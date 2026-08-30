@@ -23,6 +23,7 @@ import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.ui.screens.details.DetailsScreen
 import com.arflix.tv.ui.screens.home.HomeScreen
 import com.arflix.tv.ui.screens.login.LoginScreen
+import com.arflix.tv.ui.screens.xtreamgate.JellyfinGateScreen
 import com.arflix.tv.ui.screens.xtreamgate.XtreamGateScreen
 import com.arflix.tv.ui.screens.player.PlayerScreen
 import com.arflix.tv.ui.screens.collections.CollectionDetailsScreen
@@ -40,6 +41,7 @@ import com.arflix.tv.util.LocalDeviceType
 sealed class Screen(val route: String) {
     data object Login : Screen("login")
     data object XtreamGate : Screen("xtream_gate")
+    data object JellyfinGate : Screen("jellyfin_gate")
     data object Home : Screen("home")
     data object Search : Screen("search")
     data object Watchlist : Screen("watchlist")
@@ -170,14 +172,32 @@ fun AppNavigation(
         popEnterTransition = { fadeIn(androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
         popExitTransition = { fadeOut(androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
     ) {
-        // Xtream login gate — first screen shown until valid Xtream credentials are saved.
+        // Xtream login gate — first of two optional onboarding screens shown once,
+        // on first launch. Both submit and skip proceed to the Jellyfin step next.
         composable(Screen.XtreamGate.route) {
-            XtreamGateScreen(
-                onLoginSuccess = {
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.XtreamGate.route) { inclusive = true }
-                    }
+            val goToJellyfinGate: () -> Unit = {
+                navController.navigate(Screen.JellyfinGate.route) {
+                    popUpTo(Screen.XtreamGate.route) { inclusive = true }
                 }
+            }
+            XtreamGateScreen(
+                onLoginSuccess = goToJellyfinGate,
+                onSkip = goToJellyfinGate
+            )
+        }
+
+        // Jellyfin/VOD login — second of the two optional onboarding screens. Both
+        // submit and skip proceed straight to Home (the profile was already resolved
+        // by the Xtream step above, whether or not Xtream itself was configured).
+        composable(Screen.JellyfinGate.route) {
+            val goToHome: () -> Unit = {
+                navController.navigate(Screen.Home.route) {
+                    popUpTo(Screen.JellyfinGate.route) { inclusive = true }
+                }
+            }
+            JellyfinGateScreen(
+                onDone = goToHome,
+                onSkip = goToHome
             )
         }
 
