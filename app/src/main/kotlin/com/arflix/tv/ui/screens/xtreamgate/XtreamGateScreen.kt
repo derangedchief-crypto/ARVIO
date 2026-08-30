@@ -58,17 +58,18 @@ import com.arflix.tv.ui.theme.TextTertiary
 import com.arflix.tv.ui.theme.appBackgroundDark
 
 /**
- * Mandatory Xtream login gate for Extreme TV Network. This is the very first screen
- * shown on launch until valid Xtream credentials are entered and saved — the user
- * cannot reach profile selection, home, or settings until this succeeds. The Xtream
- * host itself is fixed (see FIXED_XTREAM_HOST_URL in SettingsScreen.kt / the matching
+ * Optional Xtream login step for Extreme TV Network — the first of two skippable
+ * onboarding screens shown on first launch (Xtream, then Jellyfin). The user can sign
+ * in or skip; either way they proceed to the Jellyfin step next. The Xtream host
+ * itself is fixed (see FIXED_XTREAM_HOST_URL in SettingsScreen.kt / the matching
  * constant in XtreamGateViewModel) and is never shown as an editable field here.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun XtreamGateScreen(
     viewModel: XtreamGateViewModel = hiltViewModel(),
-    onLoginSuccess: () -> Unit = {}
+    onLoginSuccess: () -> Unit = {},
+    onSkip: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -137,7 +138,7 @@ fun XtreamGateScreen(
                 Spacer(6.dp)
 
                 Text(
-                    text = "Sign in with your account to continue",
+                    text = "Sign in with your Xtream account, or skip for now",
                     fontSize = 13.sp,
                     color = Color.White.copy(alpha = 0.6f)
                 )
@@ -218,18 +219,36 @@ fun XtreamGateScreen(
                         .focusRequester(buttonFocusRequester)
                         .onFocusChanged { if (it.isFocused) focusedField = "button" }
                 )
+
+                Spacer(16.dp)
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(enabled = !uiState.isSubmitting) {
+                            keyboardController?.hide()
+                            viewModel.skip(onSkip = onSkip)
+                        }
+                        .padding(vertical = 8.dp, horizontal = 12.dp)
+                ) {
+                    Text(
+                        text = "Skip for now",
+                        fontSize = 13.sp,
+                        color = Color.White.copy(alpha = if (uiState.isSubmitting) 0.3f else 0.55f)
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun Spacer(height: androidx.compose.ui.unit.Dp) {
+internal fun Spacer(height: androidx.compose.ui.unit.Dp) {
     Box(modifier = Modifier.height(height))
 }
 
 @Composable
-private fun GateTextField(
+internal fun GateTextField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
@@ -289,7 +308,7 @@ private fun GateTextField(
 }
 
 @Composable
-private fun GateButton(
+internal fun GateButton(
     onClick: () -> Unit,
     text: String,
     isFocused: Boolean,
