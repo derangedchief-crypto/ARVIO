@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.repository.IptvPlaylistEntry
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.ProfileManager
+import com.arflix.tv.data.repository.ProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +30,9 @@ data class XtreamGateUiState(
 
 @HiltViewModel
 class XtreamGateViewModel @Inject constructor(
-    private val iptvRepository: IptvRepository
+    private val iptvRepository: IptvRepository,
+    private val profileRepository: ProfileRepository,
+    private val profileManager: ProfileManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamGateUiState())
@@ -67,6 +71,16 @@ class XtreamGateViewModel @Inject constructor(
                     )
                     return@launch
                 }
+
+                // This gate runs before profile selection, but IPTV config is stored
+                // per-profile (key = "profile_<id>_iptv_playlists_json"). Without
+                // resolving a real, permanently-active profile first, the playlist
+                // saved below gets written under a placeholder profile id, then
+                // becomes invisible the moment the user's actual profile (a different
+                // id, created on the next screen) becomes active. Ensuring the active
+                // profile now — and making it the one that sticks — keeps the two in
+                // sync.
+                ensureActiveProfile()
 
                 val combined = "$XTREAM_GATE_HOST_URL $username $password"
                 val entry = IptvPlaylistEntry(
@@ -124,5 +138,22 @@ class XtreamGateViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    /**
+     * Makes sure a real profile exists and is marked active, and that
+     * ProfileManager's cached id is updated to match immediately (not just
+     * eventually, once its Flow collects) so every profile-scoped save that
+     * happens right after this call lands in the right place.
+     */
+    private suspend fun ensureActiveProfile() {
+        val profile = profileRepository.createDefaultProfileIfNeeded()
+            ?: profileRepository.getActiveProfile()
+            ?: profileRepository.getProfiles().firstOrNull()
+            ?: return
+
+        profileRepository.setActiveProfile(profile.id)
+        profileManager.setCurrentProfileId(profile.id)
+        profileManager.setCurrentProfileName(profile.name)
     }
 }
