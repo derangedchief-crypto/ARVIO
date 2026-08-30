@@ -241,6 +241,12 @@ val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null
 private const val ACCOUNT_DELETION_URL = "https://auth.arvio.tv/delete"
 private const val PRIVACY_POLICY_URL = "https://arvio.tv/privacy"
 
+// --- Extreme TV Network white-label lock-in ---
+// These are baked in at build time. The IPTV host and Jellyfin server fields are
+// intentionally not shown as editable inputs below; only credentials are user-entered.
+private const val FIXED_XTREAM_HOST_URL = "https://tv.extremeiptv.net"
+private const val FIXED_JELLYFIN_SERVER_URL = "http://38.127.60.212:8096"
+
 /**
  * Pseudo playlist id used for the Stalker/Ministra portal source. Stalker
  * channels are stored with the `stalker:` id prefix, so the paged channel
@@ -696,7 +702,7 @@ fun SettingsScreen(
         if (!showIptvInput) {
             editingIptvIndex = -1
             iptvEditName = ""
-            iptvEditUrl = ""
+            iptvEditUrl = FIXED_XTREAM_HOST_URL
             iptvEditEpg = ""
             iptvEditEnabled = true
             iptvEditXtreamUser = ""
@@ -1944,19 +1950,13 @@ fun SettingsScreen(
         if (showHomeServerInput) {
             InputModal(
                 title = stringResource(R.string.settings_home_server),
-                supportingText = stringResource(R.string.settings_home_server_https_note),
+                supportingText = "Server: $FIXED_JELLYFIN_SERVER_URL",
                 fields = listOf(
                     InputField(
                         label = stringResource(R.string.settings_label_server_name),
                         value = homeServerDisplayName,
                         placeholder = stringResource(R.string.settings_ph_server_name),
                         onValueChange = { homeServerDisplayName = it }
-                    ),
-                    InputField(
-                        label = stringResource(R.string.settings_label_server_url),
-                        value = homeServerUrl,
-                        placeholder = stringResource(R.string.settings_ph_server_url),
-                        onValueChange = { homeServerUrl = it }
                     ),
                     InputField(
                         label = stringResource(R.string.settings_label_username),
@@ -1972,9 +1972,10 @@ fun SettingsScreen(
                     )
                 ),
                 onConfirm = {
-                    if (homeServerUrl.isNotBlank() && homeServerPassword.isNotBlank()) {
+                    // Host is locked to FIXED_JELLYFIN_SERVER_URL regardless of what homeServerUrl holds.
+                    if (homeServerPassword.isNotBlank()) {
                         viewModel.connectHomeServer(
-                            serverUrl = homeServerUrl.trim(),
+                            serverUrl = FIXED_JELLYFIN_SERVER_URL,
                             username = homeServerUsername.trim(),
                             password = homeServerPassword,
                             displayName = homeServerDisplayName.trim()
@@ -2028,18 +2029,12 @@ fun SettingsScreen(
         if (showIptvInput) {
             InputModal(
                 title = if (editingIptvIndex >= 0) stringResource(R.string.settings_edit_tv_playlist) else stringResource(R.string.settings_add_tv_playlist),
-                supportingText = stringResource(R.string.settings_iptv_epg_note),
+                supportingText = "Server: $FIXED_XTREAM_HOST_URL\n" + stringResource(R.string.settings_iptv_epg_note),
                 fields = listOf(
                     InputField(
                         label = stringResource(R.string.settings_label_playlist_name),
                         value = iptvEditName,
                         onValueChange = { iptvEditName = it }
-                    ),
-                    InputField(
-                        label = stringResource(R.string.settings_label_m3u_or_xtream),
-                        value = iptvEditUrl,
-                        placeholder = stringResource(R.string.settings_ph_provider_host),
-                        onValueChange = { iptvEditUrl = it }
                     ),
                     InputField(
                         label = stringResource(R.string.settings_label_xtream_user),
@@ -2064,16 +2059,17 @@ fun SettingsScreen(
                     )
                 ),
                 onConfirm = {
+                    // Host is locked to FIXED_XTREAM_HOST_URL regardless of what iptvEditUrl holds.
                     // Build the m3uUrl: if Xtream credentials are provided, combine as "host user pass"
                     val hasXtream = iptvEditXtreamUser.isNotBlank() && iptvEditXtreamPass.isNotBlank()
                     val finalM3uUrl = if (hasXtream) {
-                        "${iptvEditUrl.trim()} ${iptvEditXtreamUser.trim()} ${iptvEditXtreamPass.trim()}"
+                        "$FIXED_XTREAM_HOST_URL ${iptvEditXtreamUser.trim()} ${iptvEditXtreamPass.trim()}"
                     } else {
-                        iptvEditUrl
+                        FIXED_XTREAM_HOST_URL
                     }
                     // Auto-derive EPG for Xtream if not provided
                     val finalEpgUrl = if (hasXtream && iptvEditEpg.isBlank()) {
-                        "${iptvEditUrl.trim()} ${iptvEditXtreamUser.trim()} ${iptvEditXtreamPass.trim()}"
+                        "$FIXED_XTREAM_HOST_URL ${iptvEditXtreamUser.trim()} ${iptvEditXtreamPass.trim()}"
                     } else {
                         iptvEditEpg
                     }
