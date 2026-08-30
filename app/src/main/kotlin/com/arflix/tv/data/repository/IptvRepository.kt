@@ -664,8 +664,8 @@ class IptvRepository @Inject constructor(
         val p = java.net.URLEncoder.encode(password, "UTF-8")
         val url = "$safeBase/player_api.php?username=$u&password=$p"
 
-        val response: JsonObject? = withContext(Dispatchers.IO) {
-            requestJson(url, JsonObject::class.java, client = iptvHttpClient)
+        val response = withContext(Dispatchers.IO) {
+            requestJson<JsonObject>(url, JsonObject::class.java, client = iptvHttpClient)
         }
             ?: return XtreamLoginCheckResult(
                 success = false,
