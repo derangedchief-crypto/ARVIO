@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.DrmInfo
@@ -693,6 +694,23 @@ class IptvRepository @Inject constructor(
         }
 
         return XtreamLoginCheckResult(success = true)
+    }
+
+    /**
+     * Tracks whether the first-run Xtream/Jellyfin onboarding gate has been completed
+     * (submitted OR skipped on both screens) — not whether either was actually
+     * configured. Deliberately a plain, non-profile-scoped key: this flag is read by
+     * MainActivity before any profile exists, so it can't be profile-scoped the way
+     * IPTV playlists are.
+     */
+    private fun gateOnboardingCompleteKey(): Preferences.Key<Boolean> =
+        booleanPreferencesKey("xtream_jellyfin_gate_completed")
+
+    fun observeGateOnboardingComplete(): Flow<Boolean> =
+        context.settingsDataStore.data.map { prefs -> prefs[gateOnboardingCompleteKey()] ?: false }
+
+    suspend fun markGateOnboardingComplete() {
+        context.settingsDataStore.edit { prefs -> prefs[gateOnboardingCompleteKey()] = true }
     }
 
     suspend fun saveStalkerConfig(portalUrl: String, macAddress: String) {
