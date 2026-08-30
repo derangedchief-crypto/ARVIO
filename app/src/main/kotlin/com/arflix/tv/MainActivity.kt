@@ -585,6 +585,13 @@ fun ArflixApp(
             ActiveProfileLoadState.Loaded(profile) as ActiveProfileLoadState
         }
     }.collectAsStateWithLifecycle(initialValue = ActiveProfileLoadState.Loading)
+    // Whether an Xtream playlist has already been saved (mandatory login gate passed).
+    // null = still loading from disk; true/false once known.
+    val xtreamConfigured: Boolean? by remember(iptvRepository) {
+        iptvRepository.observeConfig().map { config ->
+            config.playlists.any { it.m3uUrl.isNotBlank() }
+        }
+    }.collectAsStateWithLifecycle(initialValue = null)
     var startupIntroComplete by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         delay(1350)
@@ -593,7 +600,8 @@ fun ArflixApp(
     val activeProfile = (activeProfileState as? ActiveProfileLoadState.Loaded)?.profile
     val startupReady = skipProfileSelection != null &&
         activeProfileState is ActiveProfileLoadState.Loaded &&
-        authState !is AuthState.Loading
+        authState !is AuthState.Loading &&
+        xtreamConfigured != null
 
     if (!startupReady || !startupIntroComplete) {
         ArvioLoadingScreen()
@@ -615,10 +623,10 @@ fun ArflixApp(
         }
     }
 
-    val startDestination = if (skipProfileSelection == true && activeProfile != null) {
-        Screen.Home.route
-    } else {
-        Screen.ProfileSelection.route
+    val startDestination = when {
+        xtreamConfigured == false -> Screen.XtreamGate.route
+        skipProfileSelection == true && activeProfile != null -> Screen.Home.route
+        else -> Screen.ProfileSelection.route
     }
 
     val deviceType = LocalDeviceType.current
