@@ -156,4 +156,17 @@ class XtreamGateViewModel @Inject constructor(
         profileManager.setCurrentProfileId(profile.id)
         profileManager.setCurrentProfileName(profile.name)
     }
+
+    /**
+     * Xtream is optional — this screen can be skipped entirely. Still resolves the
+     * active profile first, since the next screen (Jellyfin) and Home both depend
+     * on one being set, regardless of whether Xtream itself was configured.
+     */
+    fun skip(onSkip: () -> Unit) {
+        if (_uiState.value.isSubmitting) return
+        viewModelScope.launch {
+            ensureActiveProfile()
+            onSkip()
+        }
+    }
 }
