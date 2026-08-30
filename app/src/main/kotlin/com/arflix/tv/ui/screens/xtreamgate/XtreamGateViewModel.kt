@@ -22,6 +22,7 @@ data class XtreamGateUiState(
     val username: String = "",
     val password: String = "",
     val isSubmitting: Boolean = false,
+    val progressText: String? = null,
     val errorMessage: String? = null
 )
 
@@ -53,31 +54,75 @@ class XtreamGateViewModel @Inject constructor(
             return
         }
 
-        _uiState.value = current.copy(isSubmitting = true, errorMessage = null)
+        _uiState.value = current.copy(isSubmitting = true, errorMessage = null, progressText = "Signing in…")
 
         viewModelScope.launch {
-            val result = iptvRepository.verifyXtreamLogin(XTREAM_GATE_HOST_URL, username, password)
-            if (!result.success) {
+            try {
+                val result = iptvRepository.verifyXtreamLogin(XTREAM_GATE_HOST_URL, username, password)
+                if (!result.success) {
+                    _uiState.value = _uiState.value.copy(
+                        isSubmitting = false,
+                        progressText = null,
+                        errorMessage = result.message ?: "Invalid username or password."
+                    )
+                    return@launch
+                }
+
+                val combined = "$XTREAM_GATE_HOST_URL $username $password"
+                val entry = IptvPlaylistEntry(
+                    id = "list_1",
+                    name = "Extreme TV Network",
+                    m3uUrl = combined,
+                    epgUrl = combined,
+                    enabled = true,
+                    epgUrls = listOf(combined)
+                )
+                iptvRepository.savePlaylists(listOf(entry))
+
+                // Saving the playlist config alone does not fetch anything — it just
+                // persists what to load. The actual channel/EPG fetch (the same call
+                // the normal Settings "Add TV Playlist" flow makes after saving) has
+                // to be triggered explicitly, or the app has nothing cached and Live
+                // TV shows empty until some other screen happens to trigger a load.
+                runCatching { iptvRepository.purgeAllIptvSourceCaches() }
+                val snapshot = iptvRepository.loadSnapshot(
+                    forcePlaylistReload = true,
+                    forceEpgReload = true,
+                    allowNetworkEpgFetch = true,
+                    onProgress = { progress ->
+                        _uiState.value = _uiState.value.copy(progressText = progress.message)
+                    }
+                )
+
+                if (snapshot.channels.isEmpty()) {
+                    // Credentials were valid and the playlist saved, but nothing came
+                    // back from the provider — surface this instead of silently
+                    // dropping the user into an empty Live TV screen.
+                    _uiState.value = _uiState.value.copy(
+                        isSubmitting = false,
+                        progressText = null,
+                        errorMessage = "Signed in, but no channels came back from the server. " +
+                            "Try again from Settings \u2192 Refresh IPTV."
+                    )
+                    onSuccess()
+                    return@launch
+                }
+
+                // Warm VOD caches in the background — nice to have, not worth blocking
+                // navigation for.
+                launch { runCatching { iptvRepository.warmXtreamVodCachesIfPossible() } }
+
+                _uiState.value = _uiState.value.copy(isSubmitting = false, progressText = null)
+                onSuccess()
+            } catch (e: Exception) {
+                // Never fail silently — an unhandled exception here would otherwise
+                // leave the button looking "unresponsive" with no feedback at all.
                 _uiState.value = _uiState.value.copy(
                     isSubmitting = false,
-                    errorMessage = result.message ?: "Invalid username or password."
+                    progressText = null,
+                    errorMessage = "Something went wrong: ${e.message ?: e::class.simpleName}"
                 )
-                return@launch
             }
-
-            val combined = "$XTREAM_GATE_HOST_URL $username $password"
-            val entry = IptvPlaylistEntry(
-                id = "list_1",
-                name = "Extreme TV Network",
-                m3uUrl = combined,
-                epgUrl = combined,
-                enabled = true,
-                epgUrls = listOf(combined)
-            )
-            iptvRepository.savePlaylists(listOf(entry))
-
-            _uiState.value = _uiState.value.copy(isSubmitting = false)
-            onSuccess()
         }
     }
 }
