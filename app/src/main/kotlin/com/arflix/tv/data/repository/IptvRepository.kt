@@ -653,7 +653,9 @@ class IptvRepository @Inject constructor(
     /**
      * Validates Xtream credentials against player_api.php (no action param) before
      * we ever persist them. Used by the mandatory Xtream login gate shown before
-     * profile selection / home.
+     * profile selection / home. Does its own raw request (rather than going through
+     * requestJson, which collapses every failure mode to null) so we can tell the
+     * difference between DNS/connection failures, HTTP errors, and bad JSON.
      */
     suspend fun verifyXtreamLogin(baseUrl: String, username: String, password: String): XtreamLoginCheckResult {
         if (username.isBlank() || password.isBlank()) {
@@ -664,28 +666,64 @@ class IptvRepository @Inject constructor(
         val p = java.net.URLEncoder.encode(password, "UTF-8")
         val url = "$safeBase/player_api.php?username=$u&password=$p"
 
-        val response = withContext(Dispatchers.IO) {
-            requestJson<JsonObject>(url, JsonObject::class.java, client = iptvHttpClient)
+        return withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", OkHttpProvider.userAgentOr(IPTV_USER_AGENT))
+                .header("Accept", "application/json,*/*")
+                .get()
+                .build()
+
+            val response = try {
+                iptvHttpClient.newCall(request).execute()
+            } catch (e: java.net.UnknownHostException) {
+                System.err.println("XtreamGate: DNS lookup failed for ${redactIptvUrl(url)}: ${e.message}")
+                return@withContext XtreamLoginCheckResult(false, "Couldn't find the server (DNS lookup failed). Check the device's network/DNS.")
+            } catch (e: java.net.SocketTimeoutException) {
+                System.err.println("XtreamGate: Timed out reaching ${redactIptvUrl(url)}: ${e.message}")
+                return@withContext XtreamLoginCheckResult(false, "Connection to the server timed out. Check your network and try again.")
+            } catch (e: javax.net.ssl.SSLException) {
+                System.err.println("XtreamGate: TLS error reaching ${redactIptvUrl(url)}: ${e.message}")
+                return@withContext XtreamLoginCheckResult(false, "Secure connection failed (TLS error). Try again or contact support.")
+            } catch (e: java.io.IOException) {
+                System.err.println("XtreamGate: IO error reaching ${redactIptvUrl(url)}: ${e::class.simpleName}: ${e.message}")
+                return@withContext XtreamLoginCheckResult(false, "Couldn't reach the server (${e::class.simpleName}). Check your connection and try again.")
+            }
+
+            response.use { resp ->
+                if (!resp.isSuccessful) {
+                    System.err.println("XtreamGate: HTTP ${resp.code} from ${redactIptvUrl(url)}")
+                    return@withContext XtreamLoginCheckResult(false, "Server returned an error (HTTP ${resp.code}).")
+                }
+
+                val bodyString = resp.body?.string()
+                if (bodyString.isNullOrBlank()) {
+                    return@withContext XtreamLoginCheckResult(false, "Server returned an empty response.")
+                }
+
+                val parsed = try {
+                    gson.fromJson(bodyString, JsonObject::class.java)
+                } catch (e: Exception) {
+                    System.err.println("XtreamGate: JSON parse failed for ${redactIptvUrl(url)}: ${e.message}. Body prefix: ${bodyString.take(200)}")
+                    return@withContext XtreamLoginCheckResult(false, "Server response wasn't valid JSON. It may not be an Xtream panel at this address.")
+                }
+
+                val userInfo = parsed?.getAsJsonObject("user_info")
+                    ?: return@withContext XtreamLoginCheckResult(false, "Invalid username or password.")
+
+                val auth = userInfo.get("auth")?.let { if (it.isJsonPrimitive) it.asInt else 0 } ?: 0
+                if (auth != 1) {
+                    return@withContext XtreamLoginCheckResult(false, "Invalid username or password.")
+                }
+
+                val status = userInfo.get("status")?.takeIf { it.isJsonPrimitive }?.asString
+                if (!status.isNullOrBlank() && !status.equals("Active", ignoreCase = true)) {
+                    return@withContext XtreamLoginCheckResult(false, "Account status: $status. Contact support.")
+                }
+
+                XtreamLoginCheckResult(success = true)
+            }
         }
-            ?: return XtreamLoginCheckResult(
-                success = false,
-                message = "Couldn't reach the server. Check your connection and try again."
-            )
-
-        val userInfo = response.getAsJsonObject("user_info")
-            ?: return XtreamLoginCheckResult(success = false, message = "Invalid username or password.")
-
-        val auth = userInfo.get("auth")?.let { if (it.isJsonPrimitive) it.asInt else 0 } ?: 0
-        if (auth != 1) {
-            return XtreamLoginCheckResult(success = false, message = "Invalid username or password.")
-        }
-
-        val status = userInfo.get("status")?.takeIf { it.isJsonPrimitive }?.asString
-        if (!status.isNullOrBlank() && !status.equals("Active", ignoreCase = true)) {
-            return XtreamLoginCheckResult(success = false, message = "Account status: $status. Contact support.")
-        }
-
-        return XtreamLoginCheckResult(success = true)
     }
 
     suspend fun saveStalkerConfig(portalUrl: String, macAddress: String) {
