@@ -694,7 +694,6 @@ class IptvRepository @Inject constructor(
 
         return XtreamLoginCheckResult(success = true)
     }
-    }
 
     suspend fun saveStalkerConfig(portalUrl: String, macAddress: String) {
         val profileId = profileManager.getProfileIdSync()
