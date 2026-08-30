@@ -23,6 +23,7 @@ import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.ui.screens.details.DetailsScreen
 import com.arflix.tv.ui.screens.home.HomeScreen
 import com.arflix.tv.ui.screens.login.LoginScreen
+import com.arflix.tv.ui.screens.xtreamgate.XtreamGateScreen
 import com.arflix.tv.ui.screens.player.PlayerScreen
 import com.arflix.tv.ui.screens.collections.CollectionDetailsScreen
 import com.arflix.tv.ui.screens.search.SearchScreen
@@ -38,6 +39,7 @@ import com.arflix.tv.util.LocalDeviceType
  */
 sealed class Screen(val route: String) {
     data object Login : Screen("login")
+    data object XtreamGate : Screen("xtream_gate")
     data object Home : Screen("home")
     data object Search : Screen("search")
     data object Watchlist : Screen("watchlist")
@@ -168,6 +170,17 @@ fun AppNavigation(
         popEnterTransition = { fadeIn(androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
         popExitTransition = { fadeOut(androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
     ) {
+        // Xtream login gate — first screen shown until valid Xtream credentials are saved.
+        composable(Screen.XtreamGate.route) {
+            XtreamGateScreen(
+                onLoginSuccess = {
+                    navController.navigate(Screen.ProfileSelection.route) {
+                        popUpTo(Screen.XtreamGate.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+
         // Login screen
         composable(Screen.Login.route) {
             LoginScreen(
