@@ -669,7 +669,17 @@ class IptvRepository @Inject constructor(
         return withContext(Dispatchers.IO) {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", OkHttpProvider.userAgentOr(IPTV_USER_AGENT))
+                // Deliberately NOT using IPTV_USER_AGENT ("VLC/3.0.20 LibVLC/3.0.20") here.
+                // That literal string is one of the most common signatures used by
+                // credential-stuffing bots against Xtream panels, so WAFs/anti-abuse
+                // rules commonly flag it and serve a non-JSON response instead of the
+                // real API response. This is just a login check, not a stream request,
+                // so a normal browser UA avoids tripping that.
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                )
                 .header("Accept", "application/json,*/*")
                 .get()
                 .build()
