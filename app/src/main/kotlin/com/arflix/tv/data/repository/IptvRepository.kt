@@ -174,6 +174,11 @@ data class IptvPlaylistEntry(
     val epgUrls: List<String> = emptyList()
 )
 
+data class XtreamLoginCheckResult(
+    val success: Boolean,
+    val message: String? = null
+)
+
 /**
  * A single Stalker/Ministra portal configuration. Mirrors [IptvPlaylistEntry]
  * so Stalker portals can be managed (add/edit/remove/reorder/toggle) like M3U
@@ -643,6 +648,44 @@ class IptvRepository @Inject constructor(
         }
         invalidateCache()
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save iptv playlists")
+    }
+
+    /**
+     * Validates Xtream credentials against player_api.php (no action param) before
+     * we ever persist them. Used by the mandatory Xtream login gate shown before
+     * profile selection / home.
+     */
+    suspend fun verifyXtreamLogin(baseUrl: String, username: String, password: String): XtreamLoginCheckResult {
+        if (username.isBlank() || password.isBlank()) {
+            return XtreamLoginCheckResult(success = false, message = "Enter your username and password.")
+        }
+        val safeBase = baseUrl.trim().trimEnd('/')
+        val u = java.net.URLEncoder.encode(username.trim(), "UTF-8")
+        val p = java.net.URLEncoder.encode(password, "UTF-8")
+        val url = "$safeBase/player_api.php?username=$u&password=$p"
+
+        val response: JsonObject? = withContext(Dispatchers.IO) {
+            requestJson(url, JsonObject::class.java, client = iptvHttpClient)
+        }
+            ?: return XtreamLoginCheckResult(
+                success = false,
+                message = "Couldn't reach the server. Check your connection and try again."
+            )
+
+        val userInfo = response.getAsJsonObject("user_info")
+            ?: return XtreamLoginCheckResult(success = false, message = "Invalid username or password.")
+
+        val auth = userInfo.get("auth")?.let { if (it.isJsonPrimitive) it.asInt else 0 } ?: 0
+        if (auth != 1) {
+            return XtreamLoginCheckResult(success = false, message = "Invalid username or password.")
+        }
+
+        val status = userInfo.get("status")?.takeIf { it.isJsonPrimitive }?.asString
+        if (!status.isNullOrBlank() && !status.equals("Active", ignoreCase = true)) {
+            return XtreamLoginCheckResult(success = false, message = "Account status: $status. Contact support.")
+        }
+
+        return XtreamLoginCheckResult(success = true)
     }
 
     suspend fun saveStalkerConfig(portalUrl: String, macAddress: String) {
