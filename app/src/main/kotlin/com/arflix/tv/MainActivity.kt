@@ -585,12 +585,12 @@ fun ArflixApp(
             ActiveProfileLoadState.Loaded(profile) as ActiveProfileLoadState
         }
     }.collectAsStateWithLifecycle(initialValue = ActiveProfileLoadState.Loading)
-    // Whether an Xtream playlist has already been saved (mandatory login gate passed).
-    // null = still loading from disk; true/false once known.
-    val xtreamConfigured: Boolean? by remember(iptvRepository) {
-        iptvRepository.observeConfig().map { config ->
-            config.playlists.any { it.m3uUrl.isNotBlank() }
-        }
+    // Whether the first-run Xtream/Jellyfin onboarding gate has been completed
+    // (submitted or explicitly skipped on both screens) — not whether either was
+    // actually configured, since both are now optional. null = still loading from
+    // disk; true/false once known.
+    val gateOnboardingDone: Boolean? by remember(iptvRepository) {
+        iptvRepository.observeGateOnboardingComplete()
     }.collectAsStateWithLifecycle(initialValue = null)
     var startupIntroComplete by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
@@ -601,7 +601,7 @@ fun ArflixApp(
     val startupReady = skipProfileSelection != null &&
         activeProfileState is ActiveProfileLoadState.Loaded &&
         authState !is AuthState.Loading &&
-        xtreamConfigured != null
+        gateOnboardingDone != null
 
     if (!startupReady || !startupIntroComplete) {
         ArvioLoadingScreen()
@@ -624,7 +624,7 @@ fun ArflixApp(
     }
 
     val startDestination = when {
-        xtreamConfigured == false -> Screen.XtreamGate.route
+        gateOnboardingDone == false -> Screen.XtreamGate.route
         skipProfileSelection == true && activeProfile != null -> Screen.Home.route
         else -> Screen.ProfileSelection.route
     }
