@@ -2,17 +2,23 @@ package com.arflix.tv.ui.screens.xtreamgate
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,8 +45,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.tv.material3.Button
-import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.ui.theme.AccentWhite
@@ -108,16 +112,19 @@ fun XtreamGateScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(32.dp),
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .padding(horizontal = 24.dp, vertical = 32.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(
                 modifier = Modifier
-                    .width(420.dp)
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))
                     .background(Color(0xFF151520))
                     .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
-                    .padding(32.dp),
+                    .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -199,7 +206,11 @@ fun XtreamGateScreen(
                         keyboardController?.hide()
                         viewModel.submit(onSuccess = onLoginSuccess)
                     },
-                    text = if (uiState.isSubmitting) "Signing in…" else "Sign In",
+                    text = when {
+                        !uiState.isSubmitting -> "Sign In"
+                        !uiState.progressText.isNullOrBlank() -> uiState.progressText!!
+                        else -> "Signing in…"
+                    },
                     isFocused = focusedField == "button",
                     enabled = !uiState.isSubmitting,
                     modifier = Modifier
@@ -277,7 +288,6 @@ private fun GateTextField(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun GateButton(
     onClick: () -> Unit,
@@ -288,7 +298,7 @@ private fun GateButton(
 ) {
     val focusedBackground = AccentWhite
     val focusedText = ArcticBlack
-    val noScale = ButtonDefaults.scale(1f, 1f, 1f, 1f, 1f)
+    val interactionSource = remember { MutableInteractionSource() }
 
     Box(
         modifier = modifier
@@ -300,27 +310,23 @@ private fun GateButton(
                 } else {
                     Modifier.background(Color.Black, RoundedCornerShape(12.dp))
                 }
+            )
+            // Plain touch-clickable — androidx.tv.material3.Button's tap handling
+            // is tuned for D-pad focus and can be unreliable on touch/mobile.
+            .focusable(interactionSource = interactionSource)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
             ),
         contentAlignment = Alignment.Center
     ) {
-        Button(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = Modifier.fillMaxSize(),
-            colors = ButtonDefaults.colors(
-                containerColor = Color.Transparent,
-                focusedContainerColor = Color.Transparent,
-                disabledContainerColor = Color.Transparent
-            ),
-            scale = noScale,
-            shape = ButtonDefaults.shape(RoundedCornerShape(12.dp))
-        ) {
-            Text(
-                text = text,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isFocused) focusedText else TextPrimary
-            )
-        }
+        Text(
+            text = text,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (isFocused) focusedText else TextPrimary
+        )
     }
 }
