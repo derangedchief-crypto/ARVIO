@@ -535,7 +535,7 @@ fun ArvioLoadingScreen() {
 
         Image(
             painter = painterResource(id = R.drawable.arvio_loading_logo),
-            contentDescription = "ARVIO",
+            contentDescription = "Extreme TV",
             modifier = Modifier
                 .padding(horizontal = 24.dp)
                 .fillMaxWidth(0.52f)
