@@ -7,7 +7,6 @@ jobs:
   build-debug-apk:
     name: Build sideload debug APK
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -22,12 +21,21 @@ jobs:
       - name: Prepare build configuration
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL: ${{ secrets.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL }}
         run: |
           cp secrets.defaults.properties secrets.properties
           if [ -n "$TMDB_API_KEY" ]; then
             sed -i "s|^TMDB_API_KEY=.*|TMDB_API_KEY=$TMDB_API_KEY|" secrets.properties
           else
             echo "::warning::TMDB_API_KEY repo secret is not set — Trending/catalog rows will be empty in this build."
+          fi
+          # The manifest URL contains a literal '|', so sed substitution is unsafe here.
+          # Drop the placeholder line and append the real value instead.
+          if [ -n "$ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL" ]; then
+            sed -i '/^ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL=/d' secrets.properties
+            printf '%s\n' "ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL=$ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL" >> secrets.properties
+          else
+            echo "::notice::ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL not set — Cloud Stream entitlement disabled in this build."
           fi
 
       - name: Build debug APK
