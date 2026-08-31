@@ -7469,6 +7469,12 @@ class IptvRepository @Inject constructor(
                 result[channel.id] = nowNext
             }
         }
+        val matched = result.size
+        val total = channels.size
+        System.out.println(
+            "IptvRepository: EPG matched $matched/$total channels" +
+                if (total > 0) " (${(matched * 100) / total}%)" else ""
+        )
         return result
     }
 
@@ -9129,8 +9135,10 @@ class IptvRepository @Inject constructor(
         val HTML_TAG_REGEX = Regex("<[^>]+>")
         val CSS_BRACE_REGEX = Regex("\\{[^}]*\\}")
         val NON_ALPHA_NUM_REGEX_INLINE = Regex("[^a-z0-9]")
-        val QUALITY_SUFFIX_REGEX = Regex("\\b(hd|fhd|uhd|sd|4k|hevc|x265|x264|h264|h265)\\b")
-        val GUIDE_PREFIX_REGEX = Regex("""^\s*[a-z]{2,4}\s*[\|:：/\-]+\s*""", RegexOption.IGNORE_CASE)
+        val QUALITY_SUFFIX_REGEX = Regex(
+            "\\b(hd|fhd|uhd|sd|4k|8k|hevc|x265|x264|h264|h265|1080p|720p|480p|2160p|hdr|vip|raw|backup)\\b"
+        )
+        val GUIDE_PREFIX_REGEX = Regex("""^\s*(?:[a-z]{2,4}|\d{1,4})\s*[\|:：/\-.]+\s*""", RegexOption.IGNORE_CASE)
 
         val XMLTV_LOCAL_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
 
