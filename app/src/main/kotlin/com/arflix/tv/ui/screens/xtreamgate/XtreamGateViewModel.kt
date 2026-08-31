@@ -7,7 +7,8 @@ import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileRepository
 import com.arflix.tv.data.repository.StreamRepository
-import com.arflix.tv.data.repository.XtreamPackageEntitlements
+import com.arflix.tv.data.repository.XtreamEntitlementsRepository
+import com.arflix.tv.data.repository.XtreamEntitlementsResult
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,7 +25,8 @@ import javax.inject.Inject
  */
 private const val XTREAM_GATE_HOST_URL = "https://tv.extremeiptv.net"
 
-/** Hard ceilings so a dead manifest host can never stall sign-in. */
+/** Hard ceilings so a slow panel or dead manifest host can never stall sign-in. */
+private const val ENTITLEMENT_LOOKUP_TIMEOUT_MS = 20_000L
 private const val ENTITLEMENT_INSTALL_TIMEOUT_MS = 15_000L
 private const val ENTITLEMENT_REMOVE_TIMEOUT_MS = 5_000L
 
@@ -41,6 +43,7 @@ class XtreamGateViewModel @Inject constructor(
     private val iptvRepository: IptvRepository,
     private val profileRepository: ProfileRepository,
     private val profileManager: ProfileManager,
+    private val entitlementsRepository: XtreamEntitlementsRepository,
     // Lazy on purpose: StreamRepository is a heavy singleton (addon health load,
     // quality-filter warmup, Telegram resolver) and this gate is on the cold-start
     // path. Only construct it if the panel actually grants or revokes an addon.
@@ -101,10 +104,10 @@ class XtreamGateViewModel @Inject constructor(
                 )
                 iptvRepository.savePlaylists(listOf(entry))
 
-                // Package-driven addon entitlements. Runs before the channel load
-                // because it is short and its result is what the user paid for; it is
-                // never allowed to fail the sign-in.
-                runCatching { applyPackageEntitlements(result.packageLabels) }
+                // Package-driven addon entitlements, resolved from the reseller panel
+                // by the backend. Runs before the channel load because it is short and
+                // its result is what the user paid for; never fails the sign-in.
+                runCatching { applyPackageEntitlements(username, password) }
                     .onFailure { error ->
                         System.err.println("[XtreamGate] entitlement apply failed: ${error.message}")
                     }
@@ -165,31 +168,49 @@ class XtreamGateViewModel @Inject constructor(
 
     /**
      * Installs the Stremio addons the user's Xtream package grants, and removes the
-     * ones it does not.
+     * ones it no longer does.
      *
      * Uses ensureCustomAddons() rather than addCustomAddon() so a re-login does not
      * reset an addon the user deliberately disabled: ensureCustomAddons only fetches
      * the manifest when nothing with that URL is installed yet.
      *
+     * Nothing is removed unless the backend actually resolved the line against the
+     * panel. A panel outage or a permission problem returns Unresolved, and in that
+     * case installed addons are left exactly as they are — revoking on "unknown"
+     * would strip a paid addon from a paying customer.
+     *
      * Addons are account-level (shared_installed_addons_v1), not profile-scoped, so
      * unlike the IPTV playlist above this does not depend on the active profile.
      */
-    private suspend fun applyPackageEntitlements(packageLabels: List<String>) {
-        val granted = XtreamPackageEntitlements.match(packageLabels)
-        val grantedUrls = granted.map { it.manifestUrl }
-        val revokedUrls = XtreamPackageEntitlements.all()
-            .map { it.manifestUrl }
-            .filterNot { it in grantedUrls }
+    private suspend fun applyPackageEntitlements(username: String, password: String) {
+        val lookup = withTimeoutOrNull(ENTITLEMENT_LOOKUP_TIMEOUT_MS) {
+            entitlementsRepository.fetch(username, password)
+        }
+        if (lookup == null) {
+            System.err.println("[XtreamGate] entitlement lookup timed out; leaving addons unchanged")
+            return
+        }
+        if (lookup is XtreamEntitlementsResult.Unresolved) {
+            System.err.println(
+                "[XtreamGate] entitlements unresolved (${lookup.reason}); leaving addons unchanged"
+            )
+            return
+        }
 
-        if (grantedUrls.isEmpty() && revokedUrls.isEmpty()) return
+        val resolved = lookup as XtreamEntitlementsResult.Resolved
+        System.err.println(
+            "[XtreamGate] package=${resolved.packageName} expires=${resolved.expiresAt} " +
+                "granted=${resolved.granted.size} revoked=${resolved.revoked.size}"
+        )
+        if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return
 
         val repository = streamRepository.get()
 
-        if (grantedUrls.isNotEmpty()) {
-            val names = granted.joinToString(", ") { it.displayName }
+        if (resolved.granted.isNotEmpty()) {
+            val names = resolved.granted.joinToString(", ") { it.displayName }
             _uiState.value = _uiState.value.copy(progressText = "Unlocking $names…")
             val results = withTimeoutOrNull(ENTITLEMENT_INSTALL_TIMEOUT_MS) {
-                repository.ensureCustomAddons(grantedUrls)
+                repository.ensureCustomAddons(resolved.granted.map { it.manifestUrl })
             }
             if (results == null) {
                 System.err.println("[XtreamGate] entitlement install timed out for: $names")
@@ -207,11 +228,11 @@ class XtreamGateViewModel @Inject constructor(
             }
         }
 
-        if (revokedUrls.isNotEmpty()) {
-            // Package no longer grants these — drop them so a downgrade actually
-            // takes effect instead of leaving a paid addon installed forever.
+        if (resolved.revoked.isNotEmpty()) {
+            // Package no longer grants these — drop them so a downgrade or an expiry
+            // actually takes effect instead of leaving a paid addon installed forever.
             withTimeoutOrNull(ENTITLEMENT_REMOVE_TIMEOUT_MS) {
-                repository.removeCustomAddonsByUrl(revokedUrls)
+                repository.removeCustomAddonsByUrl(resolved.revoked)
             }
         }
     }
