@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.xtreamgate
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.repository.IptvPlaylistEntry
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.ProfileManager
@@ -25,8 +26,7 @@ import javax.inject.Inject
  */
 private const val XTREAM_GATE_HOST_URL = "https://tv.extremeiptv.net"
 
-/** Hard ceilings so a slow panel or dead manifest host can never stall sign-in. */
-private const val ENTITLEMENT_LOOKUP_TIMEOUT_MS = 20_000L
+/** Hard ceilings so a dead manifest host can never stall sign-in. */
 private const val ENTITLEMENT_INSTALL_TIMEOUT_MS = 15_000L
 private const val ENTITLEMENT_REMOVE_TIMEOUT_MS = 5_000L
 
@@ -46,7 +46,7 @@ class XtreamGateViewModel @Inject constructor(
     private val entitlementsRepository: XtreamEntitlementsRepository,
     // Lazy on purpose: StreamRepository is a heavy singleton (addon health load,
     // quality-filter warmup, Telegram resolver) and this gate is on the cold-start
-    // path. Only construct it if the panel actually grants or revokes an addon.
+    // path. Only construct it if the package actually grants or revokes an addon.
     private val streamRepository: Lazy<StreamRepository>
 ) : ViewModel() {
 
@@ -104,23 +104,15 @@ class XtreamGateViewModel @Inject constructor(
                 )
                 iptvRepository.savePlaylists(listOf(entry))
 
-                // Package-driven addon entitlements, resolved from the reseller panel
-                // by the backend. Runs before the channel load because it is short and
-                // its result is what the user paid for; never fails the sign-in.
-                runCatching { applyPackageEntitlements(username, password) }
-                    .onFailure { error ->
-                        System.err.println("[XtreamGate] entitlement apply failed: ${error.message}")
-                    }
-
                 // Saving the playlist config alone does not fetch anything — it just
                 // persists what to load. We do need the channel LIST fetched (fast —
-                // just the Xtream API's get_live_streams call) so Live TV isn't empty,
-                // but the full EPG/guide fetch is a separate, much slower thing (this
-                // provider's guide is 100MB+) and is deliberately NOT forced here.
-                // Every other screen in this app that touches IPTV (TvViewModel's own
-                // refresh(), Settings' refreshIptv()) also passes
-                // allowNetworkEpgFetch = false for exactly this reason — the full guide
-                // backfill instead runs as a genuine background job
+                // just the Xtream API's get_live_categories + get_live_streams calls)
+                // so Live TV isn't empty, but the full EPG/guide fetch is a separate,
+                // much slower thing (this provider's guide is 100MB+) and is
+                // deliberately NOT forced here. Every other screen in this app that
+                // touches IPTV (TvViewModel's own refresh(), Settings' refreshIptv())
+                // also passes allowNetworkEpgFetch = false for exactly this reason —
+                // the full guide backfill instead runs as a genuine background job
                 // (TvViewModel.completeEpgBackfillJob) once the user opens Live TV,
                 // with a long timeout and an idle delay, never blocking any UI. Forcing
                 // it here at login was making sign-in take minutes for no reason.
@@ -137,7 +129,10 @@ class XtreamGateViewModel @Inject constructor(
                 if (snapshot.channels.isEmpty()) {
                     // Credentials were valid and the playlist saved, but nothing came
                     // back from the provider — surface this instead of silently
-                    // dropping the user into an empty Live TV screen.
+                    // dropping the user into an empty Live TV screen. Entitlements are
+                    // deliberately left untouched: with no categories there is nothing
+                    // to match against, and revoking on "unknown" would strip a paid
+                    // addon after a provider hiccup.
                     _uiState.value = _uiState.value.copy(
                         isSubmitting = false,
                         progressText = null,
@@ -147,6 +142,14 @@ class XtreamGateViewModel @Inject constructor(
                     onSuccess()
                     return@launch
                 }
+
+                // Package-driven addon entitlements. Runs after the channel load
+                // because that load is where the provider's category list — the
+                // entitlement signal — comes from. Never fails the sign-in.
+                runCatching { applyPackageEntitlements(snapshot, result.packageLabels) }
+                    .onFailure { error ->
+                        System.err.println("[XtreamGate] entitlement apply failed: ${error.message}")
+                    }
 
                 // Warm VOD caches in the background — nice to have, not worth blocking
                 // navigation for.
@@ -170,26 +173,35 @@ class XtreamGateViewModel @Inject constructor(
      * Installs the Stremio addons the user's Xtream package grants, and removes the
      * ones it no longer does.
      *
-     * Uses ensureCustomAddons() rather than addCustomAddon() so a re-login does not
-     * reset an addon the user deliberately disabled: ensureCustomAddons only fetches
-     * the manifest when nothing with that URL is installed yet.
+     * Costs no extra network calls: the labels come from data the sign-in already
+     * fetched — the provider's live category names (which the Xtream catalog load
+     * stores as each channel's group, so [IptvSnapshot.grouped] is keyed by them)
+     * plus every string the player_api.php login response returned. Both are
+     * server-side filtered by the line's bouquets, so a marker category present
+     * only in the paid packages is a signal the client cannot fake.
      *
-     * Nothing is removed unless the backend actually resolved the line against the
-     * panel. A panel outage or a permission problem returns Unresolved, and in that
-     * case installed addons are left exactly as they are — revoking on "unknown"
-     * would strip a paid addon from a paying customer.
+     * Uses ensureCustomAddons() rather than addCustomAddon() so a re-login does not
+     * reinstate an addon the user deliberately disabled: ensureCustomAddons only
+     * fetches the manifest when nothing with that URL is installed yet.
      *
      * Addons are account-level (shared_installed_addons_v1), not profile-scoped, so
      * unlike the IPTV playlist above this does not depend on the active profile.
      */
-    private suspend fun applyPackageEntitlements(username: String, password: String) {
-        val lookup = withTimeoutOrNull(ENTITLEMENT_LOOKUP_TIMEOUT_MS) {
-            entitlementsRepository.fetch(username, password)
+    private suspend fun applyPackageEntitlements(
+        snapshot: IptvSnapshot,
+        loginLabels: List<String>
+    ) {
+        val labels = buildList {
+            // grouped is already keyed by provider category name, so this is O(#groups)
+            // rather than a pass over every channel.
+            addAll(snapshot.grouped.keys)
+            if (snapshot.grouped.isEmpty()) {
+                snapshot.channels.forEach { add(it.group) }
+            }
+            addAll(loginLabels)
         }
-        if (lookup == null) {
-            System.err.println("[XtreamGate] entitlement lookup timed out; leaving addons unchanged")
-            return
-        }
+
+        val lookup = entitlementsRepository.resolve(labels)
         if (lookup is XtreamEntitlementsResult.Unresolved) {
             System.err.println(
                 "[XtreamGate] entitlements unresolved (${lookup.reason}); leaving addons unchanged"
@@ -199,8 +211,9 @@ class XtreamGateViewModel @Inject constructor(
 
         val resolved = lookup as XtreamEntitlementsResult.Resolved
         System.err.println(
-            "[XtreamGate] package=${resolved.packageName} expires=${resolved.expiresAt} " +
-                "granted=${resolved.granted.size} revoked=${resolved.revoked.size}"
+            "[XtreamGate] entitlements: labels=${resolved.labelCount} " +
+                "match=${resolved.matchedLabel} granted=${resolved.granted.size} " +
+                "revoked=${resolved.revoked.size}"
         )
         if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return
 
@@ -229,7 +242,7 @@ class XtreamGateViewModel @Inject constructor(
         }
 
         if (resolved.revoked.isNotEmpty()) {
-            // Package no longer grants these — drop them so a downgrade or an expiry
+            // Package no longer carries the marker — drop the addon so a downgrade
             // actually takes effect instead of leaving a paid addon installed forever.
             withTimeoutOrNull(ENTITLEMENT_REMOVE_TIMEOUT_MS) {
                 repository.removeCustomAddonsByUrl(resolved.revoked)
