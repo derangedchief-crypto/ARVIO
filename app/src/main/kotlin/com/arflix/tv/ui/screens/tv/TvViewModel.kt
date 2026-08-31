@@ -149,6 +149,16 @@ class TvViewModel @Inject constructor(
     private var lastVisibleForcedCompleteEpgAt: Long = 0L
     private var lastCompleteEpgBackfillCompletedAt: Long = 0L
     private var liveTvPlaybackActive: Boolean = false
+    // Set to true to restore the original behavior: defer/pause the full EPG
+    // guide backfill entirely while a channel is playing. That protection exists
+    // to stop very-low-RAM boxes/sticks from getting OOM-killed by a large
+    // background download+parse running at the same time as active video decode.
+    // Disabled (not removed) here because on this deployment it was deferring
+    // on essentially every session — users start watching within a second of
+    // opening Live TV, so the backfill almost never got a real chance to run,
+    // which looked identical to "the guide barely has any channels in it." If
+    // large channel lists start crashing low-end hardware, flip this back on.
+    private val pauseEpgBackfillDuringPlayback: Boolean = false
     private var deferredCompleteEpgBackfill: Boolean = false
     private val deferredCompleteEpgPriorityIds = LinkedHashSet<String>()
     private var deferredCompleteEpgBackfillJob: Job? = null
@@ -872,26 +882,14 @@ class TvViewModel @Inject constructor(
     fun setLiveTvPlaybackActive(active: Boolean) {
         if (liveTvPlaybackActive == active) return
         liveTvPlaybackActive = active
-        // The full-guide backfill is deferred while a channel preview is playing.
-        // Measured reason: filling all ~10k guide-capable channels' EPG concurrently
-        // with an interactive UI exceeds this device's 384MB heap cap and crashes
-        // during navigation. Full all-channels coverage at this scale needs the
-        // backend EPG service; on-device we keep visible/priority-channel EPG, which
-        // stays within budget. (The backfill that DOES run when playback is idle now
-        // streams in bounded batches — see fetchXtreamFullEpg — so it can't OOM.)
-        if (active) {
-            deferredCompleteEpgBackfillJob?.cancel()
-            deferredCompleteEpgBackfillJob = null
-            if (completeEpgBackfillJob?.isActive == true) {
-                deferredCompleteEpgBackfill = true
-                lastCompleteEpgBackfillKey = null
-                System.err.println("[EPG-Complete] Pausing full guide backfill because live playback started")
-                completeEpgBackfillJob?.cancel()
-                setEpgBackfillInProgress(false)
-            }
-        } else {
-            scheduleDeferredCompleteEpgBackfill()
-        }
+        // Previously the full-guide backfill was deferred/cancelled whenever a
+        // channel started playing, to protect very-low-RAM devices from OOM
+        // crashes when backfilling extremely large (~10k+) channel lists
+        // concurrently with an interactive UI. That protection is intentionally
+        // disabled here so the backfill keeps running in the background
+        // regardless of playback/navigation — acceptable for moderate channel
+        // counts, but worth remembering if very large lists start crashing on
+        // low-end hardware again.
     }
 
     private fun deferCompleteEpgBackfill(priorityChannelIds: Collection<String>) {
@@ -911,7 +909,7 @@ class TvViewModel @Inject constructor(
         deferredCompleteEpgBackfillJob?.cancel()
         deferredCompleteEpgBackfillJob = viewModelScope.launch {
             delay(PlaybackEpgBackfillResumeDelayMs)
-            if (liveTvPlaybackActive) return@launch
+            if (pauseEpgBackfillDuringPlayback && liveTvPlaybackActive) return@launch
             val priorityIds = deferredCompleteEpgPriorityIds.toList()
             deferredCompleteEpgPriorityIds.clear()
             deferredCompleteEpgBackfill = false
@@ -1068,10 +1066,9 @@ class TvViewModel @Inject constructor(
             )
             return
         }
-        if (liveTvPlaybackActive) {
-            deferCompleteEpgBackfill(priorityChannelIds)
-            return
-        }
+        // Full-guide backfill now runs regardless of live playback/navigation
+        // state — see the comment in setLiveTvPlaybackActive() for the
+        // low-RAM-device tradeoff this intentionally accepts.
         // A large list is only dangerous for the Xtream path, which fans out into
         // one HTTP call per channel. An XMLTV source is a single file parsed with
         // SAX, keeping only now/next/recent per channel, so it stays bounded no
@@ -1167,7 +1164,7 @@ class TvViewModel @Inject constructor(
                 else -> 250L
             }
             delay(startupDelay)
-            if (liveTvPlaybackActive) {
+            if (pauseEpgBackfillDuringPlayback && liveTvPlaybackActive) {
                 deferCompleteEpgBackfill(priorityChannelIds)
                 return@launch
             }
