@@ -35,7 +35,12 @@ object Constants {
     val NETLIFY_ACCOUNT_SYNC_PUSH_URL: String get() = "$NETLIFY_BACKEND_URL/account-sync-push"
     val NETLIFY_ACCOUNT_SYNC_CURSOR_URL: String get() = "$NETLIFY_BACKEND_URL/account-sync-cursor"
     val NETLIFY_ACCOUNT_SYNC_DELTA_URL: String get() = "$NETLIFY_BACKEND_URL/account-sync-delta"
-    val APP_USAGE_EVENT_URL: String get() = "$NETLIFY_BACKEND_URL/app-usage-event"
+        val APP_USAGE_EVENT_URL: String get() = "$NETLIFY_BACKEND_URL/app-usage-event"
+
+    // Resolves Stremio addon entitlements from the Xtream reseller panel. The panel's
+    // X-Api-Key / X-Auth-User tokens can create and terminate lines, so they live only
+    // as backend environment variables and never in the APK.
+    val XTREAM_ENTITLEMENTS_URL: String get() = "$NETLIFY_BACKEND_URL/xtream-entitlements"
 
     // API base URLs.
     const val TMDB_BASE_URL = "https://api.themoviedb.org/3/"
