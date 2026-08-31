@@ -6,11 +6,15 @@ import com.arflix.tv.data.repository.IptvPlaylistEntry
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileRepository
+import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.XtreamPackageEntitlements
+import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 /**
@@ -19,6 +23,10 @@ import javax.inject.Inject
  * ever changes, update it here too.
  */
 private const val XTREAM_GATE_HOST_URL = "https://tv.extremeiptv.net"
+
+/** Hard ceilings so a dead manifest host can never stall sign-in. */
+private const val ENTITLEMENT_INSTALL_TIMEOUT_MS = 15_000L
+private const val ENTITLEMENT_REMOVE_TIMEOUT_MS = 5_000L
 
 data class XtreamGateUiState(
     val username: String = "",
@@ -32,7 +40,11 @@ data class XtreamGateUiState(
 class XtreamGateViewModel @Inject constructor(
     private val iptvRepository: IptvRepository,
     private val profileRepository: ProfileRepository,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    // Lazy on purpose: StreamRepository is a heavy singleton (addon health load,
+    // quality-filter warmup, Telegram resolver) and this gate is on the cold-start
+    // path. Only construct it if the panel actually grants or revokes an addon.
+    private val streamRepository: Lazy<StreamRepository>
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamGateUiState())
@@ -49,17 +61,13 @@ class XtreamGateViewModel @Inject constructor(
     fun submit(onSuccess: () -> Unit) {
         val current = _uiState.value
         if (current.isSubmitting) return
-
         val username = current.username.trim()
         val password = current.password
-
         if (username.isBlank() || password.isBlank()) {
             _uiState.value = current.copy(errorMessage = "Enter your username and password.")
             return
         }
-
         _uiState.value = current.copy(isSubmitting = true, errorMessage = null, progressText = "Signing in…")
-
         viewModelScope.launch {
             try {
                 val result = iptvRepository.verifyXtreamLogin(XTREAM_GATE_HOST_URL, username, password)
@@ -73,7 +81,7 @@ class XtreamGateViewModel @Inject constructor(
                 }
 
                 // This gate runs before profile selection, but IPTV config is stored
-                // per-profile (key = "profile_<id>_iptv_playlists_json"). Without
+                // per-profile (key = "profile__iptv_playlists_json"). Without
                 // resolving a real, permanently-active profile first, the playlist
                 // saved below gets written under a placeholder profile id, then
                 // becomes invisible the moment the user's actual profile (a different
@@ -92,6 +100,14 @@ class XtreamGateViewModel @Inject constructor(
                     epgUrls = listOf(combined)
                 )
                 iptvRepository.savePlaylists(listOf(entry))
+
+                // Package-driven addon entitlements. Runs before the channel load
+                // because it is short and its result is what the user paid for; it is
+                // never allowed to fail the sign-in.
+                runCatching { applyPackageEntitlements(result.packageLabels) }
+                    .onFailure { error ->
+                        System.err.println("[XtreamGate] entitlement apply failed: ${error.message}")
+                    }
 
                 // Saving the playlist config alone does not fetch anything — it just
                 // persists what to load. We do need the channel LIST fetched (fast —
@@ -148,6 +164,59 @@ class XtreamGateViewModel @Inject constructor(
     }
 
     /**
+     * Installs the Stremio addons the user's Xtream package grants, and removes the
+     * ones it does not.
+     *
+     * Uses ensureCustomAddons() rather than addCustomAddon() so a re-login does not
+     * reset an addon the user deliberately disabled: ensureCustomAddons only fetches
+     * the manifest when nothing with that URL is installed yet.
+     *
+     * Addons are account-level (shared_installed_addons_v1), not profile-scoped, so
+     * unlike the IPTV playlist above this does not depend on the active profile.
+     */
+    private suspend fun applyPackageEntitlements(packageLabels: List<String>) {
+        val granted = XtreamPackageEntitlements.match(packageLabels)
+        val grantedUrls = granted.map { it.manifestUrl }
+        val revokedUrls = XtreamPackageEntitlements.all()
+            .map { it.manifestUrl }
+            .filterNot { it in grantedUrls }
+
+        if (grantedUrls.isEmpty() && revokedUrls.isEmpty()) return
+
+        val repository = streamRepository.get()
+
+        if (grantedUrls.isNotEmpty()) {
+            val names = granted.joinToString(", ") { it.displayName }
+            _uiState.value = _uiState.value.copy(progressText = "Unlocking $names…")
+            val results = withTimeoutOrNull(ENTITLEMENT_INSTALL_TIMEOUT_MS) {
+                repository.ensureCustomAddons(grantedUrls)
+            }
+            if (results == null) {
+                System.err.println("[XtreamGate] entitlement install timed out for: $names")
+            } else {
+                // Not indexed against `granted`: ensureCustomAddons() normalizes and
+                // de-duplicates the URLs it was given, so its result list is not
+                // guaranteed to be positionally aligned with the input.
+                results.forEach { result ->
+                    result.onSuccess { addon ->
+                        System.err.println("[XtreamGate] entitlement addon ready: ${addon.name} (${addon.id})")
+                    }.onFailure { error ->
+                        System.err.println("[XtreamGate] entitlement addon failed: ${error.message}")
+                    }
+                }
+            }
+        }
+
+        if (revokedUrls.isNotEmpty()) {
+            // Package no longer grants these — drop them so a downgrade actually
+            // takes effect instead of leaving a paid addon installed forever.
+            withTimeoutOrNull(ENTITLEMENT_REMOVE_TIMEOUT_MS) {
+                repository.removeCustomAddonsByUrl(revokedUrls)
+            }
+        }
+    }
+
+    /**
      * Makes sure a real profile exists and is marked active, and that
      * ProfileManager's cached id is updated to match immediately (not just
      * eventually, once its Flow collects) so every profile-scoped save that
@@ -158,7 +227,6 @@ class XtreamGateViewModel @Inject constructor(
             ?: profileRepository.getActiveProfile()
             ?: profileRepository.getProfiles().firstOrNull()
             ?: return
-
         profileRepository.setActiveProfile(profile.id)
         profileManager.setCurrentProfileId(profile.id)
         profileManager.setCurrentProfileName(profile.name)
