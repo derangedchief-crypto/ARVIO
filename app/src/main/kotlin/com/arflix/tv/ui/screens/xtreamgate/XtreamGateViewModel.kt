@@ -94,15 +94,22 @@ class XtreamGateViewModel @Inject constructor(
                 iptvRepository.savePlaylists(listOf(entry))
 
                 // Saving the playlist config alone does not fetch anything — it just
-                // persists what to load. The actual channel/EPG fetch (the same call
-                // the normal Settings "Add TV Playlist" flow makes after saving) has
-                // to be triggered explicitly, or the app has nothing cached and Live
-                // TV shows empty until some other screen happens to trigger a load.
+                // persists what to load. We do need the channel LIST fetched (fast —
+                // just the Xtream API's get_live_streams call) so Live TV isn't empty,
+                // but the full EPG/guide fetch is a separate, much slower thing (this
+                // provider's guide is 100MB+) and is deliberately NOT forced here.
+                // Every other screen in this app that touches IPTV (TvViewModel's own
+                // refresh(), Settings' refreshIptv()) also passes
+                // allowNetworkEpgFetch = false for exactly this reason — the full guide
+                // backfill instead runs as a genuine background job
+                // (TvViewModel.completeEpgBackfillJob) once the user opens Live TV,
+                // with a long timeout and an idle delay, never blocking any UI. Forcing
+                // it here at login was making sign-in take minutes for no reason.
                 runCatching { iptvRepository.purgeAllIptvSourceCaches() }
                 val snapshot = iptvRepository.loadSnapshot(
                     forcePlaylistReload = true,
-                    forceEpgReload = true,
-                    allowNetworkEpgFetch = true,
+                    forceEpgReload = false,
+                    allowNetworkEpgFetch = false,
                     onProgress = { progress ->
                         _uiState.value = _uiState.value.copy(progressText = progress.message)
                     }
