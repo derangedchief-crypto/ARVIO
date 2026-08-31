@@ -169,6 +169,7 @@ class MainActivity : ComponentActivity() {
     lateinit var iptvRepository: Lazy<com.arflix.tv.data.repository.IptvRepository>
 
     private var jankStats: JankStats? = null
+
     private var pendingLauncherRequest by mutableStateOf<LauncherContinueWatchingRequest?>(null)
     private var pendingInstallPackUrl by mutableStateOf<String?>(null)
 
@@ -204,10 +205,12 @@ class MainActivity : ComponentActivity() {
         }
 
         super.onCreate(savedInstanceState)
+
         window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.BLACK))
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
+
         pendingLauncherRequest = parseLauncherRequest(intent)
         pendingInstallPackUrl = parseInstallPackUrl(intent)
 
@@ -217,7 +220,6 @@ class MainActivity : ComponentActivity() {
             val crashMsg = crashPrefs.getString("last_crash_msg", "Unexpected error")
             val crashTime = crashPrefs.getLong("last_crash_time", System.currentTimeMillis())
             crashPrefs.edit().putBoolean("has_pending_crash_report", false).commit()
-
             val crashIntent = android.content.Intent(this, com.arflix.tv.ui.screens.crash.CrashReportActivity::class.java).apply {
                 putExtra(com.arflix.tv.ui.screens.crash.CrashReportActivity.EXTRA_CRASH_ID, crashId)
                 putExtra(com.arflix.tv.ui.screens.crash.CrashReportActivity.EXTRA_CRASH_MSG, crashMsg)
@@ -228,6 +230,7 @@ class MainActivity : ComponentActivity() {
 
         // Initialize Discord RPC Manager
         com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.init(this)
+
         intent?.data?.let { uri ->
             android.util.Log.d("MainActivity", "Received intent data URI in onCreate: $uri")
             if (uri.scheme == "arvio" && uri.host == "discord" && uri.path == "/auth") {
@@ -268,6 +271,7 @@ class MainActivity : ComponentActivity() {
             val deviceModeOverride by remember {
                 this@MainActivity.settingsDataStore.data.map { it[DEVICE_MODE_OVERRIDE_KEY] }
             }.collectAsStateWithLifecycle(initialValue = null)
+
             var skipProfileSelection by remember { mutableStateOf<Boolean?>(null) }
             LaunchedEffect(Unit) {
                 val skipSelection =
@@ -285,15 +289,19 @@ class MainActivity : ComponentActivity() {
                 }
                 skipProfileSelection = skipSelection
             }
+
             val oledBlackBackground by remember {
                 this@MainActivity.settingsDataStore.data.map { it[OLED_BLACK_BACKGROUND_KEY] ?: false }
             }.collectAsStateWithLifecycle(initialValue = false)
+
             val accentColorName by remember {
                 this@MainActivity.settingsDataStore.data.map { it[ACCENT_COLOR_KEY] }
             }.collectAsStateWithLifecycle(initialValue = null)
+
             val activeProfileId by remember {
                 profileRepository.get().activeProfileId
             }.collectAsStateWithLifecycle(initialValue = null)
+
             val appLanguage by remember(activeProfileId) {
                 this@MainActivity.settingsDataStore.data.map { prefs ->
                     val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: "en-US"
@@ -305,19 +313,24 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }.collectAsStateWithLifecycle(initialValue = "en-US")
+
             LaunchedEffect(appLanguage) {
                 mediaRepository.get().contentLanguage = appLanguage
             }
+
             val deviceType = when (deviceModeOverride) {
                 "tv" -> DeviceType.TV
                 "tablet" -> DeviceType.TABLET
                 "phone" -> DeviceType.PHONE
                 else -> initialDeviceType
             }
+
             val hasTouchScreen = remember { deviceHasTouchScreen(this@MainActivity) }
+
             // If no touchscreen, force TV mode regardless of override setting
             // (prevents tablet/phone UI on devices with only D-pad input)
             val effectiveDeviceType = if (!hasTouchScreen && deviceType != DeviceType.TV) DeviceType.TV else deviceType
+
             // Wrap the Activity as a ContextWrapper that only overrides getResources() with
             // localized resources. Hilt traverses ContextWrapper chains to find the Activity,
             // so hiltViewModel() still works correctly.
@@ -331,10 +344,12 @@ class MainActivity : ComponentActivity() {
                     override fun getResources() = localizedRes
                 }
             }
+
             val isRtl = remember(appLanguage) {
                 val lang = java.util.Locale.forLanguageTag(appLanguage.replace('_', '-')).language
                 lang in listOf("ar", "he", "iw", "fa", "ur")
             }
+
             CompositionLocalProvider(
                 androidx.compose.ui.platform.LocalContext provides localizedContext,
                 LocalAppLanguage provides appLanguage,
@@ -403,6 +418,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         pendingLauncherRequest = parseLauncherRequest(intent)
         pendingInstallPackUrl = parseInstallPackUrl(intent)
+
         intent.data?.let { uri ->
             android.util.Log.d("MainActivity", "Received intent data URI in onNewIntent: $uri")
             if (uri.scheme == "arvio" && uri.host == "discord" && uri.path == "/auth") {
@@ -509,10 +525,10 @@ fun ArvioLoadingScreen() {
             val progress = reveal.value
             val logoCenterY = center.y - 8.dp.toPx()
             val baselineY = logoCenterY + 138.dp.toPx()
-
             val halfWidth = 180.dp.toPx() * progress
             val lineStartX = center.x - halfWidth
             val lineEndX = center.x + halfWidth
+
             drawLine(
                 color = Color(0xFF00F0D0).copy(alpha = 0.32f * progress),
                 start = Offset(lineStartX, baselineY),
@@ -524,6 +540,7 @@ fun ArvioLoadingScreen() {
             val sweepHalfWidth = 34.dp.toPx()
             val sweepTravel = (halfWidth - sweepHalfWidth).coerceAtLeast(0f)
             val sweepX = center.x + (sweep * sweepTravel)
+
             drawLine(
                 color = Color.White.copy(alpha = 0.54f * progress),
                 start = Offset(sweepX - sweepHalfWidth, baselineY),
@@ -585,6 +602,7 @@ fun ArflixApp(
             ActiveProfileLoadState.Loaded(profile) as ActiveProfileLoadState
         }
     }.collectAsStateWithLifecycle(initialValue = ActiveProfileLoadState.Loading)
+
     // Whether the first-run Xtream/Jellyfin onboarding gate has been completed
     // (submitted or explicitly skipped on both screens) — not whether either was
     // actually configured, since both are now optional. null = still loading from
@@ -592,11 +610,13 @@ fun ArflixApp(
     val gateOnboardingDone: Boolean? by remember(iptvRepository) {
         iptvRepository.observeGateOnboardingComplete()
     }.collectAsStateWithLifecycle(initialValue = null)
+
     var startupIntroComplete by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         delay(1350)
         startupIntroComplete = true
     }
+
     val activeProfile = (activeProfileState as? ActiveProfileLoadState.Loaded)?.profile
     val startupReady = skipProfileSelection != null &&
         activeProfileState is ActiveProfileLoadState.Loaded &&
@@ -610,6 +630,7 @@ fun ArflixApp(
 
     val navController = rememberNavController()
     val appCoroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+
     var lastAddonsSyncKey by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(authState, activeProfile?.id) {
@@ -633,18 +654,30 @@ fun ArflixApp(
     val isMobile = deviceType.isTouchDevice()
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentBackStackEntry?.destination?.route
+
     var iptvFullscreen by remember { mutableStateOf(false) }
     LaunchedEffect(currentRoute) {
         if (currentRoute?.startsWith("tv") != true) {
             iptvFullscreen = false
         }
     }
-    // Hide bottom bar on player, profile selection, and login screens.
+
+    // First-run onboarding gates: Xtream codes ("xtream_gate"), then Jellyfin/VOD
+    // ("jellyfin_gate"). The bottom bar must stay completely absent — not merely
+    // transparent — until both steps are done and navigation lands on Home.
+    // Matched by exact route rather than by login state because the Xtream step
+    // resolves the active profile mid-submit, which would otherwise reveal the
+    // bar while the codes are still loading.
+    val isOnboardingGateRoute = currentRoute == Screen.XtreamGate.route ||
+        currentRoute == Screen.JellyfinGate.route
+
+    // Hide bottom bar on player, profile selection, login, and onboarding screens.
     // TV route shows the bottom bar on mobile (touch devices) for easy navigation;
     // the fullscreen IPTV player uses BackHandler to return to the guide.
     val showBottomBar = isMobile && activeProfile != null &&
         currentRoute != null &&
         !iptvFullscreen &&
+        !isOnboardingGateRoute &&
         !currentRoute.contains("player") &&
         !currentRoute.contains("profile") &&
         !currentRoute.contains("login")
@@ -719,7 +752,10 @@ fun ArflixApp(
             )
         }
 
-        if (isMobile && !isPlayerRoute) {
+        // currentRoute is null for the first frame after launch; skipping the bar
+        // entirely there (and on the onboarding gates) avoids reserving its height
+        // before the route is known, so no empty strip is left behind.
+        if (isMobile && !isPlayerRoute && !isOnboardingGateRoute && currentRoute != null) {
             val bottomBarAlpha by androidx.compose.animation.core.animateFloatAsState(
                 targetValue = if (showBottomBar) 1f else 0f,
                 animationSpec = androidx.compose.animation.core.tween(250),
@@ -747,7 +783,6 @@ fun ArflixApp(
     LaunchedEffect(activeProfile?.id, pendingLauncherRequest) {
         val request = pendingLauncherRequest ?: return@LaunchedEffect
         if (activeProfile == null) return@LaunchedEffect
-
         val route = Screen.Details.createRoute(
             mediaType = request.mediaType,
             mediaId = request.mediaId,
@@ -764,7 +799,6 @@ fun ArflixApp(
     LaunchedEffect(activeProfile?.id, pendingInstallPackUrl) {
         val packUrl = pendingInstallPackUrl ?: return@LaunchedEffect
         if (activeProfile == null) return@LaunchedEffect
-
         val encodedUrl = java.net.URLEncoder.encode(packUrl, "UTF-8")
         val route = "settings?initialSection=catalogs&installPackUrl=$encodedUrl"
         navController.navigate(route) {
