@@ -1,14 +1,7 @@
 package com.arflix.tv.data.repository
 
+import android.util.Log
 import com.arflix.tv.util.Constants
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,116 +15,144 @@ data class XtreamEntitlement(
 sealed class XtreamEntitlementsResult {
 
     /**
-     * The backend read the line from the reseller panel successfully.
+     * Entitlement state was determined from real provider data.
      * [revoked] is authoritative: those manifests must be removed.
      */
     data class Resolved(
         val granted: List<XtreamEntitlement>,
         val revoked: List<String>,
-        val packageName: String?,
-        val expiresAt: String?
+        val matchedLabel: String?,
+        val labelCount: Int
     ) : XtreamEntitlementsResult()
 
     /**
-     * The entitlement state could not be determined (panel outage, missing
-     * permission, network error). Callers must NOT revoke anything on this —
-     * treating "unknown" as "not granted" would uninstall a paid addon during a
-     * transient failure.
+     * State could not be determined (nothing configured, or the provider
+     * returned no categories at all). Callers must NOT revoke anything on this —
+     * treating "unknown" as "not granted" would uninstall a paid addon after a
+     * transient provider failure.
      */
     data class Unresolved(val reason: String) : XtreamEntitlementsResult()
 }
 
+private const val TAG = "XtreamEntitlements"
+
+/** Bound on harvested labels so a huge provider cannot balloon memory. */
+private const val MAX_LABELS = 4_000
+
 /**
- * Resolves Stremio addon entitlements from the Xtream reseller panel.
+ * Decides which Stremio addons an Xtream account's package grants.
  *
- * The panel API tokens (X-Api-Key / X-Auth-User) can create and terminate
- * lines, so they never reach the device: the `xtream-entitlements` backend
- * function holds them, verifies the supplied credentials against
- * player_api.php, and returns only the manifest URLs this user is entitled to.
+ * Deliberately does no I/O of its own. Every input it needs is already fetched
+ * by the normal sign-in flow:
+ *
+ * - the live/VOD/series category names the provider returned for THIS line
+ *   (`IptvRepository.fetchXtreamLiveChannels` calls `get_live_categories` and
+ *   stores each category name as `IptvChannel.group`, so `IptvSnapshot.grouped`
+ *   is already keyed by them), and
+ * - every string field from the `player_api.php` login response
+ *   (`XtreamLoginCheckResult.packageLabels`).
+ *
+ * Those category lists are filtered by the line's bouquets server-side, which is
+ * what makes a marker category ("Cloud Stream Enabled") an unforgeable
+ * entitlement signal: the client cannot invent it, and no privileged panel token
+ * has to ship in the APK.
  */
 @Singleton
-class XtreamEntitlementsRepository @Inject constructor(
-    okHttpClient: OkHttpClient
-) {
+class XtreamEntitlementsRepository @Inject constructor() {
 
-    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+    private data class Definition(
+        val id: String,
+        val keyword: String,
+        val displayName: String,
+        val manifestUrl: String
+    )
 
-    // The Xtream gate blocks on this call, so it gets a tighter ceiling than the
-    // app-wide client. newBuilder() keeps the shared connection pool.
-    private val client: OkHttpClient = okHttpClient.newBuilder()
-        .callTimeout(20, TimeUnit.SECONDS)
-        .build()
-
-    suspend fun fetch(username: String, password: String): XtreamEntitlementsResult =
-        withContext(Dispatchers.IO) {
-            val endpoint = Constants.XTREAM_ENTITLEMENTS_URL
-            if (!endpoint.startsWith("http")) {
-                return@withContext XtreamEntitlementsResult.Unresolved("backend_not_configured")
-            }
-            try {
-                val payload = JSONObject()
-                    .put("username", username)
-                    .put("password", password)
-                    .toString()
-                val request = Request.Builder()
-                    .url(endpoint)
-                    .header("apikey", Constants.APP_ANON_KEY)
-                    .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
-                    .post(payload.toRequestBody(jsonMediaType))
-                    .build()
-                client.newCall(request).execute().use { response ->
-                    val body = response.body?.string().orEmpty()
-                    if (!response.isSuccessful) {
-                        return@withContext XtreamEntitlementsResult.Unresolved(
-                            "http_${response.code}: ${parseError(body)}"
-                        )
-                    }
-                    val json = JSONObject(body)
-                    if (!json.optBoolean("resolved", false)) {
-                        return@withContext XtreamEntitlementsResult.Unresolved(
-                            json.optString("reason").ifBlank { "unresolved" }
-                        )
-                    }
-                    XtreamEntitlementsResult.Resolved(
-                        granted = parseGranted(json),
-                        revoked = parseRevoked(json),
-                        packageName = json.optString("package_name").ifBlank { null },
-                        expiresAt = json.optString("expires_at").ifBlank { null }
-                    )
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                XtreamEntitlementsResult.Unresolved(
-                    e.message ?: e::class.simpleName ?: "unknown_error"
-                )
-            }
+    /**
+     * Matches [labels] against the configured entitlements.
+     *
+     * @param labels provider-supplied names — category/group names plus login
+     *   response strings. Order and duplicates do not matter.
+     */
+    fun resolve(labels: List<String>): XtreamEntitlementsResult {
+        val definitions = definitions()
+        if (definitions.isEmpty()) {
+            // No manifest URL configured: nothing to grant and nothing to take
+            // away. Unresolved on purpose so the caller leaves addons alone.
+            return XtreamEntitlementsResult.Unresolved("no_entitlements_configured")
         }
 
-    private fun parseGranted(json: JSONObject): List<XtreamEntitlement> {
-        val array = json.optJSONArray("granted") ?: return emptyList()
-        return (0 until array.length()).mapNotNull { index ->
-            val item = array.optJSONObject(index) ?: return@mapNotNull null
-            val manifestUrl = item.optString("manifest_url").trim()
-            if (manifestUrl.isEmpty()) return@mapNotNull null
-            XtreamEntitlement(
-                id = item.optString("id").ifBlank { manifestUrl },
-                displayName = item.optString("display_name").ifBlank { "Add-on" },
-                manifestUrl = manifestUrl
+        val normalized = labels.asSequence()
+            .map { normalize(it) }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(MAX_LABELS)
+            .toList()
+        if (normalized.isEmpty()) {
+            return XtreamEntitlementsResult.Unresolved("no_labels")
+        }
+
+        val granted = mutableListOf<XtreamEntitlement>()
+        var matchedLabel: String? = null
+        for (definition in definitions) {
+            if (definition.keyword.isEmpty()) continue
+            val hit = normalized.firstOrNull { it.contains(definition.keyword) } ?: continue
+            if (matchedLabel == null) matchedLabel = hit
+            granted += XtreamEntitlement(
+                id = definition.id,
+                displayName = definition.displayName,
+                manifestUrl = definition.manifestUrl
             )
         }
+
+        val grantedUrls = granted.map { it.manifestUrl }
+        val revoked = definitions.map { it.manifestUrl }.filterNot { it in grantedUrls }
+
+        Log.i(
+            TAG,
+            "resolved from ${normalized.size} labels: granted=${granted.size} " +
+                "revoked=${revoked.size} match=$matchedLabel"
+        )
+        return XtreamEntitlementsResult.Resolved(
+            granted = granted,
+            revoked = revoked,
+            matchedLabel = matchedLabel,
+            labelCount = normalized.size
+        )
     }
 
-    private fun parseRevoked(json: JSONObject): List<String> {
-        val array = json.optJSONArray("revoked") ?: return emptyList()
-        return (0 until array.length()).mapNotNull { index ->
-            array.optString(index).trim().ifBlank { null }
-        }
-    }
+    /**
+     * The addons this build knows about. Manifest URLs come from
+     * secrets.properties rather than committed source because the Torrentio URL
+     * embeds a Premiumize API key. An entry with no configured URL is dropped,
+     * which is what makes an unconfigured checkout resolve to nothing instead of
+     * revoking.
+     */
+    private fun definitions(): List<Definition> = listOfNotNull(
+        Constants.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL
+            .takeIf { it.isNotBlank() }
+            ?.let { manifestUrl ->
+                Definition(
+                    id = "cloud_stream",
+                    keyword = normalize(Constants.ENTITLEMENT_CLOUD_STREAM_KEYWORD),
+                    displayName = "Cloud Stream",
+                    manifestUrl = manifestUrl
+                )
+            }
+    )
 
-    private fun parseError(body: String): String = try {
-        JSONObject(body).optString("error").ifBlank { "request_failed" }
-    } catch (e: Exception) {
-        "request_failed"
+    /**
+     * Collapses case and separators so a hand-typed panel name still matches:
+     * "USA ⁃ Cloud_Stream Enabled | FHD" normalizes to a string containing
+     * "cloud stream".
+     */
+    private fun normalize(raw: String): String =
+        raw.lowercase()
+            .replace(SEPARATORS, " ")
+            .replace(WHITESPACE, " ")
+            .trim()
+
+    private companion object {
+        private val SEPARATORS = Regex("[_\\-/|+.,:;()\\[\\]]+")
+        private val WHITESPACE = Regex("\\s+")
     }
 }
