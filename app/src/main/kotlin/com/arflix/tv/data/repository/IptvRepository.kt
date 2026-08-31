@@ -177,7 +177,14 @@ data class IptvPlaylistEntry(
 
 data class XtreamLoginCheckResult(
     val success: Boolean,
-    val message: String? = null
+    val message: String? = null,
+    /**
+     * Every string value the panel returned from player_api.php (credentials
+     * excluded). The Xtream API has no standard field for the reseller package
+     * name, so entitlement matching scans all of them rather than betting on
+     * one key. Empty when the login failed.
+     */
+    val packageLabels: List<String> = emptyList()
 )
 
 /**
@@ -696,8 +703,51 @@ class IptvRepository @Inject constructor(
         if (!status.isNullOrBlank() && !status.equals("Active", ignoreCase = true)) {
             return XtreamLoginCheckResult(success = false, message = "Account status: $status. Contact support.")
         }
+        val packageLabels = collectXtreamPackageLabels(parsed)
+        // Logged so it is possible to see, on a real panel, which field (if any)
+        // actually carries the reseller package name. Credentials are stripped by
+        // collectXtreamPackageLabels, so this is safe to leave in.
+        System.err.println("[XtreamGate] package labels: ${packageLabels.joinToString(" | ").take(400)}")
+        return XtreamLoginCheckResult(success = true, packageLabels = packageLabels)
+    }
 
-        return XtreamLoginCheckResult(success = true)
+    /**
+     * Harvests every string value from a player_api.php response so package
+     * entitlements can be matched without depending on a specific field name.
+     *
+     * Xtream Codes / XUI.one have no standard place for the reseller package
+     * ("1 Month - 2 Connections - Cloud Stream Enabled"): some panels put it in
+     * `user_info.message`, some add a custom key, some omit it entirely. Scanning
+     * all values keeps the check working across panels.
+     *
+     * `username` and `password` are skipped so credentials never reach a log or a
+     * matcher. Depth and count are bounded so a hostile or huge response cannot
+     * blow up memory.
+     */
+    private fun collectXtreamPackageLabels(root: JsonElement?): List<String> {
+        val out = LinkedHashSet<String>()
+        fun walk(element: JsonElement?, depth: Int) {
+            if (element == null || depth > 4 || out.size >= 64) return
+            when {
+                element.isJsonPrimitive -> {
+                    val primitive = element.asJsonPrimitive
+                    if (primitive.isString) {
+                        val value = primitive.asString.trim()
+                        if (value.isNotBlank() && value.length <= 300) out += value
+                    }
+                }
+                element.isJsonArray -> element.asJsonArray.forEach { walk(it, depth + 1) }
+                element.isJsonObject -> element.asJsonObject.entrySet().forEach { (key, value) ->
+                    if (!key.equals("username", ignoreCase = true) &&
+                        !key.equals("password", ignoreCase = true)
+                    ) {
+                        walk(value, depth + 1)
+                    }
+                }
+            }
+        }
+        walk(root, 0)
+        return out.toList()
     }
 
     /**
