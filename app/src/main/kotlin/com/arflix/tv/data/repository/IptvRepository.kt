@@ -443,13 +443,17 @@ class IptvRepository @Inject constructor(
     private val xtreamVodCacheMs = 6 * 60 * 60_000L
     private val iptvHttpClient: OkHttpClient by lazy {
         // Used for full playlist/EPG loading – generous timeouts for large
-        // Xtream EPG feeds. TX-4K serves a ~100 MB XMLTV dump so the read
-        // and call timeouts need to be minutes, not seconds.
+        // Xtream EPG feeds. Some providers (like this one) serve XMLTV dumps
+        // well over 100 MB, so read and call timeouts need to be many minutes,
+        // not seconds — a timeout partway through a multi-hundred-MB download
+        // would otherwise silently look identical to "the guide barely has any
+        // channels in it," when really only the first fraction of the file was
+        // ever received before the connection was torn down.
         okHttpClient.newBuilder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(180, TimeUnit.SECONDS)
-            .writeTimeout(15, TimeUnit.SECONDS)
-            .callTimeout(300, TimeUnit.SECONDS)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(600, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .callTimeout(900, TimeUnit.SECONDS)
             .build()
     }
     private val xtreamLookupHttpClient: OkHttpClient by lazy {
@@ -7443,7 +7447,20 @@ class IptvRepository @Inject constructor(
             }
         }
 
-        parser.parse(input, handler)
+        try {
+            parser.parse(input, handler)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            // A truncated/interrupted download (connection drop, server hiccup
+            // partway through a huge file) would otherwise discard every program
+            // successfully parsed before the failure, making a large guide look
+            // like it barely has any channels in it. Keep whatever was parsed so
+            // far instead of throwing everything away.
+            System.err.println(
+                "IptvRepository: XMLTV parse interrupted after partial read (${e::class.simpleName}: ${e.message}). " +
+                    "Returning ${nowCandidates.size} channels' worth of data parsed before the interruption."
+            )
+        }
 
         return buildParsedNowNextResult(channels, nowCandidates, upcomingCandidates, recentCandidates)
     }
@@ -7469,6 +7486,12 @@ class IptvRepository @Inject constructor(
                 result[channel.id] = nowNext
             }
         }
+        val matched = result.size
+        val total = channels.size
+        System.out.println(
+            "IptvRepository: EPG matched $matched/$total channels" +
+                if (total > 0) " (${(matched * 100) / total}%)" else ""
+        )
         return result
     }
 
@@ -9129,7 +9152,9 @@ class IptvRepository @Inject constructor(
         val HTML_TAG_REGEX = Regex("<[^>]+>")
         val CSS_BRACE_REGEX = Regex("\\{[^}]*\\}")
         val NON_ALPHA_NUM_REGEX_INLINE = Regex("[^a-z0-9]")
-        val QUALITY_SUFFIX_REGEX = Regex("\\b(hd|fhd|uhd|sd|4k|hevc|x265|x264|h264|h265)\\b")
+        val QUALITY_SUFFIX_REGEX = Regex(
+            "\\b(hd|fhd|uhd|sd|4k|8k|hevc|x265|x264|h264|h265|1080p|720p|480p|2160p|hdr|vip|raw|backup)\\b"
+        )
         val GUIDE_PREFIX_REGEX = Regex("""^\s*[a-z]{2,4}\s*[\|:：/\-]+\s*""", RegexOption.IGNORE_CASE)
 
         val XMLTV_LOCAL_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
