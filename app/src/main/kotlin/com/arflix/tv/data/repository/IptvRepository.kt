@@ -6728,12 +6728,20 @@ class IptvRepository @Inject constructor(
 
     private fun xtreamShortEpgTimeout(streamCount: Int): Long =
         when {
-            streamCount > 4_000 -> 90_000L
-            streamCount > 1_200 -> 45_000L
-            streamCount > 256 -> 18_000L
-            streamCount > 64 -> 8_000L
-            streamCount > 16 -> 5_000L
-            else -> 2_500L
+            // These budgets were cutting real fetches off far too early — e.g. a
+            // 240-channel list (a completely normal size) only got 8 seconds,
+            // and each stream can need up to 3 sequential round trips (primary
+            // get_short_epg call, then two fallbacks) if the provider's first
+            // response is empty. 8s was enough for a handful of channels, not
+            // the whole list — which looked exactly like "only a few channels
+            // have EPG" even though every fetch that did complete matched its
+            // channel correctly. Widened every tier accordingly.
+            streamCount > 4_000 -> 180_000L
+            streamCount > 1_200 -> 90_000L
+            streamCount > 256 -> 45_000L
+            streamCount > 64 -> 25_000L
+            streamCount > 16 -> 12_000L
+            else -> 6_000L
         }
 
     private fun xtreamFullCatchupEpgTimeout(streamCount: Int): Long =
