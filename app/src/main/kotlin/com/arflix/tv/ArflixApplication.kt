@@ -30,6 +30,8 @@ import com.arflix.tv.data.repository.CloudSyncCoordinator
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.RealtimeSyncManager
 import com.arflix.tv.data.repository.WatchlistRepository
+// ── ADDED (1 of 3): import for the silent entitlement re-check ──
+import com.arflix.tv.data.repository.XtreamEntitlementsGuard
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.DiagnosticsManager
@@ -53,26 +55,39 @@ import javax.inject.Inject
  */
 @HiltAndroidApp
 class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFactory {
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     @Volatile
     private var appImageLoader: ImageLoader? = null
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
     @Inject
     lateinit var profileManager: ProfileManager
+
     @Inject
     lateinit var authRepository: AuthRepository
+
     @Inject
     lateinit var cloudSyncRepository: CloudSyncRepository
+
     @Inject
     lateinit var cloudSyncCoordinator: CloudSyncCoordinator
+
     @Inject
     lateinit var realtimeSyncManager: RealtimeSyncManager
+
     @Inject
     lateinit var watchlistRepository: WatchlistRepository
+
     @Inject
     lateinit var appUsageAnalyticsRepository: AppUsageAnalyticsRepository
+
+    // ── ADDED (2 of 3): injected guard singleton ──
+    @Inject
+    lateinit var xtreamEntitlementsGuard: XtreamEntitlementsGuard
 
     override fun onCreate() {
         super.onCreate()
@@ -83,6 +98,18 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         // a single volatile assignment.
         OkHttpProvider.init(this)
 
+        // ── ADDED (3 of 3): silent package re-check on every app open ──
+        // Re-reads the line's category list from the panel and installs or
+        // removes entitlement addons to match. Delayed so it never competes
+        // with first-frame work; minIntervalMs = 0 so a cold start is never
+        // throttled by the previous session's timestamp.
+        xtreamEntitlementsGuard.attach(this)
+        xtreamEntitlementsGuard.scheduleCheck(
+            reason = "cold_start",
+            initialDelayMs = 4_000L,
+            minIntervalMs = 0L
+        )
+
         // Initialize global DNS provider and user agent from DataStore before network calls.
         appScope.launch(Dispatchers.IO) {
             val prefs = settingsDataStore.data.first()
@@ -90,11 +117,9 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             val dnsPref = prefs[dnsKey]
             val provider = OkHttpProvider.parseDnsProvider(dnsPref)
             OkHttpProvider.setDnsProvider(provider)
-
             val uaKey = androidx.datastore.preferences.core.stringPreferencesKey(OkHttpProvider.USER_AGENT_PREF_KEY)
             val savedUserAgent = prefs[uaKey].orEmpty()
             OkHttpProvider.setCustomUserAgent(savedUserAgent)
-
             runCatching { OkHttpProvider.dns.lookup("image.tmdb.org") }
         }
 
@@ -117,10 +142,10 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
                 defaultHandler?.uncaughtException(thread, throwable) ?: android.os.Process.killProcess(android.os.Process.myPid())
             }
         }
+
         // Initialize active profile asynchronously to avoid blocking cold start.
         // Wire realtime push notification when realtime is enabled.
         cloudSyncRepository.onPushCompleted = { realtimeSyncManager.markPush() }
-
         appScope.launch {
             runCatching { profileManager.initialize() }
             // Preload watchlist cache in background for instant display
