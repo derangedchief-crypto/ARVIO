@@ -19,8 +19,16 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Prepare placeholder build configuration
-        run: cp secrets.defaults.properties secrets.properties
+      - name: Prepare build configuration
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: |
+          cp secrets.defaults.properties secrets.properties
+          if [ -n "$TMDB_API_KEY" ]; then
+            sed -i "s|^TMDB_API_KEY=.*|TMDB_API_KEY=$TMDB_API_KEY|" secrets.properties
+          else
+            echo "::warning::TMDB_API_KEY repo secret is not set — Trending/catalog rows will be empty in this build."
+          fi
 
       - name: Build debug APK
         run: ./gradlew :app:assembleSideloadDebug --no-daemon
