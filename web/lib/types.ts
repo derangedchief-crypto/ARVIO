@@ -484,4 +484,7 @@ export interface AppSettings {
   metadataTvProviders: string[];
   metadataAnimeProviders: string[];
   iptvSortOrder?: "provider" | "number" | "name";
+  // Addon management
+  addonOrder: string[];
+  enabledAddons: string[];
 }
