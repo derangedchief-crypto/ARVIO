@@ -68,7 +68,6 @@ android {
             "\"${escapeBuildConfigString(localSecretValue("APP_ANON_KEY").ifBlank { localSecretValue("SUPABASE_ANON_KEY") })}\""
         )
 
-
         // Keep release downloads ARM-universal by default. Developers can add x86
         // emulator support with -PincludeX86Abis=true without changing this file.
         ndk {
@@ -130,12 +129,12 @@ android {
         }
     }
 
-
     buildTypes {
         release {
             // Full release optimization for TV smoothness.
             isMinifyEnabled = true
             isShrinkResources = true
+
             // Use release signing if configured, otherwise fall back to debug
             val releaseSigningConfig = signingConfigs.findByName("release")
             signingConfig = if (releaseSigningConfig?.storeFile != null) {
@@ -143,6 +142,7 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -181,8 +181,11 @@ android {
             }
             isDebuggable = false
             isJniDebuggable = false
-
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "true")
+            // Appended on top of the rules initWith(release) already copied.
+            // Disables R8 name obfuscation ONLY, so crash traces from this test
+            // build are readable without mapping.txt. See the file for details.
+            proguardFile("proguard-rules-staging.pro")
         }
     }
 
@@ -205,6 +208,21 @@ android {
             // (see dvmkv/package-info.java for the re-vendoring procedure on media3 bumps).
             java.srcDir("src/main/dvmkv-java")
         }
+
+        // src/staging/res carries upstream's "ARVIO Beta" branding: it overrides
+        // app_name, the launcher/round icons, the TV banner and
+        // drawable-nodpi/arvio_loading_logo.webp. Build-type resources take
+        // precedence over src/main/res, so a staging build silently ships that
+        // artwork instead of ours. Drop the override directory so the beta APK
+        // looks exactly like what ships — otherwise the performance A/B is
+        // comparing two visually different apps.
+        //
+        // Safe by construction: there is no staging-only Kotlin/Java source set,
+        // so nothing can reference a staging-only resource. Every file in that
+        // directory is an override of a resource that also exists in src/main/res.
+        getByName("staging") {
+            res.setSrcDirs(emptyList<String>())
+        }
     }
 
     buildFeatures {
@@ -224,7 +242,7 @@ android {
             )
         }
         jniLibs {
-            useLegacyPackaging = false  // Required for 16KB page size support
+            useLegacyPackaging = false // Required for 16KB page size support
         }
     }
 
@@ -264,20 +282,20 @@ ksp {
     arg("dagger.hilt.android.internal.disableAndroidSuperclassValidation", "true")
 }
 
-    // Kotlin 2.3.0 emits class metadata v2.3.0, which Hilt 2.57's bundled
-    // kotlin-metadata-jvm (max v2.2.0) cannot read — hiltJavaCompile fails with
-    // "Provided Metadata instance has version 2.3.0". Force the reader library to
-    // 2.3.0 on every configuration (incl. Hilt's annotation-processor classpath) so
-    // Hilt 2.57 can process Kotlin 2.3.0 metadata without moving to Hilt 2.59 (AGP 9).
-    configurations.all {
-        resolutionStrategy {
-            force("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
-            force("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-            force("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-        }
+// Kotlin 2.3.0 emits class metadata v2.3.0, which Hilt 2.57's bundled
+// kotlin-metadata-jvm (max v2.2.0) cannot read — hiltJavaCompile fails with
+// "Provided Metadata instance has version 2.3.0". Force the reader library to
+// 2.3.0 on every configuration (incl. Hilt's annotation-processor classpath) so
+// Hilt 2.57 can process Kotlin 2.3.0 metadata without moving to Hilt 2.59 (AGP 9).
+configurations.all {
+    resolutionStrategy {
+        force("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
+        force("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+        force("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     }
+}
 
-    dependencies {
+dependencies {
     // Discord Partner SDK is licensed separately and intentionally not committed.
     if (hasDiscordSdk) {
         implementation(files(discordSdkAar))
@@ -300,7 +318,7 @@ ksp {
 
     // Core Android
     implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.core:core-splashscreen:1.0.1")  // Android 12+ Splash Screen
+    implementation("androidx.core:core-splashscreen:1.0.1") // Android 12+ Splash Screen
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     // Provides collectAsStateWithLifecycle — pauses Flow collection while the
@@ -442,9 +460,9 @@ ksp {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("io.mockk:mockk:1.13.8")
-    testImplementation("app.cash.turbine:turbine:1.0.0")  // Flow testing
-    testImplementation("com.google.truth:truth:1.1.5")    // Better assertions
-    testImplementation("org.robolectric:robolectric:4.11.1")  // Android mocking
+    testImplementation("app.cash.turbine:turbine:1.0.0") // Flow testing
+    testImplementation("com.google.truth:truth:1.1.5") // Better assertions
+    testImplementation("org.robolectric:robolectric:4.11.1") // Android mocking
 
     // Android Instrumented Testing
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.06.00"))
@@ -534,7 +552,6 @@ tasks.configureEach {
     }
 }
 
-
 detekt {
     // Configuration file
     config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
@@ -560,7 +577,6 @@ detekt {
     ignoreFailures = true
 }
 
-
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -581,10 +597,7 @@ dependencies {
         exclude(group = "org.mozilla", module = "rhino")
     }
     add("sideloadImplementation", "org.webjars.npm:crypto-js:4.2.0")
-    
     // Runtime helpers used by the sideload plugin extractor stack.
     add("sideloadImplementation", "org.mozilla:rhino:1.8.1")
     add("sideloadImplementation", "com.google.re2j:re2j:1.8")
 }
-
-
