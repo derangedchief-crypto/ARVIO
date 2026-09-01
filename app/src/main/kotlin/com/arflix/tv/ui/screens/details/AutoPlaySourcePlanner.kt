@@ -1,22 +1,50 @@
 package com.arflix.tv.ui.screens.details
 
 import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.data.repository.HomeServerRepository
 import java.util.Locale
 
-// Autoplay starts the best quality/size source it can find within ~2s. It keeps
-// collecting progressive addon results until every addon has reported OR this
-// ceiling is reached, then plays the best candidate found so far.
+// Autoplay starts the best source it can find within this window when only remote
+// (addon/debrid) candidates exist. It keeps collecting progressive addon results
+// until every addon has reported OR this ceiling is reached.
 internal const val AUTOPLAY_MAX_WAIT_MS = 2000L
-// Once a top-tier (4K) source is found we only briefly settle to let a larger 4K
-// rip arrive, instead of waiting on slow addons — 4K quality can't be beaten.
+
+// Extra grace granted while the best candidate so far is a REMOTE source, so the
+// slower local-library probe (Jellyfin/Plex/Emby ~5s timeout, Xtream VOD) gets a
+// chance to land before a debrid link is committed to. Resolving a debrid link is
+// what actually spends Premiumize points, so this window is the whole saving.
+internal const val AUTOPLAY_LOCAL_PROBE_EXTRA_MS = 1500L
+
+// Once a top-tier (4K) LOCAL source is found we only briefly settle to let a
+// larger/better local rip arrive, instead of waiting on slow addons.
 internal const val AUTOPLAY_TOP_TIER_SETTLE_MS = 450L
+
 internal const val AUTOPLAY_SOURCE_RECHECK_MS = 120L
+
+// Total ceiling. Derived so tuning AUTOPLAY_MAX_WAIT_MS still behaves sensibly.
+private const val AUTOPLAY_LOCAL_WINDOW_MS = AUTOPLAY_MAX_WAIT_MS + AUTOPLAY_LOCAL_PROBE_EXTRA_MS
+
 private const val TOP_TIER_QUALITY_SCORE = 4
+
+// Xtream VOD sources are injected by IptvRepository under this fixed addon id.
+private const val XTREAM_VOD_ADDON_ID = "iptv_xtream_vod"
 
 private object AutoPlayRegexes {
     val fourKRegex = Regex("""\b4[kK]\b""")
     val sizeRegex = Regex("""(?i)(\d+(?:[\.,]\d+)?)\s*(TB|GB|MB|KB|B|GiB|MiB|KiB)?""")
 }
+
+/**
+ * True for sources served by the user's own infrastructure: a home media server
+ * (Jellyfin / Plex / Emby) or their Xtream VOD library.
+ *
+ * These are free to stream — no debrid resolution, no points, no cache lookup —
+ * so they are preferred over any addon result regardless of advertised quality.
+ * Mirrors `DetailsViewModel.isSupplementalStream`, kept here so both the ranking
+ * and the wait policy read from a single definition.
+ */
+internal fun isLocalLibraryStream(stream: StreamSource): Boolean =
+    stream.addonId == XTREAM_VOD_ADDON_ID || stream.addonId == HomeServerRepository.ADDON_ID
 
 /** Score quality from all stream text because addons do not fill the quality field consistently. */
 internal fun qualityScoreForAutoPlay(stream: StreamSource): Int {
@@ -35,6 +63,7 @@ internal fun qualityScoreForAutoPlay(stream: StreamSource): Int {
             append(it)
         }
     }
+
     return when {
         combined.contains("2160p", ignoreCase = true) || AutoPlayRegexes.fourKRegex.containsMatchIn(combined) -> 4
         combined.contains("1080p", ignoreCase = true) -> 3
@@ -50,13 +79,23 @@ internal fun bestAutoPlayStream(
 ): StreamSource? {
     return streams
         .asSequence()
-        .filter { stream -> qualityScoreForAutoPlay(stream) >= minQualityScore }
+        .filter { stream ->
+            // Local sources are exempt from the quality floor. HomeServerRepository
+            // derives its quality label from videoWidth/videoHeight, and Plex parts
+            // frequently leave those unset — the file would score 0 and be filtered
+            // out of autoplay entirely, sending playback back to a paid source.
+            isLocalLibraryStream(stream) || qualityScoreForAutoPlay(stream) >= minQualityScore
+        }
         .sortedWith(
-            // Best quality, then biggest size — that is the user's "best" definition.
-            // `notWebReady` HTTP sources (e.g. direct MKV rips) are fully playable on the
-            // native ExoPlayer, so they are eligible; webReady only breaks ties at equal
-            // quality+size so a known-simple URL wins a coin-flip.
-            compareByDescending<StreamSource> { qualityScoreForAutoPlay(it) }
+            // Own library first — that is the point of this ordering, and it wins
+            // even against a higher-quality debrid rip because streaming it is free.
+            // Within each tier: best quality, then biggest size, which is the user's
+            // "best" definition.
+            // `notWebReady` HTTP sources (e.g. direct MKV rips) are fully playable on
+            // the native ExoPlayer, so they are eligible; webReady only breaks ties at
+            // equal quality+size so a known-simple URL wins a coin-flip.
+            compareByDescending<StreamSource> { if (isLocalLibraryStream(it)) 1 else 0 }
+                .thenByDescending { qualityScoreForAutoPlay(it) }
                 .thenByDescending { autoPlaySizeBytes(it) }
                 .thenByDescending { if (it.behaviorHints?.notWebReady == true) 0 else 1 }
                 .thenByDescending { if (it.behaviorHints?.cached == true) 1 else 0 }
@@ -123,23 +162,37 @@ internal fun isPendingDebridStream(stream: StreamSource): Boolean {
 /**
  * Decides whether autoplay should keep waiting for more/better sources, or start now.
  *
- * Goal: play the best quality/size found across all sources, within ~2 seconds.
- * - Hard ceiling at [AUTOPLAY_MAX_WAIT_MS]: whatever is best by then plays.
- * - No candidate yet → wait while addons are still loading (until the ceiling).
- * - Top-tier (4K) candidate → only a brief settle ([AUTOPLAY_TOP_TIER_SETTLE_MS]) to let a
- *   larger 4K rip arrive; don't stall on slow addons since 4K can't be out-qualitied.
- * - Sub-4K candidate → keep collecting until every addon has reported (so a better
- *   source isn't missed), capped by the ceiling.
+ * Goal: play the user's own library when it has the title, and only fall back to a
+ * paid/debrid source when it genuinely does not.
+ *
+ * - Hard ceiling at [AUTOPLAY_LOCAL_WINDOW_MS]: whatever is best by then plays.
+ * - No candidate yet → wait while sources are still loading.
+ * - LOCAL candidate → commit almost immediately. It already outranks everything
+ *   else, so there is nothing cheaper to wait for; a brief
+ *   [AUTOPLAY_TOP_TIER_SETTLE_MS] settle only lets a *better local* file (a 4K
+ *   Jellyfin copy arriving after a 720p Xtream VOD one) win on quality.
+ * - REMOTE candidate → keep waiting for the full window. The 4K shortcut is
+ *   deliberately NOT applied here: a cached 4K debrid stream would otherwise
+ *   commit at ~450ms and the local probe would never finish in time, which is
+ *   exactly the leak this is meant to close.
+ *
+ * `isLoadingStreams` intentionally does not gate the remote branch — the
+ * home-server and VOD probes run on their own jobs (`homeServerAppendJob`,
+ * `vodAppendJob`) and are not reflected in that flag.
  */
 internal fun shouldWaitForAutoPlaySources(
     isLoadingStreams: Boolean,
     selectedStream: StreamSource?,
     elapsedMs: Long
 ): Boolean {
-    if (elapsedMs >= AUTOPLAY_MAX_WAIT_MS) return false
+    if (elapsedMs >= AUTOPLAY_LOCAL_WINDOW_MS) return false
+
     if (selectedStream == null) return isLoadingStreams
-    if (qualityScoreForAutoPlay(selectedStream) >= TOP_TIER_QUALITY_SCORE) {
-        return elapsedMs < AUTOPLAY_TOP_TIER_SETTLE_MS
+
+    if (isLocalLibraryStream(selectedStream)) {
+        if (qualityScoreForAutoPlay(selectedStream) >= TOP_TIER_QUALITY_SCORE) return false
+        return isLoadingStreams && elapsedMs < AUTOPLAY_TOP_TIER_SETTLE_MS
     }
-    return isLoadingStreams
+
+    return true
 }
