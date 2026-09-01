@@ -13,7 +13,6 @@ data class XtreamEntitlement(
 )
 
 sealed class XtreamEntitlementsResult {
-
     /**
      * Entitlement state was determined from real provider data.
      * [revoked] is authoritative: those manifests must be removed.
@@ -87,12 +86,14 @@ class XtreamEntitlementsRepository @Inject constructor() {
             .distinct()
             .take(MAX_LABELS)
             .toList()
+
         if (normalized.isEmpty()) {
             return XtreamEntitlementsResult.Unresolved("no_labels")
         }
 
         val granted = mutableListOf<XtreamEntitlement>()
         var matchedLabel: String? = null
+
         for (definition in definitions) {
             if (definition.keyword.isEmpty()) continue
             val hit = normalized.firstOrNull { it.contains(definition.keyword) } ?: continue
@@ -112,12 +113,33 @@ class XtreamEntitlementsRepository @Inject constructor() {
             "resolved from ${normalized.size} labels: granted=${granted.size} " +
                 "revoked=${revoked.size} match=$matchedLabel"
         )
+
         return XtreamEntitlementsResult.Resolved(
             granted = granted,
             revoked = revoked,
             matchedLabel = matchedLabel,
             labelCount = normalized.size
         )
+    }
+
+    /**
+     * Which of [names] would trigger an entitlement, returned in their original
+     * form so a caller can map them back to provider ids.
+     *
+     * Exists so [XtreamEntitlementsGuard] can verify a marker category is not an
+     * empty shell before trusting it. A category listed by the panel but holding
+     * no streams for this line must not grant anything — otherwise deleting the
+     * marker channel would never revoke, because the category itself lingers in
+     * `get_live_categories`.
+     */
+    fun markerCategoryNames(names: List<String>): List<String> {
+        val definitions = definitions().filter { it.keyword.isNotEmpty() }
+        if (definitions.isEmpty()) return emptyList()
+
+        return names.filter { name ->
+            val normalized = normalize(name)
+            normalized.isNotEmpty() && definitions.any { normalized.contains(it.keyword) }
+        }
     }
 
     /**
