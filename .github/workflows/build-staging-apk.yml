@@ -1,8 +1,13 @@
 name: Build Optimized Test APK
 
-# Release-grade build (R8 + baseline profile + non-debuggable) for on-device
-# performance testing. Installs alongside the Play Store app because the
-# `staging` build type applies applicationIdSuffix ".beta".
+# Release-grade build (R8 + resource shrinking + baseline profile +
+# non-debuggable) for on-device performance testing against the Play Store
+# build. Installs alongside it because the `staging` build type applies
+# applicationIdSuffix ".beta".
+#
+# Cloud-secret validation is deliberately skipped: Supabase realtime sync and
+# Trakt are not in use here. R8, the baseline profile and the non-debuggable
+# flag are all unaffected, so performance results remain valid.
 on:
   workflow_dispatch:
 
@@ -25,17 +30,13 @@ jobs:
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL: ${{ secrets.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          APP_ANON_KEY: ${{ secrets.APP_ANON_KEY }}
-          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
-          TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           set -euo pipefail
           cp secrets.defaults.properties secrets.properties
 
-          # Delete-then-append rather than `sed s|old|new|`: several of these
-          # values legitimately contain '|', '&' or '/', which would corrupt a
+          # Delete-then-append rather than `sed s|old|new|`: these values can
+          # legitimately contain '|', '&' or '/', which would corrupt a
           # substitution. Deleting the placeholder line and appending is safe
           # for any value, and later keys win in a .properties file anyway.
           set_secret() {
@@ -50,45 +51,31 @@ jobs:
 
           set_secret TMDB_API_KEY "${TMDB_API_KEY}"
           set_secret ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL "${ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL}"
-          set_secret SUPABASE_URL "${SUPABASE_URL}"
-          set_secret APP_ANON_KEY "${APP_ANON_KEY}"
-          set_secret TRAKT_CLIENT_ID "${TRAKT_CLIENT_ID}"
-          set_secret TRAKT_CLIENT_SECRET "${TRAKT_CLIENT_SECRET}"
           set_secret SENTRY_DSN "${SENTRY_DSN}"
-
-          # app/build.gradle.kts wires validateReleaseCloudSecrets into
-          # preSideloadStagingBuild and requires all four of these. Check here so
-          # the failure names the missing secret instead of surfacing as an
-          # opaque Gradle `require` failure several minutes in.
-          missing=""
-          for pair in \
-            "SUPABASE_URL=${SUPABASE_URL}" \
-            "APP_ANON_KEY=${APP_ANON_KEY}" \
-            "TRAKT_CLIENT_ID=${TRAKT_CLIENT_ID}" \
-            "TRAKT_CLIENT_SECRET=${TRAKT_CLIENT_SECRET}"
-          do
-            name="${pair%%=*}"
-            value="${pair#*=}"
-            if [ -z "$value" ]; then
-              missing="${missing} ${name}"
-            fi
-          done
-          if [ -n "${missing}" ]; then
-            echo "::error::Release-grade builds require these repo secrets:${missing}"
-            exit 1
-          fi
 
           if [ -z "${TMDB_API_KEY}" ]; then
             echo "::warning::TMDB_API_KEY is not set — Trending/catalog rows will be empty."
           fi
           if [ -z "${SENTRY_DSN}" ]; then
-            echo "::warning::SENTRY_DSN is not set — crashes will not be reported."
+            echo "::warning::SENTRY_DSN is not set — crashes will NOT be reported even though ENABLE_CRASH_REPORTING is true for the staging build type."
           fi
+
+          echo "Supabase/Trakt secrets intentionally omitted; cloud sync will be non-functional in this APK."
 
       - name: Build staging APK
         # `staging` = initWith(release): R8 full mode, resource shrinking,
-        # baseline profile, isDebuggable=false, ENABLE_CRASH_REPORTING=true.
-        run: ./gradlew :app:assembleSideloadStaging --no-daemon --stacktrace
+        # baseline profile (committed at app/src/main/baseline-prof.txt, so no
+        # device is needed to generate it), isDebuggable=false.
+        # Signing falls back to the debug config when keystore.properties is
+        # absent, so the artifact is installable via adb.
+        #
+        # validateReleaseCloudSecrets is excluded: it is attached to
+        # preSideloadStagingBuild purely as a guard and produces no build output.
+        run: >-
+          ./gradlew :app:assembleSideloadStaging
+          -x :app:validateReleaseCloudSecrets
+          --no-daemon
+          --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -98,7 +85,8 @@ jobs:
           retention-days: 14
 
       - name: Upload R8 mapping file
-        # Needed to deobfuscate any Sentry stack traces from this build.
+        # Required to deobfuscate any stack trace from this build — R8 renames
+        # everything, so a raw logcat trace will be unreadable without it.
         if: always()
         uses: actions/upload-artifact@v4
         with:
