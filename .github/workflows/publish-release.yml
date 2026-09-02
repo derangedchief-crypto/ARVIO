@@ -109,14 +109,14 @@ jobs:
             echo "::error::No APK found in app/build/outputs/apk/sideload/staging"
             exit 1
           fi
-          DEST="ARVIO-${{ steps.version.outputs.name }}.apk"
+          DEST="ExtremeTV-${{ steps.version.outputs.name }}.apk"
           cp "$SRC" "$DEST"
           echo "path=$DEST" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: arvio-release-apk
+          name: extremetv-release-apk
           path: ${{ steps.apk.outputs.path }}
           retention-days: 90
 
@@ -124,7 +124,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: arvio-release-mapping
+          name: extremetv-release-mapping
           path: app/build/outputs/mapping/sideloadStaging/mapping.txt
           retention-days: 90
           if-no-files-found: warn
@@ -133,7 +133,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: ARVIO ${{ steps.version.outputs.name }}
+          name: Extreme TV ${{ steps.version.outputs.name }}
           body: ${{ github.event.inputs.release_notes || format('Automated release build from {0}.', github.ref_name) }}
           draft: false
           prerelease: false
