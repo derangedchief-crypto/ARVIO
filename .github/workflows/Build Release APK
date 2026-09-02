@@ -1,0 +1,65 @@
+name: Build Release APK
+# Production-grade release build with R8 full mode, resource shrinking, and
+# baseline profile. Requires a keystore for signing—add keystore setup if needed.
+on:
+ workflow_dispatch:
+jobs:
+ build-release-apk:
+ name: Build release APK
+ runs-on: ubuntu-latest
+ steps:
+ - name: Checkout
+ uses: actions/checkout@v5
+ - name: Set up Java
+ uses: actions/setup-java@v5
+ with:
+ distribution: temurin
+ java-version: "17"
+ cache: gradle
+ - name: Prepare build configuration
+ env:
+ TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+ ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL: ${{ secrets.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL }}
+ SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+ run: |
+ set -euo pipefail
+ cp secrets.defaults.properties secrets.properties
+ set_secret() {
+ key="$1"
+ value="$2"
+ if [ -z "$value" ]; then
+ return 0
+ fi
+ sed -i "/^${key}=/d" secrets.properties
+ printf '%s\n' "${key}=${value}" >> secrets.properties
+ }
+ set_secret TMDB_API_KEY "${TMDB_API_KEY}"
+ set_secret ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL "${ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL}"
+ set_secret SENTRY_DSN "${SENTRY_DSN}"
+ if [ -z "${TMDB_API_KEY}" ]; then
+ echo "::warning::TMDB_API_KEY is not set — Trending/catalog rows will be empty."
+ fi
+ if [ -z "${SENTRY_DSN}" ]; then
+ echo "::warning::SENTRY_DSN is not set — crashes will NOT be reported."
+ fi
+ - name: Build release APK
+ # release build type: R8 full mode, resource shrinking, baseline profile,
+ # non-debuggable. Update the gradle task below if your build types differ.
+ run: >-
+ ./gradlew :app:assembleRelease
+ --no-daemon
+ --stacktrace
+ - name: Upload APK artifact
+ uses: actions/upload-artifact@v4
+ with:
+ name: arvio-release-apk
+ path: app/build/outputs/apk/release/*.apk
+ retention-days: 14
+ - name: Upload R8 mapping file
+ if: always()
+ uses: actions/upload-artifact@v4
+ with:
+ name: arvio-release-mapping
+ path: app/build/outputs/mapping/release/mapping.txt
+ retention-days: 90
+ if-no-files-found: warn
