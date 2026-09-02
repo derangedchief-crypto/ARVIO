@@ -1154,6 +1154,7 @@
     <string name="auth_verify_email">Please verify your email to continue.</string>
     <string name="auth_signin_failed">Sign in failed</string>
     <string name="auth_signup_failed">Sign up failed</string>
+    <string name="auth_confirmation_email_sent">Check your email to confirm your account, then sign in.</string>
     <string name="auth_unable_create_account">Unable to create account</string>
     <string name="homeserver_invalid_code_url">Invalid code sign-in URL</string>
     <string name="homeserver_code_signin_failed_code">Code sign in failed (%1$d)</string>
