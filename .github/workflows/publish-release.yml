@@ -72,6 +72,8 @@ jobs:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL: ${{ secrets.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           set -euo pipefail
           cp secrets.defaults.properties secrets.properties
@@ -89,9 +91,14 @@ jobs:
           set_secret TMDB_API_KEY "${TMDB_API_KEY}"
           set_secret ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL "${ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL}"
           set_secret SENTRY_DSN "${SENTRY_DSN}"
+          set_secret SUPABASE_URL "${SUPABASE_URL}"
+          set_secret SUPABASE_ANON_KEY "${SUPABASE_ANON_KEY}"
 
           if [ -z "${TMDB_API_KEY}" ]; then
             echo "::warning::TMDB_API_KEY is not set — Trending/catalog rows will be empty."
+          fi
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_ANON_KEY}" ]; then
+            echo "::warning::SUPABASE_URL/SUPABASE_ANON_KEY not set — cloud sync (accounts, watch history, watchlist) will not work in this build."
           fi
 
       - name: Restore release keystore
