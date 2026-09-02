@@ -118,13 +118,15 @@ data class BottomBarItem(
     val route: String
 )
 
+// TEMP: TV item hidden from the mobile bottom bar for now, matching
+// Sidebar.kt/AppTopBar.kt. Remove the .filter to bring it back.
 val bottomBarItems = listOf(
     BottomBarItem(R.string.home, Icons.Default.Home, "home"),
     BottomBarItem(R.string.search, Icons.Default.Search, "search"),
     BottomBarItem(R.string.nav_library, Icons.Default.Bookmark, "watchlist"),
     BottomBarItem(R.string.topbar_tv, Icons.Default.LiveTv, "tv"),
     BottomBarItem(R.string.settings, Icons.Default.Settings, "settings")
-)
+).filter { it.route != "tv" }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
