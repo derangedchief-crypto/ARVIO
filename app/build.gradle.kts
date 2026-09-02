@@ -37,9 +37,9 @@ android {
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
         minSdk = 23
         targetSdk = 36
-        versionCode = 311
-        versionName = "1.9.996"
-        buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
+        versionCode = 312
+        versionName = "1.9.997"
+        buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
         // Emergency Supabase cost guard. Keep high-volume public metadata and
