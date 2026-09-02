@@ -106,7 +106,14 @@ jobs:
             echo "::error::RELEASE_KEYSTORE_BASE64 is not set. Every build without it gets signed with a fresh random debug key, so updates cannot install over existing installs. Add the 4 keystore secrets before running this again."
             exit 1
           fi
-          echo "${RELEASE_KEYSTORE_BASE64}" | base64 -d > release.keystore
+          # keystore.properties itself must sit at the repo root — app/build.gradle.kts
+          # reads it via rootProject.file("keystore.properties"). But the storeFile
+          # VALUE inside it is resolved with plain file(...) from inside app/build.gradle.kts,
+          # which resolves relative to the app/ module directory, not the repo root.
+          # So the keystore itself goes in app/, while the properties value stays
+          # just "release.keystore" (not "app/release.keystore" — that would look
+          # for app/app/release.keystore and fail the same way).
+          echo "${RELEASE_KEYSTORE_BASE64}" | base64 -d > app/release.keystore
           cat > keystore.properties <<EOF
           storeFile=release.keystore
           storePassword=${RELEASE_KEYSTORE_PASSWORD}
