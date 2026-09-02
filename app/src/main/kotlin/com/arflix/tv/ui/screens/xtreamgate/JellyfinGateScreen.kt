@@ -60,6 +60,16 @@ fun JellyfinGateScreen(
     val buttonFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    // TEMP: Jellyfin/VOD step hidden from onboarding for now — auto-skip the
+    // instant this screen is reached, same as tapping "Skip" would. Reuses
+    // viewModel.skip() so gate-onboarding-complete still gets marked (see
+    // JellyfinGateViewModel.finish) and the user is never asked for
+    // Jellyfin credentials. Remove this LaunchedEffect to bring the screen
+    // back — nothing else here changed.
+    LaunchedEffect(Unit) {
+        viewModel.skip(onDone = onSkip)
+    }
+
     LaunchedEffect(Unit) {
         usernameFocusRequester.requestFocus()
     }
