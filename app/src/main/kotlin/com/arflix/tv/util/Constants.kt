@@ -18,13 +18,24 @@ object Constants {
     val USE_NETLIFY_CLOUD_SYNC: Boolean
         get() = BuildConfig.ENABLE_NETLIFY_CLOUD_SYNC && (NETLIFY_BACKEND_URL.startsWith("https://") || NETLIFY_BACKEND_URL.startsWith("http://"))
 
+    // Self-hosted Supabase Edge Functions base — used instead of NETLIFY_BACKEND_URL
+    // when not using Netlify. Standard self-hosted Supabase exposes functions at
+    // <SUPABASE_URL>/functions/v1/<function-name>.
+    private val SELF_HOSTED_FUNCTIONS_BASE_URL: String
+        get() = "${SUPABASE_URL.trim().trimEnd('/')}/functions/v1"
+    private val EDGE_FUNCTIONS_BASE_URL: String
+        get() = if (USE_NETLIFY_CLOUD_SYNC) NETLIFY_BACKEND_URL else SELF_HOSTED_FUNCTIONS_BASE_URL
+
     // Edge Function proxy URLs used by backend/proxy-capable flows.
     val TMDB_PROXY_URL: String get() = "$NETLIFY_BACKEND_URL/tmdb-proxy"
     val SIMKL_PROXY_URL: String get() = "$NETLIFY_BACKEND_URL/simkl-proxy"
-    val TV_AUTH_START_URL: String get() = "$NETLIFY_BACKEND_URL/tv-auth-start"
-    val TV_AUTH_STATUS_URL: String get() = "$NETLIFY_BACKEND_URL/tv-auth-status"
-    val TV_AUTH_POLL_URL: String get() = "$NETLIFY_BACKEND_URL/tv-auth-poll"
-    val TV_AUTH_COMPLETE_URL: String get() = "$NETLIFY_BACKEND_URL/tv-auth-complete"
+    // TV device-pairing flow (Fire TV/onn boxes, no keyboard): these route to
+    // self-hosted Edge Functions when not using Netlify, since TvDeviceAuthRepository
+    // calls them unconditionally regardless of the Netlify flag.
+    val TV_AUTH_START_URL: String get() = "$EDGE_FUNCTIONS_BASE_URL/tv-auth-start"
+    val TV_AUTH_STATUS_URL: String get() = "$EDGE_FUNCTIONS_BASE_URL/tv-auth-status"
+    val TV_AUTH_POLL_URL: String get() = "$EDGE_FUNCTIONS_BASE_URL/tv-auth-poll"
+    val TV_AUTH_COMPLETE_URL: String get() = "$EDGE_FUNCTIONS_BASE_URL/tv-auth-complete"
     val DISCORD_AUTH_START_URL: String get() = "$NETLIFY_BACKEND_URL/discord-auth-start"
     val DISCORD_AUTH_STATUS_URL: String get() = "$NETLIFY_BACKEND_URL/discord-auth-status"
     val AUTH_LOGIN_URL: String get() = "$NETLIFY_BACKEND_URL/auth-login"
