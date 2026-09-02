@@ -77,7 +77,11 @@ fun Sidebar(
     onItemSelected: (SidebarItem) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    // TEMP: TV menu entry hidden from the main sidebar for now. Remove the
+    // .filter to bring it back — SidebarItem.TV, routing, and the Live TV
+    // screen itself are untouched, this only hides the nav entry point.
     val centerItems = listOf(SidebarItem.SEARCH, SidebarItem.HOME, SidebarItem.WATCHLIST, SidebarItem.TV)
+        .filter { it != SidebarItem.TV }
     val bottomItem = SidebarItem.SETTINGS
     val hasProfile = profile != null
     // With profile: index 0 = profile, 1-4 = center items, 5 = settings. Without: 0-3 = center, 4 = settings.

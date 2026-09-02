@@ -311,6 +311,15 @@ internal fun iptvRowMaxAction(): Int = 5
 internal fun firstIptvGroupIndex(playlistId: String, orderedGroups: List<String>, stalkerPortalIds: Set<String> = emptySet()): Int =
     if (orderedGroups.isNotEmpty() && (playlistId == STALKER_PLAYLIST_ID || playlistId in stalkerPortalIds)) 2 else 1
 
+/**
+ * BuildConfig.VERSION_NAME carries a build-type suffix locally (e.g.
+ * "1.9.995-debug", "1.9.995-beta") so debug/staging installs are
+ * distinguishable on-device from a file listing. That suffix isn't meant for
+ * the customer-facing Settings screen, so strip it here and show the plain
+ * version number regardless of which build type produced this APK.
+ */
+private fun displayVersionName(): String = BuildConfig.VERSION_NAME.substringBefore("-")
+
 private fun openExternalUrl(context: Context, url: String) {
     runCatching {
         context.startActivity(
@@ -1513,7 +1522,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        text = stringResource(R.string.settings_app_version_label, BuildConfig.VERSION_NAME),
+                        text = stringResource(R.string.settings_app_version_label, displayVersionName()),
                         style = ArflixTypography.caption,
                         color = TextSecondary.copy(alpha = 0.5f),
                         modifier = Modifier.padding(start = 8.dp)
@@ -4250,7 +4259,7 @@ private fun MobileSettingsMainPage(
                 MobileSettingsRow(
                     icon = Icons.Default.SystemUpdate,
                     title = stringResource(R.string.app_version),
-                    subtitle = "V${BuildConfig.VERSION_NAME}",
+                    subtitle = "V${displayVersionName()}",
                     value = if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable) stringResource(R.string.settings_update_available) else stringResource(R.string.settings_check_updates),
                     isFocused = false,
                     onClick = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) }
