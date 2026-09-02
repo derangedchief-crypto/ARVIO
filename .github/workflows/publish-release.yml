@@ -1,17 +1,21 @@
 name: Publish Customer Release
 
 # Builds the sideloadStaging APK (release-grade: R8 + resource shrinking +
-# baseline profile, debug-signed) and publishes it as a GitHub Release. This
-# is the build type you've been shipping to customers, so this workflow just
-# formalizes that into an actual GitHub Release instead of a CI artifact.
+# baseline profile) and publishes it as a GitHub Release. This is the build
+# type you've been shipping to customers, so this workflow just formalizes
+# that into an actual GitHub Release instead of a CI artifact.
 #
 # This is the release the in-app updater checks against (AppUpdateRepository
 # hits /repos/{owner}/{repo}/releases/latest), so this workflow is what makes
 # "check for updates" in the app actually work.
 #
-# No keystore secrets needed — sideloadStaging always falls back to debug
-# signing (see app/build.gradle.kts), same as your existing staging builds,
-# so updates install in place over what customers already have.
+# Signed with the stable release keystore stored in repo secrets
+# (RELEASE_KEYSTORE_BASE64/RELEASE_KEYSTORE_PASSWORD/RELEASE_KEY_ALIAS/
+# RELEASE_KEY_PASSWORD). staging automatically picks up signingConfigs.release
+# when its storeFile is set (see app/build.gradle.kts) — this is what makes
+# every release sign identically, so updates install in place instead of
+# hitting a signature conflict. Without this, GitHub Actions would generate a
+# fresh random debug key on every run and no update would ever install cleanly.
 #
 # The GitHub Release itself is labeled as a normal release (tag "vX.Y.Z",
 # not "beta"/"staging") since that's the only thing customers see — the
@@ -90,10 +94,30 @@ jobs:
             echo "::warning::TMDB_API_KEY is not set — Trending/catalog rows will be empty."
           fi
 
+      - name: Restore release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_KEYSTORE_BASE64}" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 is not set. Every build without it gets signed with a fresh random debug key, so updates cannot install over existing installs. Add the 4 keystore secrets before running this again."
+            exit 1
+          fi
+          echo "${RELEASE_KEYSTORE_BASE64}" | base64 -d > release.keystore
+          cat > keystore.properties <<EOF
+          storeFile=release.keystore
+          storePassword=${RELEASE_KEYSTORE_PASSWORD}
+          keyAlias=${RELEASE_KEY_ALIAS}
+          keyPassword=${RELEASE_KEY_PASSWORD}
+          EOF
+
       - name: Build staging APK
         # `staging` = initWith(release): R8 full mode, resource shrinking,
-        # baseline profile, isDebuggable=false. Falls back to debug signing
-        # automatically since no keystore.properties is present.
+        # baseline profile, isDebuggable=false. Picks up signingConfigs.release
+        # automatically now that keystore.properties exists (see above step).
         run: >-
           ./gradlew :app:assembleSideloadStaging
           -x :app:validateReleaseCloudSecrets
