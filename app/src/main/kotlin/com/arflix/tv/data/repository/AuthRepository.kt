@@ -613,11 +613,45 @@ class AuthRepository @Inject constructor(
             AppLogger.breadcrumb("Auth", "email_sign_up_start")
             _authState.value = AuthState.Loading
 
-            val tokens = createCloudAccountSession(normalizedEmail, password)
-            signInWithSessionTokens(tokens.accessToken, tokens.refreshToken).also {
-                if (it.isSuccess) {
-                    AppLogger.breadcrumb("Auth", "email_sign_up_success")
+            if (Constants.USE_NETLIFY_CLOUD_SYNC) {
+                val tokens = createCloudAccountSession(normalizedEmail, password)
+                return signInWithSessionTokens(tokens.accessToken, tokens.refreshToken).also {
+                    if (it.isSuccess) {
+                        AppLogger.breadcrumb("Auth", "email_sign_up_success_netlify")
+                    }
                 }
+            }
+
+            // Direct-Supabase signup — no Netlify functions involved. Mirrors the
+            // load-or-create-profile pattern already used in signIn()'s non-Netlify branch.
+            supabase.auth.signUpWith(Email) {
+                this.email = normalizedEmail
+                this.password = password
+            }
+
+            val session = supabase.auth.currentSessionOrNull()
+            val user = session?.user
+
+            if (user != null) {
+                storeSession(session)
+
+                var profile = loadUserProfile(user.id)
+                if (profile == null) {
+                    profile = createDefaultProfile(user.id, user.email ?: normalizedEmail)
+                }
+
+                _userProfile.value = profile
+                _authState.value = AuthState.Authenticated(user.id, user.email ?: normalizedEmail, profile)
+                AppLogger.breadcrumb("Auth", "email_sign_up_success")
+                Result.success(Unit)
+            } else {
+                // Most self-hosted setups require email confirmation before a session
+                // is issued, so this is the expected outcome right after signup, not
+                // necessarily an error — surface it as such rather than a hard failure.
+                val message = context.getString(R.string.auth_confirmation_email_sent)
+                _authState.value = AuthState.Error(message)
+                AppLogger.breadcrumb("Auth", "email_sign_up_no_session", severity = "warning")
+                Result.failure(Exception(message))
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
