@@ -185,14 +185,14 @@ fun AppUpdateModal(
                 if (status is UpdateStatus.UpdateAvailable) {
                     Spacer(modifier = Modifier.height(8.dp))
                     androidx.compose.material3.Text(
-                        text = stringResource(R.string.update_msg_current_to_latest, BuildConfig.VERSION_NAME, status.update.tag),
+                        text = stringResource(R.string.update_msg_current_to_latest, BuildConfig.VERSION_NAME.substringBefore("-"), status.update.tag),
                         style = ArflixTypography.caption,
                         color = TextSecondary.copy(alpha = 0.78f)
                     )
                 } else if (status is UpdateStatus.Success) {
                     Spacer(modifier = Modifier.height(8.dp))
                     androidx.compose.material3.Text(
-                        text = stringResource(R.string.update_msg_current_uptodate, BuildConfig.VERSION_NAME),
+                        text = stringResource(R.string.update_msg_current_uptodate, BuildConfig.VERSION_NAME.substringBefore("-")),
                         style = ArflixTypography.caption,
                         color = TextSecondary.copy(alpha = 0.78f)
                     )
