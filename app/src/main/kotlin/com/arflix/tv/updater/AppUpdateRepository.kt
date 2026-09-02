@@ -8,6 +8,7 @@ import com.arflix.tv.R
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import dagger.hilt.android.qualifiers.ApplicationContext
+import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +61,12 @@ class AppUpdateRepository @Inject constructor(
                     .url(url)
                     .header("Accept", "application/vnd.github+json")
                     .header("User-Agent", "ARVIO/${BuildConfig.VERSION_NAME}")
+                    // Always hit the network for this one. The shared OkHttp client
+                    // has a 50MB disk cache for API responses (TMDB, Trakt, etc.), and
+                    // without this, a "no update" response gets cached and keeps being
+                    // served as-is even after a new release is published — the app
+                    // would report "up to date" indefinitely until the cache expires.
+                    .cacheControl(CacheControl.FORCE_NETWORK)
                     .build()
 
                 okHttpClient.newCall(request).execute().use { response ->
