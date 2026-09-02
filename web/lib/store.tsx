@@ -209,7 +209,9 @@ export const defaultSettings: AppSettings = {
   metadataMovieProviders: ["tmdb"],
   metadataTvProviders: ["tvdb", "tmdb"],
   metadataAnimeProviders: ["anilist", "tvdb", "tmdb"],
-  iptvSortOrder: "provider"
+  iptvSortOrder: "provider",
+  addonOrder: ["iptv_xtream_vod", "org.stremio.filmon"],
+  enabledAddons: []
 };
 
 

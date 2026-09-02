@@ -1882,7 +1882,8 @@ class IptvRepository @Inject constructor(
         allowNetworkEpgFetch: Boolean = false,
         allowBroadShortEpg: Boolean = true,
         onProgress: (IptvLoadProgress) -> Unit = {},
-        onChannelsReady: suspend (List<IptvChannel>) -> Unit = {}
+        onChannelsReady: suspend (List<IptvChannel>) -> Unit = {},
+        onEpgChunkReady: suspend (Map<String, IptvNowNext>) -> Unit = {}
     ): IptvSnapshot {
         return withContext(Dispatchers.IO) {
             loadMutex.withLock {
@@ -2077,7 +2078,6 @@ class IptvRepository @Inject constructor(
             }
 
             // Publish channels immediately so the UI can show them while EPG loads.
-            // Uses cached nowNext if available to paint initial EPG state.
             runCatching { onChannelsReady(channels) }
             if ((forcePlaylistReload || cachedChannelsFromDisk == null) && channels.isNotEmpty()) {
                 val immediateNowNext = if (channels.size > LargeIptvListChannelCount) {
@@ -2115,93 +2115,55 @@ class IptvRepository @Inject constructor(
             } else {
                 reDeriveCachedNowNext(channels.asSequence().map { it.id }.toSet()) ?: cachedNowNext
             }
-            val nowNext = if (shouldUseCachedEpg) {
-                onProgress(IptvLoadProgress(context.getString(R.string.epg_using_cached), 92))
-                System.err.println("[EPG] Using cached EPG (${cachedNowNext.size} channels, age=${(now - cachedEpgAt)/1000}s)")
-                cachedFallbackNowNext
-            } else if (!allowNetworkEpgFetch) {
-                if (cachedFallbackNowNext.isNotEmpty()) {
-                    onProgress(IptvLoadProgress(context.getString(R.string.epg_using_cached), 92))
-                    System.err.println("[EPG] Skipping broad network EPG fetch and using cached fallback (${cachedFallbackNowNext.size} channels)")
-                    cachedFallbackNowNext
-                } else {
-                    System.err.println("[EPG] Skipping broad network EPG fetch until category-scoped guide request")
-                    emptyMap()
-                }
-            } else if (epgCandidates.isEmpty() && !hasXtreamChannels) {
-                if (cachedFallbackNowNext.isNotEmpty()) {
-                    onProgress(IptvLoadProgress(context.getString(R.string.epg_using_cached), 92))
-                    System.err.println("[EPG] No active EPG source, keeping cached EPG fallback (${cachedFallbackNowNext.size} channels)")
-                    cachedFallbackNowNext
-                } else {
-                    onProgress(IptvLoadProgress(context.getString(R.string.epg_no_url), 90))
-                    System.err.println("[EPG] No EPG URL and no Xtream creds - skipping EPG")
-                    emptyMap()
-                }
-            } else {
-                var resolvedNowNext: Map<String, IptvNowNext> = emptyMap()
-                var resolved = false
 
-                // Collect EPG from multiple sources and merge them all.
-                // Short EPG is fast (~10s) but only covers channels that have data.
-                // XMLTV is slow (~60s) but comprehensive. Both run, results are merged.
-                var shortEpgResult: Map<String, IptvNowNext>? = null
-
-                // ── Fast path: Xtream short EPG API ──
+            // ═══════════════════════════════════════════════════════════
+            // PHASE A: Fast EPG (cache + Xtream short) — emit immediately
+            // ═══════════════════════════════════════════════════════════
+            val phaseANowNext = ConcurrentHashMap<String, IptvNowNext>()
+            if (shouldUseCachedEpg || !allowNetworkEpgFetch) {
+                if (cachedFallbackNowNext.isNotEmpty()) {
+                    phaseANowNext.putAll(cachedFallbackNowNext)
+                    onProgress(IptvLoadProgress(context.getString(R.string.epg_using_cached), 82))
+                    runCatching { onEpgChunkReady(phaseANowNext) }
+                }
+            } else if (epgCandidates.isNotEmpty() || hasXtreamChannels) {
+                // Try Xtream short EPG early in Phase A
                 if (hasXtreamChannels && shouldFetchBroadShortEpg) {
-                    System.err.println("[EPG] Attempting provider-scoped Xtream short EPG (${xtreamProviderGroups.size} providers)")
                     val shortEpgAttempt = runCatching {
                         fetchXtreamShortEpgForActiveProviders(config, channels, onProgress)
                     }
                     if (shortEpgAttempt.isSuccess) {
                         val parsed = shortEpgAttempt.getOrNull()
-                        val parsedHasData = parsed != null && hasAnyProgramData(parsed)
-                        System.err.println("[EPG] Xtream short EPG result: ${parsed?.size ?: 0} channels, hasData=$parsedHasData")
-                        if (parsed != null && parsedHasData) {
-                            shortEpgResult = parsed
-                            // Provide immediate results: merge short EPG with cached data (no stale removal)
-                            cachedNowNext.putAll(parsed) // Short EPG data takes priority (fresher)
-                            resolvedNowNext = cachedNowNext
-                            cachedEpgAt = System.currentTimeMillis()
-                            persistEpgIndexChannels(config, parsed, cachedEpgAt)
-                            epgUpdated = true
-                            resolved = true
-                            System.err.println("[EPG] Xtream short EPG SUCCESS: ${parsed.size} fresh, ${cachedNowNext.size} total cached")
+                        if (parsed != null && hasAnyProgramData(parsed)) {
+                            phaseANowNext.putAll(parsed)
+                            phaseANowNext.putAll(cachedFallbackNowNext)  // Merge with cache
+                            onProgress(IptvLoadProgress("EPG updated (${phaseANowNext.size} channels)", 85))
+                            runCatching { onEpgChunkReady(phaseANowNext) }
                         }
-                    } else {
-                        System.err.println("[EPG] Xtream short EPG FAILED: ${shortEpgAttempt.exceptionOrNull()?.message}")
                     }
-                } else if (hasXtreamChannels) {
-                    System.err.println("[EPG] Skipping broad Xtream short EPG so full XMLTV can backfill ${channels.size} channels first")
                 }
+            }
 
-                // ── Slow path: XMLTV download. On large lists normal startup keeps first paint fast
-                // by skipping this after short EPG; forced/background refreshes still run it.
-                val skipXmlTvAfterXtreamShort = hasXtreamChannels &&
-                    !forceEpgReload &&
-                    channels.size > LargeIptvListChannelCount &&
-                    shortEpgResult != null &&
-                    hasAnyProgramData(shortEpgResult)
-                if (skipXmlTvAfterXtreamShort) {
-                    System.err.println(
-                        "[EPG] Skipping XMLTV after large-list Xtream sweep; " +
-                            "provider short/simple APIs already returned ${shortEpgResult?.size ?: 0} channels"
-                    )
-                } else if (epgCandidates.isNotEmpty()) {
-                    val epgCandidatesToTry = epgCandidates
-                    var bestCoverage = epgCoverageRatio(channels, resolvedNowNext)
-                    val mergedXmlNowNext = ConcurrentHashMap(resolvedNowNext)
+            // ═══════════════════════════════════════════════════════════
+            // PHASE B: Slow EPG (XMLTV) — background async job
+            // ═══════════════════════════════════════════════════════════
+            val xmltvJob = if (allowNetworkEpgFetch && epgCandidates.isNotEmpty() && !shouldUseCachedEpg) {
+                async {
+                    val phaseB = ConcurrentHashMap(phaseANowNext)
+                    var bestCoverage = epgCoverageRatio(channels, phaseB)
+                    var resolved = false
                     var xmltvChanged = false
+
+                    val epgCandidatesToTry = epgCandidates
                     for ((index, candidate) in epgCandidatesToTry.withIndex()) {
                         val epgUrl = candidate.url
                         val candidateChannels = channelsForScopedEpgCandidate(candidate, channels)
                         if (candidateChannels.isEmpty()) continue
-                        val pct = (90 + ((index * 8) / epgCandidatesToTry.size.coerceAtLeast(1))).coerceIn(90, 98)
+
+                        val pct = (86 + ((index * 12) / epgCandidatesToTry.size.coerceAtLeast(1))).coerceIn(86, 98)
                         onProgress(IptvLoadProgress(context.getString(R.string.iptv_progress_loading_full_epg, index + 1, epgCandidatesToTry.size), pct))
+
                         val attempt = runCatching {
-                            // 300 s: some providers (like TX-4K) serve a 100 MB
-                            // XMLTV dump that needs 2-3 min on a TV's WiFi.
-                            // 90 s was aborting before the file finished.
                             withTimeoutOrNull(300_000L) { fetchAndParseEpg(epgUrl, candidateChannels) }
                                 ?: throw java.util.concurrent.TimeoutException(context.getString(R.string.epg_timeout, epgUrl.take(80)))
                         }
@@ -2211,19 +2173,20 @@ class IptvRepository @Inject constructor(
                             if (parsedHasPrograms) {
                                 xmltvChanged = true
                                 parsed.forEach { (channelId, nowNext) ->
-                                    val current = mergedXmlNowNext[channelId]
+                                    val current = phaseB[channelId]
                                     if (!hasProgramData(current) && hasProgramData(nowNext)) {
-                                        mergedXmlNowNext[channelId] = nowNext
+                                        phaseB[channelId] = nowNext
                                     } else if (current == null) {
-                                        mergedXmlNowNext[channelId] = nowNext
+                                        phaseB[channelId] = nowNext
                                     }
                                 }
-                                val coverage = epgCoverageRatio(channels, mergedXmlNowNext)
+                                val coverage = epgCoverageRatio(channels, phaseB)
                                 if (coverage >= bestCoverage) {
                                     bestCoverage = coverage
                                 }
                                 resolved = true
                                 System.err.println("[EPG] XMLTV candidate ${index + 1} merged coverage=${(coverage * 100).toInt()}%")
+                                runCatching { onEpgChunkReady(phaseB) }  // Emit as each source completes
                                 if (coverage >= completeEpgCoverageTarget) {
                                     System.err.println("[EPG] XMLTV coverage target reached; skipping remaining EPG candidates")
                                     break
@@ -2240,131 +2203,51 @@ class IptvRepository @Inject constructor(
                                     )
                                 }.getOrDefault(emptyMap())
                                 existing.forEach { (channelId, nowNext) ->
-                                    val current = mergedXmlNowNext[channelId]
+                                    val current = phaseB[channelId]
                                     if (!hasProgramData(current) && hasProgramData(nowNext)) {
-                                        mergedXmlNowNext[channelId] = nowNext
+                                        phaseB[channelId] = nowNext
                                     } else if (current == null) {
-                                        mergedXmlNowNext[channelId] = nowNext
+                                        phaseB[channelId] = nowNext
                                     }
                                 }
                                 resolved = true
+                                runCatching { onEpgChunkReady(phaseB) }
                             } else {
                                 epgFailureMessage = exception?.message
                                 System.err.println("[EPG] XMLTV attempt ${index + 1} failed: ${epgFailureMessage}")
                             }
                         }
                     }
-                    if (resolved) {
-                        shortEpgResult?.let { mergedXmlNowNext.putAll(it) } // Short EPG wins for channels it covers
-                        resolvedNowNext = mergedXmlNowNext
-                        cachedNowNext = mergedXmlNowNext
-                        cachedEpgAt = System.currentTimeMillis()
-                        if (xmltvChanged) {
-                            persistEpgIndexAll(config, mergedXmlNowNext, cachedEpgAt)
-                        } else {
-                            System.err.println("[EPG] Skipping persistEpgIndexAll because XMLTV index is unchanged")
-                        }
-                        epgUpdated = true
-                        System.err.println("[EPG] Final merged EPG coverage=${(epgCoverageRatio(channels, mergedXmlNowNext) * 100).toInt()}% for ${channels.size} channels")
+                    if (resolved && xmltvChanged) {
+                        persistEpgIndexAll(config, phaseB, System.currentTimeMillis())
                     }
+                    phaseB
                 }
+            } else {
+                null
+            }
 
-                val currentCoverage = epgCoverageRatio(channels, resolvedNowNext)
-                if (
-                    resolved &&
-                    currentCoverage < completeEpgCoverageTarget &&
-                    !shouldFetchBroadShortEpg &&
-                    hasXtreamChannels
-                ) {
-                    val missingXtreamChannels = channels.filter { channel ->
-                        resolveXtreamStreamId(channel) != null && !hasProgramData(resolvedNowNext[channel.id])
-                    }
-                    if (missingXtreamChannels.isNotEmpty()) {
-                        System.err.println(
-                            "[EPG] XMLTV coverage ${(currentCoverage * 100).toInt()}%; " +
-                                "backfilling ${missingXtreamChannels.size} missing Xtream channels"
-                        )
-                        val shortEpgAttempt = runCatching {
-                            fetchXtreamShortEpgForActiveProviders(config, missingXtreamChannels, onProgress)
-                        }
-                        if (shortEpgAttempt.isSuccess) {
-                            val parsed = shortEpgAttempt.getOrNull()
-                            if (parsed != null && hasAnyProgramData(parsed)) {
-                                val merged = ConcurrentHashMap(resolvedNowNext)
-                                merged.putAll(parsed)
-                                resolvedNowNext = merged
-                                cachedNowNext = ConcurrentHashMap(merged)
-                                cachedEpgAt = System.currentTimeMillis()
-                                persistEpgIndexChannels(config, parsed, cachedEpgAt)
-                                epgUpdated = true
-                                val backfilledCoverage = epgCoverageRatio(channels, merged)
-                                System.err.println(
-                                    "[EPG] Missing-channel Xtream backfill added ${parsed.size} channels; " +
-                                        "coverage=${(backfilledCoverage * 100).toInt()}%"
-                                )
-                            }
-                        } else {
-                            epgFailureMessage = shortEpgAttempt.exceptionOrNull()?.message
-                            System.err.println("[EPG] Missing-channel Xtream backfill failed: $epgFailureMessage")
-                        }
-                    }
+            // Wait for Phase B and merge final results
+            val nowNext = phaseANowNext.toMutableMap()
+            try {
+                val phaseBResult = withTimeoutOrNull(120_000) { xmltvJob?.await() }
+                if (phaseBResult != null) {
+                    nowNext.putAll(phaseBResult)
                 }
+            } catch (e: Exception) {
+                System.err.println("[EPG] Phase B timeout/error: ${e.message}")
+            }
 
-                if (!resolved && !shouldFetchBroadShortEpg && hasXtreamChannels) {
-                    System.err.println("[EPG] XMLTV did not resolve; falling back to full Xtream guide API")
-                    val fullEpgAttempt = runCatching {
-                        fetchXtreamFullEpgForActiveProviders(config, channels, onProgress)
-                    }
-                    if (fullEpgAttempt.isSuccess) {
-                        val parsed = fullEpgAttempt.getOrNull()
-                        if (parsed != null && hasAnyProgramData(parsed)) {
-                            cachedNowNext.putAll(parsed)
-                            resolvedNowNext = cachedNowNext
-                            cachedEpgAt = System.currentTimeMillis()
-                            persistEpgIndexChannels(config, parsed, cachedEpgAt)
-                            epgUpdated = true
-                            resolved = true
-                            System.err.println("[EPG] Full Xtream fallback SUCCESS: ${parsed.size} fresh, ${cachedNowNext.size} total cached")
-                        }
-                    } else {
-                        epgFailureMessage = fullEpgAttempt.exceptionOrNull()?.message
-                        System.err.println("[EPG] Full Xtream fallback failed: $epgFailureMessage")
-                    }
-                    if (!resolved) {
-                        System.err.println("[EPG] Full Xtream fallback did not resolve; falling back to broad Xtream short EPG")
-                        val shortEpgAttempt = runCatching {
-                            fetchXtreamShortEpgForActiveProviders(config, channels, onProgress)
-                        }
-                        if (shortEpgAttempt.isSuccess) {
-                            val parsed = shortEpgAttempt.getOrNull()
-                            if (parsed != null && hasAnyProgramData(parsed)) {
-                                cachedNowNext.putAll(parsed)
-                                resolvedNowNext = cachedNowNext
-                                cachedEpgAt = System.currentTimeMillis()
-                                persistEpgIndexChannels(config, parsed, cachedEpgAt)
-                                epgUpdated = true
-                                resolved = true
-                                System.err.println("[EPG] Broad Xtream fallback SUCCESS: ${parsed.size} fresh, ${cachedNowNext.size} total cached")
-                            }
-                        } else {
-                            epgFailureMessage = shortEpgAttempt.exceptionOrNull()?.message
-                            System.err.println("[EPG] Broad Xtream fallback failed: $epgFailureMessage")
-                        }
-                    }
-                }
+            // Fallback to cached if still empty
+            if (nowNext.isEmpty() && cachedFallbackNowNext.isNotEmpty()) {
+                nowNext.putAll(cachedFallbackNowNext)
+            }
 
-                if (!resolved) {
-                    if (cachedFallbackNowNext.isNotEmpty()) {
-                        resolvedNowNext = cachedFallbackNowNext
-                        System.err.println("[EPG] Keeping stale cached EPG fallback after refresh failure (${cachedFallbackNowNext.size} channels)")
-                    } else {
-                        // Throttle repeated failures to avoid refetching every open.
-                        cachedNowNext = ConcurrentHashMap()
-                        cachedEpgAt = System.currentTimeMillis()
-                        epgUpdated = true
-                    }
-                }
-                resolvedNowNext
+            // Update cache
+            if (nowNext.isNotEmpty()) {
+                cachedNowNext = ConcurrentHashMap(nowNext)
+                cachedEpgAt = System.currentTimeMillis()
+                epgUpdated = true
             }
             val epgFailure = epgFailureMessage
             val epgWarning = if (epgCandidates.isNotEmpty() && nowNext.isEmpty()) {
