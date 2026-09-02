@@ -38,18 +38,24 @@ android {
         minSdk = 23
         targetSdk = 36
         versionCode = 313
-        versionName = "1.9.998"
+        versionName = "1.9.999"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
-        // Emergency Supabase cost guard. Keep high-volume public metadata and
-        // idle realtime polling off Supabase unless explicitly re-enabled.
+        // Was capped to control managed-Supabase usage costs. Self-hosted has no
+        // per-request billing, so full realtime sync is safe to run at full strength.
         buildConfigField("Boolean", "ENABLE_TMDB_EDGE_PROXY", "false")
         buildConfigField("Boolean", "ENABLE_TRAKT_EDGE_PROXY", "false")
         buildConfigField("Boolean", "ENABLE_REALTIME_CLOUD_SYNC", "true")
-        buildConfigField("Boolean", "ENABLE_REALTIME_WATCH_SYNC", "false")
-        buildConfigField("Boolean", "ENABLE_PERIODIC_CLOUD_PULL", "false")
-        buildConfigField("Boolean", "ENABLE_NETLIFY_CLOUD_SYNC", "true")
+        buildConfigField("Boolean", "ENABLE_REALTIME_WATCH_SYNC", "true")
+        buildConfigField("Boolean", "ENABLE_PERIODIC_CLOUD_PULL", "true")
+        // Switched off self-hosted Supabase migration: this was routing accounts,
+        // watch history, and profiles through the original ARVIO project's own
+        // Netlify backend (auth.arvio.tv) instead of infrastructure we control.
+        // The direct-Supabase path below (SUPABASE_URL/SUPABASE_ANON_KEY) is now
+        // the only path used, and it also unlocks the realtime websocket, which
+        // was disabled outright while Netlify sync was active.
+        buildConfigField("Boolean", "ENABLE_NETLIFY_CLOUD_SYNC", "false")
         buildConfigField("Boolean", "ENABLE_SUPABASE_SYNC_MIRROR", "false")
         buildConfigField("Boolean", "DISCORD_RICH_PRESENCE_AVAILABLE", hasDiscordSdk.toString())
         buildConfigField(
