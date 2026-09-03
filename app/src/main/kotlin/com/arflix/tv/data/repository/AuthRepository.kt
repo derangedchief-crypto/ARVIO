@@ -400,6 +400,16 @@ class AuthRepository @Inject constructor(
                 codeVerifierCache = MemoryCodeVerifierCache()
                 autoLoadFromStorage = true
                 autoSaveToStorage = true
+                // The SDK's own background auto-refresh timer runs independently of
+                // AuthRepository.refreshAccessToken()/ensureValidSession() below, with
+                // no shared lock between them. Both could fire near-simultaneously with
+                // the same refresh token: one rotates it, the other then fails with
+                // refresh_token_already_used using the now-stale token — and since nothing
+                // cleared that dead token, every subsequent attempt (from either path,
+                // on every device signed into this account) kept retrying it forever.
+                // Disabling this makes AuthRepository's mutex-guarded refresh the only
+                // path that can ever refresh a token.
+                alwaysAutoRefresh = false
             }
             install(Postgrest)
         }
@@ -407,6 +417,35 @@ class AuthRepository @Inject constructor(
 
     // Auth state
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
+    // Serializes token-refresh attempts. Without this, the Supabase SDK's own
+    // background auto-refresh timer and this repository's manual fallback
+    // (ensureValidSession/getAccessToken) could both fire near-simultaneously
+    // with the same stored refresh token — one succeeds and rotates it, the
+    // other then fails with refresh_token_already_used using the now-stale
+    // token. Previously that failure was silently swallowed and the same
+    // dead token stayed in storage, so every subsequent call kept retrying
+    // it forever (observed as a continuous /token 400 loop server-side,
+    // hundreds of requests/minute, from multiple devices on the same
+    // account). This mutex plus invalidateDeadSession() below closes that.
+    private val refreshMutex = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Clears just the stale/dead session tokens (not the user's local app
+     * data) and marks auth as NotAuthenticated, so callers stop retrying a
+     * refresh token that will never work again and the user cleanly sees
+     * "please sign in" instead of silent infinite retries.
+     */
+    private suspend fun invalidateDeadSession() {
+        runCatching {
+            context.authDataStore.edit { prefs ->
+                prefs.remove(PrefsKeys.ACCESS_TOKEN)
+                prefs.remove(PrefsKeys.REFRESH_TOKEN)
+            }
+        }
+        if (_authState.value !is AuthState.Loading) {
+            _authState.value = AuthState.NotAuthenticated
+        }
+    }
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
     // User profile
@@ -1155,16 +1194,25 @@ class AuthRepository @Inject constructor(
 
         if (Constants.USE_NETLIFY_CLOUD_SYNC) {
             refreshNetlifyAccessToken(refreshToken)?.let { return it }
+            return null
         }
 
-        return try {
-            val refreshed = supabase.auth.refreshSession(refreshToken)
-            storeSession(refreshed)
-            refreshed.accessToken
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            null
+        return refreshMutex.withLock {
+            // Re-read after acquiring the lock: another caller may have
+            // already refreshed (and rotated the token) while we were
+            // waiting, in which case retrying with the token we read above
+            // would itself fail with refresh_token_already_used.
+            val currentToken = context.authDataStore.data.first()[PrefsKeys.REFRESH_TOKEN]
+            if (currentToken.isNullOrBlank()) return@withLock null
+            try {
+                val refreshed = supabase.auth.refreshSession(currentToken)
+                storeSession(refreshed)
+                refreshed.accessToken
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                invalidateDeadSession()
+                null
+            }
         }
     }
 
@@ -1239,14 +1287,19 @@ class AuthRepository @Inject constructor(
             return null
         }
 
-        return try {
-            val refreshed = supabase.auth.refreshSession(refreshToken)
-            storeSession(refreshed)
-            refreshed
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            null
+        return refreshMutex.withLock {
+            // Re-read after acquiring the lock — see comment in refreshAccessToken().
+            val currentToken = context.authDataStore.data.first()[PrefsKeys.REFRESH_TOKEN]
+            if (currentToken.isNullOrBlank()) return@withLock null
+            try {
+                val refreshed = supabase.auth.refreshSession(currentToken)
+                storeSession(refreshed)
+                refreshed
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                invalidateDeadSession()
+                null
+            }
         }
     }
 
