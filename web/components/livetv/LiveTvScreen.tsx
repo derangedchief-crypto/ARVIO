@@ -326,7 +326,7 @@ export function LiveTvScreen() {
         <section className="livetv-empty">
           <Tv size={44} />
           <h3>Add your IPTV playlist</h3>
-          <p>Paste an M3U link or Xtream login. Playlists sync through ARVIO Cloud{auth ? "" : " when you sign in"}.</p>
+          <p>Paste an M3U link or Xtream login. Playlists sync through Extreme TV Cloud{auth ? "" : " when you sign in"}.</p>
           <button type="button" className="primary" onClick={() => setManaging(true)}><Plus size={18} /> Add playlist</button>
         </section>
       )}
