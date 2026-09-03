@@ -1,39 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { hasNetlifyBackendConfig, hasSupabaseConfig, getAuthPortalUrl } from "@/lib/config";
-import { capturePremiumAttribution, TRIAL_INTENT_KEY } from "@/lib/premiumAnalytics";
+import { hasSupabaseConfig } from "@/lib/config";
 import { useApp } from "@/lib/store";
 
 export function LoginScreen() {
-  const { backToProfiles, cloudLoginRequired } = useApp();
-  const cloudConfigured = hasNetlifyBackendConfig() || hasSupabaseConfig();
-  const [mounted, setMounted] = useState(false);
+  const { backToProfiles, cloudLoginRequired, signIn } = useApp();
+  const cloudConfigured = hasSupabaseConfig();
+  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const redirectToAuthPortal = () => {
-    if (typeof window === "undefined") return;
-    const redirectUri = window.location.origin + "/";
-    const portalUrl = getAuthPortalUrl();
-    window.location.href = `${portalUrl}?redirect_uri=${encodeURIComponent(redirectUri)}`;
+  const submit = async () => {
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await signIn(email, password, mode);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Authentication failed.");
+    } finally {
+      setSubmitting(false);
+    }
   };
-
-  useEffect(() => {
-    capturePremiumAttribution();
-    if (new URLSearchParams(window.location.search).get("intent") === "trial") {
-      try { localStorage.setItem(TRIAL_INTENT_KEY, "1"); } catch { /* storage is optional */ }
-    }
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (mounted && cloudConfigured) {
-      const hash = window.location.hash || "";
-      if (!hash.includes("access_token=")) {
-        redirectToAuthPortal();
-      }
-    }
-  }, [mounted, cloudConfigured]);
 
   return (
     <main className="login-shell">
@@ -43,7 +35,7 @@ export function LoginScreen() {
       <div className="login-hero">
         <div className="login-copy">
           <div className="login-brand-lockup">
-            <img src="/arvio-logo.svg" alt="" className="login-brand-logo" />
+            <img src="/arvio-icon-192.png" alt="" className="login-brand-logo" />
             <img src="/arvio-wordmark.svg" alt="Extreme TV" className="login-wordmark" />
           </div>
           <p className="login-tag">Cloud sign-in required</p>
@@ -57,11 +49,42 @@ export function LoginScreen() {
         </div>
 
         <div className="login-card">
-          <p className="login-card-title">Sign in to continue</p>
+          <p className="login-card-title">{mode === "sign-up" ? "Create your account" : "Sign in to continue"}</p>
           {!cloudConfigured && <p className="login-error">Extreme TV Cloud backend env is missing. Add values in web/.env.local.</p>}
-          <button type="button" className="primary login-submit" onClick={redirectToAuthPortal} disabled={!cloudConfigured}>
-            Sign In with Extreme TV Cloud
-          </button>
+          {cloudConfigured && (
+            <>
+              <input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                className="login-input"
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
+                className="login-input"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void submit();
+                }}
+              />
+              {error && <p className="login-error">{error}</p>}
+              <button type="button" className="primary login-submit" onClick={() => void submit()} disabled={submitting}>
+                {submitting ? "Please wait…" : mode === "sign-up" ? "Create Account" : "Sign In"}
+              </button>
+              <button
+                type="button"
+                className="login-switch-mode"
+                onClick={() => { setMode(mode === "sign-up" ? "sign-in" : "sign-up"); setError(null); }}
+              >
+                {mode === "sign-up" ? "Already have an account? Sign in" : "New here? Create an account"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </main>
