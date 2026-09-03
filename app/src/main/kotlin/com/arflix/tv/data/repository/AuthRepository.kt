@@ -1060,6 +1060,24 @@ class AuthRepository @Inject constructor(
         }
     }
 
+    /**
+     * Like getCurrentUserId(), but waits for the initial session restore to
+     * finish first instead of racing it. On cold start, authState begins as
+     * Loading while the saved session is read from disk asynchronously —
+     * calling getCurrentUserId() during that window returns null even for a
+     * signed-in user, which silently short-circuits callers like
+     * WatchHistoryRepository.getContinueWatching() into an empty result with
+     * no retry. This waits (bounded by timeoutMs) until authState resolves
+     * to something other than Loading before deciding.
+     */
+    suspend fun awaitResolvedUserId(timeoutMs: Long = 5_000L): String? {
+        if (_authState.value !is AuthState.Loading) return getCurrentUserId()
+        val resolved = withTimeoutOrNull(timeoutMs) {
+            authState.first { it !is AuthState.Loading }
+        }
+        return (resolved as? AuthState.Authenticated)?.userId ?: getCurrentUserId()
+    }
+
     fun getCurrentUserEmail(): String? {
         return when (val state = _authState.value) {
             is AuthState.Authenticated -> state.email
