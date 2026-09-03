@@ -1,7 +1,7 @@
 {
-  "name": "ARVIO",
-  "short_name": "ARVIO",
-  "description": "ARVIO media hub",
+  "name": "Extreme TV",
+  "short_name": "Extreme TV",
+  "description": "Extreme TV Network media hub",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#02070c",
