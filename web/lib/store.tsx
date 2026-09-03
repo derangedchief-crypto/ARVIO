@@ -123,7 +123,7 @@ function saveCachedList(key: string, items: MediaItem[], max: number) {
   }
 }
 
-export type AppView = "profiles" | "login" | "app";
+export type AppView = "xtream-gate" | "profiles" | "login" | "app";
 
 function randomProfileColor() {
   const colors = [0xffe50914, 0xff1db954, 0xff3b82f6, 0xfff59e0b, 0xff8b5cf6, 0xffec4899, 0xff14b8a6, 0xff6366f1];
@@ -536,6 +536,7 @@ export interface AppStore {
   closePlayer: () => void;
   installAddon: (url: string) => Promise<void>;
   removeAddon: (addon: InstalledAddon) => Promise<void>;
+  completeXtreamGate: (username: string, password: string, packageLabels: string[]) => Promise<void>;
   setAddonsState: (next: InstalledAddon[]) => Promise<void>;
   signIn: (email: string, password: string, mode: "sign-in" | "sign-up") => Promise<void>;
   signOut: () => void;
@@ -639,7 +640,7 @@ export function AppProvider({
   const [simklConnected, setSimklConnected] = useState(() => simklClient.isConnected);
   const [deviceCode, setDeviceCode] = useState<TraktDeviceCode | null>(null);
   const [simklDeviceCode, setSimklDeviceCode] = useState<SimklPinCode | null>(null);
-  const [busy, setBusy] = useState("Loading ARVIO");
+  const [busy, setBusy] = useState("Loading Extreme TV");
   const [toast, setToast] = useState<string | null>(null);
   const [cloudProfilesHydrated, setCloudProfilesHydrated] = useState(() => !authClient.session);
   const refreshInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
@@ -673,9 +674,16 @@ export function AppProvider({
   const [manageMode, setManageMode] = useState(false);
   const [view, setView] = useState<AppView>(() => {
     if (initialView) return initialView;
+    const storedSettings = loadStored<AppSettings>(settingsKey, defaultSettings);
+    // Mirrors Android: the Xtream gate is the very first thing shown, before
+    // profile selection or cloud sign-in, whenever no IPTV source has been
+    // configured on this browser yet.
+    if (!storedSettings.iptvPlaylists || storedSettings.iptvPlaylists.length === 0) {
+      return "xtream-gate";
+    }
     const stored = loadStored<Profile[]>(PROFILES_KEY, []);
     const activeId = loadStored<string | null>(ACTIVE_PROFILE_KEY, null);
-    const skip = loadStored<AppSettings>(settingsKey, defaultSettings).skipProfileSelection;
+    const skip = storedSettings.skipProfileSelection;
     if (skip && activeId && stored.some((p) => p.id === activeId)) return "app";
     return "profiles";
   });
@@ -1029,7 +1037,7 @@ export function AppProvider({
       }
       } catch (error) {
         setAddonsReady(true);
-        setToast(error instanceof Error ? error.message : "Failed to load ARVIO");
+        setToast(error instanceof Error ? error.message : "Failed to load Extreme TV");
       } finally {
         setBusy("");
       }
@@ -1488,13 +1496,13 @@ export function AppProvider({
     }
     // Default external player (VLC / Infuse): hand the source straight to it,
     // resolving the debrid CDN URL first (external players can't follow the
-    // torrentio redirect chain). A pending record lets ARVIO scrobble to Trakt
+    // torrentio redirect chain). A pending record lets Extreme TV scrobble to Trakt
     // + save progress when the user returns. forceBrowser overrides (e.g. the
     // in-player source panel, which is already in the browser player).
     const preferredPlayer = settingsRef.current.defaultPlayer;
     if (!options.forceBrowser && !options.forceRemux && !options.forceTranscode && (preferredPlayer === "vlc" || preferredPlayer === "infuse")) {
       const externalItem = selected;
-      const externalTitle = selected?.title ?? stream.source ?? "ARVIO stream";
+      const externalTitle = selected?.title ?? stream.source ?? "Extreme TV stream";
       const preferredSub = settingsRef.current.defaultSubtitle;
       // The deep link MUST fire synchronously in the Play click — custom-scheme
       // navigation (vlc-x-callback://) is blocked after an await. Use the
@@ -1744,7 +1752,7 @@ export function AppProvider({
     authClient.signOut();
     setAuth(null);
     setCloudProfilesHydrated(true);
-    setToast("Signed out of ARVIO Cloud.");
+    setToast("Signed out of Extreme TV Cloud.");
   }, []);
 
   const beginTrakt = useCallback(async () => {
@@ -2110,6 +2118,28 @@ export function AppProvider({
     setView("profiles");
   }, []);
 
+  const completeXtreamGate = useCallback(
+    async (username: string, password: string, packageLabels: string[]) => {
+      const host = "https://tv.extremeiptv.net";
+      const combined = `${host} ${username} ${password}`;
+      const entry = {
+        id: "list_1",
+        name: "Extreme TV Network",
+        m3uUrl: combined,
+        epgUrl: combined,
+        enabled: true,
+        epgUrls: [combined]
+      };
+      setSettings((prev) => ({ ...prev, iptvPlaylists: [entry] }));
+
+      const { applyCloudStreamEntitlement } = await import("./entitlements");
+      await applyCloudStreamEntitlement(packageLabels, addonsRef.current, installAddon, removeAddon);
+
+      setView("profiles");
+    },
+    [installAddon, removeAddon]
+  );
+
   const goToLogin = useCallback(() => {
     if (typeof window !== "undefined") {
       const redirectUri = window.location.origin + "/";
@@ -2333,6 +2363,7 @@ export function AppProvider({
     updateSettings, refreshData, openDetails, closeDetails, playStream, playTrailer, playChannel, playCatchup, closePlayer,
     refreshIptv, loadIptvGuide,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt,
+    completeXtreamGate,
     connectMdblist, disconnectMdblist, beginSimkl, pollSimkl, disconnectSimkl, updateTrackingPreferences,
     loadTraktLists, loadTraktListItems,
     toggleWatchlist, toggleWatched, removeFromContinueWatching, activeContextMenu, openContextMenu, closeContextMenu

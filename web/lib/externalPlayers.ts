@@ -8,7 +8,7 @@ function cleanFilename(value: string) {
     .replace(/[\\/:*?"<>|]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 140) || "ARVIO stream";
+    .slice(0, 140) || "Extreme TV stream";
 }
 
 function subtitleUrl(subtitle?: SubtitleTrack) {
@@ -193,7 +193,7 @@ export function isDesktop() {
 }
 
 // One-time setup scripts that register the vlc:// handler so desktop "Open in VLC"
-// launches VLC directly instead of downloading a .m3u. Hosted by ARVIO.
+// launches VLC directly instead of downloading a .m3u. Hosted by Extreme TV.
 // Bump this query and readiness key whenever the installed protocol handler
 // changes. Browsers must not keep using or re-download an obsolete handler.
 const VLC_SETUP_VERSION = "2";

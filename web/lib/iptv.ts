@@ -264,7 +264,7 @@ export async function loadXtreamCatchup(playlists: IptvPlaylistEntry[], channel:
 /**
  * Xtream timeshift URL for a finished programme:
  * {base}/timeshift/{user}/{pass}/{durationMinutes}/{YYYY-MM-DD:HH-MM}/{id}.m3u8
- * The start stamp is in the panel's local timezone; ARVIO formats it in the
+ * The start stamp is in the panel's local timezone; Extreme TV formats it in the
  * viewer's timezone, which matches panels hosted for their local market.
  */
 export function buildXtreamCatchupUrl(playlists: IptvPlaylistEntry[], channel: IptvChannel, program: IptvProgram): string | null {
