@@ -130,7 +130,7 @@ class WatchHistoryRepository @Inject constructor(
         streamTitle: String? = null,
         sessionStartTime: Long = 0L
     ) {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return
 
         if (sessionStartTime > 0L) {
             val existingProgress = getProgress(mediaType, tmdbId, season, episode)
@@ -275,7 +275,7 @@ class WatchHistoryRepository @Inject constructor(
         if (Constants.USE_NETLIFY_CLOUD_SYNC) {
             return cachedWatchHistoryByProfile[profileId].orEmpty()
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId()
+        val userId = authRepositoryProvider.get().awaitResolvedUserId()
             ?: return cachedWatchHistoryByProfile[profileId].orEmpty()
 
         return try {
@@ -324,7 +324,7 @@ class WatchHistoryRepository @Inject constructor(
         if (Constants.USE_NETLIFY_CLOUD_SYNC) {
             return filterLive(cachedContinueWatchingByProfile[profileId].orEmpty())
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId()
+        val userId = authRepositoryProvider.get().awaitResolvedUserId()
         if (userId == null) return filterLive(cachedContinueWatchingByProfile[profileId].orEmpty())
 
         return try {
@@ -369,7 +369,7 @@ class WatchHistoryRepository @Inject constructor(
                     entry.episode == episode
             }
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return null
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return null
 
         return try {
             val records = executeSupabaseCall("get watch history item") { auth ->
@@ -408,7 +408,7 @@ class WatchHistoryRepository @Inject constructor(
                     parseEpoch(entry.updated_at).coerceAtLeast(parseEpoch(entry.paused_at))
                 }
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return null
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return null
         val mediaTypeKey = if (mediaType == MediaType.MOVIE) "movie" else "tv"
 
         return try {
@@ -460,7 +460,7 @@ class WatchHistoryRepository @Inject constructor(
         if (Constants.USE_NETLIFY_CLOUD_SYNC) {
             return
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return
 
         try {
             executeSupabaseCall("remove watch history item") { auth ->
@@ -492,7 +492,7 @@ class WatchHistoryRepository @Inject constructor(
             cachedContinueWatching = emptyList()
             return
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return
 
         try {
             executeSupabaseCall("clear watch history") { auth ->
