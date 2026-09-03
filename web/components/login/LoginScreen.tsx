@@ -44,10 +44,10 @@ export function LoginScreen() {
         <div className="login-copy">
           <div className="login-brand-lockup">
             <img src="/arvio-logo.svg" alt="" className="login-brand-logo" />
-            <img src="/arvio-wordmark.svg" alt="ARVIO" className="login-wordmark" />
+            <img src="/arvio-wordmark.svg" alt="Extreme TV" className="login-wordmark" />
           </div>
           <p className="login-tag">Cloud sign-in required</p>
-          <p className="login-sub">Use your ARVIO Cloud account to sync profiles, continue watching, Trakt activity, addons, catalogs, and playback settings across devices.</p>
+          <p className="login-sub">Use your Extreme TV Cloud account to sync profiles, continue watching, Trakt activity, addons, catalogs, and playback settings across devices.</p>
           <div className="login-proof">
             <span>Profiles</span>
             <span>Watch history</span>
@@ -58,9 +58,9 @@ export function LoginScreen() {
 
         <div className="login-card">
           <p className="login-card-title">Sign in to continue</p>
-          {!cloudConfigured && <p className="login-error">ARVIO Cloud backend env is missing. Add values in web/.env.local.</p>}
+          {!cloudConfigured && <p className="login-error">Extreme TV Cloud backend env is missing. Add values in web/.env.local.</p>}
           <button type="button" className="primary login-submit" onClick={redirectToAuthPortal} disabled={!cloudConfigured}>
-            Sign In with ARVIO Cloud
+            Sign In with Extreme TV Cloud
           </button>
         </div>
       </div>
