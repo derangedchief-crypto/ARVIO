@@ -217,7 +217,7 @@ export function WatchlistScreen() {
     return null;
   })();
   const eyebrow = tab === "watchlist"
-    ? watchlistSyncLabel ? `Synced with ${watchlistSyncLabel}` : "Saved across your ARVIO devices"
+    ? watchlistSyncLabel ? `Synced with ${watchlistSyncLabel}` : "Saved across your Extreme TV devices"
     : loading && !items.length ? `Connecting to ${PROVIDER_LABELS[tab]}` : `${libraryPage.total.toLocaleString()} titles${activeLibrary ? ` in ${activeLibrary.libraryName}` : ""}`;
 
   return (
