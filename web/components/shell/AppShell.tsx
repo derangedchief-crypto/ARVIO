@@ -67,8 +67,8 @@ export function AppShell() {
   if (!mounted) {
     return (
       <main className="app-boot">
-        <img src="/arvio-logo.svg" alt="" className="app-boot-logo" />
-        <img src="/arvio-wordmark.svg" alt="ARVIO" className="app-boot-wordmark" />
+        <img src="/arvio-icon-192.png" alt="" className="app-boot-logo" />
+        <img src="/arvio-wordmark.svg" alt="Extreme TV" className="app-boot-wordmark" />
       </main>
     );
   }
