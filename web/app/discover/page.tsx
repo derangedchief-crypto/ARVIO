@@ -21,7 +21,7 @@ const STATIC_FALLBACK_PACKS: CatalogPack[] = [
   {
     id: "cinema-essentials",
     name: "Cinema Essentials",
-    author: "ARVIO Team",
+    author: "Extreme TV Team",
     version: "1.0.0",
     description: "All the trending movies, popular lists, and upcoming releases you need for a perfect movie night.",
     url: "/packs/cinema-essentials.json",
@@ -30,7 +30,7 @@ const STATIC_FALLBACK_PACKS: CatalogPack[] = [
   {
     id: "tv-binge",
     name: "TV Show Binge Pack",
-    author: "ARVIO Team",
+    author: "Extreme TV Team",
     version: "1.0.0",
     description: "Never miss an episode. Popular, trending, and latest airing series in one convenient bundle.",
     url: "/packs/tv-binge.json",
@@ -192,8 +192,8 @@ export default function DiscoverPage() {
       <header className="discover-header">
         <div className="header-top">
           <div className="logo-section">
-            <img src="/arvio-logo.svg" alt="ARVIO Logo" className="logo" />
-            <span className="logo-text">ARVIO</span>
+            <img src="/arvio-icon-192.png" alt="Extreme TV Logo" className="logo" />
+            <span className="logo-text">Extreme TV</span>
           </div>
           <button
             type="button"
@@ -375,7 +375,7 @@ export default function DiscoverPage() {
           <div className="faq-item">
             <h3>How do I install a pack?</h3>
             <p>
-              Clicking <strong>Install Pack</strong> will trigger a deep link (<code>arvio://install-pack</code>) to launch the ARVIO app on your device and open the import dialog. If you are browsing on another device, copy the URL and paste it under <strong>Settings &gt; Catalogs &gt; Import Catalog Pack</strong> in your app.
+              Clicking <strong>Install Pack</strong> will trigger a deep link (<code>arvio://install-pack</code>) to launch the Extreme TV app on your device and open the import dialog. If you are browsing on another device, copy the URL and paste it under <strong>Settings &gt; Catalogs &gt; Import Catalog Pack</strong> in your app.
             </p>
           </div>
           <div className="faq-item">
@@ -411,7 +411,7 @@ export default function DiscoverPage() {
       </section>
 
       <footer className="discover-footer">
-        <p>ARVIO TV &copy; {new Date().getFullYear()}. Built with premium aesthetics.</p>
+        <p>Extreme TV Network &copy; {new Date().getFullYear()}. Built with premium aesthetics.</p>
       </footer>
 
       <style jsx>{`
