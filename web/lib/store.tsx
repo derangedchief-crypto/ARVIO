@@ -2342,6 +2342,7 @@ export function AppProvider({
     beginTrakt,
     pollTrakt,
     disconnectTrakt,
+    completeXtreamGate,
     connectMdblist,
     disconnectMdblist,
     beginSimkl,
