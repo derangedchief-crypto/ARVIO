@@ -4035,6 +4035,7 @@ class HomeViewModel @Inject constructor(
     private suspend fun loadContinueWatchingFromHistoryStable(): List<ContinueWatchingItem> {
         return try {
             val entries = watchHistoryRepository.getContinueWatching()
+            android.util.Log.e("SyncDebug", "getContinueWatching returned ${entries.size} entries: ${entries.map { "${it.media_type}:${it.show_tmdb_id}:progress=${it.progress}" }}")
             if (entries.isEmpty()) return emptyList()
             val mapped = entries.distinctBy { entry ->
                 "${entry.media_type}:${entry.show_tmdb_id}"
@@ -4071,10 +4072,14 @@ class HomeViewModel @Inject constructor(
                     updatedAtMs = parseContinueWatchingUpdatedAt(entry.updated_at, entry.paused_at)
                 )
             }
-            traktRepository.enrichContinueWatchingItems(mapped)
+            android.util.Log.e("SyncDebug", "mapped ${mapped.size} items before enrichment: ${mapped.map { "${it.mediaType}:${it.id}:progress=${it.progress}" }}")
+            val enriched = traktRepository.enrichContinueWatchingItems(mapped)
+            android.util.Log.e("SyncDebug", "enrichContinueWatchingItems returned ${enriched.size} items")
+            enriched
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("SyncDebug", "loadContinueWatchingFromHistoryStable EXCEPTION: ${e::class.java.simpleName}: ${e.message}", e)
             emptyList()
         }
     }
@@ -4153,11 +4158,16 @@ class HomeViewModel @Inject constructor(
         }
 
         val repairedItems = repairContinueWatchingMetadataIfNeeded(items)
-        return applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
+        android.util.Log.e("SyncDebug", "resolveContinueWatchingItemsStable: items=${items.size} repaired=${repairedItems.size}")
+        val dismissalsFiltered = applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
+        android.util.Log.e("SyncDebug", "after dismissals+sanitize: ${dismissalsFiltered.size}")
+        val finalResult = dismissalsFiltered
             .filter { item ->
                 if (useRemoteSync) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
+        android.util.Log.e("SyncDebug", "resolveContinueWatchingItemsStable FINAL: ${finalResult.size} items")
+        return finalResult
     }
 
     private suspend fun preloadStartupContinueWatchingItems(): List<ContinueWatchingItem> {
