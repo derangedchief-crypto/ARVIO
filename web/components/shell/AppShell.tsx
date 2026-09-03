@@ -17,6 +17,7 @@ import { ExternalPlaybackPrompt } from "./ExternalPlaybackPrompt";
 import { MediaContextMenu } from "./MediaContextMenu";
 import { NoAddonsPrompt } from "./NoAddonsPrompt";
 import { EntitlementGate } from "./Paywall";
+import { isSourceGateComplete, SourceGateScreen } from "./SourceGateScreen";
 import { Toast } from "./Toast";
 import { TopNav } from "./TopNav";
 
@@ -29,12 +30,30 @@ const ACCENTS: Record<string, string> = {
 };
 
 export function AppShell() {
-  const { view, section, settings, selected, activeStream } = useApp();
+  const { view, section, settings, selected, activeStream, activeProfile } = useApp();
   const [mounted, setMounted] = useState(false);
+  const [gateOpen, setGateOpen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // First-run Xtream/Jellyfin gate, mirroring the Android app's onboarding.
+  // Shown once per profile; skipping or completing either step marks it done.
+  // Returning cloud accounts that already synced a home server / playlist
+  // from the Android app skip this automatically — nothing to add.
+  useEffect(() => {
+    if (view !== "app" || !activeProfile?.id) {
+      setGateOpen(false);
+      return;
+    }
+    const alreadyHasSources = (settings.homeServers?.length ?? 0) > 0 || (settings.iptvPlaylists?.length ?? 0) > 0;
+    if (alreadyHasSources) {
+      setGateOpen(false);
+      return;
+    }
+    setGateOpen(!isSourceGateComplete(activeProfile.id));
+  }, [view, activeProfile?.id, settings.homeServers, settings.iptvPlaylists]);
 
   // D-pad / keyboard spatial navigation for TV browsers (Tizen, webOS) and
   // desktop keyboards: arrows move focus, Enter activates, TV Back → Escape.
@@ -107,7 +126,7 @@ export function AppShell() {
       <PlayerOverlay />
       <ExternalPlaybackPrompt />
       <MediaContextMenu />
-      <NoAddonsPrompt />
+      {gateOpen ? <SourceGateScreen onDone={() => setGateOpen(false)} /> : <NoAddonsPrompt />}
       <BackHandler />
       <Toast />
     </main>
