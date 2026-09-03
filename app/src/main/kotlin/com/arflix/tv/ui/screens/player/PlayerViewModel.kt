@@ -4038,6 +4038,7 @@ class PlayerViewModel @Inject constructor(
         isPlaying: Boolean,
         playbackState: Int
     ): Job? {
+        android.util.Log.i("SyncDebug", "PlayerViewModel.saveProgress ENTRY pos=$position dur=$duration percent=$progressPercent isPlaying=$isPlaying state=$playbackState")
         if (duration <= 0) return null
 
         // On pause/stop, replace an in-flight periodic save. During normal playback,
@@ -4126,9 +4127,11 @@ class PlayerViewModel @Inject constructor(
             val shouldPersistWatchHistory = !isPlaying ||
                 currentTime - lastWatchHistorySaveTime >= WATCH_HISTORY_UPDATE_INTERVAL_MS ||
                 hasSeekJump
+            android.util.Log.i("SyncDebug", "Gate check: shouldPersist=$shouldPersistWatchHistory isAtThreshold=$isAtWatchedThreshold isLiveOrSports=$isLiveStreamOrSports")
             if (shouldPersistWatchHistory && !isAtWatchedThreshold && !isLiveStreamOrSports) {
                 lastWatchHistorySaveTime = currentTime
                 lastWatchHistorySavedPositionSeconds = positionSeconds
+                android.util.Log.i("SyncDebug", "About to call watchHistoryRepository.saveProgress pos=$positionSeconds dur=$durationSeconds")
                 val shouldPersistStreamAffinity = positionSeconds >= 30L
                 val streamKey = if (shouldPersistStreamAffinity) buildStreamKey(selectedStream) else null
                 val streamAddonId = if (shouldPersistStreamAffinity) selectedStream?.addonId?.takeIf { it.isNotBlank() } else null

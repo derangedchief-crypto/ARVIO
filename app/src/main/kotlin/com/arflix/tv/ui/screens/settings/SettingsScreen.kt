@@ -239,7 +239,7 @@ class SettingsFocusTracker {
 val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null }
 
 private const val ACCOUNT_DELETION_URL = "https://auth.arvio.tv/delete"
-private const val PRIVACY_POLICY_URL = "https://arvio.tv/privacy"
+private const val PRIVACY_POLICY_URL = "https://extremeiptv.net/applicationspolicy"
 
 // --- Extreme TV Network white-label lock-in ---
 // These are baked in at build time. The IPTV host and Jellyfin server fields are

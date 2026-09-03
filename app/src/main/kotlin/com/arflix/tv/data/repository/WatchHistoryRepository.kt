@@ -130,7 +130,7 @@ class WatchHistoryRepository @Inject constructor(
         streamTitle: String? = null,
         sessionStartTime: Long = 0L
     ) {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return
 
         if (sessionStartTime > 0L) {
             val existingProgress = getProgress(mediaType, tmdbId, season, episode)
@@ -206,11 +206,14 @@ class WatchHistoryRepository @Inject constructor(
         // Retry without stream_* fields if the Supabase schema hasn't been migrated yet.
         var saved = false
         try {
+            android.util.Log.i("SyncDebug", "WatchHistoryRepository: attempting upsertWatchHistory network call")
             executeSupabaseCall("save watch progress") { auth ->
                 supabaseApi.upsertWatchHistory(auth = auth, item = entry.toRecord())
             }
             saved = true
+            android.util.Log.i("SyncDebug", "WatchHistoryRepository: upsertWatchHistory SUCCEEDED")
         } catch (e: HttpException) {
+            android.util.Log.e("SyncDebug", "WatchHistoryRepository: upsertWatchHistory HttpException code=${e.code()} msg=${e.message()}", e)
             try {
                 val fallback = entry.copy(stream_key = null, stream_addon_id = null, stream_title = null)
                 executeSupabaseCall("save watch progress fallback") { auth ->
@@ -219,10 +222,12 @@ class WatchHistoryRepository @Inject constructor(
                 saved = true
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                android.util.Log.e("SyncDebug", "WatchHistoryRepository: fallback save also failed: ${e.message}", e)
                 AppLogger.recordException(e, mapOf("error_area" to "WatchHistoryRepository", "watch_history_phase" to "save_fallback"))
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
+            android.util.Log.e("SyncDebug", "WatchHistoryRepository: generic exception: ${e::class.java.simpleName}: ${e.message}", e)
             AppLogger.e("WatchHistoryRepository", "Error in watch history operation", e)
         }
 
@@ -270,7 +275,7 @@ class WatchHistoryRepository @Inject constructor(
         if (Constants.USE_NETLIFY_CLOUD_SYNC) {
             return cachedWatchHistoryByProfile[profileId].orEmpty()
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId()
+        val userId = authRepositoryProvider.get().awaitResolvedUserId()
             ?: return cachedWatchHistoryByProfile[profileId].orEmpty()
 
         return try {
@@ -319,7 +324,7 @@ class WatchHistoryRepository @Inject constructor(
         if (Constants.USE_NETLIFY_CLOUD_SYNC) {
             return filterLive(cachedContinueWatchingByProfile[profileId].orEmpty())
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId()
+        val userId = authRepositoryProvider.get().awaitResolvedUserId()
         if (userId == null) return filterLive(cachedContinueWatchingByProfile[profileId].orEmpty())
 
         return try {
@@ -364,7 +369,7 @@ class WatchHistoryRepository @Inject constructor(
                     entry.episode == episode
             }
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return null
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return null
 
         return try {
             val records = executeSupabaseCall("get watch history item") { auth ->
@@ -403,7 +408,7 @@ class WatchHistoryRepository @Inject constructor(
                     parseEpoch(entry.updated_at).coerceAtLeast(parseEpoch(entry.paused_at))
                 }
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return null
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return null
         val mediaTypeKey = if (mediaType == MediaType.MOVIE) "movie" else "tv"
 
         return try {
@@ -455,7 +460,7 @@ class WatchHistoryRepository @Inject constructor(
         if (Constants.USE_NETLIFY_CLOUD_SYNC) {
             return
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return
 
         try {
             executeSupabaseCall("remove watch history item") { auth ->
@@ -487,7 +492,7 @@ class WatchHistoryRepository @Inject constructor(
             cachedContinueWatching = emptyList()
             return
         }
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+        val userId = authRepositoryProvider.get().awaitResolvedUserId() ?: return
 
         try {
             executeSupabaseCall("clear watch history") { auth ->

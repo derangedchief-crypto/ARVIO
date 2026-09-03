@@ -1,17 +1,21 @@
 name: Publish Customer Release
 
 # Builds the sideloadStaging APK (release-grade: R8 + resource shrinking +
-# baseline profile, debug-signed) and publishes it as a GitHub Release. This
-# is the build type you've been shipping to customers, so this workflow just
-# formalizes that into an actual GitHub Release instead of a CI artifact.
+# baseline profile) and publishes it as a GitHub Release. This is the build
+# type you've been shipping to customers, so this workflow just formalizes
+# that into an actual GitHub Release instead of a CI artifact.
 #
 # This is the release the in-app updater checks against (AppUpdateRepository
 # hits /repos/{owner}/{repo}/releases/latest), so this workflow is what makes
 # "check for updates" in the app actually work.
 #
-# No keystore secrets needed — sideloadStaging always falls back to debug
-# signing (see app/build.gradle.kts), same as your existing staging builds,
-# so updates install in place over what customers already have.
+# Signed with the stable release keystore stored in repo secrets
+# (RELEASE_KEYSTORE_BASE64/RELEASE_KEYSTORE_PASSWORD/RELEASE_KEY_ALIAS/
+# RELEASE_KEY_PASSWORD). staging automatically picks up signingConfigs.release
+# when its storeFile is set (see app/build.gradle.kts) — this is what makes
+# every release sign identically, so updates install in place instead of
+# hitting a signature conflict. Without this, GitHub Actions would generate a
+# fresh random debug key on every run and no update would ever install cleanly.
 #
 # The GitHub Release itself is labeled as a normal release (tag "vX.Y.Z",
 # not "beta"/"staging") since that's the only thing customers see — the
@@ -68,6 +72,8 @@ jobs:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL: ${{ secrets.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           set -euo pipefail
           cp secrets.defaults.properties secrets.properties
@@ -85,15 +91,47 @@ jobs:
           set_secret TMDB_API_KEY "${TMDB_API_KEY}"
           set_secret ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL "${ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL}"
           set_secret SENTRY_DSN "${SENTRY_DSN}"
+          set_secret SUPABASE_URL "${SUPABASE_URL}"
+          set_secret SUPABASE_ANON_KEY "${SUPABASE_ANON_KEY}"
 
           if [ -z "${TMDB_API_KEY}" ]; then
             echo "::warning::TMDB_API_KEY is not set — Trending/catalog rows will be empty."
           fi
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_ANON_KEY}" ]; then
+            echo "::warning::SUPABASE_URL/SUPABASE_ANON_KEY not set — cloud sync (accounts, watch history, watchlist) will not work in this build."
+          fi
+
+      - name: Restore release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_KEYSTORE_BASE64}" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 is not set. Every build without it gets signed with a fresh random debug key, so updates cannot install over existing installs. Add the 4 keystore secrets before running this again."
+            exit 1
+          fi
+          # keystore.properties itself must sit at the repo root — app/build.gradle.kts
+          # reads it via rootProject.file("keystore.properties"). But the storeFile
+          # VALUE inside it is resolved with plain file(...) from inside app/build.gradle.kts,
+          # which resolves relative to the app/ module directory, not the repo root.
+          # So the keystore itself goes in app/, while the properties value stays
+          # just "release.keystore" (not "app/release.keystore" — that would look
+          # for app/app/release.keystore and fail the same way).
+          echo "${RELEASE_KEYSTORE_BASE64}" | base64 -d > app/release.keystore
+          cat > keystore.properties <<EOF
+          storeFile=release.keystore
+          storePassword=${RELEASE_KEYSTORE_PASSWORD}
+          keyAlias=${RELEASE_KEY_ALIAS}
+          keyPassword=${RELEASE_KEY_PASSWORD}
+          EOF
 
       - name: Build staging APK
         # `staging` = initWith(release): R8 full mode, resource shrinking,
-        # baseline profile, isDebuggable=false. Falls back to debug signing
-        # automatically since no keystore.properties is present.
+        # baseline profile, isDebuggable=false. Picks up signingConfigs.release
+        # automatically now that keystore.properties exists (see above step).
         run: >-
           ./gradlew :app:assembleSideloadStaging
           -x :app:validateReleaseCloudSecrets
@@ -109,14 +147,14 @@ jobs:
             echo "::error::No APK found in app/build/outputs/apk/sideload/staging"
             exit 1
           fi
-          DEST="ARVIO-${{ steps.version.outputs.name }}.apk"
+          DEST="ExtremeTV-${{ steps.version.outputs.name }}.apk"
           cp "$SRC" "$DEST"
           echo "path=$DEST" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: arvio-release-apk
+          name: extremetv-release-apk
           path: ${{ steps.apk.outputs.path }}
           retention-days: 90
 
@@ -124,7 +162,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: arvio-release-mapping
+          name: extremetv-release-mapping
           path: app/build/outputs/mapping/sideloadStaging/mapping.txt
           retention-days: 90
           if-no-files-found: warn
@@ -133,7 +171,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: ARVIO ${{ steps.version.outputs.name }}
+          name: Extreme TV ${{ steps.version.outputs.name }}
           body: ${{ github.event.inputs.release_notes || format('Automated release build from {0}.', github.ref_name) }}
           draft: false
           prerelease: false

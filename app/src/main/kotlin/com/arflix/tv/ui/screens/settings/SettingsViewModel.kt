@@ -85,6 +85,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import javax.inject.Inject
+import com.arflix.tv.util.Constants
 
 enum class ToastType {
     SUCCESS, ERROR, INFO
@@ -2808,6 +2809,18 @@ class SettingsViewModel @Inject constructor(
     fun openCloudEmailPasswordDialog() {
         if (_uiState.value.isLoggedIn) return
         viewModelScope.launch {
+            // Direct-Supabase mode has no device-pairing/approval concept — that's
+            // Netlify-specific infrastructure (ensureCloudAuthSession below hits
+            // auth.arvio.tv, which we don't control). Just show the form.
+            if (!Constants.USE_NETLIFY_CLOUD_SYNC) {
+                _uiState.value = _uiState.value.copy(
+                    showCloudPairDialog = false,
+                    showCloudEmailPasswordDialog = true,
+                    isCloudAuthWorking = false
+                )
+                return@launch
+            }
+
             _uiState.value = _uiState.value.copy(
                 showCloudPairDialog = false,
                 showCloudEmailPasswordDialog = false,
@@ -2861,6 +2874,55 @@ class SettingsViewModel @Inject constructor(
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isCloudAuthWorking = true)
+
+            // Direct-Supabase mode: sign in/up immediately with AuthRepository,
+            // no device code, no approval step, no polling. That whole dance
+            // below is Netlify-specific (auth.arvio.tv issuing/approving codes).
+            if (!Constants.USE_NETLIFY_CLOUD_SYNC) {
+                val authResult = if (createAccount) {
+                    authRepository.signUp(trimmedEmail, password)
+                } else {
+                    authRepository.signIn(trimmedEmail, password)
+                }
+                if (authResult.isFailure) {
+                    _uiState.value = _uiState.value.copy(
+                        isCloudAuthWorking = false,
+                        toastMessage = authResult.exceptionOrNull()?.message
+                            ?: context.getString(R.string.cloud_signin_failed),
+                        toastType = ToastType.ERROR
+                    )
+                    return@launch
+                }
+
+                var restoreResult = withTimeoutOrNull(15_000L) {
+                    restoreCloudStateToLocalInternal(silent = true, pushPendingLocalFirst = false)
+                } ?: CloudRestoreResult.FAILED
+                if (restoreResult == CloudRestoreResult.FAILED) {
+                    delay(1200)
+                    restoreResult = withTimeoutOrNull(15_000L) {
+                        restoreCloudStateToLocalInternal(silent = true, pushPendingLocalFirst = false)
+                    } ?: CloudRestoreResult.FAILED
+                }
+
+                pendingProfileSwitchAfterCloudLogin = false
+                _uiState.value = _uiState.value.copy(
+                    isCloudAuthWorking = false,
+                    showCloudPairDialog = false,
+                    showCloudEmailPasswordDialog = false,
+                    shouldSwitchProfile = true,
+                    toastMessage = when (restoreResult) {
+                        CloudRestoreResult.RESTORED -> "Signed in and restored from cloud"
+                        CloudRestoreResult.NO_BACKUP -> "Signed in successfully"
+                        CloudRestoreResult.FAILED -> "Signed in, but cloud restore failed"
+                    },
+                    toastType = when (restoreResult) {
+                        CloudRestoreResult.FAILED -> ToastType.ERROR
+                        else -> ToastType.SUCCESS
+                    }
+                )
+                return@launch
+            }
+
             val sessionReady = ensureCloudAuthSession(startPolling = false)
             if (sessionReady.isFailure) {
                 clearCloudAuthSession()

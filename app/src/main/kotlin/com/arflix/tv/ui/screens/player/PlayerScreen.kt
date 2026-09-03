@@ -2490,6 +2490,7 @@ fun PlayerScreen(
                 if (shouldReport) {
                     lastProgressReportSecond = currentSecond
                     val progressPercent = (currentPosition.toFloat() / duration.toFloat() * 100).toInt()
+                    android.util.Log.i("SyncDebug", "PlayerScreen calling saveProgress: pos=$currentPosition dur=$duration percent=$progressPercent isPlaying=${exoPlayer.isPlaying}")
                     viewModel.saveProgress(
                         currentPosition,
                         duration,

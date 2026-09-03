@@ -400,6 +400,16 @@ class AuthRepository @Inject constructor(
                 codeVerifierCache = MemoryCodeVerifierCache()
                 autoLoadFromStorage = true
                 autoSaveToStorage = true
+                // The SDK's own background auto-refresh timer runs independently of
+                // AuthRepository.refreshAccessToken()/ensureValidSession() below, with
+                // no shared lock between them. Both could fire near-simultaneously with
+                // the same refresh token: one rotates it, the other then fails with
+                // refresh_token_already_used using the now-stale token — and since nothing
+                // cleared that dead token, every subsequent attempt (from either path,
+                // on every device signed into this account) kept retrying it forever.
+                // Disabling this makes AuthRepository's mutex-guarded refresh the only
+                // path that can ever refresh a token.
+                alwaysAutoRefresh = false
             }
             install(Postgrest)
         }
@@ -407,6 +417,35 @@ class AuthRepository @Inject constructor(
 
     // Auth state
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
+    // Serializes token-refresh attempts. Without this, the Supabase SDK's own
+    // background auto-refresh timer and this repository's manual fallback
+    // (ensureValidSession/getAccessToken) could both fire near-simultaneously
+    // with the same stored refresh token — one succeeds and rotates it, the
+    // other then fails with refresh_token_already_used using the now-stale
+    // token. Previously that failure was silently swallowed and the same
+    // dead token stayed in storage, so every subsequent call kept retrying
+    // it forever (observed as a continuous /token 400 loop server-side,
+    // hundreds of requests/minute, from multiple devices on the same
+    // account). This mutex plus invalidateDeadSession() below closes that.
+    private val refreshMutex = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Clears just the stale/dead session tokens (not the user's local app
+     * data) and marks auth as NotAuthenticated, so callers stop retrying a
+     * refresh token that will never work again and the user cleanly sees
+     * "please sign in" instead of silent infinite retries.
+     */
+    private suspend fun invalidateDeadSession() {
+        runCatching {
+            context.authDataStore.edit { prefs ->
+                prefs.remove(PrefsKeys.ACCESS_TOKEN)
+                prefs.remove(PrefsKeys.REFRESH_TOKEN)
+            }
+        }
+        if (_authState.value !is AuthState.Loading) {
+            _authState.value = AuthState.NotAuthenticated
+        }
+    }
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
     // User profile
@@ -613,11 +652,45 @@ class AuthRepository @Inject constructor(
             AppLogger.breadcrumb("Auth", "email_sign_up_start")
             _authState.value = AuthState.Loading
 
-            val tokens = createCloudAccountSession(normalizedEmail, password)
-            signInWithSessionTokens(tokens.accessToken, tokens.refreshToken).also {
-                if (it.isSuccess) {
-                    AppLogger.breadcrumb("Auth", "email_sign_up_success")
+            if (Constants.USE_NETLIFY_CLOUD_SYNC) {
+                val tokens = createCloudAccountSession(normalizedEmail, password)
+                return signInWithSessionTokens(tokens.accessToken, tokens.refreshToken).also {
+                    if (it.isSuccess) {
+                        AppLogger.breadcrumb("Auth", "email_sign_up_success_netlify")
+                    }
                 }
+            }
+
+            // Direct-Supabase signup — no Netlify functions involved. Mirrors the
+            // load-or-create-profile pattern already used in signIn()'s non-Netlify branch.
+            supabase.auth.signUpWith(Email) {
+                this.email = normalizedEmail
+                this.password = password
+            }
+
+            val session = supabase.auth.currentSessionOrNull()
+            val user = session?.user
+
+            if (user != null) {
+                storeSession(session)
+
+                var profile = loadUserProfile(user.id)
+                if (profile == null) {
+                    profile = createDefaultProfile(user.id, user.email ?: normalizedEmail)
+                }
+
+                _userProfile.value = profile
+                _authState.value = AuthState.Authenticated(user.id, user.email ?: normalizedEmail, profile)
+                AppLogger.breadcrumb("Auth", "email_sign_up_success")
+                Result.success(Unit)
+            } else {
+                // Most self-hosted setups require email confirmation before a session
+                // is issued, so this is the expected outcome right after signup, not
+                // necessarily an error — surface it as such rather than a hard failure.
+                val message = context.getString(R.string.auth_confirmation_email_sent)
+                _authState.value = AuthState.Error(message)
+                AppLogger.breadcrumb("Auth", "email_sign_up_no_session", severity = "warning")
+                Result.failure(Exception(message))
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -1026,6 +1099,24 @@ class AuthRepository @Inject constructor(
         }
     }
 
+    /**
+     * Like getCurrentUserId(), but waits for the initial session restore to
+     * finish first instead of racing it. On cold start, authState begins as
+     * Loading while the saved session is read from disk asynchronously —
+     * calling getCurrentUserId() during that window returns null even for a
+     * signed-in user, which silently short-circuits callers like
+     * WatchHistoryRepository.getContinueWatching() into an empty result with
+     * no retry. This waits (bounded by timeoutMs) until authState resolves
+     * to something other than Loading before deciding.
+     */
+    suspend fun awaitResolvedUserId(timeoutMs: Long = 5_000L): String? {
+        if (_authState.value !is AuthState.Loading) return getCurrentUserId()
+        val resolved = withTimeoutOrNull(timeoutMs) {
+            authState.first { it !is AuthState.Loading }
+        }
+        return (resolved as? AuthState.Authenticated)?.userId ?: getCurrentUserId()
+    }
+
     fun getCurrentUserEmail(): String? {
         return when (val state = _authState.value) {
             is AuthState.Authenticated -> state.email
@@ -1103,16 +1194,25 @@ class AuthRepository @Inject constructor(
 
         if (Constants.USE_NETLIFY_CLOUD_SYNC) {
             refreshNetlifyAccessToken(refreshToken)?.let { return it }
+            return null
         }
 
-        return try {
-            val refreshed = supabase.auth.refreshSession(refreshToken)
-            storeSession(refreshed)
-            refreshed.accessToken
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            null
+        return refreshMutex.withLock {
+            // Re-read after acquiring the lock: another caller may have
+            // already refreshed (and rotated the token) while we were
+            // waiting, in which case retrying with the token we read above
+            // would itself fail with refresh_token_already_used.
+            val currentToken = context.authDataStore.data.first()[PrefsKeys.REFRESH_TOKEN]
+            if (currentToken.isNullOrBlank()) return@withLock null
+            try {
+                val refreshed = supabase.auth.refreshSession(currentToken)
+                storeSession(refreshed)
+                refreshed.accessToken
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                invalidateDeadSession()
+                null
+            }
         }
     }
 
@@ -1187,14 +1287,19 @@ class AuthRepository @Inject constructor(
             return null
         }
 
-        return try {
-            val refreshed = supabase.auth.refreshSession(refreshToken)
-            storeSession(refreshed)
-            refreshed
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            null
+        return refreshMutex.withLock {
+            // Re-read after acquiring the lock — see comment in refreshAccessToken().
+            val currentToken = context.authDataStore.data.first()[PrefsKeys.REFRESH_TOKEN]
+            if (currentToken.isNullOrBlank()) return@withLock null
+            try {
+                val refreshed = supabase.auth.refreshSession(currentToken)
+                storeSession(refreshed)
+                refreshed
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                invalidateDeadSession()
+                null
+            }
         }
     }
 
