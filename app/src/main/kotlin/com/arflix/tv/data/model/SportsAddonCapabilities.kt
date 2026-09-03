@@ -147,6 +147,12 @@ object SportsAddonCapabilities {
     fun isLiveStreamAddonId(addonId: String?): Boolean {
         val id = addonId?.trim()?.lowercase(Locale.US) ?: return false
         if (id.contains("cinemeta") || id.contains("tmdb") || id.contains("torrentio")) return false
+        // Anything explicitly labeled VOD is never live, even if it also matches
+        // "iptv"/"tv" patterns below (e.g. "iptv_xtream_vod" — the addon id used
+        // for all Xtream movies/series — was being caught by the generic "iptv"
+        // check, which silently excluded every Xtream VOD title from watch
+        // history / continue watching, since they were being classified as live.
+        if (id.contains("vod")) return false
         return id.contains("livetv") || id.contains("live_tv") ||
             id.contains("live-tv") || id.contains("live_stream") ||
             id.contains("livestream") || id.contains("live-stream") ||
