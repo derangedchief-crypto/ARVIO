@@ -2003,6 +2003,29 @@ input:focus {
   font-size: 13px;
 }
 .login-submit { width: 100%; }
+.login-input {
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 15px;
+}
+.login-input:focus {
+  outline: none;
+  border-color: #0bfab6;
+}
+.login-switch-mode {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  text-align: center;
+}
 /* Sign-up variant: the submit is an <a> to the auth site. Keep it identical to
    the .primary button and centre its label. */
 a.login-submit {
