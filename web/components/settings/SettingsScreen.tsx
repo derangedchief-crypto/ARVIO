@@ -598,13 +598,13 @@ function SectionBody({ section }: { section: SectionId }) {
             // Movies and series always open in an external player now, so this
             // choice only routes Live TV. Saying otherwise here would be the
             // same broken promise we removed from the source list.
-            hint="Movies and series always open in an external player like VLC. This picks where Live TV channels play; ARVIO still syncs Trakt when you return"
+            hint="Movies and series always open in an external player like VLC. This picks where Live TV channels play; Extreme TV still syncs Trakt when you return"
           >
             <Select
               value={settings.defaultPlayer}
               onChange={(v) => set({ defaultPlayer: v })}
               options={[
-                ["browser", "ARVIO player (browser)"],
+                ["browser", "Extreme TV player (browser)"],
                 ["vlc", "VLC"],
                 ["infuse", "Infuse"],
               ]}
@@ -1351,10 +1351,10 @@ function AccountsSection() {
 
   return (
     <>
-      <Panel title="ARVIO Account">
+      <Panel title="Extreme TV Account">
         {!cloudConfigured && (
           <p className="empty">
-            ARVIO Cloud backend env is missing. Add backend values in
+            Extreme TV Cloud backend env is missing. Add backend values in
             web/.env.local.
           </p>
         )}
@@ -1403,7 +1403,7 @@ function AccountsSection() {
             <UserCircle size={34} />
             <div className="account-copy">
               <strong>{auth.email}</strong>
-              <span title={auth.userId}>ARVIO Cloud account</span>
+              <span title={auth.userId}>Extreme TV Cloud account</span>
             </div>
             <button type="button" className="secondary" onClick={signOut}>
               <LogOut size={18} /> Sign out
@@ -1417,7 +1417,7 @@ function AccountsSection() {
               disabled={!cloudConfigured}
               onClick={redirectToAuthPortal}
             >
-              Sign In with ARVIO Cloud
+              Sign In with Extreme TV Cloud
             </button>
           </div>
         )}
@@ -1889,7 +1889,7 @@ function TelegramSection() {
       <p className="empty">
         Connect your Telegram account to stream video files from your chats and
         channels as sources — the same feature as the Android app. Everything
-        runs in your browser; nothing is sent to ARVIO servers.
+        runs in your browser; nothing is sent to Extreme TV servers.
       </p>
 
       {authState.k === "idle" && !usePhone && (
@@ -2649,7 +2649,7 @@ function VlcSection() {
 
       <Row
         label="Protocol Handler Status"
-        hint="When enabled, ARVIO launches streams directly via vlc:// instead of saving .m3u playlist files"
+        hint="When enabled, Extreme TV launches streams directly via vlc:// instead of saving .m3u playlist files"
       >
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           {isMac() ? (
