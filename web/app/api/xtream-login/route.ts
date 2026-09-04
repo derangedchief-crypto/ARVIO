@@ -19,8 +19,11 @@ function collectPackageLabels(value: unknown, out: string[], depth = 0) {
   }
   if (value && typeof value === "object") {
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      // Skip fields that are credentials/tokens, not package descriptions.
-      if (/pass|token|auth$/i.test(key)) continue;
+      // Matches Android exactly: only the literal "username"/"password" keys
+      // are skipped, not a broad pattern — a broader filter risks silently
+      // dropping legitimate package-label text.
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === "username" || lowerKey === "password") continue;
       collectPackageLabels(item, out, depth + 1);
     }
   }
