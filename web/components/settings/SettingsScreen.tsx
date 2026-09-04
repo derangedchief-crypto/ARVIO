@@ -1240,6 +1240,7 @@ function AccountsSection() {
     pollSimkl,
     disconnectSimkl,
     refreshData,
+    goToLogin,
   } = useApp();
   const [traktError, setTraktError] = useState<string | null>(null);
   const [traktBusy, setTraktBusy] = useState<"start" | "poll" | null>(null);
@@ -1257,8 +1258,7 @@ function AccountsSection() {
   if (mdblistConnected) routingOptions.push(["mdblist", "MDBList"]);
 
   const redirectToAuthPortal = () => {
-    const redirectUri = window.location.origin + "/";
-    window.location.href = `${getAuthPortalUrl()}?redirect_uri=${encodeURIComponent(redirectUri)}`;
+    goToLogin();
   };
 
   const startTraktLink = async () => {
