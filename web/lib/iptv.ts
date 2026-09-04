@@ -558,7 +558,72 @@ async function fetchXtreamJson<T>(url: string, headers: Record<string, string>) 
 
 function jsonFromText<T>(text: string) {
   if (isHtmlText(text)) throw new Error("The remote service returned an HTML error page instead of API data.");
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    // Some Xtream panels emit a single malformed entry (an unescaped
+    // control character in a category/channel name is the common case) that
+    // breaks JSON.parse for the *entire* response, even though everything
+    // before that point is valid. Rather than losing the whole list over one
+    // bad entry, salvage every complete element up to the break point.
+    const repaired = repairTruncatedJsonArray(text);
+    if (repaired !== null) {
+      console.warn("[IPTV] JSON response was malformed, recovered partial data:", error);
+      return repaired as T;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Attempts to recover a JSON array (the shape of every Xtream player_api.php
+ * response used here) that's invalid past some point, by repeatedly trying
+ * to close the array earlier and earlier until something parses. Returns
+ * null if the text isn't array-shaped or nothing recoverable is found.
+ */
+function repairTruncatedJsonArray(text: string): unknown[] | null {
+  const start = text.indexOf("[");
+  if (start === -1) return null;
+
+  // Try closing the array at each top-level element boundary, walking
+  // backwards from the end, so we only cut off the broken tail.
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  const boundaries: number[] = [];
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{" || ch === "[") depth++;
+    if (ch === "}" || ch === "]") {
+      depth--;
+      if (depth === 1 && ch === "}") boundaries.push(i);
+    }
+  }
+
+  for (let i = boundaries.length - 1; i >= 0; i--) {
+    const candidate = text.slice(start, boundaries[i] + 1) + "]";
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {
+      // keep walking backwards
+    }
+  }
+  return null;
 }
 
 function isHtmlText(text: string) {
