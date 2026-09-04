@@ -2132,8 +2132,29 @@ export function AppProvider({
       };
       setSettings((prev) => ({ ...prev, iptvPlaylists: [entry] }));
 
+      // Mirrors Android's applyPackageEntitlements exactly: the real signal
+      // is almost always the live TV *category* names (e.g. "USA | CLOUD
+      // STREAM"), not the plain account fields from the login response —
+      // those rarely carry a package/plan name at all. Load a snapshot here
+      // so the category names are available before resolving.
+      let categoryLabels: string[] = [];
+      try {
+        const snapshot = await loadIptvSnapshot([entry], [], [], [], [], {});
+        categoryLabels = Object.keys(snapshot.grouped ?? {});
+        if (categoryLabels.length === 0) {
+          categoryLabels = (snapshot.channels ?? []).map((c) => c.group).filter(Boolean);
+        }
+      } catch (error) {
+        console.error("[XtreamGate] snapshot load for entitlement check failed:", error);
+      }
+
       const { applyCloudStreamEntitlement } = await import("./entitlements");
-      await applyCloudStreamEntitlement(packageLabels, addonsRef.current, installAddon, removeAddon);
+      await applyCloudStreamEntitlement(
+        [...categoryLabels, ...packageLabels],
+        addonsRef.current,
+        installAddon,
+        removeAddon
+      );
 
       setView("profiles");
     },
