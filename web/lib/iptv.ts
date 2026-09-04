@@ -503,7 +503,10 @@ async function fetchXtreamChannels(playlist: IptvPlaylistEntry, options: IptvLoa
   const categoriesUrl = buildXtreamPlayerApiUrl(info.baseUrl, info.username, info.password, "get_live_categories");
   const [streams, categories] = await Promise.all([
     fetchXtreamJson<XtreamStream[]>(streamsUrl, headers),
-    fetchXtreamJson<XtreamCategory[]>(categoriesUrl, headers).catch(() => [] as XtreamCategory[])
+    fetchXtreamJson<XtreamCategory[]>(categoriesUrl, headers).catch((error) => {
+      console.error("[IPTV] get_live_categories failed, channels will be Uncategorized:", error);
+      return [] as XtreamCategory[];
+    })
   ]);
   if (!Array.isArray(streams)) return [];
   const groupById = new Map(

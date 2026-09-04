@@ -50,14 +50,23 @@ export async function applyCloudStreamEntitlement(
 ): Promise<void> {
   try {
     const resolution = resolveCloudStreamEntitlement(labels);
+    console.log("[Entitlements] labels received:", labels);
+    console.log("[Entitlements] resolution:", resolution);
     if (resolution.kind === "unresolved") return;
 
     const manifestUrl = config.entitlementCloudStreamManifestUrl;
     const existing = addons.find((addon) => addon.manifestUrl === manifestUrl);
 
     if (resolution.granted) {
-      if (!existing) await installAddon(manifestUrl);
+      if (!existing) {
+        console.log("[Entitlements] installing addon:", manifestUrl);
+        await installAddon(manifestUrl);
+        console.log("[Entitlements] install call completed");
+      } else {
+        console.log("[Entitlements] addon already installed, skipping");
+      }
     } else if (existing) {
+      console.log("[Entitlements] revoking addon:", manifestUrl);
       await removeAddon(existing);
     }
   } catch (error) {

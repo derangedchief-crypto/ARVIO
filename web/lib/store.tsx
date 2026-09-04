@@ -2141,11 +2141,7 @@ export function AppProvider({
   );
 
   const goToLogin = useCallback(() => {
-    if (typeof window !== "undefined") {
-      const redirectUri = window.location.origin + "/";
-      const portalUrl = getAuthPortalUrl();
-      window.location.href = `${portalUrl}?redirect_uri=${encodeURIComponent(redirectUri)}`;
-    }
+    setView("login");
   }, []);
   const backToProfiles = useCallback(() => setView("profiles"), []);
 
