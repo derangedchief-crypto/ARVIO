@@ -19,6 +19,16 @@ export const config = {
   xtreamGateHostUrl: "https://tv.extremeiptv.net",
   entitlementCloudStreamManifestUrl: envValue(process.env.NEXT_PUBLIC_ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL, ""),
   entitlementCloudStreamKeyword: "cloud stream",
+  // 1-Stream billing panel "ext" API — server-side only (no NEXT_PUBLIC_
+  // prefix, so this never reaches the browser bundle). Used to resolve a
+  // customer's actual bouquet/package names directly from the panel
+  // instead of Xtream's get_live_categories, which silently truncates on
+  // large channel counts (26k+ streams) and was causing missed Cloud
+  // Stream entitlement matches. Set these in your deployment's env, never
+  // commit real values.
+  panelApiBaseUrl: envValue(process.env.PANEL_API_BASE_URL, ""),
+  panelApiKey: envValue(process.env.PANEL_API_KEY, ""),
+  panelAuthUser: envValue(process.env.PANEL_AUTH_USER, ""),
   // Web subscription: the Ko-fi membership page the paywall links to, and a
   // master switch to enable the paywall (off by default so nothing changes for
   // users until you flip it in the environment).
