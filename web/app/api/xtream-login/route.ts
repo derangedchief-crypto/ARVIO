@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import { fetchPanelBouquetLabels } from "@/lib/panelApi";
 
 // Mirrors com.arflix.tv.data.repository.IptvRepository.verifyXtreamLogin +
 // collectXtreamPackageLabels on Android: same endpoint, same auth/status
@@ -81,5 +82,13 @@ export async function POST(request: NextRequest) {
   const labels: string[] = [];
   collectPackageLabels(parsed, labels, 0);
 
-  return NextResponse.json({ success: true, packageLabels: labels.slice(0, 500) });
+  // Reliable source: the billing panel's own bouquet list for this line,
+  // fetched via the admin ext API. Doesn't depend on Xtream's
+  // get_live_categories, which truncates on large channel counts and was
+  // causing intermittent missed Cloud Stream matches. Merged in alongside
+  // the harvested login-response labels; a panel lookup failure never
+  // blocks login since fetchPanelBouquetLabels always resolves to [].
+  const panelLabels = await fetchPanelBouquetLabels(username);
+
+  return NextResponse.json({ success: true, packageLabels: [...labels, ...panelLabels].slice(0, 500) });
 }
