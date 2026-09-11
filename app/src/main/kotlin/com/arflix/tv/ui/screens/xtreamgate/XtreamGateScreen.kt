@@ -58,11 +58,27 @@ import com.arflix.tv.ui.theme.TextTertiary
 import com.arflix.tv.ui.theme.appBackgroundDark
 
 /**
- * Optional Xtream login step for Extreme TV Network — the first of two skippable
- * onboarding screens shown on first launch (Xtream, then Jellyfin). The user can sign
- * in or skip; either way they proceed to the Jellyfin step next. The Xtream host
- * itself is fixed (see FIXED_XTREAM_HOST_URL in SettingsScreen.kt / the matching
- * constant in XtreamGateViewModel) and is never shown as an editable field here.
+ * Set to true to re-enable the "Skip for now" opt-out on the Xtream gate.
+ *
+ * Keep the entire skip block behind this flag rather than commenting out only the
+ * label: a `Box` that still carries `Modifier.clickable` renders no content but is
+ * still an invisible tap target on touch and still takes D-pad focus on TV, so the
+ * user can trigger skip by accident and focus appears to vanish.
+ */
+private const val SHOW_SKIP_BUTTON = false
+
+/**
+ * Mandatory Xtream login step for Extreme TV Network — the first of the two
+ * onboarding screens shown on first launch (Xtream, then Jellyfin). The user signs in
+ * here and then proceeds to the Jellyfin step. The Xtream host itself is fixed (see
+ * FIXED_XTREAM_HOST_URL in SettingsScreen.kt / the matching constant in
+ * XtreamGateViewModel) and is never shown as an editable field here.
+ *
+ * The "Skip for now" opt-out is currently disabled via [SHOW_SKIP_BUTTON]; the
+ * [onSkip] callback is kept so the navigation graph wiring stays intact if the
+ * opt-out is restored. Note that hiding the button is not enforcement — verify that
+ * BACK press and any other caller of [XtreamGateViewModel.skip] cannot bypass the
+ * gate either.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -138,7 +154,11 @@ fun XtreamGateScreen(
                 Spacer(6.dp)
 
                 Text(
-                    text = "Sign in with your Xtream account, or skip for now",
+                    text = if (SHOW_SKIP_BUTTON) {
+                        "Sign in with your Xtream account, or skip for now"
+                    } else {
+                        "Sign in with your Xtream account to continue"
+                    },
                     fontSize = 13.sp,
                     color = Color.White.copy(alpha = 0.6f)
                 )
@@ -220,22 +240,28 @@ fun XtreamGateScreen(
                         .onFocusChanged { if (it.isFocused) focusedField = "button" }
                 )
 
-                Spacer(16.dp)
+                // Skip opt-out: fully removed from the layout (no spacer, no invisible
+                // hit target, no focusable node) while SHOW_SKIP_BUTTON is false.
+                if (SHOW_SKIP_BUTTON) {
+                    Spacer(16.dp)
 
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(enabled = !uiState.isSubmitting) {
-                            keyboardController?.hide()
-                            viewModel.skip(onSkip = onSkip)
-                        }
-                        .padding(vertical = 8.dp, horizontal = 12.dp)
-                ) {
-                    Text(
-                        text = "Skip for now",
-                        fontSize = 13.sp,
-                        color = Color.White.copy(alpha = if (uiState.isSubmitting) 0.3f else 0.55f)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(enabled = !uiState.isSubmitting) {
+                                keyboardController?.hide()
+                                viewModel.skip(onSkip = onSkip)
+                            }
+                            .padding(vertical = 8.dp, horizontal = 12.dp)
+                    ) {
+                        Text(
+                            text = "Skip for now",
+                            fontSize = 13.sp,
+                            color = Color.White.copy(
+                                alpha = if (uiState.isSubmitting) 0.3f else 0.55f
+                            )
+                        )
+                    }
                 }
             }
         }
