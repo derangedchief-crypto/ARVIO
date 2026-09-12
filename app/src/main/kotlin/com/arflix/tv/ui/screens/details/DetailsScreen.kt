@@ -4074,12 +4074,18 @@ private fun EpisodeCard(
                     .fillMaxSize()
                     .background(
                         brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Black.copy(alpha = 0.18f),
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.28f),
-                                Color.Black.copy(alpha = 0.86f)
-                            )
+                            // Text sits in the bottom ~35-40% of the card (title + up to
+                            // 4 lines of description), but the old 4-stop gradient only
+                            // reached its darkest point right at the very bottom edge —
+                            // most of the text was actually sitting in a much lighter
+                            // ~0.28-alpha zone, unreadable against bright thumbnails.
+                            // Ramping to near-full darkness earlier keeps the whole text
+                            // block on a consistently dark backing regardless of image content.
+                            0.0f to Color.Black.copy(alpha = 0.18f),
+                            0.35f to Color.Black.copy(alpha = 0.12f),
+                            0.55f to Color.Black.copy(alpha = 0.55f),
+                            0.72f to Color.Black.copy(alpha = 0.82f),
+                            1.0f to Color.Black.copy(alpha = 0.94f)
                         )
                     )
             )
