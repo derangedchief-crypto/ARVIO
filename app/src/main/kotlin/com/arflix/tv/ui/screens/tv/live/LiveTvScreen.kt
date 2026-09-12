@@ -2360,6 +2360,18 @@ fun LiveTvScreen(
         }
     }
     LaunchedEffect(currentStreamUrl, playingCatchupProgram, catchupUrlAnchorOffsetMs, playingChannel?.id) {
+        // Debounce: rapid channel changes (holding channel-down, fast zapping)
+        // previously rebuilt the native decoder — exoPlayer.stop() -> clearMediaItems()
+        // -> setMediaItem() -> prepare() — on every single intermediate channel with
+        // no throttling at all. Native decoder teardown isn't instant, so quick
+        // repeated changes could leave more than one codec instance alive in native
+        // memory at once, which is a well-known way to exhaust memory and crash
+        // natively on low-RAM TV hardware. LaunchedEffect cancels this coroutine
+        // outright when its keys change again, so this delay is a real, clean
+        // cancellation point — only the channel the user actually settles on for
+        // longer than the debounce window ever reaches the expensive resolve+prepare
+        // work below; every skipped-through channel in between costs nothing.
+        delay(250L)
         val rawStream = currentStreamUrl ?: return@LaunchedEffect
         val sourceChannel = playingChannel?.source
         val streamProgram = playingCatchupProgram?.shiftedForCatchup(catchupUrlAnchorOffsetMs)
