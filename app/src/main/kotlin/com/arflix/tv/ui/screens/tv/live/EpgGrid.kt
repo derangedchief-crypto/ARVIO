@@ -278,7 +278,19 @@ fun EpgGrid(
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channelIndexById[id] ?: return@LaunchedEffect
         channelListState.scrollToItem(idx)
-        runCatching { selectedChannelFocusRequester.requestFocus() }
+        // Mirrors the focusEpgSignal effect below: right after a big layout
+        // change (e.g. collapsing back out of fullscreen), the target row may
+        // not be composed/measured yet, so a single requestFocus() attempt can
+        // silently fail (runCatching was swallowing "FocusRequester is not
+        // initialized"). With no retry, nothing ended up focused in the guide
+        // at all — the remote then has no focused view to deliver key events
+        // to, which presents as the whole screen being frozen/locked up, even
+        // though playback itself was fine the whole time.
+        for (attempt in 0 until 6) {
+            val succeeded = runCatching { selectedChannelFocusRequester.requestFocus() }.isSuccess
+            if (succeeded) break
+            delay(50L)
+        }
         handledSelectedFocusSignal = focusSelectedChannelSignal
     }
 
