@@ -73,7 +73,10 @@ class CrashReportActivity : ComponentActivity() {
         const val EXTRA_CRASH_ID = "extra_crash_id"
         const val EXTRA_CRASH_MSG = "extra_crash_msg"
         const val EXTRA_CRASH_TIME = "extra_crash_time"
-        const val DISCORD_BUG_CHANNEL_URL = "https://discord.gg/UavuEYMfQ4"
+        // No Discord server set up yet. Once you create one, put its invite
+        // link here and restore the "Report on Discord" button below (it
+        // currently just copies to clipboard).
+        // const val DISCORD_BUG_CHANNEL_URL = "https://discord.gg/your-invite-code"
     }
 }
 
@@ -111,7 +114,7 @@ fun CrashReportScreen(
 
     val formattedReport = remember(crashId, sentryLink, crashMsg, crashVersion, timeString) {
         """
-        **🚨 ARVIO Crash Report**
+        **🚨 Extreme TV Crash Report**
         **Crash ID:** `$crashId`
         **Sentry Link:** $sentryLink
         **Version:** $crashVersion
@@ -123,7 +126,7 @@ fun CrashReportScreen(
     val webBridgeUrl = remember(crashId, crashVersion, crashMsg, crashTime) {
         val encodedErr = Uri.encode(crashMsg.take(300))
         val encodedV = Uri.encode(crashVersion)
-        "https://arvio.tv/report?id=$crashId&v=$encodedV&err=$encodedErr&t=$crashTime"
+        "https://app.extremeiptv.net/report?id=$crashId&v=$encodedV&err=$encodedErr&t=$crashTime"
     }
 
     Box(
@@ -150,9 +153,9 @@ fun CrashReportScreen(
 
             Text(
                 text = if (isTv) {
-                    "Scan the QR code below with your phone camera to automatically copy the crash report & open our Discord bug channel."
+                    "Scan the QR code below with your phone camera to copy the crash report."
                 } else {
-                    "We apologize for the interruption. You can report this crash directly to our Discord channel to help us fix it."
+                    "We apologize for the interruption. You can copy this crash report to send to Extreme TV support."
                 },
                 color = Color(0xFFA0A6B2),
                 fontSize = 14.sp,
@@ -160,7 +163,7 @@ fun CrashReportScreen(
             )
 
             if (isTv) {
-                // TV layout: Show clean QR Code prominently pointing to arvio.tv/report
+                // TV layout: Show clean QR Code prominently pointing to app.extremeiptv.net/report
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = Color.White,
@@ -176,7 +179,7 @@ fun CrashReportScreen(
                 }
 
                 Text(
-                    text = "Scan to open arvio.tv — 1 tap to copy report & jump into Discord.",
+                    text = "Scan to open app.extremeiptv.net and copy your crash report.",
                     color = Color(0xFF00F0D0),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -222,18 +225,13 @@ fun CrashReportScreen(
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val clip = ClipData.newPlainText("Extreme TV Crash Report", formattedReport)
                             clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Crash details copied! Opening Discord...", Toast.LENGTH_LONG).show()
-
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(CrashReportActivity.DISCORD_BUG_CHANNEL_URL)).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
+                            Toast.makeText(context, "Crash details copied to clipboard!", Toast.LENGTH_LONG).show()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5865F2)),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Report on Discord", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Copy Crash Report", color = Color.White, fontWeight = FontWeight.SemiBold)
                     }
                 }
 

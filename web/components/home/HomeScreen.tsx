@@ -164,7 +164,7 @@ export function HomeScreen() {
             </div>
             <p>
               {(() => {
-                const desc = displayHero.overview || displayHero.subtitle || "Continue from your ARVIO library.";
+                const desc = displayHero.overview || displayHero.subtitle || "Continue from your Extreme TV library.";
                 return desc.length > 150 ? desc.slice(0, 150) + "..." : desc;
               })()}
             </p>

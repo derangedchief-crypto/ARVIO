@@ -1465,7 +1465,7 @@ function VideoPlayer({
           <span>
             {liveTv
               ? "Most IPTV providers serve live channels over plain HTTP, which a secure web page can't play (mixed content), and many also block anything that isn't a real player app. Open it in VLC — it plays the exact same stream from your own connection, with no browser restrictions."
-              : "This title's versions use a codec (often Dolby Vision or HEVC) your browser can't render. Open it in an external player, which decodes anything — ARVIO still tracks your progress on Trakt when you come back."}
+              : "This title's versions use a codec (often Dolby Vision or HEVC) your browser can't render. Open it in an external player, which decodes anything — Extreme TV still tracks your progress on Trakt when you come back."}
           </span>
           <div className="player-error-actions">
             <button type="button" className="player-error-external" onClick={() => openExternal("vlc", stream)}>

@@ -53,7 +53,7 @@ export class AuthClient {
   }
 
   private async netlifyAuth<T>(path: string, body: Record<string, unknown>) {
-    if (!hasNetlifyBackendConfig()) throw new Error("ARVIO backend is not configured");
+    if (!hasNetlifyBackendConfig()) throw new Error("Extreme TV backend is not configured");
     return jsonRequest<T>(`${config.netlifyBackendUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`, {
       method: "POST",
       headers: {
@@ -149,7 +149,7 @@ export class AuthClient {
 
   async supabase<T>(path: string, init: RequestInit = {}) {
     if (this.isNetlifySession) {
-      throw new Error("This ARVIO Cloud session must use the ARVIO backend sync API.");
+      throw new Error("This Extreme TV Cloud session must use the Extreme TV backend sync API.");
     }
     const token = await this.accessToken();
     return jsonRequest<T>(`${config.supabaseUrl}${path}`, {

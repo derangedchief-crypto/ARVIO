@@ -44,7 +44,7 @@ export const parityFeatures: ParityFeature[] = [
   },
   {
     id: "cloud",
-    area: "ARVIO Cloud",
+    area: "Extreme TV Cloud",
     androidSource: "AuthRepository + CloudSyncRepository",
     webSource: "auth + cloud + store",
     status: "partial",

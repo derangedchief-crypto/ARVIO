@@ -28,7 +28,7 @@ export function TopNav() {
   return (
     <>
       {/* Desktop/Tablet Sidebar / TopNav */}
-      <aside className={`sidebar ${scrolled ? "is-scrolled" : ""}`} aria-label="ARVIO navigation">
+      <aside className={`sidebar ${scrolled ? "is-scrolled" : ""}`} aria-label="Extreme TV navigation">
         <div className="profile-cluster">
           <button type="button" className="brand" onClick={switchProfile} aria-label="Switch profile">
             {activeProfile ? <ProfileAvatarVisual profile={activeProfile} avatarImages={avatarImages} /> : <img src="/arvio-logo.svg" alt="" />}
@@ -73,7 +73,7 @@ export function TopNav() {
       <header className={`mobile-header ${scrolled ? "is-scrolled" : ""}`}>
         <div className="mobile-brand">
           <img src="/arvio-logo.svg" alt="" className="mobile-brand-logo" />
-          <img src="/arvio-wordmark.svg" alt="ARVIO" className="mobile-wordmark" />
+          <img src="/arvio-wordmark.svg" alt="Extreme TV" className="mobile-wordmark" />
         </div>
         <button
           type="button"

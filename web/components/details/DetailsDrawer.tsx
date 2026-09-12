@@ -200,7 +200,7 @@ function DetailsView({ item }: { item: MediaItem }) {
         else await syncClient().addToHistory(ref);
         saved = true;
       }
-      setToast(saved ? (alreadyWatched ? "Removed from watched." : "Marked as watched.") : "Connect ARVIO Cloud, Trakt or MDBList to sync watched state.");
+      setToast(saved ? (alreadyWatched ? "Removed from watched." : "Marked as watched.") : "Connect Extreme TV Cloud, Trakt or MDBList to sync watched state.");
       if (saved) void refreshData();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Could not update watched state.");

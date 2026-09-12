@@ -6,6 +6,7 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
+import android.view.LayoutInflater
 import android.content.pm.ActivityInfo
 import com.arflix.tv.util.findActivity
 import android.view.KeyEvent as AndroidKeyEvent
@@ -2360,6 +2361,18 @@ fun LiveTvScreen(
         }
     }
     LaunchedEffect(currentStreamUrl, playingCatchupProgram, catchupUrlAnchorOffsetMs, playingChannel?.id) {
+        // Debounce: rapid channel changes (holding channel-down, fast zapping)
+        // previously rebuilt the native decoder — exoPlayer.stop() -> clearMediaItems()
+        // -> setMediaItem() -> prepare() — on every single intermediate channel with
+        // no throttling at all. Native decoder teardown isn't instant, so quick
+        // repeated changes could leave more than one codec instance alive in native
+        // memory at once, which is a well-known way to exhaust memory and crash
+        // natively on low-RAM TV hardware. LaunchedEffect cancels this coroutine
+        // outright when its keys change again, so this delay is a real, clean
+        // cancellation point — only the channel the user actually settles on for
+        // longer than the debounce window ever reaches the expensive resolve+prepare
+        // work below; every skipped-through channel in between costs nothing.
+        delay(250L)
         val rawStream = currentStreamUrl ?: return@LaunchedEffect
         val sourceChannel = playingChannel?.source
         val streamProgram = playingCatchupProgram?.shiftedForCatchup(catchupUrlAnchorOffsetMs)
@@ -3044,10 +3057,16 @@ fun LiveTvScreen(
             ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
-                        androidx.media3.ui.PlayerView(ctx).apply {
+                        // Inflated from XML (surface_type="texture_view") rather than
+                        // PlayerView(ctx) directly — a plain constructor call defaults
+                        // to SurfaceView, which doesn't animate/resize smoothly. The
+                        // fullscreen<->mini transition below continuously resizes this
+                        // view, and SurfaceView's separate compositor surface freezes
+                        // mid-transition when resized that way (same root cause already
+                        // fixed for the trailer player's fade-in, see trailer_player_view.xml).
+                        (LayoutInflater.from(ctx).inflate(R.layout.live_tv_player_view, null) as androidx.media3.ui.PlayerView).apply {
                             keepScreenOn = true
                             player = exoPlayer
-                            useController = false
                             setKeepContentOnPlayerReset(true)
                         }
                     },

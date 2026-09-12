@@ -12,6 +12,7 @@ import { ProfileSelectionScreen } from "@/components/profile/ProfileSelectionScr
 import { SearchScreen } from "@/components/search/SearchScreen";
 import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { WatchlistScreen } from "@/components/watchlist/WatchlistScreen";
+import { XtreamGateScreen } from "@/components/xtreamgate/XtreamGateScreen";
 import { BackHandler } from "./BackHandler";
 import { ExternalPlaybackPrompt } from "./ExternalPlaybackPrompt";
 import { MediaContextMenu } from "./MediaContextMenu";
@@ -86,12 +87,13 @@ export function AppShell() {
   if (!mounted) {
     return (
       <main className="app-boot">
-        <img src="/arvio-logo.svg" alt="" className="app-boot-logo" />
-        <img src="/arvio-wordmark.svg" alt="ARVIO" className="app-boot-wordmark" />
+        <img src="/arvio-icon-192.png" alt="" className="app-boot-logo" />
+        <img src="/arvio-wordmark.svg" alt="Extreme TV" className="app-boot-wordmark" />
       </main>
     );
   }
 
+  if (view === "xtream-gate") return <XtreamGateScreen />;
   if (view === "login") return <LoginScreen />;
   if (view === "profiles") return <ProfileSelectionScreen />;
 

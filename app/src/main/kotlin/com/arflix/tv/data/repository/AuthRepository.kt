@@ -416,6 +416,26 @@ class AuthRepository @Inject constructor(
     }
 
     // Auth state
+    /**
+     * True only when the server has explicitly rejected the refresh token
+     * itself (dead/reused/revoked) — as opposed to a transient failure
+     * (no internet, DNS hiccup, timeout, a 5xx from our own server). Only
+     * the former should ever clear a saved session; per product decision,
+     * sessions must last until an explicit sign-out, so a temporary network
+     * problem must never be treated the same as a genuine rejection.
+     */
+    private fun isDefiniteAuthRejection(e: Throwable): Boolean {
+        val message = e.message?.lowercase().orEmpty()
+        return message.contains("refresh_token_already_used") ||
+            message.contains("invalid_grant") ||
+            message.contains("invalid refresh token") ||
+            message.contains("refresh token not found") ||
+            message.contains("session_not_found") ||
+            message.contains("session not found") ||
+            message.contains("user_not_found") ||
+            (message.contains("400") && message.contains("refresh"))
+    }
+
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     // Serializes token-refresh attempts. Without this, the Supabase SDK's own
     // background auto-refresh timer and this repository's manual fallback
@@ -1210,7 +1230,7 @@ class AuthRepository @Inject constructor(
                 refreshed.accessToken
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                invalidateDeadSession()
+                if (isDefiniteAuthRejection(e)) invalidateDeadSession()
                 null
             }
         }
@@ -1297,7 +1317,7 @@ class AuthRepository @Inject constructor(
                 refreshed
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                invalidateDeadSession()
+                if (isDefiniteAuthRejection(e)) invalidateDeadSession()
                 null
             }
         }

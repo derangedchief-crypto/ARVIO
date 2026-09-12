@@ -1,6 +1,6 @@
 // Telegram MTProto app credentials. These are the SAME public api_id / api_hash
 // the Android app ships (see app/.../telegram/TelegramConfig.kt) — they identify
-// the ARVIO application to Telegram, not the user, and are already shipped in the
+// the Extreme TV application to Telegram, not the user, and are already shipped in the
 // public APK, so surfacing them in the browser bundle exposes nothing new.
 export const TELEGRAM_API_ID = 23905496;
 export const TELEGRAM_API_HASH = "1e48b355edfe55f9a4fbf8d3c2324628";

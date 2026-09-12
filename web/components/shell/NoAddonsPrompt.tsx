@@ -92,11 +92,11 @@ export function NoAddonsPrompt() {
         </div>
 
         <p id="no-addons-description" className="no-addons-copy">
-          ARVIO does not host or provide any media. It connects to addons you choose and configure.
+          Extreme TV does not host or provide any media. It connects to addons you choose and configure.
           You can browse both free and paid community addons on stremio-addons.net.
         </p>
         <p className="no-addons-disclaimer">
-          This is an independent third-party directory. ARVIO is not affiliated with its addons;
+          This is an independent third-party directory. Extreme TV is not affiliated with its addons;
           availability and legality can vary by provider and location.
         </p>
 

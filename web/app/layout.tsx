@@ -3,8 +3,8 @@ import { UpdateWatcher } from "@/components/shell/UpdateWatcher";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ARVIO",
-  description: "ARVIO media hub for web, iPad, desktop, and TV browsers",
+  title: "Extreme TV",
+  description: "Extreme TV Network media hub for web, iPad, desktop, and TV browsers",
   robots: {
     index: false,
     follow: false,
@@ -30,7 +30,7 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: "ARVIO",
+    title: "Extreme TV",
     statusBarStyle: "black-translucent"
   }
 };

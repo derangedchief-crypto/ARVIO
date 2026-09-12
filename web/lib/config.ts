@@ -12,6 +12,23 @@ export const config = {
   traktClientSecret: envValue(process.env.NEXT_PUBLIC_TRAKT_CLIENT_SECRET, ""),
   simklClientId: process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID ?? process.env.SIMKL_CLIENT_ID ?? "",
   allowNetlifyMediaProxy: envValue(process.env.NEXT_PUBLIC_ALLOW_NETLIFY_MEDIA_PROXY, "false") === "true",
+  // Package-driven Cloud Stream addon entitlement — mirrors Android's
+  // ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL / ENTITLEMENT_CLOUD_STREAM_KEYWORD.
+  // Fixed Xtream host so users only ever enter username/password (matches
+  // XTREAM_GATE_HOST_URL in the Android app's XtreamGateViewModel).
+  xtreamGateHostUrl: "https://tv.extremeiptv.net",
+  entitlementCloudStreamManifestUrl: envValue(process.env.NEXT_PUBLIC_ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL, ""),
+  entitlementCloudStreamKeyword: "cloud stream",
+  // 1-Stream billing panel "ext" API — server-side only (no NEXT_PUBLIC_
+  // prefix, so this never reaches the browser bundle). Used to resolve a
+  // customer's actual bouquet/package names directly from the panel
+  // instead of Xtream's get_live_categories, which silently truncates on
+  // large channel counts (26k+ streams) and was causing missed Cloud
+  // Stream entitlement matches. Set these in your deployment's env, never
+  // commit real values.
+  panelApiBaseUrl: envValue(process.env.PANEL_API_BASE_URL, ""),
+  panelApiKey: envValue(process.env.PANEL_API_KEY, ""),
+  panelAuthUser: envValue(process.env.PANEL_AUTH_USER, ""),
   // Web subscription: the Ko-fi membership page the paywall links to, and a
   // master switch to enable the paywall (off by default so nothing changes for
   // users until you flip it in the environment).

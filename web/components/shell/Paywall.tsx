@@ -15,7 +15,7 @@ import {
 import { authClient, useApp } from "@/lib/store";
 import { capturePremiumAttribution, trackPremiumEvent, trackPremiumMilestone, TRIAL_INTENT_KEY } from "@/lib/premiumAnalytics";
 
-// Three-day free trial: enabled — enough time to use ARVIO Web on normal days,
+// Three-day free trial: enabled — enough time to use Extreme TV Web on normal days,
 // blind $2.99 ask. One trial per account (trialUsed is stamped server-side).
 const SHOW_TRIAL = true;
 
@@ -208,16 +208,16 @@ function PaywallScreen({
       <div className="paywall-card">
         <div className="paywall-brand">
           <img src="/arvio-logo.svg" alt="" className="paywall-logo" />
-          <img src="/arvio-wordmark.svg" alt="ARVIO" className="paywall-wordmark" />
+          <img src="/arvio-wordmark.svg" alt="Extreme TV" className="paywall-wordmark" />
         </div>
 
-        <h1>{expired ? "Your ARVIO Web membership has ended" : "ARVIO Web is a members feature"}</h1>
+        <h1>{expired ? "Your Extreme TV Web membership has ended" : "Extreme TV Web is a members feature"}</h1>
         <p className="paywall-sub">
-          Take your existing ARVIO setup to Windows, Mac, iPhone, iPad and smart-TV browsers.
-          Your profiles, libraries, addons and progress stay connected through ARVIO Cloud.
+          Take your existing Extreme TV setup to Windows, Mac, iPhone, iPad and smart-TV browsers.
+          Your profiles, libraries, addons and progress stay connected through Extreme TV Cloud.
         </p>
 
-        <div className="paywall-benefits" aria-label="ARVIO Web benefits">
+        <div className="paywall-benefits" aria-label="Extreme TV Web benefits">
           <span><Check size={15} /> Same profiles, libraries and watch progress</span>
           <span><Check size={15} /> Watch or download directly on Windows, Mac and mobile</span>
           <span><Check size={15} /> Browser playback and one-click VLC</span>

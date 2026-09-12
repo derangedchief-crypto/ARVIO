@@ -30,7 +30,7 @@ function ReportContent() {
 
   const sentryLink = id !== "N/A" ? `https://sentry.io/issues/?query=id%3A${id}` : "N/A";
 
-  const reportText = `**🚨 ARVIO Crash Report**
+  const reportText = `**🚨 Extreme TV Crash Report**
 **Crash ID:** \`${id}\`
 **Sentry Link:** ${sentryLink}
 **Version:** ${version}
@@ -104,10 +104,10 @@ function ReportContent() {
         </div>
 
         <h1 style={{ margin: "0 0 8px", fontSize: "26px", fontWeight: 750, color: "#fff" }}>
-          ARVIO Crash Diagnostics
+          Extreme TV Crash Diagnostics
         </h1>
         <p style={{ margin: "0 0 24px", color: "#a0a6b2", fontSize: "15px", lineHeight: 1.5 }}>
-          Tap below to instantly copy this bug report to your phone clipboard and open the ARVIO Discord bug channel.
+          Tap below to instantly copy this bug report to your phone clipboard and open the Extreme TV Discord bug channel.
         </p>
 
         <div

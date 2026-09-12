@@ -248,12 +248,12 @@ export async function getStreamsProgressive(
   if (hasResolverConfig()) {
     const browserPromise = getBrowserStreamsProgressive(addons, item, season, episode, onUpdate)
       .catch((error) => {
-        console.warn("ARVIO browser addon lookup failed.", error);
+        console.warn("Extreme TV browser addon lookup failed.", error);
         return [] as StreamSource[];
       });
     const resolverPromise = getResolverStreamsProgressive(addons, item, season, episode, onUpdate)
       .catch((error) => {
-        console.warn("ARVIO resolver unavailable, using browser addon lookup.", error);
+        console.warn("Extreme TV resolver unavailable, using browser addon lookup.", error);
         return [] as StreamSource[];
       });
     const [browserResolved, resolved] = await Promise.all([browserPromise, resolverPromise]);

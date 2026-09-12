@@ -124,7 +124,7 @@ export function serializeHomeServerConnectionJson(servers: HomeServerConfig[] | 
  * server and we can attach the auth header.
  */
 
-const AUTH_HEADER = 'MediaBrowser Client="ARVIO Web", Device="Web", DeviceId="arvio-web", Version="1.0.0"';
+const AUTH_HEADER = 'MediaBrowser Client="Extreme TV Web", Device="Web", DeviceId="arvio-web", Version="1.0.0"';
 
 const sessionCache = new Map<string, { token: string; userId: string }>();
 

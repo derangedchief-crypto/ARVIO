@@ -195,7 +195,7 @@ export function ExternalPlaybackPrompt() {
         )}
 
         <small>
-          ARVIO cannot read playback from external apps, so it only updates Trakt and ARVIO Cloud after you confirm.
+          Extreme TV cannot read playback from external apps, so it only updates Trakt and Extreme TV Cloud after you confirm.
         </small>
       </article>
     </section>
