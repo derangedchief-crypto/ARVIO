@@ -143,13 +143,28 @@ object DiscordRpcManager {
             return
         }
 
+        var engineActivityAttached = false
         if (context is Activity) {
             runCatching {
                 val initClass = Class.forName("com.discord.socialsdk.DiscordSocialSdkInit")
                 initClass.getMethod("setEngineActivity", Activity::class.java).invoke(null, context)
+            }.onSuccess {
+                engineActivityAttached = true
             }.onFailure { error ->
                 Log.e(TAG, "Failed to attach the Android activity to Discord Social SDK", error)
             }
+        }
+
+        // The native SDK requires that activity attachment to have actually
+        // succeeded before it's in a valid state. Proceeding anyway (previously
+        // unconditional) left it half-initialized — reconnecting a saved
+        // session then drove the native client into firing a fatal internal
+        // assert (SIGABRT via liblog.so), taking down the whole app rather
+        // than just leaving Rich Presence unavailable for this session/device.
+        if (!engineActivityAttached) {
+            Log.w(TAG, "Discord Social SDK engine activity not attached; disabling Rich Presence for this session.")
+            bridgeReady = false
+            return
         }
 
         bridgeReady = DiscordBridge.init(discordClientId, jniCallback)
