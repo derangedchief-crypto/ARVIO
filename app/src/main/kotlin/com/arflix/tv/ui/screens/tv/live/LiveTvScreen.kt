@@ -1730,11 +1730,26 @@ fun LiveTvScreen(
         fullscreenGuideOpen = false
         isFullScreen = false
         hudPokeSignal++
+        android.util.Log.e(
+            "LiveTvDebug",
+            "exitFullScreenPlayback: isPlaying=${exoPlayer.isPlaying} playbackState=${exoPlayer.playbackState} " +
+                "playWhenReady=${exoPlayer.playWhenReady}"
+        )
         focusCommitScope.launch {
             // Let the fullscreen layer start collapsing before returning focus
             // to the large guide. On big IPTV lists this keeps Back immediate.
             delay(16L)
             focusChannelList(returnFocusChannelId)
+        }
+        coroutineScope.launch {
+            repeat(6) { i ->
+                delay(500L)
+                android.util.Log.e(
+                    "LiveTvDebug",
+                    "post-exit check t=${(i + 1) * 500}ms: isPlaying=${exoPlayer.isPlaying} " +
+                        "playbackState=${exoPlayer.playbackState} playWhenReady=${exoPlayer.playWhenReady}"
+                )
+            }
         }
     }
 
@@ -2448,6 +2463,7 @@ fun LiveTvScreen(
 
             override fun onPlayerError(error: PlaybackException) {
                 playerIsBuffering = false
+                android.util.Log.e("LiveTvDebug", "onPlayerError fired: ${error.errorCodeName} isFullScreen=$isFullScreen msg=${error.message}", error)
                 val prepared = lastPreparedStreamUrl ?: return
                 val preparedIsHls = lastPreparedIsHls
                 val nextAttempt = playerRetryCount + 1
@@ -3057,16 +3073,10 @@ fun LiveTvScreen(
             ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
-                        // Inflated from XML (surface_type="texture_view") rather than
-                        // PlayerView(ctx) directly — a plain constructor call defaults
-                        // to SurfaceView, which doesn't animate/resize smoothly. The
-                        // fullscreen<->mini transition below continuously resizes this
-                        // view, and SurfaceView's separate compositor surface freezes
-                        // mid-transition when resized that way (same root cause already
-                        // fixed for the trailer player's fade-in, see trailer_player_view.xml).
-                        (LayoutInflater.from(ctx).inflate(R.layout.live_tv_player_view, null) as androidx.media3.ui.PlayerView).apply {
+                        androidx.media3.ui.PlayerView(ctx).apply {
                             keepScreenOn = true
                             player = exoPlayer
+                            useController = false
                             setKeepContentOnPlayerReset(true)
                         }
                     },
