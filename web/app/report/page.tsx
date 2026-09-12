@@ -3,7 +3,10 @@
 import React, { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-const DISCORD_URL = "https://discord.gg/UavuEYMfQ4";
+// No Discord server set up yet. Once you create one, put its invite link
+// here and restore the two usages below (redirect in handleCopyReport,
+// and the "Open Discord" link near the bottom) to bring that flow back.
+const DISCORD_URL = "https://discord.gg/zgZB7Nyp57";
 
 function ReportContent() {
   const searchParams = useSearchParams();
@@ -30,14 +33,14 @@ function ReportContent() {
 
   const sentryLink = id !== "N/A" ? `https://sentry.io/issues/?query=id%3A${id}` : "N/A";
 
-  const reportText = `**🚨 Extreme TV Crash Report**
+  const reportText = `**Extreme Hub Crash Report**
 **Crash ID:** \`${id}\`
 **Sentry Link:** ${sentryLink}
 **Version:** ${version}
 **Time:** ${timeStr}
 **Error:** ${error}`;
 
-  const handleCopyAndRedirect = async () => {
+  const handleCopyReport = async () => {
     try {
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(reportText);
@@ -54,9 +57,6 @@ function ReportContent() {
     }
 
     setCopied(true);
-    setTimeout(() => {
-      window.location.href = DISCORD_URL;
-    }, 700);
   };
 
   return (
@@ -107,7 +107,7 @@ function ReportContent() {
           Extreme TV Crash Diagnostics
         </h1>
         <p style={{ margin: "0 0 24px", color: "#a0a6b2", fontSize: "15px", lineHeight: 1.5 }}>
-          Tap below to instantly copy this bug report to your phone clipboard and open the Extreme TV Discord bug channel.
+          Tap below to copy this bug report to your clipboard, then send it to Extreme TV support.
         </p>
 
         <div
@@ -148,7 +148,7 @@ function ReportContent() {
         </div>
 
         <button
-          onClick={handleCopyAndRedirect}
+          onClick={handleCopyReport}
           style={{
             width: "100%",
             padding: "16px 22px",
@@ -166,23 +166,8 @@ function ReportContent() {
             marginBottom: "16px"
           }}
         >
-          {copied ? "Copied! Redirecting to Discord..." : "Copy Report & Open Discord"}
+          {copied ? "Copied to clipboard!" : "Copy Report"}
         </button>
-
-        <div>
-          <a
-            href={DISCORD_URL}
-            style={{
-              color: "#a0a6b2",
-              fontSize: "14px",
-              textDecoration: "none",
-              display: "inline-block",
-              padding: "6px 12px"
-            }}
-          >
-            Open Discord Without Copying &rarr;
-          </a>
-        </div>
       </div>
     </div>
   );
