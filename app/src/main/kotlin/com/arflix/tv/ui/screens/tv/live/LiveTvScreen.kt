@@ -1730,26 +1730,11 @@ fun LiveTvScreen(
         fullscreenGuideOpen = false
         isFullScreen = false
         hudPokeSignal++
-        android.util.Log.e(
-            "LiveTvDebug",
-            "exitFullScreenPlayback: isPlaying=${exoPlayer.isPlaying} playbackState=${exoPlayer.playbackState} " +
-                "playWhenReady=${exoPlayer.playWhenReady}"
-        )
         focusCommitScope.launch {
             // Let the fullscreen layer start collapsing before returning focus
             // to the large guide. On big IPTV lists this keeps Back immediate.
             delay(16L)
             focusChannelList(returnFocusChannelId)
-        }
-        coroutineScope.launch {
-            repeat(6) { i ->
-                delay(500L)
-                android.util.Log.e(
-                    "LiveTvDebug",
-                    "post-exit check t=${(i + 1) * 500}ms: isPlaying=${exoPlayer.isPlaying} " +
-                        "playbackState=${exoPlayer.playbackState} playWhenReady=${exoPlayer.playWhenReady}"
-                )
-            }
         }
     }
 
@@ -2120,6 +2105,23 @@ fun LiveTvScreen(
     }
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
+
+    LaunchedEffect(isFullScreen) {
+        if (isFullScreen) return@LaunchedEffect
+        android.util.Log.e(
+            "LiveTvDebug",
+            "exited fullscreen: isPlaying=${exoPlayer.isPlaying} playbackState=${exoPlayer.playbackState} " +
+                "playWhenReady=${exoPlayer.playWhenReady}"
+        )
+        repeat(6) { i ->
+            delay(500L)
+            android.util.Log.e(
+                "LiveTvDebug",
+                "post-exit check t=${(i + 1) * 500}ms: isPlaying=${exoPlayer.isPlaying} " +
+                    "playbackState=${exoPlayer.playbackState} playWhenReady=${exoPlayer.playWhenReady}"
+            )
+        }
+    }
 
     var playerPositionMs by remember { mutableLongStateOf(0L) }
     var playerDurationMs by remember { mutableLongStateOf(0L) }
