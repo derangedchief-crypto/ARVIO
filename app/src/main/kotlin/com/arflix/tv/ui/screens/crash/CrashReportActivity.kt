@@ -73,10 +73,7 @@ class CrashReportActivity : ComponentActivity() {
         const val EXTRA_CRASH_ID = "extra_crash_id"
         const val EXTRA_CRASH_MSG = "extra_crash_msg"
         const val EXTRA_CRASH_TIME = "extra_crash_time"
-        // No Discord server set up yet. Once you create one, put its invite
-        // link here and restore the "Report on Discord" button below (it
-        // currently just copies to clipboard).
-        // const val DISCORD_BUG_CHANNEL_URL = "https://discord.gg/your-invite-code"
+        const val DISCORD_BUG_CHANNEL_URL = "https://discord.gg/zgZB7Nyp57"
     }
 }
 
@@ -153,9 +150,9 @@ fun CrashReportScreen(
 
             Text(
                 text = if (isTv) {
-                    "Scan the QR code below with your phone camera to copy the crash report."
+                    "Scan the QR code below with your phone camera to automatically copy the crash report & open our Discord bug channel."
                 } else {
-                    "We apologize for the interruption. You can copy this crash report to send to Extreme TV support."
+                    "We apologize for the interruption. You can report this crash directly to our Discord channel to help us fix it."
                 },
                 color = Color(0xFFA0A6B2),
                 fontSize = 14.sp,
@@ -179,7 +176,7 @@ fun CrashReportScreen(
                 }
 
                 Text(
-                    text = "Scan to open app.extremeiptv.net and copy your crash report.",
+                    text = "Scan to open app.extremeiptv.net — 1 tap to copy report & jump into Discord.",
                     color = Color(0xFF00F0D0),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -225,13 +222,18 @@ fun CrashReportScreen(
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val clip = ClipData.newPlainText("Extreme TV Crash Report", formattedReport)
                             clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Crash details copied to clipboard!", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "Crash details copied! Opening Discord...", Toast.LENGTH_LONG).show()
+
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(CrashReportActivity.DISCORD_BUG_CHANNEL_URL)).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5865F2)),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Copy Crash Report", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Report on Discord", color = Color.White, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
