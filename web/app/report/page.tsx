@@ -3,9 +3,6 @@
 import React, { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-// No Discord server set up yet. Once you create one, put its invite link
-// here and restore the two usages below (redirect in handleCopyReport,
-// and the "Open Discord" link near the bottom) to bring that flow back.
 const DISCORD_URL = "https://discord.gg/zgZB7Nyp57";
 
 function ReportContent() {
@@ -40,7 +37,7 @@ function ReportContent() {
 **Time:** ${timeStr}
 **Error:** ${error}`;
 
-  const handleCopyReport = async () => {
+  const handleCopyAndRedirect = async () => {
     try {
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(reportText);
@@ -57,6 +54,9 @@ function ReportContent() {
     }
 
     setCopied(true);
+    setTimeout(() => {
+      window.location.href = DISCORD_URL;
+    }, 700);
   };
 
   return (
@@ -107,7 +107,7 @@ function ReportContent() {
           Extreme TV Crash Diagnostics
         </h1>
         <p style={{ margin: "0 0 24px", color: "#a0a6b2", fontSize: "15px", lineHeight: 1.5 }}>
-          Tap below to copy this bug report to your clipboard, then send it to Extreme TV support.
+          Tap below to instantly copy this bug report to your phone clipboard and open the Extreme TV Discord bug channel.
         </p>
 
         <div
@@ -148,7 +148,7 @@ function ReportContent() {
         </div>
 
         <button
-          onClick={handleCopyReport}
+          onClick={handleCopyAndRedirect}
           style={{
             width: "100%",
             padding: "16px 22px",
@@ -166,8 +166,23 @@ function ReportContent() {
             marginBottom: "16px"
           }}
         >
-          {copied ? "Copied to clipboard!" : "Copy Report"}
+          {copied ? "Copied! Redirecting to Discord..." : "Copy Report & Open Discord"}
         </button>
+
+        <div>
+          <a
+            href={DISCORD_URL}
+            style={{
+              color: "#a0a6b2",
+              fontSize: "14px",
+              textDecoration: "none",
+              display: "inline-block",
+              padding: "6px 12px"
+            }}
+          >
+            Open Discord Without Copying &rarr;
+          </a>
+        </div>
       </div>
     </div>
   );
