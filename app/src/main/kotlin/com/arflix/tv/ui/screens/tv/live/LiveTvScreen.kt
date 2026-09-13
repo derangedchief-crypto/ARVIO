@@ -2106,23 +2106,6 @@ fun LiveTvScreen(
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
 
-    LaunchedEffect(isFullScreen) {
-        if (isFullScreen) return@LaunchedEffect
-        android.util.Log.e(
-            "LiveTvDebug",
-            "exited fullscreen: isPlaying=${exoPlayer.isPlaying} playbackState=${exoPlayer.playbackState} " +
-                "playWhenReady=${exoPlayer.playWhenReady}"
-        )
-        repeat(6) { i ->
-            delay(500L)
-            android.util.Log.e(
-                "LiveTvDebug",
-                "post-exit check t=${(i + 1) * 500}ms: isPlaying=${exoPlayer.isPlaying} " +
-                    "playbackState=${exoPlayer.playbackState} playWhenReady=${exoPlayer.playWhenReady}"
-            )
-        }
-    }
-
     var playerPositionMs by remember { mutableLongStateOf(0L) }
     var playerDurationMs by remember { mutableLongStateOf(0L) }
     var playerIsPlaying by remember { mutableStateOf(false) }
@@ -2465,7 +2448,6 @@ fun LiveTvScreen(
 
             override fun onPlayerError(error: PlaybackException) {
                 playerIsBuffering = false
-                android.util.Log.e("LiveTvDebug", "onPlayerError fired: ${error.errorCodeName} isFullScreen=$isFullScreen msg=${error.message}", error)
                 val prepared = lastPreparedStreamUrl ?: return
                 val preparedIsHls = lastPreparedIsHls
                 val nextAttempt = playerRetryCount + 1
@@ -2484,7 +2466,14 @@ fun LiveTvScreen(
                 val maxRetryCount = if (retryProgram != null) {
                     (catchupCandidateCount - 1).coerceAtLeast(0).coerceAtMost(2)
                 } else {
-                    3
+                    // Was 3 (retry window ~3.5s of delay, ~5s observed end-to-end).
+                    // Real-world IPTV glitches (a momentary unrecognized-container
+                    // error from the origin, transient network blip, etc.) can
+                    // outlast that — giving up right as the glitch would likely
+                    // have cleared on its own reads to the user as a permanent
+                    // freeze. Extending to 6 roughly doubles the window before
+                    // surfacing a real error, without retrying forever.
+                    6
                 }
                 if (nextAttempt > maxRetryCount) {
                     playbackDiagnostic = PlaybackDiagnostic(
