@@ -31,6 +31,7 @@ private const val TAG = "XtreamGuard"
 /** SharedPreferences (not DataStore) on purpose: this is device state, not synced profile state. */
 private const val PREFS_NAME = "arvio_entitlement_guard"
 private const val KEY_LAST_CHECK = "last_check_at"
+private const val KEY_LAST_GRANTED_URLS = "last_granted_urls"
 
 /** Warm foregrounds are throttled; a cold start passes 0 and always runs. */
 private const val DEFAULT_MIN_INTERVAL_MS = 30 * 60_000L
@@ -201,7 +202,22 @@ class XtreamEntitlementsGuard @Inject constructor(
     }
 
     private suspend fun applyResolved(resolved: XtreamEntitlementsResult.Resolved) {
-        if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return
+        val grantedUrls = resolved.granted.map { it.manifestUrl }.toSet()
+
+        // resolve() only ever knows about the manifest URL(s) baked into THIS
+        // build — if the configured URL changes between app versions (e.g. the
+        // addon provider changes), a URL granted by an older build is invisible
+        // to it and would never appear in resolved.revoked, so it would sit
+        // installed forever as an orphan even after the customer updates.
+        // Tracking what was actually granted last time closes that gap: anything
+        // granted before but not granted now gets cleaned up too, regardless of
+        // whether the current build even still knows that URL exists.
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val previouslyGrantedUrls = prefs.getStringSet(KEY_LAST_GRANTED_URLS, emptySet()).orEmpty()
+        val orphanedUrls = previouslyGrantedUrls - grantedUrls
+        val revokeUrls = (resolved.revoked.toSet() + orphanedUrls).toList()
+
+        if (resolved.granted.isEmpty() && revokeUrls.isEmpty()) return
 
         val repository = streamRepository.get()
 
@@ -224,18 +240,23 @@ class XtreamEntitlementsGuard @Inject constructor(
             }
         }
 
-        if (resolved.revoked.isNotEmpty()) {
+        if (revokeUrls.isNotEmpty()) {
+            if (orphanedUrls.isNotEmpty()) {
+                Log.i(TAG, "also revoking ${orphanedUrls.size} orphaned url(s) from a previous manifest URL")
+            }
             val removed = withTimeoutOrNull(REMOVE_TIMEOUT_MS) {
-                repository.removeCustomAddonsByUrl(resolved.revoked)
+                repository.removeCustomAddonsByUrl(revokeUrls)
             }
             when (removed) {
                 null -> Log.w(TAG, "addon removal timed out")
                 // false means nothing matched — either already gone, or the
                 // stored addon url differs from the configured manifest url.
-                false -> Log.i(TAG, "nothing to remove for ${resolved.revoked.size} revoked url(s)")
-                true -> Log.i(TAG, "removed ${resolved.revoked.size} revoked addon url(s)")
+                false -> Log.i(TAG, "nothing to remove for ${revokeUrls.size} revoked url(s)")
+                true -> Log.i(TAG, "removed ${revokeUrls.size} revoked addon url(s)")
             }
         }
+
+        prefs.edit().putStringSet(KEY_LAST_GRANTED_URLS, grantedUrls).apply()
     }
 
     /**
