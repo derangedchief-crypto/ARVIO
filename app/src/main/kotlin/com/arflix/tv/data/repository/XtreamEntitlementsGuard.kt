@@ -31,6 +31,8 @@ private const val TAG = "XtreamGuard"
 /** SharedPreferences (not DataStore) on purpose: this is device state, not synced profile state. */
 private const val PREFS_NAME = "arvio_entitlement_guard"
 private const val KEY_LAST_CHECK = "last_check_at"
+private const val KEY_TRACKED_DEFINITION_IDS = "tracked_definition_ids"
+private const val ADDON_ID_KEY_PREFIX = "granted_addon_id:"
 
 /** Warm foregrounds are throttled; a cold start passes 0 and always runs. */
 private const val DEFAULT_MIN_INTERVAL_MS = 30 * 60_000L
@@ -204,23 +206,72 @@ class XtreamEntitlementsGuard @Inject constructor(
         if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return
 
         val repository = streamRepository.get()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        // Tracked by the entitlement definition's stable id ("cloud_stream"),
+        // never by the manifest URL — a URL can change shape entirely (a new
+        // provider config, a different query string) while still being "the
+        // same" entitlement, and the definition id is hardcoded, independent of
+        // whatever URL happens to be configured right now.
+        val trackedDefinitionIds = prefs.getStringSet(KEY_TRACKED_DEFINITION_IDS, emptySet()).orEmpty()
+        val grantedDefinitionIds = resolved.granted.map { it.id }.toSet()
+
+        // Wipe-then-add, unconditionally: whatever addon id was recorded for a
+        // granted definition last time gets removed FIRST, no "is it actually
+        // different" comparison at all — then the current manifest url gets
+        // installed fresh right below. Every check does this, not just ones
+        // where something changed, which costs a small, harmless re-fetch of
+        // the manifest but removes any chance of a stale entry ever surviving.
+        resolved.granted.forEach { entitlement ->
+            val addonIdKey = ADDON_ID_KEY_PREFIX + entitlement.id
+            val previousAddonId = prefs.getString(addonIdKey, null)
+            if (previousAddonId != null) {
+                withTimeoutOrNull(REMOVE_TIMEOUT_MS) { runCatching { repository.removeAddon(previousAddonId) } }
+                prefs.edit().remove(addonIdKey).apply()
+            }
+        }
 
         if (resolved.granted.isNotEmpty()) {
-            // ensureCustomAddons (not addCustomAddon) so a user who deliberately
-            // removed an addon does not get it silently reinstalled on reopen.
             val results = withTimeoutOrNull(INSTALL_TIMEOUT_MS) {
                 repository.ensureCustomAddons(resolved.granted.map { it.manifestUrl })
             }
             if (results == null) {
                 Log.w(TAG, "addon install timed out")
-            } else {
+            } else if (results.size != resolved.granted.size) {
+                // ensureCustomAddons distinct()s/filters its input internally;
+                // a size mismatch means position-based pairing can't be
+                // trusted. Only matters once a second definition exists —
+                // today there's exactly one ("cloud_stream"), so this never
+                // actually fires; addons still install, just without recording
+                // their id for next check's wipe step.
+                Log.w(TAG, "addon results size (${results.size}) != granted size (${resolved.granted.size}); ids not recorded this check")
                 results.forEach { result ->
+                    result.onSuccess { addon -> Log.i(TAG, "addon ready: ${addon.name} (${addon.id})") }
+                        .onFailure { error -> Log.w(TAG, "addon install failed: ${error.message}") }
+                }
+            } else {
+                resolved.granted.forEachIndexed { index, entitlement ->
+                    val result = results.getOrNull(index) ?: return@forEachIndexed
                     result.onSuccess { addon ->
                         Log.i(TAG, "addon ready: ${addon.name} (${addon.id})")
+                        prefs.edit().putString(ADDON_ID_KEY_PREFIX + entitlement.id, addon.id).apply()
                     }.onFailure { error ->
                         Log.w(TAG, "addon install failed: ${error.message}")
                     }
                 }
+            }
+        }
+
+        // A definition that WAS granted on some earlier check but is not
+        // granted at all now (marker category gone, or its url unconfigured)
+        // needs its addon removed by the id recorded for it too.
+        val droppedDefinitionIds = trackedDefinitionIds - grantedDefinitionIds
+        droppedDefinitionIds.forEach { definitionId ->
+            val addonIdKey = ADDON_ID_KEY_PREFIX + definitionId
+            val addonId = prefs.getString(addonIdKey, null)
+            if (addonId != null) {
+                withTimeoutOrNull(REMOVE_TIMEOUT_MS) { runCatching { repository.removeAddon(addonId) } }
+                prefs.edit().remove(addonIdKey).apply()
             }
         }
 
@@ -236,6 +287,8 @@ class XtreamEntitlementsGuard @Inject constructor(
                 true -> Log.i(TAG, "removed ${resolved.revoked.size} revoked addon url(s)")
             }
         }
+
+        prefs.edit().putStringSet(KEY_TRACKED_DEFINITION_IDS, trackedDefinitionIds + grantedDefinitionIds).apply()
     }
 
     /**

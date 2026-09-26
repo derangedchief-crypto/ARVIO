@@ -3,7 +3,7 @@
 import React, { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-const DISCORD_URL = "https://discord.gg/UavuEYMfQ4";
+const DISCORD_URL = "https://discord.gg/zgZB7Nyp57";
 
 function ReportContent() {
   const searchParams = useSearchParams();
@@ -30,7 +30,7 @@ function ReportContent() {
 
   const sentryLink = id !== "N/A" ? `https://sentry.io/issues/?query=id%3A${id}` : "N/A";
 
-  const reportText = `**🚨 Extreme TV Crash Report**
+  const reportText = `**Extreme Hub Crash Report**
 **Crash ID:** \`${id}\`
 **Sentry Link:** ${sentryLink}
 **Version:** ${version}

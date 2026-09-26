@@ -2466,7 +2466,14 @@ fun LiveTvScreen(
                 val maxRetryCount = if (retryProgram != null) {
                     (catchupCandidateCount - 1).coerceAtLeast(0).coerceAtMost(2)
                 } else {
-                    3
+                    // Was 3 (retry window ~3.5s of delay, ~5s observed end-to-end).
+                    // Real-world IPTV glitches (a momentary unrecognized-container
+                    // error from the origin, transient network blip, etc.) can
+                    // outlast that — giving up right as the glitch would likely
+                    // have cleared on its own reads to the user as a permanent
+                    // freeze. Extending to 6 roughly doubles the window before
+                    // surfacing a real error, without retrying forever.
+                    6
                 }
                 if (nextAttempt > maxRetryCount) {
                     playbackDiagnostic = PlaybackDiagnostic(
@@ -3057,16 +3064,10 @@ fun LiveTvScreen(
             ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
-                        // Inflated from XML (surface_type="texture_view") rather than
-                        // PlayerView(ctx) directly — a plain constructor call defaults
-                        // to SurfaceView, which doesn't animate/resize smoothly. The
-                        // fullscreen<->mini transition below continuously resizes this
-                        // view, and SurfaceView's separate compositor surface freezes
-                        // mid-transition when resized that way (same root cause already
-                        // fixed for the trailer player's fade-in, see trailer_player_view.xml).
-                        (LayoutInflater.from(ctx).inflate(R.layout.live_tv_player_view, null) as androidx.media3.ui.PlayerView).apply {
+                        androidx.media3.ui.PlayerView(ctx).apply {
                             keepScreenOn = true
                             player = exoPlayer
+                            useController = false
                             setKeepContentOnPlayerReset(true)
                         }
                     },
