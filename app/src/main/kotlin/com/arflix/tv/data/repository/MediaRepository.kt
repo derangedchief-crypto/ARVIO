@@ -2132,6 +2132,92 @@ class MediaRepository @Inject constructor(
         CategoryPageResult(items = items, hasMore = offset + pageRefs.size < refs.size)
     }
 
+    enum class ServiceRowKind { POPULAR, TOP_RATED, NEW_RELEASES }
+
+    /**
+     * A single labeled shelf of titles for a streaming service's collection
+     * screen (Popular / Top Rated / New Releases on Netflix, etc.) — same
+     * `with_watch_providers` TMDB query the flat list already used, just with
+     * a different `sort_by` (and, for Top Rated, a minimum vote count so a
+     * single 10/10 vote from an obscure title can't outrank real hits; and for
+     * New Releases, a release-date-not-in-the-future filter so unreleased
+     * titles don't show up ahead of their premiere). One TMDB page (~20
+     * results) is plenty for a horizontally-scrolled row, so this doesn't need
+     * the full multi-page-until-count-met logic loadCollectionCatalogPage uses
+     * for the flat grid.
+     */
+    suspend fun loadServiceProviderRow(
+        providerId: Int,
+        mediaType: MediaType,
+        kind: ServiceRowKind,
+        watchRegion: String = "US",
+        limit: Int = 20
+    ): List<MediaItem> = coroutineScope {
+        val sortBy = when (kind) {
+            ServiceRowKind.POPULAR -> "popularity.desc"
+            ServiceRowKind.TOP_RATED -> "vote_average.desc"
+            ServiceRowKind.NEW_RELEASES -> if (mediaType == MediaType.MOVIE) "release_date.desc" else "first_air_date.desc"
+        }
+        val minVoteCount = if (kind == ServiceRowKind.TOP_RATED) 200 else null
+        val today = if (kind == ServiceRowKind.NEW_RELEASES) {
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
+        } else {
+            null
+        }
+
+        val refs: List<Pair<MediaType, Int>> = runCatching {
+            when (mediaType) {
+                MediaType.MOVIE -> tmdbApi.discoverMovies(
+                    apiKey,
+                    sortBy = sortBy,
+                    minVoteCount = minVoteCount,
+                    releaseDateLte = today,
+                    watchProviders = providerId,
+                    watchRegion = watchRegion,
+                    language = contentLanguage,
+                    page = 1
+                ).results.map { MediaType.MOVIE to it.id }
+                MediaType.TV -> tmdbApi.discoverTv(
+                    apiKey,
+                    watchProviders = providerId,
+                    watchRegion = watchRegion,
+                    sortBy = sortBy,
+                    minVoteCount = minVoteCount,
+                    airDateLte = today,
+                    language = contentLanguage,
+                    page = 1
+                ).results.map { MediaType.TV to it.id }
+            }
+        }.getOrNull().orEmpty().take(limit)
+
+        if (refs.isEmpty()) return@coroutineScope emptyList()
+
+        val itemsByRef = LinkedHashMap<Pair<MediaType, Int>, MediaItem>()
+        val missingRefs = mutableListOf<Pair<MediaType, Int>>()
+        refs.forEach { ref ->
+            val cachedItem = getCachedItem(ref.first, ref.second)
+            if (cachedItem != null) itemsByRef[ref] = cachedItem else missingRefs += ref
+        }
+        val semaphore = Semaphore(2)
+        val jobs = missingRefs.map { (type, tmdbId) ->
+            async {
+                semaphore.withPermit {
+                    val item = runCatching {
+                        when (type) {
+                            MediaType.MOVIE -> getMovieDetails(tmdbId)
+                            MediaType.TV -> getTvDetails(tmdbId)
+                        }
+                    }.getOrNull()
+                    if (item != null) itemsByRef[type to tmdbId] = item
+                }
+            }
+        }
+        jobs.forEach { it.await() }
+        val items = refs.mapNotNull { itemsByRef[it] }
+        if (items.isNotEmpty()) cacheItems(items)
+        items
+    }
+
     private suspend fun resolveCollectionSourceRefs(
         source: CollectionSourceConfig,
         offset: Int,
