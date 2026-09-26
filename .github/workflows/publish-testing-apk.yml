@@ -17,18 +17,18 @@ name: Publish Testing APK
 # updater never looks at.
 #
 # Run manually from Actions -> Publish Testing APK -> Run workflow, picking
-# the `staging` branch (or whichever branch has the in-progress changes you
-# want to test). Does not run automatically on push, same reasoning as
+# the `staging/testing` branch (or whichever branch has the in-progress
+# changes you want to test). Does not run automatically on push, same reasoning as
 # Publish Customer Release: you don't want a build kicked off on every
 # half-finished commit.
 on:
   workflow_dispatch:
     inputs:
       branch:
-        description: "Branch to build (defaults to staging)"
+        description: "Branch to build (defaults to staging/testing)"
         required: false
         type: string
-        default: staging
+        default: staging/testing
 
 permissions:
   contents: read
