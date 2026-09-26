@@ -1,0 +1,156 @@
+name: Publish Testing APK
+
+# Builds the sideloadInternalTest APK — same release-grade build as the
+# customer-facing sideloadStaging (R8 + resource shrinking, signed with the
+# same real release keystore, so it's not a throwaway debug-signed build) but
+# under its own application id (com.arvio.tv.test, vs com.arvio.tv.beta for
+# production) and its own launcher name ("Extreme Hub Test"). That's what
+# lets this be installed on the same device as the real production app
+# without one overwriting the other — see the `internalTest` build type in
+# app/build.gradle.kts for exactly what differs from `staging`.
+#
+# Deliberately does NOT publish a GitHub Release the way Publish Customer
+# Release does. The in-app updater checks /repos/{owner}/{repo}/releases/latest
+# for the PRODUCTION app — creating a Release here at all risks that endpoint
+# ever resolving to a test build instead of a real one. This workflow only
+# uploads a plain CI artifact (Actions run page -> Artifacts), which the
+# updater never looks at.
+#
+# Run manually from Actions -> Publish Testing APK -> Run workflow, picking
+# the `staging` branch (or whichever branch has the in-progress changes you
+# want to test). Does not run automatically on push, same reasoning as
+# Publish Customer Release: you don't want a build kicked off on every
+# half-finished commit.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to build (defaults to staging)"
+        required: false
+        type: string
+        default: staging
+
+permissions:
+  contents: read
+
+jobs:
+  publish-testing-apk:
+    name: Build signed internal-test APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Read version from build.gradle.kts
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          if [ -z "$VERSION_NAME" ]; then
+            echo "::error::Could not read versionName from app/build.gradle.kts"
+            exit 1
+          fi
+          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "Building test APK for version $VERSION_NAME (branch ${{ github.event.inputs.branch }})"
+
+      - name: Prepare build configuration
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL: ${{ secrets.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          cp secrets.defaults.properties secrets.properties
+
+          set_secret() {
+            key="$1"
+            value="$2"
+            if [ -z "$value" ]; then
+              return 0
+            fi
+            sed -i "/^${key}=/d" secrets.properties
+            printf '%s\n' "${key}=${value}" >> secrets.properties
+          }
+
+          set_secret TMDB_API_KEY "${TMDB_API_KEY}"
+          set_secret ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL "${ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL}"
+          set_secret SENTRY_DSN "${SENTRY_DSN}"
+          set_secret SUPABASE_URL "${SUPABASE_URL}"
+          set_secret SUPABASE_ANON_KEY "${SUPABASE_ANON_KEY}"
+
+          if [ -z "${TMDB_API_KEY}" ]; then
+            echo "::warning::TMDB_API_KEY is not set — Trending/catalog rows will be empty."
+          fi
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_ANON_KEY}" ]; then
+            echo "::warning::SUPABASE_URL/SUPABASE_ANON_KEY not set — cloud sync (accounts, watch history, watchlist) will not work in this build."
+          fi
+
+      - name: Restore release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_KEYSTORE_BASE64}" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 is not set. Add the 4 keystore secrets before running this again."
+            exit 1
+          fi
+          # Same layout as Publish Customer Release: keystore file goes in
+          # app/, keystore.properties (at repo root) points at it with a path
+          # relative to app/ — see that workflow's comment for exactly why.
+          echo "${RELEASE_KEYSTORE_BASE64}" | base64 -d > app/release.keystore
+          cat > keystore.properties <<EOF
+          storeFile=release.keystore
+          storePassword=${RELEASE_KEYSTORE_PASSWORD}
+          keyAlias=${RELEASE_KEY_ALIAS}
+          keyPassword=${RELEASE_KEY_PASSWORD}
+          EOF
+
+      - name: Build internal-test APK
+        run: >-
+          ./gradlew :app:assembleSideloadInternalTest
+          -x :app:validateReleaseCloudSecrets
+          --no-daemon
+          --stacktrace
+
+      - name: Rename APK for artifact upload
+        id: apk
+        run: |
+          set -euo pipefail
+          SRC=$(find app/build/outputs/apk/sideload/internalTest -maxdepth 1 -name '*.apk' | head -n1)
+          if [ -z "$SRC" ]; then
+            echo "::error::No APK found in app/build/outputs/apk/sideload/internalTest"
+            exit 1
+          fi
+          DEST="ExtremeTV-Test-${{ steps.version.outputs.name }}.apk"
+          cp "$SRC" "$DEST"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extremetv-testing-apk
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 30
+
+      - name: Upload R8 mapping file
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extremetv-testing-mapping
+          path: app/build/outputs/mapping/sideloadInternalTest/mapping.txt
+          retention-days: 30
+          if-no-files-found: warn
