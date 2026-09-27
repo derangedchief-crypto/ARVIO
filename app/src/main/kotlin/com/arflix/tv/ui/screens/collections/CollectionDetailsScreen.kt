@@ -132,7 +132,11 @@ data class CollectionDetailsUiState(
     val loadedSeriesOffset: Int = 0,
     val error: String? = null
 ) {
-    val isServiceCollection: Boolean get() = catalog?.collectionGroup == CollectionGroupKind.SERVICE
+    // Name kept from when this was service-only to avoid a broad rename —
+    // this same rows-based rendering now also covers genre collections
+    // (Action, Comedy, etc.), which had the exact same flat-grid complaint.
+    val isServiceCollection: Boolean get() = catalog?.collectionGroup == CollectionGroupKind.SERVICE ||
+        catalog?.collectionGroup == CollectionGroupKind.GENRE
     val hasMovies: Boolean get() = if (isServiceCollection) movieServiceRows.isNotEmpty() else movieItems.isNotEmpty()
     val hasSeries: Boolean get() = if (isServiceCollection) seriesServiceRows.isNotEmpty() else seriesItems.isNotEmpty()
 }
@@ -184,7 +188,9 @@ class CollectionDetailsViewModel @Inject constructor(
                 isLoadingSeries = true
             )
 
-            if (catalog.collectionGroup == CollectionGroupKind.SERVICE) {
+            if (catalog.collectionGroup == CollectionGroupKind.SERVICE ||
+                catalog.collectionGroup == CollectionGroupKind.GENRE
+            ) {
                 loadServiceRows(catalog)
                 return@launch
             }
@@ -218,27 +224,42 @@ class CollectionDetailsViewModel @Inject constructor(
      * slow (or the provider not offering that media type at all) never
      * blocks the other tab.
      */
+    /** Which TMDB query backs a rows-based collection screen, found from
+     * whichever field is actually set on the matching source — a service
+     * collection sets tmdbWatchProviderId, a genre collection sets
+     * tmdbGenreId; never both. */
+    private sealed class RowSource {
+        data class Provider(val id: Int, val watchRegion: String) : RowSource()
+        data class Genre(val id: Int) : RowSource()
+    }
+
+    private fun rowSourceForTab(catalog: CatalogConfig, tab: CollectionTab): RowSource? {
+        val source = catalog.collectionSources.firstOrNull {
+            sourceMatchesTab(it, tab) && (it.tmdbWatchProviderId != null || it.tmdbGenreId != null)
+        } ?: return null
+        source.tmdbWatchProviderId?.let { providerId ->
+            val region = source.watchRegion?.takeIf { it.isNotBlank() } ?: "US"
+            return RowSource.Provider(providerId, region)
+        }
+        source.tmdbGenreId?.let { return RowSource.Genre(it) }
+        return null
+    }
+
     private fun loadServiceRows(catalog: CatalogConfig) {
-        val movieProviderId = catalog.collectionSources
-            .firstOrNull { sourceMatchesTab(it, CollectionTab.MOVIES) && it.tmdbWatchProviderId != null }
-            ?.let { it.tmdbWatchProviderId to (it.watchRegion?.takeIf { r -> r.isNotBlank() } ?: "US") }
-        val seriesProviderId = catalog.collectionSources
-            .firstOrNull { sourceMatchesTab(it, CollectionTab.SERIES) && it.tmdbWatchProviderId != null }
-            ?.let { it.tmdbWatchProviderId to (it.watchRegion?.takeIf { r -> r.isNotBlank() } ?: "US") }
+        val movieSource = rowSourceForTab(catalog, CollectionTab.MOVIES)
+        val seriesSource = rowSourceForTab(catalog, CollectionTab.SERIES)
 
         viewModelScope.launch {
-            if (movieProviderId != null) {
-                val (providerId, region) = movieProviderId
-                val rows = buildServiceRows(requireNotNull(providerId), MediaType.MOVIE, region)
+            if (movieSource != null) {
+                val rows = buildServiceRows(movieSource, MediaType.MOVIE)
                 _uiState.value = _uiState.value.copy(movieServiceRows = rows, isLoadingMovies = false)
             } else {
                 _uiState.value = _uiState.value.copy(isLoadingMovies = false)
             }
         }
         viewModelScope.launch {
-            if (seriesProviderId != null) {
-                val (providerId, region) = seriesProviderId
-                val rows = buildServiceRows(requireNotNull(providerId), MediaType.TV, region)
+            if (seriesSource != null) {
+                val rows = buildServiceRows(seriesSource, MediaType.TV)
                 _uiState.value = _uiState.value.copy(seriesServiceRows = rows, isLoadingSeries = false)
             } else {
                 _uiState.value = _uiState.value.copy(isLoadingSeries = false)
@@ -247,13 +268,19 @@ class CollectionDetailsViewModel @Inject constructor(
     }
 
     private suspend fun buildServiceRows(
-        providerId: Int,
-        mediaType: MediaType,
-        watchRegion: String
+        source: RowSource,
+        mediaType: MediaType
     ): List<CollectionServiceRow> = coroutineScope {
-        val popular = async { runCatching { mediaRepository.loadServiceProviderRow(providerId, mediaType, MediaRepository.ServiceRowKind.POPULAR, watchRegion) }.getOrDefault(emptyList()) }
-        val topRated = async { runCatching { mediaRepository.loadServiceProviderRow(providerId, mediaType, MediaRepository.ServiceRowKind.TOP_RATED, watchRegion) }.getOrDefault(emptyList()) }
-        val newReleases = async { runCatching { mediaRepository.loadServiceProviderRow(providerId, mediaType, MediaRepository.ServiceRowKind.NEW_RELEASES, watchRegion) }.getOrDefault(emptyList()) }
+        suspend fun fetch(kind: MediaRepository.ServiceRowKind): List<MediaItem> = runCatching {
+            when (source) {
+                is RowSource.Provider -> mediaRepository.loadServiceProviderRow(source.id, mediaType, kind, source.watchRegion)
+                is RowSource.Genre -> mediaRepository.loadGenreRow(source.id, mediaType, kind)
+            }
+        }.getOrDefault(emptyList())
+
+        val popular = async { fetch(MediaRepository.ServiceRowKind.POPULAR) }
+        val topRated = async { fetch(MediaRepository.ServiceRowKind.TOP_RATED) }
+        val newReleases = async { fetch(MediaRepository.ServiceRowKind.NEW_RELEASES) }
         listOfNotNull(
             popular.await().takeIf { it.isNotEmpty() }?.let { CollectionServiceRow("Popular", it) },
             topRated.await().takeIf { it.isNotEmpty() }?.let { CollectionServiceRow("Top Rated", it) },
