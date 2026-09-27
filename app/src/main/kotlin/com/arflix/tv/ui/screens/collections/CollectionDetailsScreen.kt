@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,6 +54,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.tv.foundation.lazy.grid.TvGridCells
@@ -89,6 +94,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -102,10 +108,18 @@ enum class CollectionTab { MOVIES, SERIES }
  */
 private const val COLLECTION_LOAD_FAILED_ERROR = "__collection_load_failed__"
 
+/** One labeled, horizontally-scrolled shelf on a streaming-service collection screen. */
+data class CollectionServiceRow(val title: String, val items: List<MediaItem>)
+
 data class CollectionDetailsUiState(
     val catalog: CatalogConfig? = null,
     val movieItems: List<MediaItem> = emptyList(),
     val seriesItems: List<MediaItem> = emptyList(),
+    // Populated instead of movieItems/seriesItems when catalog.collectionGroup
+    // == CollectionGroupKind.SERVICE — several curated rows (Popular, Top
+    // Rated, New Releases) rather than one flat, unsorted list of everything.
+    val movieServiceRows: List<CollectionServiceRow> = emptyList(),
+    val seriesServiceRows: List<CollectionServiceRow> = emptyList(),
     val supportsMovies: Boolean = false,
     val supportsSeries: Boolean = false,
     val isLoadingMovies: Boolean = true,
@@ -118,8 +132,13 @@ data class CollectionDetailsUiState(
     val loadedSeriesOffset: Int = 0,
     val error: String? = null
 ) {
-    val hasMovies: Boolean get() = movieItems.isNotEmpty()
-    val hasSeries: Boolean get() = seriesItems.isNotEmpty()
+    // Name kept from when this was service-only to avoid a broad rename —
+    // this same rows-based rendering now also covers genre collections
+    // (Action, Comedy, etc.), which had the exact same flat-grid complaint.
+    val isServiceCollection: Boolean get() = catalog?.collectionGroup == CollectionGroupKind.SERVICE ||
+        catalog?.collectionGroup == CollectionGroupKind.GENRE
+    val hasMovies: Boolean get() = if (isServiceCollection) movieServiceRows.isNotEmpty() else movieItems.isNotEmpty()
+    val hasSeries: Boolean get() = if (isServiceCollection) seriesServiceRows.isNotEmpty() else seriesItems.isNotEmpty()
 }
 
 @HiltViewModel
@@ -169,6 +188,13 @@ class CollectionDetailsViewModel @Inject constructor(
                 isLoadingSeries = true
             )
 
+            if (catalog.collectionGroup == CollectionGroupKind.SERVICE ||
+                catalog.collectionGroup == CollectionGroupKind.GENRE
+            ) {
+                loadServiceRows(catalog)
+                return@launch
+            }
+
             val primaryTab = when {
                 _uiState.value.supportsMovies -> CollectionTab.MOVIES
                 _uiState.value.supportsSeries -> CollectionTab.SERIES
@@ -188,6 +214,127 @@ class CollectionDetailsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Streaming-service screens (Netflix, Hulu, etc.) get several curated
+     * rows instead of one flat unsorted grid — same watch-provider TMDB data,
+     * just several differently-sorted/filtered slices of it. Movies and
+     * series load concurrently, each independent of the other so one being
+     * slow (or the provider not offering that media type at all) never
+     * blocks the other tab.
+     */
+    /** Which TMDB query backs a rows-based collection screen, found from
+     * whichever field is actually set on the matching source — a service
+     * collection sets tmdbWatchProviderId, a genre collection sets
+     * tmdbGenreId; never both. */
+    private sealed class RowSource {
+        data class Provider(val id: Int, val watchRegion: String) : RowSource()
+        data class Genre(val id: Int) : RowSource()
+    }
+
+    private fun rowSourceForTab(catalog: CatalogConfig, tab: CollectionTab): RowSource? {
+        val source = catalog.collectionSources.firstOrNull {
+            sourceMatchesTab(it, tab) && (it.tmdbWatchProviderId != null || it.tmdbGenreId != null)
+        } ?: return null
+        source.tmdbWatchProviderId?.let { providerId ->
+            val region = source.watchRegion?.takeIf { it.isNotBlank() } ?: "US"
+            return RowSource.Provider(providerId, region)
+        }
+        source.tmdbGenreId?.let { return RowSource.Genre(it) }
+        return null
+    }
+
+    private fun loadServiceRows(catalog: CatalogConfig) {
+        val movieSource = rowSourceForTab(catalog, CollectionTab.MOVIES)
+        val seriesSource = rowSourceForTab(catalog, CollectionTab.SERIES)
+        val needsGenreCatalogs = movieSource is RowSource.Provider || seriesSource is RowSource.Provider
+
+        viewModelScope.launch {
+            // Fetched once here (not inside buildServiceRows, which runs once
+            // per tab) so a provider-based screen doesn't ask for the full
+            // catalog list twice. Genre-based screens never need this list at
+            // all, so skip the call entirely rather than fetch-then-ignore.
+            val genreCatalogs = if (needsGenreCatalogs) {
+                runCatching { catalogRepository.getCatalogs() }.getOrDefault(emptyList())
+                    .filter { it.collectionGroup == CollectionGroupKind.GENRE }
+            } else {
+                emptyList()
+            }
+
+            launch {
+                if (movieSource != null) {
+                    val rows = buildServiceRows(movieSource, MediaType.MOVIE, genreCatalogs)
+                    _uiState.value = _uiState.value.copy(movieServiceRows = rows, isLoadingMovies = false)
+                } else {
+                    _uiState.value = _uiState.value.copy(isLoadingMovies = false)
+                }
+            }
+            launch {
+                if (seriesSource != null) {
+                    val rows = buildServiceRows(seriesSource, MediaType.TV, genreCatalogs)
+                    _uiState.value = _uiState.value.copy(seriesServiceRows = rows, isLoadingSeries = false)
+                } else {
+                    _uiState.value = _uiState.value.copy(isLoadingSeries = false)
+                }
+            }
+        }
+    }
+
+    private suspend fun buildServiceRows(
+        source: RowSource,
+        mediaType: MediaType,
+        genreCatalogs: List<CatalogConfig>
+    ): List<CollectionServiceRow> = coroutineScope {
+        suspend fun fetch(kind: MediaRepository.ServiceRowKind): List<MediaItem> = runCatching {
+            when (source) {
+                is RowSource.Provider -> mediaRepository.loadServiceProviderRow(source.id, mediaType, kind, source.watchRegion)
+                is RowSource.Genre -> mediaRepository.loadGenreRow(source.id, mediaType, kind)
+            }
+        }.getOrDefault(emptyList())
+
+        val popular = async { fetch(MediaRepository.ServiceRowKind.POPULAR) }
+        val topRated = async { fetch(MediaRepository.ServiceRowKind.TOP_RATED) }
+        val newReleases = async { fetch(MediaRepository.ServiceRowKind.NEW_RELEASES) }
+
+        // A streaming-service screen (not a genre screen itself) also gets
+        // one row per existing genre catalog (Action, Comedy, ...), each
+        // filtered by BOTH this service's provider id and that genre's id —
+        // "Action on Netflix" rather than either alone. Every genre fetches
+        // concurrently with everything else here; an empty result (a genre
+        // with nothing on this particular service) just quietly contributes
+        // no row rather than an awkward empty shelf.
+        val tab = if (mediaType == MediaType.MOVIE) CollectionTab.MOVIES else CollectionTab.SERIES
+        val genreRowDeferreds = if (source is RowSource.Provider) {
+            genreCatalogs
+                .mapNotNull { genreCatalog ->
+                    val genreSource = rowSourceForTab(genreCatalog, tab) as? RowSource.Genre ?: return@mapNotNull null
+                    genreCatalog.title to genreSource.id
+                }
+                .map { (title, genreId) ->
+                    async {
+                        val items = runCatching {
+                            mediaRepository.loadServiceProviderGenreRow(
+                                providerId = source.id,
+                                genreId = genreId,
+                                mediaType = mediaType,
+                                kind = MediaRepository.ServiceRowKind.POPULAR,
+                                watchRegion = source.watchRegion
+                            )
+                        }.getOrDefault(emptyList())
+                        items.takeIf { it.isNotEmpty() }?.let { CollectionServiceRow(title, it) }
+                    }
+                }
+        } else {
+            emptyList()
+        }
+
+        val baseRows = listOfNotNull(
+            popular.await().takeIf { it.isNotEmpty() }?.let { CollectionServiceRow("Popular", it) },
+            topRated.await().takeIf { it.isNotEmpty() }?.let { CollectionServiceRow("Top Rated", it) },
+            newReleases.await().takeIf { it.isNotEmpty() }?.let { CollectionServiceRow("New Releases", it) }
+        )
+        baseRows + genreRowDeferreds.awaitAll().filterNotNull()
     }
 
     private fun normalizeCatalogId(catalogId: String): String {
@@ -632,61 +779,83 @@ fun CollectionDetailsScreen(
         } else {
             seriesGridState
         }
-        CollectionItemsGrid(
-            items = items,
-            gridColumns = gridColumns,
-            cardWidth = cardWidth,
-            usePosterCards = usePosterCards,
-            gridState = gridState,
-            pendingFocusIndex = pendingFocusIndex,
-            onClearPendingFocus = { pendingFocusIndex = -1 },
-            hasMovies = uiState.supportsMovies,
-            hasSeries = uiState.supportsSeries,
-            cardLogoUrls = cardLogoUrls,
-            selectedTab = selectedTab,
-            moviesTabFocusRequester = moviesTabFocusRequester,
-            seriesTabFocusRequester = seriesTabFocusRequester,
-            isSportsCollection = isSportsCollection,
-            onTabSelected = { selectedTab = it },
-            onItemClick = { item ->
-                if (SportsAddonCapabilities.isSportsEventStatus(item.status)) {
-                    viewModel.openSportsCollectionItem(
-                        item = item,
-                        onUnavailable = {
-                            android.widget.Toast.makeText(
-                                context,
-                                if (item.badge.equals("LIVE", ignoreCase = true)) {
-                                    context.getString(R.string.home_sports_playback_failed)
-                                } else {
-                                    context.getString(R.string.home_sports_event_not_live)
-                                },
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        },
-                        onNavigateToPlayer = onNavigateToPlayer
-                    )
-                } else {
-                    onNavigateToDetails(item.mediaType, item.id)
-                }
-            },
-            onItemFocused = { item, index ->
-                viewModel.preloadLogos(listOf(item))
-                when (activeTab) {
-                    CollectionTab.MOVIES -> lastFocusedMovieIndex = index
-                    CollectionTab.SERIES -> lastFocusedSeriesIndex = index
-                }
-            },
-            onVisibleItemsChanged = { visibleItems -> viewModel.preloadLogos(visibleItems) },
-            onNearEnd = { viewModel.loadMoreIfNeeded(activeTab) },
-            isLoading = isTabLoading,
-            isLoadingMore = isTabLoadingMore,
-            emptyMessage = when (uiState.error) {
-                null -> stringResource(R.string.collection_empty)
-                COLLECTION_LOAD_FAILED_ERROR -> stringResource(R.string.collection_failed_load)
-                else -> uiState.error!!
-            },
-            topContentPadding = if (isMobile) 18.dp else if (usePosterCards) 22.dp else 10.dp
-        )
+        val onItemClickShared: (MediaItem) -> Unit = { item ->
+            if (SportsAddonCapabilities.isSportsEventStatus(item.status)) {
+                viewModel.openSportsCollectionItem(
+                    item = item,
+                    onUnavailable = {
+                        android.widget.Toast.makeText(
+                            context,
+                            if (item.badge.equals("LIVE", ignoreCase = true)) {
+                                context.getString(R.string.home_sports_playback_failed)
+                            } else {
+                                context.getString(R.string.home_sports_event_not_live)
+                            },
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    },
+                    onNavigateToPlayer = onNavigateToPlayer
+                )
+            } else {
+                onNavigateToDetails(item.mediaType, item.id)
+            }
+        }
+
+        if (uiState.isServiceCollection) {
+            ServiceRowsContent(
+                movieRows = uiState.movieServiceRows,
+                seriesRows = uiState.seriesServiceRows,
+                isLoadingMovies = uiState.isLoadingMovies,
+                isLoadingSeries = uiState.isLoadingSeries,
+                hasMovies = uiState.supportsMovies,
+                hasSeries = uiState.supportsSeries,
+                selectedTab = selectedTab,
+                moviesTabFocusRequester = moviesTabFocusRequester,
+                seriesTabFocusRequester = seriesTabFocusRequester,
+                cardWidth = cardWidth,
+                usePosterCards = usePosterCards,
+                topContentPadding = if (isMobile) 18.dp else if (usePosterCards) 22.dp else 10.dp,
+                onTabSelected = { selectedTab = it },
+                onItemClick = onItemClickShared,
+                onItemFocused = { item -> viewModel.preloadLogos(listOf(item)) }
+            )
+        } else {
+            CollectionItemsGrid(
+                items = items,
+                gridColumns = gridColumns,
+                cardWidth = cardWidth,
+                usePosterCards = usePosterCards,
+                gridState = gridState,
+                pendingFocusIndex = pendingFocusIndex,
+                onClearPendingFocus = { pendingFocusIndex = -1 },
+                hasMovies = uiState.supportsMovies,
+                hasSeries = uiState.supportsSeries,
+                cardLogoUrls = cardLogoUrls,
+                selectedTab = selectedTab,
+                moviesTabFocusRequester = moviesTabFocusRequester,
+                seriesTabFocusRequester = seriesTabFocusRequester,
+                isSportsCollection = isSportsCollection,
+                onTabSelected = { selectedTab = it },
+                onItemClick = onItemClickShared,
+                onItemFocused = { item, index ->
+                    viewModel.preloadLogos(listOf(item))
+                    when (activeTab) {
+                        CollectionTab.MOVIES -> lastFocusedMovieIndex = index
+                        CollectionTab.SERIES -> lastFocusedSeriesIndex = index
+                    }
+                },
+                onVisibleItemsChanged = { visibleItems -> viewModel.preloadLogos(visibleItems) },
+                onNearEnd = { viewModel.loadMoreIfNeeded(activeTab) },
+                isLoading = isTabLoading,
+                isLoadingMore = isTabLoadingMore,
+                emptyMessage = when (uiState.error) {
+                    null -> stringResource(R.string.collection_empty)
+                    COLLECTION_LOAD_FAILED_ERROR -> stringResource(R.string.collection_failed_load)
+                    else -> uiState.error!!
+                },
+                topContentPadding = if (isMobile) 18.dp else if (usePosterCards) 22.dp else 10.dp
+            )
+        }
     }
 }
 
@@ -847,6 +1016,140 @@ private fun CollectionTabChip(
             ),
             color = fg
         )
+    }
+}
+
+/**
+ * Streaming-service collection screens (Netflix, Hulu, etc.) — several
+ * curated, horizontally-scrolled rows (Popular / Top Rated / New Releases)
+ * instead of one flat grid of everything. Deliberately mirrors the Home
+ * screen's row layout (title above a horizontal shelf of [MediaCard]s) minus
+ * Home's featured hero banner, per the request this was built for — every row
+ * here is scoped to whichever single service the user picked, independent of
+ * anything else in the catalog.
+ */
+@Composable
+private fun ServiceRowsContent(
+    movieRows: List<CollectionServiceRow>,
+    seriesRows: List<CollectionServiceRow>,
+    isLoadingMovies: Boolean,
+    isLoadingSeries: Boolean,
+    hasMovies: Boolean,
+    hasSeries: Boolean,
+    selectedTab: CollectionTab,
+    moviesTabFocusRequester: FocusRequester,
+    seriesTabFocusRequester: FocusRequester,
+    cardWidth: androidx.compose.ui.unit.Dp,
+    usePosterCards: Boolean,
+    topContentPadding: androidx.compose.ui.unit.Dp,
+    onTabSelected: (CollectionTab) -> Unit,
+    onItemClick: (MediaItem) -> Unit,
+    onItemFocused: (MediaItem) -> Unit
+) {
+    val activeTab = selectedTab
+    val rows = if (activeTab == CollectionTab.MOVIES) movieRows else seriesRows
+    val isLoading = if (activeTab == CollectionTab.MOVIES) isLoadingMovies else isLoadingSeries
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().arvioDpadFocusGroup(),
+        contentPadding = PaddingValues(top = topContentPadding, bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(28.dp)
+    ) {
+        item(contentType = "tabs") {
+            CollectionTabBar(
+                hasMovies = hasMovies,
+                hasSeries = hasSeries,
+                selectedTab = selectedTab,
+                moviesTabFocusRequester = moviesTabFocusRequester,
+                seriesTabFocusRequester = seriesTabFocusRequester,
+                isSportsCollection = false,
+                onTabSelected = onTabSelected
+            )
+        }
+
+        if (isLoading) {
+            items(2, contentType = { "skeleton_row" }) {
+                ServiceRowSkeleton(cardWidth = cardWidth, usePosterCards = usePosterCards)
+            }
+        } else if (rows.isEmpty()) {
+            item(contentType = "empty") {
+                CollectionEmptyState(message = stringResource(R.string.collection_empty))
+            }
+        } else {
+            items(rows, key = { it.title }, contentType = { "row" }) { row ->
+                ServiceRow(
+                    row = row,
+                    cardWidth = cardWidth,
+                    usePosterCards = usePosterCards,
+                    onItemClick = onItemClick,
+                    onItemFocused = onItemFocused
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServiceRow(
+    row: CollectionServiceRow,
+    cardWidth: androidx.compose.ui.unit.Dp,
+    usePosterCards: Boolean,
+    onItemClick: (MediaItem) -> Unit,
+    onItemFocused: (MediaItem) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        androidx.tv.material3.Text(
+            text = row.title,
+            color = Color.White,
+            style = ArflixTypography.sectionTitle,
+            modifier = Modifier.padding(start = 42.dp, bottom = 10.dp)
+        )
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().arvioDpadFocusGroup(),
+            contentPadding = PaddingValues(horizontal = 42.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            items(row.items, key = { "${it.mediaType}-${it.id}" }, contentType = { "card" }) { item ->
+                MediaCard(
+                    item = item,
+                    width = cardWidth,
+                    isLandscape = !usePosterCards,
+                    showTitle = true,
+                    titleMaxLines = if (usePosterCards) 2 else 1,
+                    onFocused = { onItemFocused(item) },
+                    onClick = { onItemClick(item) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServiceRowSkeleton(cardWidth: androidx.compose.ui.unit.Dp, usePosterCards: Boolean) {
+    val cardHeight = if (usePosterCards) cardWidth * 1.5f else cardWidth * 9f / 16f
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .padding(start = 42.dp, bottom = 10.dp)
+                .width(140.dp)
+                .height(20.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color.White.copy(alpha = 0.08f))
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 42.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            items(6, contentType = { "skeleton_card" }) {
+                Box(
+                    modifier = Modifier
+                        .width(cardWidth)
+                        .height(cardHeight)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(alpha = 0.05f))
+                )
+            }
+        }
     }
 }
 

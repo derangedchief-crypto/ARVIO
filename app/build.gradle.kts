@@ -37,8 +37,8 @@ android {
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
         minSdk = 23
         targetSdk = 36
-        versionCode = 334
-        versionName = "2.0.019"
+        versionCode = 336
+        versionName = "2.0.021"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
@@ -192,6 +192,19 @@ android {
             // Disables R8 name obfuscation ONLY, so crash traces from this test
             // build are readable without mapping.txt. See the file for details.
             proguardFile("proguard-rules-staging.pro")
+        }
+
+        // Same release-grade build as `staging` (R8 + resource shrinking +
+        // readable crash traces, signed with the same real release keystore
+        // so it's not a throwaway debug-signed build) but under its OWN
+        // application id + launcher name, so a build from the `staging` git
+        // branch (in-progress changes not on `main` yet) can be installed
+        // side by side with the actual production app on the same device
+        // instead of overwriting it. See publish-testing-apk.yml.
+        create("internalTest") {
+            initWith(getByName("staging"))
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-test"
         }
     }
 

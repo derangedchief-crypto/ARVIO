@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Build-type-specific override (only applies to the internalTest
+         variant) — makes the two installs visually obvious apart on the
+         launcher, not just distinguishable by package name in Settings. -->
+    <string name="app_name">Extreme Hub Test</string>
+</resources>
