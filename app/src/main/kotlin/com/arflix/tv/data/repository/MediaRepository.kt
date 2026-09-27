@@ -2152,7 +2152,7 @@ class MediaRepository @Inject constructor(
         kind: ServiceRowKind,
         watchRegion: String = "US",
         limit: Int = 20
-    ): List<MediaItem> = coroutineScope {
+    ): List<MediaItem> {
         val sortBy = when (kind) {
             ServiceRowKind.POPULAR -> "popularity.desc"
             ServiceRowKind.TOP_RATED -> "vote_average.desc"
@@ -2165,7 +2165,19 @@ class MediaRepository @Inject constructor(
             null
         }
 
-        val refs: List<Pair<MediaType, Int>> = runCatching {
+        // Builds MediaItems directly from the discover response itself
+        // (poster, title, overview, rating are all already in it — the same
+        // toMediaItem() conversion trending/search rows already use) instead
+        // of a separate getMovieDetails/getTvDetails network call per item.
+        // The earlier version hydrated every item individually through a
+        // Semaphore(2) — up to 20 items x 3 rows x 2 tabs, only 2 in flight
+        // at a time — which was the actual cause of the slow load reported.
+        // Deliberately does NOT go through cacheItems(): that write-through
+        // cache is shared with the full Details screen fetch, and a lighter
+        // discover-response item lacks fields (full cast, runtime, genre
+        // names vs ids) a details view expects — this only affects what's
+        // shown in this row, never what Details shows after tapping into it.
+        return runCatching {
             when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.discoverMovies(
                     apiKey,
@@ -2176,7 +2188,7 @@ class MediaRepository @Inject constructor(
                     watchRegion = watchRegion,
                     language = contentLanguage,
                     page = 1
-                ).results.map { MediaType.MOVIE to it.id }
+                ).results.take(limit).map { it.toMediaItem(MediaType.MOVIE) }
                 MediaType.TV -> tmdbApi.discoverTv(
                     apiKey,
                     watchProviders = providerId,
@@ -2186,36 +2198,59 @@ class MediaRepository @Inject constructor(
                     airDateLte = today,
                     language = contentLanguage,
                     page = 1
-                ).results.map { MediaType.TV to it.id }
+                ).results.take(limit).map { it.toMediaItem(MediaType.TV) }
             }
-        }.getOrNull().orEmpty().take(limit)
+        }.getOrDefault(emptyList())
+    }
 
-        if (refs.isEmpty()) return@coroutineScope emptyList()
-
-        val itemsByRef = LinkedHashMap<Pair<MediaType, Int>, MediaItem>()
-        val missingRefs = mutableListOf<Pair<MediaType, Int>>()
-        refs.forEach { ref ->
-            val cachedItem = getCachedItem(ref.first, ref.second)
-            if (cachedItem != null) itemsByRef[ref] = cachedItem else missingRefs += ref
+    /** Same idea as [loadServiceProviderRow] (Popular/Top Rated/New Releases
+     * as separate rows), sourced by TMDB genre instead of watch provider —
+     * for the existing genre collection screens (Action, Comedy, etc.).
+     * Movies and series use different genre id spaces in TMDB (e.g. Action
+     * is 28 for movies, but 10759 "Action & Adventure" for TV), which is
+     * exactly what CollectionTemplateManifest's per-mediaType
+     * tmdbGenreSource(...) entries already encode — the right id for the
+     * requested mediaType is passed in by the caller, not looked up here. */
+    suspend fun loadGenreRow(
+        genreId: Int,
+        mediaType: MediaType,
+        kind: ServiceRowKind,
+        limit: Int = 20
+    ): List<MediaItem> {
+        val sortBy = when (kind) {
+            ServiceRowKind.POPULAR -> "popularity.desc"
+            ServiceRowKind.TOP_RATED -> "vote_average.desc"
+            ServiceRowKind.NEW_RELEASES -> if (mediaType == MediaType.MOVIE) "release_date.desc" else "first_air_date.desc"
         }
-        val semaphore = Semaphore(2)
-        val jobs = missingRefs.map { (type, tmdbId) ->
-            async {
-                semaphore.withPermit {
-                    val item = runCatching {
-                        when (type) {
-                            MediaType.MOVIE -> getMovieDetails(tmdbId)
-                            MediaType.TV -> getTvDetails(tmdbId)
-                        }
-                    }.getOrNull()
-                    if (item != null) itemsByRef[type to tmdbId] = item
-                }
+        val minVoteCount = if (kind == ServiceRowKind.TOP_RATED) 200 else null
+        val today = if (kind == ServiceRowKind.NEW_RELEASES) {
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
+        } else {
+            null
+        }
+
+        return runCatching {
+            when (mediaType) {
+                MediaType.MOVIE -> tmdbApi.discoverMovies(
+                    apiKey,
+                    genres = genreId.toString(),
+                    sortBy = sortBy,
+                    minVoteCount = minVoteCount,
+                    releaseDateLte = today,
+                    language = contentLanguage,
+                    page = 1
+                ).results.take(limit).map { it.toMediaItem(MediaType.MOVIE) }
+                MediaType.TV -> tmdbApi.discoverTv(
+                    apiKey,
+                    genres = genreId.toString(),
+                    sortBy = sortBy,
+                    minVoteCount = minVoteCount,
+                    airDateLte = today,
+                    language = contentLanguage,
+                    page = 1
+                ).results.take(limit).map { it.toMediaItem(MediaType.TV) }
             }
-        }
-        jobs.forEach { it.await() }
-        val items = refs.mapNotNull { itemsByRef[it] }
-        if (items.isNotEmpty()) cacheItems(items)
-        items
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun resolveCollectionSourceRefs(
