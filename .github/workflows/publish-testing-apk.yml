@@ -28,7 +28,7 @@ on:
         description: "Branch to build (defaults to staging)"
         required: false
         type: string
-        default: staging
+        default: staging/testing
 
 permissions:
   contents: read
