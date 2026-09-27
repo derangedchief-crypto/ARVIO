@@ -193,6 +193,19 @@ android {
             // build are readable without mapping.txt. See the file for details.
             proguardFile("proguard-rules-staging.pro")
         }
+
+        // Same release-grade build as `staging` (R8 + resource shrinking +
+        // readable crash traces, signed with the same real release keystore
+        // so it's not a throwaway debug-signed build) but under its OWN
+        // application id + launcher name, so a build from the `staging` git
+        // branch (in-progress changes not on `main` yet) can be installed
+        // side by side with the actual production app on the same device
+        // instead of overwriting it. See publish-testing-apk.yml.
+        create("internalTest") {
+            initWith(getByName("staging"))
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-test"
+        }
     }
 
     compileOptions {
