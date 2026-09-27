@@ -2146,11 +2146,27 @@ class MediaRepository @Inject constructor(
      * the full multi-page-until-count-met logic loadCollectionCatalogPage uses
      * for the flat grid.
      */
-    suspend fun loadServiceProviderRow(
-        providerId: Int,
+    /**
+     * Shared by every rows-based collection screen (streaming service, genre,
+     * and a service+genre combination) — builds one TMDB discover query and
+     * converts results straight from the response (poster, title, rating are
+     * already in it, the same toMediaItem() trending/search rows already
+     * use), never a separate getMovieDetails/getTvDetails call per item. The
+     * previous version hydrated every item individually through a
+     * Semaphore(2) — up to 20 items x 3 rows x 2 tabs, only 2 in flight at a
+     * time — which was the actual cause of the slow load reported.
+     * Deliberately does NOT go through cacheItems(): that write-through cache
+     * is shared with the full Details screen fetch, and a lighter
+     * discover-response item lacks fields (full cast, runtime, genre names
+     * vs ids) a details view expects — this only affects what's shown in
+     * this row, never what Details shows after tapping into it.
+     */
+    private suspend fun discoverRow(
         mediaType: MediaType,
         kind: ServiceRowKind,
+        providerId: Int? = null,
         watchRegion: String = "US",
+        genreId: Int? = null,
         limit: Int = 20
     ): List<MediaItem> {
         val sortBy = when (kind) {
@@ -2164,23 +2180,13 @@ class MediaRepository @Inject constructor(
         } else {
             null
         }
+        val genres = genreId?.toString()
 
-        // Builds MediaItems directly from the discover response itself
-        // (poster, title, overview, rating are all already in it — the same
-        // toMediaItem() conversion trending/search rows already use) instead
-        // of a separate getMovieDetails/getTvDetails network call per item.
-        // The earlier version hydrated every item individually through a
-        // Semaphore(2) — up to 20 items x 3 rows x 2 tabs, only 2 in flight
-        // at a time — which was the actual cause of the slow load reported.
-        // Deliberately does NOT go through cacheItems(): that write-through
-        // cache is shared with the full Details screen fetch, and a lighter
-        // discover-response item lacks fields (full cast, runtime, genre
-        // names vs ids) a details view expects — this only affects what's
-        // shown in this row, never what Details shows after tapping into it.
         return runCatching {
             when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.discoverMovies(
                     apiKey,
+                    genres = genres,
                     sortBy = sortBy,
                     minVoteCount = minVoteCount,
                     releaseDateLte = today,
@@ -2195,6 +2201,7 @@ class MediaRepository @Inject constructor(
                     watchRegion = watchRegion,
                     sortBy = sortBy,
                     minVoteCount = minVoteCount,
+                    genres = genres,
                     airDateLte = today,
                     language = contentLanguage,
                     page = 1
@@ -2203,12 +2210,19 @@ class MediaRepository @Inject constructor(
         }.getOrDefault(emptyList())
     }
 
-    /** Same idea as [loadServiceProviderRow] (Popular/Top Rated/New Releases
-     * as separate rows), sourced by TMDB genre instead of watch provider —
-     * for the existing genre collection screens (Action, Comedy, etc.).
-     * Movies and series use different genre id spaces in TMDB (e.g. Action
-     * is 28 for movies, but 10759 "Action & Adventure" for TV), which is
-     * exactly what CollectionTemplateManifest's per-mediaType
+    suspend fun loadServiceProviderRow(
+        providerId: Int,
+        mediaType: MediaType,
+        kind: ServiceRowKind,
+        watchRegion: String = "US",
+        limit: Int = 20
+    ): List<MediaItem> = discoverRow(mediaType, kind, providerId = providerId, watchRegion = watchRegion, limit = limit)
+
+    /** Same idea as [loadServiceProviderRow], sourced by TMDB genre instead
+     * of watch provider — for the existing genre collection screens (Action,
+     * Comedy, etc.). Movies and series use different genre id spaces in
+     * TMDB (e.g. Action is 28 for movies, but 10759 "Action & Adventure" for
+     * TV), which is exactly what CollectionTemplateManifest's per-mediaType
      * tmdbGenreSource(...) entries already encode — the right id for the
      * requested mediaType is passed in by the caller, not looked up here. */
     suspend fun loadGenreRow(
@@ -2216,42 +2230,21 @@ class MediaRepository @Inject constructor(
         mediaType: MediaType,
         kind: ServiceRowKind,
         limit: Int = 20
-    ): List<MediaItem> {
-        val sortBy = when (kind) {
-            ServiceRowKind.POPULAR -> "popularity.desc"
-            ServiceRowKind.TOP_RATED -> "vote_average.desc"
-            ServiceRowKind.NEW_RELEASES -> if (mediaType == MediaType.MOVIE) "release_date.desc" else "first_air_date.desc"
-        }
-        val minVoteCount = if (kind == ServiceRowKind.TOP_RATED) 200 else null
-        val today = if (kind == ServiceRowKind.NEW_RELEASES) {
-            SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
-        } else {
-            null
-        }
+    ): List<MediaItem> = discoverRow(mediaType, kind, genreId = genreId, limit = limit)
 
-        return runCatching {
-            when (mediaType) {
-                MediaType.MOVIE -> tmdbApi.discoverMovies(
-                    apiKey,
-                    genres = genreId.toString(),
-                    sortBy = sortBy,
-                    minVoteCount = minVoteCount,
-                    releaseDateLte = today,
-                    language = contentLanguage,
-                    page = 1
-                ).results.take(limit).map { it.toMediaItem(MediaType.MOVIE) }
-                MediaType.TV -> tmdbApi.discoverTv(
-                    apiKey,
-                    genres = genreId.toString(),
-                    sortBy = sortBy,
-                    minVoteCount = minVoteCount,
-                    airDateLte = today,
-                    language = contentLanguage,
-                    page = 1
-                ).results.take(limit).map { it.toMediaItem(MediaType.TV) }
-            }
-        }.getOrDefault(emptyList())
-    }
+    /** Both filters at once — "Action on Netflix" rather than either alone.
+     * Only ever fetched at [ServiceRowKind.POPULAR] by the caller today (one
+     * row per genre inside a streaming service's screen), but kind is still
+     * a parameter rather than hardcoded so a Top Rated/New Releases variant
+     * of a genre-on-a-service row is a one-line addition later if wanted. */
+    suspend fun loadServiceProviderGenreRow(
+        providerId: Int,
+        genreId: Int,
+        mediaType: MediaType,
+        kind: ServiceRowKind,
+        watchRegion: String = "US",
+        limit: Int = 20
+    ): List<MediaItem> = discoverRow(mediaType, kind, providerId = providerId, watchRegion = watchRegion, genreId = genreId, limit = limit)
 
     private suspend fun resolveCollectionSourceRefs(
         source: CollectionSourceConfig,
