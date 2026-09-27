@@ -248,28 +248,43 @@ class CollectionDetailsViewModel @Inject constructor(
     private fun loadServiceRows(catalog: CatalogConfig) {
         val movieSource = rowSourceForTab(catalog, CollectionTab.MOVIES)
         val seriesSource = rowSourceForTab(catalog, CollectionTab.SERIES)
+        val needsGenreCatalogs = movieSource is RowSource.Provider || seriesSource is RowSource.Provider
 
         viewModelScope.launch {
-            if (movieSource != null) {
-                val rows = buildServiceRows(movieSource, MediaType.MOVIE)
-                _uiState.value = _uiState.value.copy(movieServiceRows = rows, isLoadingMovies = false)
+            // Fetched once here (not inside buildServiceRows, which runs once
+            // per tab) so a provider-based screen doesn't ask for the full
+            // catalog list twice. Genre-based screens never need this list at
+            // all, so skip the call entirely rather than fetch-then-ignore.
+            val genreCatalogs = if (needsGenreCatalogs) {
+                runCatching { catalogRepository.getCatalogs() }.getOrDefault(emptyList())
+                    .filter { it.collectionGroup == CollectionGroupKind.GENRE }
             } else {
-                _uiState.value = _uiState.value.copy(isLoadingMovies = false)
+                emptyList()
             }
-        }
-        viewModelScope.launch {
-            if (seriesSource != null) {
-                val rows = buildServiceRows(seriesSource, MediaType.TV)
-                _uiState.value = _uiState.value.copy(seriesServiceRows = rows, isLoadingSeries = false)
-            } else {
-                _uiState.value = _uiState.value.copy(isLoadingSeries = false)
+
+            launch {
+                if (movieSource != null) {
+                    val rows = buildServiceRows(movieSource, MediaType.MOVIE, genreCatalogs)
+                    _uiState.value = _uiState.value.copy(movieServiceRows = rows, isLoadingMovies = false)
+                } else {
+                    _uiState.value = _uiState.value.copy(isLoadingMovies = false)
+                }
+            }
+            launch {
+                if (seriesSource != null) {
+                    val rows = buildServiceRows(seriesSource, MediaType.TV, genreCatalogs)
+                    _uiState.value = _uiState.value.copy(seriesServiceRows = rows, isLoadingSeries = false)
+                } else {
+                    _uiState.value = _uiState.value.copy(isLoadingSeries = false)
+                }
             }
         }
     }
 
     private suspend fun buildServiceRows(
         source: RowSource,
-        mediaType: MediaType
+        mediaType: MediaType,
+        genreCatalogs: List<CatalogConfig>
     ): List<CollectionServiceRow> = coroutineScope {
         suspend fun fetch(kind: MediaRepository.ServiceRowKind): List<MediaItem> = runCatching {
             when (source) {
@@ -281,11 +296,45 @@ class CollectionDetailsViewModel @Inject constructor(
         val popular = async { fetch(MediaRepository.ServiceRowKind.POPULAR) }
         val topRated = async { fetch(MediaRepository.ServiceRowKind.TOP_RATED) }
         val newReleases = async { fetch(MediaRepository.ServiceRowKind.NEW_RELEASES) }
-        listOfNotNull(
+
+        // A streaming-service screen (not a genre screen itself) also gets
+        // one row per existing genre catalog (Action, Comedy, ...), each
+        // filtered by BOTH this service's provider id and that genre's id —
+        // "Action on Netflix" rather than either alone. Every genre fetches
+        // concurrently with everything else here; an empty result (a genre
+        // with nothing on this particular service) just quietly contributes
+        // no row rather than an awkward empty shelf.
+        val tab = if (mediaType == MediaType.MOVIE) CollectionTab.MOVIES else CollectionTab.SERIES
+        val genreRowDeferreds = if (source is RowSource.Provider) {
+            genreCatalogs
+                .mapNotNull { genreCatalog ->
+                    val genreSource = rowSourceForTab(genreCatalog, tab) as? RowSource.Genre ?: return@mapNotNull null
+                    genreCatalog.title to genreSource.id
+                }
+                .map { (title, genreId) ->
+                    async {
+                        val items = runCatching {
+                            mediaRepository.loadServiceProviderGenreRow(
+                                providerId = source.id,
+                                genreId = genreId,
+                                mediaType = mediaType,
+                                kind = MediaRepository.ServiceRowKind.POPULAR,
+                                watchRegion = source.watchRegion
+                            )
+                        }.getOrDefault(emptyList())
+                        items.takeIf { it.isNotEmpty() }?.let { CollectionServiceRow(title, it) }
+                    }
+                }
+        } else {
+            emptyList()
+        }
+
+        val baseRows = listOfNotNull(
             popular.await().takeIf { it.isNotEmpty() }?.let { CollectionServiceRow("Popular", it) },
             topRated.await().takeIf { it.isNotEmpty() }?.let { CollectionServiceRow("Top Rated", it) },
             newReleases.await().takeIf { it.isNotEmpty() }?.let { CollectionServiceRow("New Releases", it) }
         )
+        baseRows + genreRowDeferreds.awaitAll().filterNotNull()
     }
 
     private fun normalizeCatalogId(catalogId: String): String {
