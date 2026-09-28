@@ -1051,7 +1051,13 @@ private fun ServiceRowsContent(
     val isLoading = if (activeTab == CollectionTab.MOVIES) isLoadingMovies else isLoadingSeries
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().arvioDpadFocusGroup(),
+        // enableFocusRestorer = false — see ArvioDpadFocus.kt's comment: this
+        // LazyColumn disposes rows that scroll off-screen and recreates them
+        // fresh on the way back up. Compose's automatic focus-restorer calls
+        // requestFocus() internally on re-entry, uncatchable, and throws if
+        // the target isn't attached yet — exactly the "scroll up locks
+        // everything up" symptom reported here.
+        modifier = Modifier.fillMaxSize().arvioDpadFocusGroup(enableFocusRestorer = false),
         contentPadding = PaddingValues(top = topContentPadding, bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp)
     ) {
@@ -1105,7 +1111,9 @@ private fun ServiceRow(
             modifier = Modifier.padding(start = 42.dp, bottom = 10.dp)
         )
         LazyRow(
-            modifier = Modifier.fillMaxWidth().arvioDpadFocusGroup(),
+            // Same reasoning as the outer LazyColumn above — this row
+            // disposes/recreates tiles that scroll off-screen too.
+            modifier = Modifier.fillMaxWidth().arvioDpadFocusGroup(enableFocusRestorer = false),
             contentPadding = PaddingValues(horizontal = 42.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
