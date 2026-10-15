@@ -267,6 +267,79 @@ class IptvRepositoryOptimizationTest {
     }
 
     @Test
+    fun testXmltvProviderIdentifierAliasesMatchReversedRegionAndQuality() {
+        val repository = newRepository()
+        val channel = IptvChannel(
+            id = "channel-cnn-us",
+            name = "CNN",
+            streamUrl = "https://example.test/live/cnn",
+            group = "News",
+            epgId = "cnn.us"
+        )
+        val buildLookup = IptvRepository::class.java.getDeclaredMethod(
+            "buildChannelKeyLookup",
+            List::class.java
+        ).apply { isAccessible = true }
+        val lookup = buildLookup.invoke(repository, listOf(channel))
+        val resolve = IptvRepository::class.java.getDeclaredMethod(
+            "resolveXmlTvChannels",
+            String::class.java,
+            Map::class.java,
+            lookup.javaClass
+        ).apply { isAccessible = true }
+
+        @Suppress("UNCHECKED_CAST")
+        val resolved = resolve.invoke(
+            repository,
+            "US.CNN.HD",
+            emptyMap<String, Set<String>>(),
+            lookup
+        ) as List<IptvChannel>
+
+        assertEquals(listOf("channel-cnn-us"), resolved.map { it.id })
+    }
+
+    @Test
+    fun testXmltvProviderIdentifierAliasesDoNotMergeRegionalFeeds() {
+        val repository = newRepository()
+        val east = IptvChannel(
+            id = "channel-cnn-east",
+            name = "CNN East",
+            streamUrl = "https://example.test/live/cnn-east",
+            group = "News",
+            epgId = "cnn.east.us"
+        )
+        val west = IptvChannel(
+            id = "channel-cnn-west",
+            name = "CNN West",
+            streamUrl = "https://example.test/live/cnn-west",
+            group = "News",
+            epgId = "cnn.west.us"
+        )
+        val buildLookup = IptvRepository::class.java.getDeclaredMethod(
+            "buildChannelKeyLookup",
+            List::class.java
+        ).apply { isAccessible = true }
+        val lookup = buildLookup.invoke(repository, listOf(east, west))
+        val resolve = IptvRepository::class.java.getDeclaredMethod(
+            "resolveXmlTvChannels",
+            String::class.java,
+            Map::class.java,
+            lookup.javaClass
+        ).apply { isAccessible = true }
+
+        @Suppress("UNCHECKED_CAST")
+        val resolved = resolve.invoke(
+            repository,
+            "US.CNN.HD",
+            emptyMap<String, Set<String>>(),
+            lookup
+        ) as List<IptvChannel>
+
+        assertEquals(emptyList<String>(), resolved.map { it.id })
+    }
+
+    @Test
     fun testXtreamNowNextUsesDifferentUpcomingProgramsForNextAndLater() {
         val repository = newRepository()
         val listingClass = Class.forName(

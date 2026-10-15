@@ -8193,10 +8193,6 @@ class IptvRepository @Inject constructor(
             .trim()
         val withoutPrefix = stripGuidePrefix(withoutBrackets)
         val afterPipe = withoutBrackets.substringAfterLast('|').trim()
-        val beforeDomain = withoutBrackets
-            .takeIf { '.' in it && !it.any(Char::isWhitespace) }
-            ?.substringBefore('.')
-            ?.trim()
 
         val rawAliases = buildList {
             add(raw)
@@ -8206,28 +8202,58 @@ class IptvRepository @Inject constructor(
             add(stripQualitySuffixes(withoutPrefix))
             add(afterPipe)
             add(stripQualitySuffixes(afterPipe))
-            beforeDomain?.let {
-                add(it)
-                add(stripQualitySuffixes(it))
-            }
+            // XMLTV and M3U providers frequently describe the same station in
+            // opposite forms, for example `us.cnn.hd`, `cnn.us`, or
+            // `CA | TSN 1`.  Retain the meaningful station tokens while
+            // dropping only well-known region/technical decorations.  This is
+            // deliberately an alias (not an exact identity): it must still
+            // pass the ambiguity guard in selectXmlTvCandidates().
+            addAll(providerGuideIdentityAliases(withoutBrackets))
+            addAll(providerGuideIdentityAliases(withoutPrefix))
+            addAll(providerGuideIdentityAliases(afterPipe))
         }
 
-        val result = rawAliases
-            .asSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .flatMap { alias ->
-                sequenceOf(
-                    normalizeChannelKey(alias),
-                    normalizeLooseKey(alias),
-                    normalizeLooseKey(stripQualitySuffixes(alias))
-                )
-            }
-            .filter { it.isNotBlank() }
-            .toSet()
+        val result = LinkedHashSet<String>()
+        rawAliases.forEach { alias ->
+            val trimmed = alias.trim()
+            if (trimmed.isBlank()) return@forEach
+            sequenceOf(
+                normalizeChannelKey(trimmed),
+                normalizeLooseKey(trimmed),
+                normalizeLooseKey(stripQualitySuffixes(trimmed))
+            ).filter { it.isNotBlank() }.forEach(result::add)
+        }
 
         guideKeyCandidatesCache[raw] = result
         return result
+    }
+
+    /**
+     * Produces a conservative comparable station identity for provider-style
+     * channel keys. It is intentionally limited to explicit identifiers and
+     * never performs title-token/fuzzy matching, which would risk attaching a
+     * programme to the wrong regional feed.
+     */
+    private fun providerGuideIdentityAliases(value: String): List<String> {
+        if (value.isBlank()) return emptyList()
+        val tokens = value
+            .lowercase(Locale.US)
+            .split(GUIDE_ID_SEPARATOR_REGEX)
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .filterNot { it in GUIDE_REGION_TOKENS || it in GUIDE_TECHNICAL_TOKENS }
+            .toList()
+        if (tokens.isEmpty()) return emptyList()
+
+        // Keep the complete meaningful identifier (CNN East must not collapse
+        // to CNN), then allow the plain station name only when all removed
+        // tokens were metadata such as a country code or HD marker.
+        val compact = tokens.joinToString(separator = "")
+        return buildList {
+            if (compact.isNotBlank()) add(compact)
+            if (tokens.size == 1 && tokens.single().isNotBlank()) add(tokens.single())
+        }.distinct()
     }
 
     private fun stripGuidePrefix(value: String): String {
@@ -8346,7 +8372,7 @@ class IptvRepository @Inject constructor(
             ).joinToString("|")
         }
         val raw = listOf(
-            "playlist-group-prefix-v6-stalker-portal-list-xtream-category-order-catchup-history-48h",
+            "playlist-group-prefix-v7-guide-identity-aliases-stalker-portal-list-xtream-category-order-catchup-history-48h",
             config.m3uUrl.trim(),
             config.epgUrl.trim(),
             stalkerPortalSignature(config),
@@ -8367,7 +8393,7 @@ class IptvRepository @Inject constructor(
             ).joinToString("|")
         }
         val raw = listOf(
-            "playlist-sources-v5-stalker-portal-list-xtream-category-order-catchup-history-48h",
+            "playlist-sources-v6-guide-identity-aliases-stalker-portal-list-xtream-category-order-catchup-history-48h",
             config.m3uUrl.trim(),
             stalkerPortalSignature(config),
             playlistSignature
@@ -9338,6 +9364,17 @@ class IptvRepository @Inject constructor(
         val NON_ALPHA_NUM_REGEX_INLINE = Regex("[^a-z0-9]")
         val QUALITY_SUFFIX_REGEX = Regex("\\b(hd|fhd|uhd|sd|4k|hevc|x265|x264|h264|h265)\\b")
         val GUIDE_PREFIX_REGEX = Regex("""^\s*[a-z]{2,4}\s*[\|:：/\-]+\s*""", RegexOption.IGNORE_CASE)
+        val GUIDE_ID_SEPARATOR_REGEX = Regex("""[\s._|:：/\\-]+""")
+        val GUIDE_REGION_TOKENS = setOf(
+            "us", "usa", "uk", "gb", "ca", "can", "au", "nz", "ie", "de", "fr", "es", "it",
+            "pt", "nl", "be", "ch", "at", "se", "no", "dk", "fi", "pl", "cz", "sk", "hu",
+            "ro", "gr", "tr", "br", "mx", "ar", "cl", "co", "pe", "za", "in", "pk", "ae",
+            "sa", "il", "jp", "kr", "cn", "tw", "hk", "sg", "my", "ph", "th", "id", "vn"
+        )
+        val GUIDE_TECHNICAL_TOKENS = setOf(
+            "hd", "fhd", "uhd", "sd", "4k", "2160", "2160p", "1080", "1080p", "720", "720p",
+            "576", "576p", "480", "480p", "hevc", "x265", "x264", "h264", "h265", "mpeg", "avc"
+        )
 
         val XMLTV_LOCAL_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
 
