@@ -62,7 +62,9 @@ private const val CurrentChannelEpgRefreshThrottleMs = 12_000L
 private const val EpgVodLookupTimeoutMs = 2_500L
 private const val LargeListCompleteGuideCoverageTarget = 0.75f
 private const val PlaybackEpgBackfillResumeDelayMs = 90_000L
-private const val LargeListCompleteEpgBackfillStartupDelayMs = 180_000L
+private const val LargeListCompleteEpgBackfillStartupDelayMs = 5_000L
+private const val LargeListBackgroundEpgBatchSize = 48
+private const val LargeListBackgroundEpgBatchDelayMs = 250L
 private const val AutomaticEpgInitialDelayMs = 2_000L
 private const val AutomaticEpgRefreshIntervalMs = 10 * 60_000L
 private const val AutomaticEpgRefreshChannelLimit = 96
@@ -149,6 +151,8 @@ class TvViewModel @Inject constructor(
     private var lastFullEpgWarmupKey: String? = null
     private var completeEpgBackfillJob: Job? = null
     private var lastCompleteEpgBackfillKey: String? = null
+    private var largeListBackgroundEpgJob: Job? = null
+    private var lastLargeListBackgroundEpgKey: String? = null
     private var lastVisibleForcedCompleteEpgAt: Long = 0L
     private var lastCompleteEpgBackfillCompletedAt: Long = 0L
     private var liveTvPlaybackActive: Boolean = false
@@ -1101,6 +1105,72 @@ class TvViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Xtream-only large playlists cannot use the single-pass XMLTV indexer. They
+     * previously fetched guide rows only after a category became visible, making
+     * every newly opened category look empty before its own request completed.
+     *
+     * Walk the paged channel store in small, persisted batches instead. Results
+     * are intentionally not merged into the UI snapshot: that would retain a
+     * full 10k+ channel guide in Compose memory. The category path reads each
+     * prepared batch from the SQLite guide index as soon as it is selected.
+     */
+    private fun startLargeListBackgroundEpgIndex(state: TvUiState) {
+        val totalChannels = runCatching { iptvRepository.pagedChannelStoreCount() }.getOrDefault(0)
+        if (totalChannels <= 0) return
+        if (totalChannels <= LargeIptvListChannelCount && !isLargeIptvList(state.snapshot.channels.size)) return
+        val configSignature = state.config.syncSignature()
+        val indexKey = "$configSignature|$totalChannels"
+        if (indexKey == lastLargeListBackgroundEpgKey) return
+
+        lastLargeListBackgroundEpgKey = indexKey
+        largeListBackgroundEpgJob?.cancel()
+        largeListBackgroundEpgJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(2_000L)
+            var offset = 0
+            var indexed = 0
+            while (offset < totalChannels && _uiState.value.config.syncSignature() == configSignature) {
+                // Keep interactive category work ahead of the background walk.
+                if (visibleEpgRefreshJob?.isActive == true) {
+                    delay(LargeListBackgroundEpgBatchDelayMs)
+                    continue
+                }
+                val batch = iptvRepository.pagedChannelWindow(
+                    groupTitle = null,
+                    offset = offset,
+                    limit = LargeListBackgroundEpgBatchSize
+                )
+                if (batch.isEmpty()) break
+                offset += batch.size
+
+                val ids = batch.mapTo(LinkedHashSet()) { it.id }
+                val cached = iptvRepository.reDeriveCachedNowNext(ids).orEmpty()
+                val missingIds = ids.filterNot { id -> hasUsefulVisibleGuideData(cached[id]) }.toSet()
+                if (missingIds.isNotEmpty()) {
+                    val refreshed = runCatching {
+                        iptvRepository.refreshEpgForChannels(
+                            channelIds = missingIds,
+                            maxChannels = missingIds.size,
+                            preferFullCatchupHistory = false
+                        )
+                    }.getOrNull()
+                    indexed += refreshed?.size ?: 0
+                }
+                delay(LargeListBackgroundEpgBatchDelayMs)
+            }
+            System.err.println(
+                "[EPG-Background] completed large-list guide index; " +
+                    "visited=$offset/$totalChannels updated=$indexed"
+            )
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (largeListBackgroundEpgJob === job) {
+                    largeListBackgroundEpgJob = null
+                }
+            }
+        }
+    }
+
     private fun startCompleteEpgBackfill(
         force: Boolean = false,
         priorityChannelIds: Collection<String> = emptyList()
@@ -1143,7 +1213,8 @@ class TvViewModel @Inject constructor(
         // all: verified on device, the guide stayed empty indefinitely.
         if (largeList && !LiveTvGuideSources.hasXmltvSource(state.config)) {
             setEpgBackfillInProgress(false)
-            System.err.println("[EPG-Complete] Skipping on-device full guide backfill for large playlist; visible guide loads on demand")
+            startLargeListBackgroundEpgIndex(state)
+            System.err.println("[EPG-Complete] Starting background guide index for large Xtream playlist")
             return
         }
         val indexedGuideChannels = if (largeList) {
