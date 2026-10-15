@@ -330,6 +330,10 @@ class IptvRepository @Inject constructor(
     private var cachedEpgAt: Long = 0L
 
     private val discoveredM3uEpgUrls = java.util.concurrent.CopyOnWriteArraySet<String>()
+    // A URL discovered in an M3U header belongs to that playlist only. Keeping
+    // the scope prevents an embedded guide from one provider being matched
+    // against a second provider's similarly named channels.
+    private val discoveredM3uEpgUrlPlaylistIds = ConcurrentHashMap<String, MutableSet<String>>()
     @Volatile
     private var cacheOwnerProfileId: String? = null
     @Volatile
@@ -3147,6 +3151,7 @@ class IptvRepository @Inject constructor(
         cachedPlaylistAt = 0L
         cachedEpgAt = 0L
         discoveredM3uEpgUrls.clear()
+        discoveredM3uEpgUrlPlaylistIds.clear()
         xtreamVodCacheKey = null
         xtreamVodLoadedAtMs = 0L
         xtreamSeriesLoadedAtMs = 0L
@@ -3242,6 +3247,7 @@ class IptvRepository @Inject constructor(
             cachedNowNext = ConcurrentHashMap()
             cachedEpgAt = 0L
             discoveredM3uEpgUrls.clear()
+            discoveredM3uEpgUrlPlaylistIds.clear()
             runCatching { epgIndex.deleteSource(sourceKey) }
             runCatching { cacheFile().delete() }
         }
@@ -3646,11 +3652,12 @@ class IptvRepository @Inject constructor(
                 System.err.println("IptvRepository: Xtream catalog unavailable; falling back to M3U: ${error.message}")
             }
         }
-        return fetchAndParseM3uWithRetries(playlist.m3uUrl, onProgress)
+        return fetchAndParseM3uWithRetries(playlist.m3uUrl, playlist.id, onProgress)
     }
 
     private suspend fun fetchAndParseM3uWithRetries(
         url: String,
+        playlistId: String,
         onProgress: (IptvLoadProgress) -> Unit
     ): List<IptvChannel> {
         val normalizedUrl = normalizeStoredIptvUrl(url)
@@ -3660,7 +3667,7 @@ class IptvRepository @Inject constructor(
             onProgress(IptvLoadProgress("Connecting to playlist (attempt ${attempt + 1}/$maxAttempts)...", 5))
             runCatching {
                 withTimeoutOrNull(90_000L) {
-                    fetchAndParseM3uOnce(normalizedUrl, onProgress)
+                    fetchAndParseM3uOnce(normalizedUrl, playlistId, onProgress)
                 } ?: throw IllegalStateException(context.getString(R.string.iptv_playlist_timeout))
             }.onSuccess { channels ->
                 if (channels.isNotEmpty()) return channels
@@ -5777,7 +5784,19 @@ class IptvRepository @Inject constructor(
                     add(ScopedEpgCandidate("${creds.baseUrl}/get.php?username=${creds.username}&password=${creds.password}", list.id))
                 }
             }
-            discoveredM3uEpgUrls.forEach { add(ScopedEpgCandidate(it)) }
+            discoveredM3uEpgUrls.forEach { url ->
+                val playlistIds = discoveredM3uEpgUrlPlaylistIds[url].orEmpty()
+                when {
+                    playlistIds.isNotEmpty() -> playlistIds.forEach { playlistId ->
+                        add(ScopedEpgCandidate(url, playlistId))
+                    }
+                    allLists.size == 1 -> add(ScopedEpgCandidate(url, allLists.single().id))
+                    else -> System.err.println(
+                        "[EPG] Ignoring unscoped embedded guide URL for ${allLists.size} playlists; " +
+                            "it will be rediscovered with its source scope."
+                    )
+                }
+            }
         }
             .filter { it.url.isNotBlank() }
             .distinctBy { "${it.playlistId.orEmpty()}|${it.url}" }
@@ -5823,25 +5842,28 @@ class IptvRepository @Inject constructor(
     }
 
     private suspend fun discoverEmbeddedEpgSourcesIfNeeded(playlists: List<IptvPlaylistEntry>) {
-        if (discoveredM3uEpgUrls.isNotEmpty()) return
+        val alreadyScopedPlaylistIds = discoveredM3uEpgUrlPlaylistIds.values
+            .asSequence()
+            .flatMap { it.asSequence() }
+            .toSet()
         val candidates = playlists.filter { playlist ->
             playlist.m3uUrl.isNotBlank() &&
                 playlist.allEpgUrls().isEmpty() &&
-                resolveXtreamCredentials(playlist) == null
+                resolveXtreamCredentials(playlist) == null &&
+                playlist.id !in alreadyScopedPlaylistIds
         }
         if (candidates.isEmpty()) return
 
         coroutineScope {
             candidates.map { playlist ->
                 async(Dispatchers.IO) {
-                    discoverM3uHeaderEpgUrls(playlist.m3uUrl)
+                    playlist.id to discoverM3uHeaderEpgUrls(playlist.m3uUrl)
                 }
             }.awaitAll()
         }
-            .flatten()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .forEach { discoveredM3uEpgUrls.add(it) }
+            .forEach { (playlistId, urls) ->
+                urls.forEach { url -> rememberDiscoveredEpgUrl(url, playlistId) }
+            }
     }
 
     private fun discoverM3uHeaderEpgUrls(m3uUrl: String): List<String> {
@@ -5985,6 +6007,7 @@ class IptvRepository @Inject constructor(
 
     private fun fetchAndParseM3uOnce(
         url: String,
+        playlistId: String,
         onProgress: (IptvLoadProgress) -> Unit,
         client: OkHttpClient = iptvHttpClient,
     ): List<IptvChannel> {
@@ -6027,7 +6050,7 @@ class IptvRepository @Inject constructor(
                 throw IllegalStateException(context.getString(R.string.iptv_m3u_failed, response.code) + " " + detail)
             }
             onProgress(IptvLoadProgress("Parsing channels...", 78))
-            return parseM3u(stream, onProgress)
+            return parseM3u(stream, playlistId, onProgress)
         }
     }
 
@@ -7120,6 +7143,7 @@ class IptvRepository @Inject constructor(
 
     private fun parseM3u(
         input: InputStream,
+        playlistId: String,
         onProgress: (IptvLoadProgress) -> Unit
     ): List<IptvChannel> {
         val channels = mutableListOf<IptvChannel>()
@@ -7137,7 +7161,7 @@ class IptvRepository @Inject constructor(
 
                 if (line.startsWith("#EXTM3U", ignoreCase = true)) {
                     extractM3uDeclaredEpgUrls(line)
-                        .forEach { discoveredM3uEpgUrls.add(it) }
+                        .forEach { url -> rememberDiscoveredEpgUrl(url, playlistId) }
                     continue
                 }
 
@@ -8372,7 +8396,7 @@ class IptvRepository @Inject constructor(
             ).joinToString("|")
         }
         val raw = listOf(
-            "playlist-group-prefix-v7-guide-identity-aliases-stalker-portal-list-xtream-category-order-catchup-history-48h",
+            "playlist-group-prefix-v8-scoped-embedded-guides-identity-aliases-stalker-portal-list-xtream-category-order-catchup-history-48h",
             config.m3uUrl.trim(),
             config.epgUrl.trim(),
             stalkerPortalSignature(config),
@@ -8393,7 +8417,7 @@ class IptvRepository @Inject constructor(
             ).joinToString("|")
         }
         val raw = listOf(
-            "playlist-sources-v6-guide-identity-aliases-stalker-portal-list-xtream-category-order-catchup-history-48h",
+            "playlist-sources-v7-scoped-embedded-guides-identity-aliases-stalker-portal-list-xtream-category-order-catchup-history-48h",
             config.m3uUrl.trim(),
             stalkerPortalSignature(config),
             playlistSignature
@@ -8705,6 +8729,16 @@ class IptvRepository @Inject constructor(
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .forEach { discoveredM3uEpgUrls.add(it) }
+    }
+
+    private fun rememberDiscoveredEpgUrl(url: String, playlistId: String) {
+        val normalizedUrl = url.trim()
+        val normalizedPlaylistId = playlistId.trim()
+        if (normalizedUrl.isBlank() || normalizedPlaylistId.isBlank()) return
+        discoveredM3uEpgUrls += normalizedUrl
+        discoveredM3uEpgUrlPlaylistIds
+            .getOrPut(normalizedUrl) { ConcurrentHashMap.newKeySet() }
+            .add(normalizedPlaylistId)
     }
 
     private fun IptvProgram.compactForCache(): IptvProgram =

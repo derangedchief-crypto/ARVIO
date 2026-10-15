@@ -340,6 +340,65 @@ class IptvRepositoryOptimizationTest {
     }
 
     @Test
+    fun testEmbeddedEpgUrlIsScopedToItsPlaylist() {
+        val repository = newRepository()
+        val remember = IptvRepository::class.java.getDeclaredMethod(
+            "rememberDiscoveredEpgUrl",
+            String::class.java,
+            String::class.java,
+        ).apply { isAccessible = true }
+        val resolve = IptvRepository::class.java.getDeclaredMethod(
+            "resolveScopedEpgCandidates",
+            IptvConfig::class.java,
+        ).apply { isAccessible = true }
+        val candidateClass = Class.forName(
+            "com.arflix.tv.data.repository.IptvRepository\$ScopedEpgCandidate"
+        )
+        val playlistIdField = candidateClass.getDeclaredField("playlistId").apply { isAccessible = true }
+
+        remember.invoke(repository, "https://provider-one.test/guide.xml", "one")
+        @Suppress("UNCHECKED_CAST")
+        val candidates = resolve.invoke(
+            repository,
+            IptvConfig(
+                playlists = listOf(
+                    IptvPlaylistEntry("one", "One", "https://provider-one.test/list.m3u"),
+                    IptvPlaylistEntry("two", "Two", "https://provider-two.test/list.m3u"),
+                )
+            )
+        ) as List<Any>
+
+        assertEquals(listOf("one"), candidates.map { playlistIdField.get(it) })
+    }
+
+    @Test
+    fun testUnscopedCachedEmbeddedEpgUrlIsNotAppliedAcrossPlaylists() {
+        val repository = newRepository()
+        val rememberLegacy = IptvRepository::class.java.getDeclaredMethod(
+            "rememberDiscoveredEpgUrls",
+            List::class.java,
+        ).apply { isAccessible = true }
+        val resolve = IptvRepository::class.java.getDeclaredMethod(
+            "resolveScopedEpgCandidates",
+            IptvConfig::class.java,
+        ).apply { isAccessible = true }
+
+        rememberLegacy.invoke(repository, listOf("https://unknown-source.test/guide.xml"))
+        @Suppress("UNCHECKED_CAST")
+        val candidates = resolve.invoke(
+            repository,
+            IptvConfig(
+                playlists = listOf(
+                    IptvPlaylistEntry("one", "One", "https://provider-one.test/list.m3u"),
+                    IptvPlaylistEntry("two", "Two", "https://provider-two.test/list.m3u"),
+                )
+            )
+        ) as List<Any>
+
+        assertEquals(emptyList<Any>(), candidates)
+    }
+
+    @Test
     fun testXtreamNowNextUsesDifferentUpcomingProgramsForNextAndLater() {
         val repository = newRepository()
         val listingClass = Class.forName(
