@@ -906,7 +906,7 @@ class TvViewModel @Inject constructor(
         // stays within budget. (The backfill that DOES run when playback is idle now
         // streams in bounded batches — see fetchXtreamFullEpg — so it can't OOM.)
         if (active) {
-            if (pauseEpgBackfillDuringPlayback) {
+            if (pauseEpgBackfillDuringPlayback && !canFetchXmltvGuideDuringPlayback(_uiState.value.config)) {
                 deferredCompleteEpgBackfillJob?.cancel()
                 deferredCompleteEpgBackfillJob = null
                 if (completeEpgBackfillJob?.isActive == true) {
@@ -920,6 +920,11 @@ class TvViewModel @Inject constructor(
         } else {
             scheduleDeferredCompleteEpgBackfill()
         }
+    }
+
+    private fun canFetchXmltvGuideDuringPlayback(config: IptvConfig): Boolean {
+        return LiveTvGuideSources.hasXmltvSource(config) ||
+            iptvRepository.hasDiscoveredM3uEpgSource()
     }
 
     private fun deferCompleteEpgBackfill(priorityChannelIds: Collection<String>) {
@@ -1199,24 +1204,20 @@ class TvViewModel @Inject constructor(
             )
             return
         }
-        if (pauseEpgBackfillDuringPlayback && liveTvPlaybackActive) {
+        if (pauseEpgBackfillDuringPlayback &&
+            liveTvPlaybackActive &&
+            !canFetchXmltvGuideDuringPlayback(state.config)
+        ) {
             deferCompleteEpgBackfill(priorityChannelIds)
             return
         }
-        // A large list is only dangerous for the Xtream path, which fans out into
-        // one HTTP call per channel. An XMLTV source is a single file parsed with
-        // SAX, keeping only now/next/recent per channel, so it stays bounded no
-        // matter how many programmes the file holds — and it is the ONLY way a
-        // plain-M3U playlist can ever get a guide, because refreshEpgForChannels
-        // (the "loads on demand" fallback) skips every channel without Xtream
-        // credentials. Blocking it here left large M3U playlists with no EPG at
-        // all: verified on device, the guide stayed empty indefinitely.
-        if (largeList && !LiveTvGuideSources.hasXmltvSource(state.config)) {
-            setEpgBackfillInProgress(false)
-            startLargeListBackgroundEpgIndex(state)
-            System.err.println("[EPG-Complete] Starting background guide index for large Xtream playlist")
-            return
-        }
+        // XMLTV may be declared in the M3U's #EXTM3U header rather than in the
+        // saved settings. That source is discovered only while loadSnapshot()
+        // reads the playlist, so a configuration-only check here incorrectly
+        // classified large plain-M3U lists as Xtream-only and skipped the one
+        // operation that can populate their guide. The repository resolves the
+        // actual scoped candidates at runtime; no candidate means no XMLTV
+        // request, while a discovered candidate is parsed in one bounded pass.
         val indexedGuideChannels = if (largeList) {
             runCatching { iptvRepository.indexedGuideChannelCount() }.getOrDefault(0)
         } else {
@@ -1299,7 +1300,10 @@ class TvViewModel @Inject constructor(
                 else -> 250L
             }
             delay(startupDelay)
-            if (pauseEpgBackfillDuringPlayback && liveTvPlaybackActive) {
+            if (pauseEpgBackfillDuringPlayback &&
+                liveTvPlaybackActive &&
+                !canFetchXmltvGuideDuringPlayback(state.config)
+            ) {
                 deferCompleteEpgBackfill(priorityChannelIds)
                 return@launch
             }

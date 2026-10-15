@@ -8,6 +8,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -369,6 +370,7 @@ class IptvRepositoryOptimizationTest {
         ) as List<Any>
 
         assertEquals(listOf("one"), candidates.map { playlistIdField.get(it) })
+        assertTrue(repository.hasDiscoveredM3uEpgSource())
     }
 
     @Test

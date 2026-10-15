@@ -81,6 +81,7 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -2098,6 +2099,18 @@ fun LiveTvScreen(
             .build()
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setRenderersFactory(
+                DefaultRenderersFactory(context)
+                    // Keep hardware decoding first, but recover on the many
+                    // low-cost TV firmware builds whose advertised decoder
+                    // cannot actually start a provider stream's profile.
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+                    .setEnableDecoderFallback(true)
+                    // Synchronous codec queueing avoids frame pacing stalls
+                    // observed on affected Amlogic/onn Android TV firmware.
+                    .forceDisableMediaCodecAsynchronousQueueing()
+                    .experimentalSetEnableMediaCodecVideoRendererPrewarming(false)
+            )
             .setLoadControl(loadControl)
             .build().apply {
                 playWhenReady = true
@@ -2112,8 +2125,22 @@ fun LiveTvScreen(
     var playerIsPlaying by remember { mutableStateOf(false) }
     var playerPlayWhenReady by remember { mutableStateOf(true) }
     var playerIsBuffering by remember { mutableStateOf(false) }
-    LaunchedEffect(exoPlayer, playingCatchupProgram, catchupUrlAnchorOffsetMs) {
+    LaunchedEffect(exoPlayer, playingCatchupProgram, catchupUrlAnchorOffsetMs, isFullScreen, isHudVisible) {
         while (true) {
+            // The guide composition is intentionally large. Updating its root
+            // state every 1.5 seconds just to advance a hidden live HUD steals
+            // render time from the video surface on entry-level TV hardware.
+            // Catch-up controls need a progressing timeline, and the visible
+            // fullscreen HUD does too; the mini-player does not.
+            val needsTimelineUpdates = playingCatchupProgram != null ||
+                (isFullScreen && isHudVisible && !fullscreenGuideOpen && !quickZapOpen)
+            if (!needsTimelineUpdates) {
+                playerIsPlaying = exoPlayer.isPlaying
+                playerPlayWhenReady = exoPlayer.playWhenReady
+                playerIsBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING
+                delay(2_500L)
+                continue
+            }
             val programDuration = playingCatchupProgram
                 ?.let { (it.endUtcMillis - it.startUtcMillis).coerceAtLeast(0L) }
                 ?: 0L
@@ -3562,13 +3589,17 @@ private fun buildLiveTvBufferProfile(
     // faster and stop the initial bandwidth burn that caused early buffering.
     val heapMb = memoryClassMb.coerceAtLeast(256)
     val constrained = isLowRamDevice || heapMb <= 384
-    val targetMb = if (constrained) 32 else 48
+    // 32 MiB is too shallow for many 1080p/4K IPTV feeds: a brief Wi-Fi or
+    // provider-rate dip drains it in seconds and presents as choppy playback.
+    // 48 MiB stays far below the former 96–160 MiB OOM-prone allocation while
+    // providing a useful live-stream safety margin on 384 MiB TV heaps.
+    val targetMb = if (constrained) 48 else 64
 
     return LiveTvBufferProfile(
-        minBufferMs = 15_000,
-        maxBufferMs = 30_000,
-        bufferForPlaybackMs = 1_000,
-        bufferForPlaybackAfterRebufferMs = if (constrained) 2_500 else 3_000,
+        minBufferMs = 20_000,
+        maxBufferMs = 45_000,
+        bufferForPlaybackMs = 1_500,
+        bufferForPlaybackAfterRebufferMs = if (constrained) 3_500 else 4_000,
         targetBufferBytes = targetMb * 1024 * 1024,
         backBufferMs = 5_000,
     )

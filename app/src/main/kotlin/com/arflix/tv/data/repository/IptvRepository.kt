@@ -334,6 +334,14 @@ class IptvRepository @Inject constructor(
     // the scope prevents an embedded guide from one provider being matched
     // against a second provider's similarly named channels.
     private val discoveredM3uEpgUrlPlaylistIds = ConcurrentHashMap<String, MutableSet<String>>()
+
+    /**
+     * An XMLTV URL declared by an M3U header is not persisted in settings, but
+     * it is still safe to parse as one bounded stream while live playback is
+     * active. Callers use this to avoid treating plain M3U providers as
+     * Xtream-only and permanently deferring their guide refresh.
+     */
+    fun hasDiscoveredM3uEpgSource(): Boolean = discoveredM3uEpgUrls.isNotEmpty()
     @Volatile
     private var cacheOwnerProfileId: String? = null
     @Volatile
