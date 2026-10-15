@@ -83,6 +83,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.PlayerView
 import com.arflix.tv.R
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.ArflixTypography
@@ -2593,6 +2594,46 @@ fun LiveTvScreen(
         }
     }
 
+    // Keep the ExoPlayer attached to exactly one PlayerView while the
+    // fullscreen layer animates in and out. During the reverse animation both
+    // the guide (with its mini-player) and fullscreen layer are composed; if
+    // both views claim the player, the fullscreen view can be removed while it
+    // still owns the video surface, leaving the mini-player frozen.
+    val fsProgress by animateFloatAsState(
+        targetValue = if (isFullScreen) 1f else 0f,
+        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+        label = "tv-fullscreen-progress",
+    )
+    val fullscreenSurfaceActive = fsProgress > 0f
+    var miniPlayerView by remember { mutableStateOf<PlayerView?>(null) }
+    var fullPlayerView by remember { mutableStateOf<PlayerView?>(null) }
+    var attachedPlayerView by remember { mutableStateOf<PlayerView?>(null) }
+
+    fun releasePlayerView(view: PlayerView, isMini: Boolean) {
+        if (isMini) {
+            if (miniPlayerView === view) miniPlayerView = null
+        } else if (fullPlayerView === view) {
+            fullPlayerView = null
+        }
+        // The view is being removed, so it must not be used as the old target
+        // on the next handoff. Leave its stale Player reference alone: calling
+        // setPlayer(null) after the replacement view is attached would clear
+        // the replacement surface too.
+        if (attachedPlayerView === view) attachedPlayerView = null
+    }
+
+    LaunchedEffect(exoPlayer, fullscreenSurfaceActive, miniPlayerView, fullPlayerView) {
+        val targetView = if (fullscreenSurfaceActive) fullPlayerView else miniPlayerView
+        val previousView = attachedPlayerView
+        if (previousView === targetView) return@LaunchedEffect
+
+        // Media3 explicitly recommends attaching the new target before
+        // detaching the old one. This avoids a decoder/surface gap and makes
+        // the reverse fullscreen transition safe on TV Surface/TextureView.
+        PlayerView.switchTargetView(exoPlayer, previousView, targetView)
+        attachedPlayerView = targetView
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -2712,7 +2753,6 @@ fun LiveTvScreen(
                         )
                     }
                     MiniPlayerRow(
-                        exoPlayer = exoPlayer,
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
                         nowNext = currentNowNext,
@@ -2723,6 +2763,8 @@ fun LiveTvScreen(
                         onOpenVariants = playingChannel?.let { channel -> { openVariantPicker(channel) } },
                         compact = true,
                         landscapeCompact = landscapeCompactMiniPlayer,
+                        onPlayerViewCreated = { view -> miniPlayerView = view },
+                        onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     TouchCategoryRail(
@@ -2866,7 +2908,6 @@ fun LiveTvScreen(
                         )
                     }
                     MiniPlayerRow(
-                        exoPlayer = exoPlayer,
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
                         nowNext = currentNowNext,
@@ -2876,6 +2917,8 @@ fun LiveTvScreen(
                         variantCount = playingChannel?.let { variantCountFor(it, variantGroups) } ?: 1,
                         onOpenVariants = playingChannel?.let { channel -> { openVariantPicker(channel) } },
                         compact = compactTouchLayout,
+                        onPlayerViewCreated = { view -> miniPlayerView = view },
+                        onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     EpgGrid(
@@ -2938,11 +2981,6 @@ fun LiveTvScreen(
         // anchored visually to where the user tapped instead of from screen
         // center. fsProgress stays mounted until it reaches 0, so the
         // reverse animation also plays on Back.
-        val fsProgress by animateFloatAsState(
-            targetValue = if (isFullScreen) 1f else 0f,
-            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
-            label = "tv-fullscreen-progress",
-        )
         if (fsProgress > 0f && playingChannel != null) {
             val scale = 0.35f + 0.65f * fsProgress
     BackHandler(enabled = isFullScreen) {
@@ -3064,18 +3102,21 @@ fun LiveTvScreen(
             ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
-                        androidx.media3.ui.PlayerView(ctx).apply {
+                        val view = (LayoutInflater.from(ctx)
+                            .inflate(R.layout.live_tv_player_view, null) as PlayerView).apply {
                             keepScreenOn = true
-                            player = exoPlayer
                             useController = false
                             setKeepContentOnPlayerReset(true)
                         }
+                        fullPlayerView = view
+                        view
                     },
                     update = { view ->
                         view.keepScreenOn = true
-                        if (view.player !== exoPlayer) {
-                            view.player = exoPlayer
-                        }
+                        fullPlayerView = view
+                    },
+                    onRelease = { view ->
+                        releasePlayerView(view, isMini = false)
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
