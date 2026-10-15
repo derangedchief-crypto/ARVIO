@@ -96,6 +96,8 @@ private object IptvRepoDateRegexes {
     val SECOND_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm-ss")
     val SPACE_SECOND_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     val SPACE_MINUTE_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+    val ISO_LOCAL_SECOND_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+    val ISO_LOCAL_MINUTE_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
     val YEAR_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy")
     val MONTH_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("MM")
     val DAY_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("dd")
@@ -333,6 +335,8 @@ class IptvRepository @Inject constructor(
     @Volatile
     private var cacheOwnerConfigSig: String? = null
     @Volatile
+    private var cacheOwnerEpgSig: String? = null
+    @Volatile
     private var currentEpgIndexKey: String = ""
     @Volatile
     private var xtreamVodCacheKey: String? = null
@@ -506,6 +510,7 @@ class IptvRepository @Inject constructor(
         val channels: List<IptvChannel> = emptyList(),
         val nowNext: Map<String, IptvNowNext> = emptyMap(),
         val loadedAtEpochMs: Long = 0L,
+        val epgLoadedAtEpochMs: Long = 0L,
         val configSignature: String = "",
         val sourceSignature: String = "",
         val discoveredEpgUrls: List<String> = emptyList()
@@ -1989,7 +1994,9 @@ class IptvRepository @Inject constructor(
                 cachedGroupedChannels = buildGroupedChannels(cachedChannelsFromDisk.channels)
                 cachedNowNext = ConcurrentHashMap(cachedGuideFromDisk?.nowNext.orEmpty())
                 cachedPlaylistAt = cachedChannelsFromDisk.loadedAtEpochMs
-                cachedEpgAt = cachedGuideFromDisk?.loadedAtEpochMs ?: cachedChannelsFromDisk.loadedAtEpochMs
+                cachedEpgAt = cachedGuideFromDisk?.epgLoadedAtEpochMs
+                    ?.takeIf { it > 0L }
+                    ?: 0L
                 if (cachedChannelsFromDisk.channels.size <= LargeIptvListChannelCount) {
                     reDeriveCachedNowNext(cachedChannelsFromDisk.channels.asSequence().map { it.id }.toSet())
                 } else {
@@ -2089,7 +2096,8 @@ class IptvRepository @Inject constructor(
                     config = config,
                     channels = channels,
                     nowNext = immediateNowNext,
-                    loadedAtMs = System.currentTimeMillis()
+                    loadedAtMs = System.currentTimeMillis(),
+                    epgLoadedAtMs = cachedEpgAt
                 )
             }
 
@@ -2099,10 +2107,12 @@ class IptvRepository @Inject constructor(
             val epgCandidates = resolveScopedEpgCandidates(config)
             var epgUpdated = false
             val cachedHasPrograms = hasAnyProgramData(cachedNowNext)
+            val cachedEpgIsFresh = cachedEpgAt > 0L && now - cachedEpgAt < epgCacheMs
             val shouldUseCachedEpg = !forceEpgReload && (
-                cachedHasPrograms ||
+                (cachedHasPrograms && (!allowNetworkEpgFetch || cachedEpgIsFresh)) ||
                     (!cachedHasPrograms && now - cachedEpgAt < epgEmptyRetryMs)
                 )
+            val networkEpgUpdated = AtomicBoolean(false)
             var epgFailureMessage: String? = null
 
             // Check if this is an Xtream provider (can use fast short EPG API)
@@ -2120,6 +2130,7 @@ class IptvRepository @Inject constructor(
             // PHASE A: Fast EPG (cache + Xtream short) — emit immediately
             // ═══════════════════════════════════════════════════════════
             val phaseANowNext = ConcurrentHashMap<String, IptvNowNext>()
+            val phaseAFreshNetworkChannelIds = ConcurrentHashMap.newKeySet<String>()
             if (shouldUseCachedEpg || !allowNetworkEpgFetch) {
                 if (cachedFallbackNowNext.isNotEmpty()) {
                     phaseANowNext.putAll(cachedFallbackNowNext)
@@ -2135,8 +2146,19 @@ class IptvRepository @Inject constructor(
                     if (shortEpgAttempt.isSuccess) {
                         val parsed = shortEpgAttempt.getOrNull()
                         if (parsed != null && hasAnyProgramData(parsed)) {
-                            phaseANowNext.putAll(parsed)
-                            phaseANowNext.putAll(cachedFallbackNowNext)  // Merge with cache
+                            networkEpgUpdated.set(true)
+                            // Seed with the cache for channels the provider did
+                            // not return, then let fresh network rows win for
+                            // the channels that were actually refreshed.
+                            phaseANowNext.putAll(cachedFallbackNowNext)
+                            parsed.forEach { (channelId, fresh) ->
+                                if (hasProgramData(fresh) || channelId !in phaseANowNext) {
+                                    phaseANowNext[channelId] = fresh
+                                    if (hasProgramData(fresh)) {
+                                        phaseAFreshNetworkChannelIds += channelId
+                                    }
+                                }
+                            }
                             onProgress(IptvLoadProgress("EPG updated (${phaseANowNext.size} channels)", 85))
                             runCatching { onEpgChunkReady(phaseANowNext) }
                         }
@@ -2153,6 +2175,7 @@ class IptvRepository @Inject constructor(
                     var bestCoverage = epgCoverageRatio(channels, phaseB)
                     var resolved = false
                     var xmltvChanged = false
+                    val xmltvResolvedChannelIds = mutableSetOf<String>()
 
                     val epgCandidatesToTry = epgCandidates
                     for ((index, candidate) in epgCandidatesToTry.withIndex()) {
@@ -2171,11 +2194,17 @@ class IptvRepository @Inject constructor(
                             val parsed = attempt.getOrDefault(emptyMap())
                             val parsedHasPrograms = hasAnyProgramData(parsed)
                             if (parsedHasPrograms) {
+                                networkEpgUpdated.set(true)
                                 xmltvChanged = true
                                 parsed.forEach { (channelId, nowNext) ->
                                     val current = phaseB[channelId]
-                                    if (!hasProgramData(current) && hasProgramData(nowNext)) {
+                                    if (
+                                        channelId !in phaseAFreshNetworkChannelIds &&
+                                            channelId !in xmltvResolvedChannelIds &&
+                                            hasProgramData(nowNext)
+                                    ) {
                                         phaseB[channelId] = nowNext
+                                        xmltvResolvedChannelIds += channelId
                                     } else if (current == null) {
                                         phaseB[channelId] = nowNext
                                     }
@@ -2209,6 +2238,9 @@ class IptvRepository @Inject constructor(
                                     } else if (current == null) {
                                         phaseB[channelId] = nowNext
                                     }
+                                }
+                                if (hasAnyProgramData(existing)) {
+                                    networkEpgUpdated.set(true)
                                 }
                                 resolved = true
                                 runCatching { onEpgChunkReady(phaseB) }
@@ -2246,8 +2278,10 @@ class IptvRepository @Inject constructor(
             // Update cache
             if (nowNext.isNotEmpty()) {
                 cachedNowNext = ConcurrentHashMap(nowNext)
-                cachedEpgAt = System.currentTimeMillis()
-                epgUpdated = true
+                epgUpdated = networkEpgUpdated.get()
+                if (epgUpdated) {
+                    cachedEpgAt = System.currentTimeMillis()
+                }
             }
             val epgFailure = epgFailureMessage
             val epgWarning = if (epgCandidates.isNotEmpty() && nowNext.isEmpty()) {
@@ -2288,7 +2322,8 @@ class IptvRepository @Inject constructor(
                         config = config,
                         channels = channels,
                         nowNext = nowNext,
-                        loadedAtMs = System.currentTimeMillis()
+                        loadedAtMs = System.currentTimeMillis(),
+                        epgLoadedAtMs = cachedEpgAt
                     )
                 }
                 onProgress(IptvLoadProgress(context.getString(R.string.iptv_loaded_channels, channels.size), 100))
@@ -2322,7 +2357,9 @@ class IptvRepository @Inject constructor(
                 }
                 if (guideCache != null) {
                     cachedNowNext = ConcurrentHashMap(guideCache.nowNext)
-                    cachedEpgAt = guideCache.loadedAtEpochMs
+                    cachedEpgAt = guideCache.epgLoadedAtEpochMs
+                        .takeIf { it > 0L }
+                        ?: 0L
                     persistEpgIndexChannels(config, guideCache.nowNext, cachedEpgAt)
                     val indexedChannels = countIndexedGuideChannels()
                     val indexedPrograms = countIndexedGuidePrograms()
@@ -2332,7 +2369,7 @@ class IptvRepository @Inject constructor(
                     )
                 } else {
                     cachedNowNext = ConcurrentHashMap()
-                    cachedEpgAt = cached.loadedAtEpochMs
+                    cachedEpgAt = 0L
                     if (cached.channels.size > LargeIptvListChannelCount) {
                         System.err.println("[EPG-Memory] warm cache skipped full guide hydration for ${cached.channels.size} channels")
                     }
@@ -2374,7 +2411,9 @@ class IptvRepository @Inject constructor(
                     cachedGroupedChannels = buildGroupedChannels(cached.channels)
                     cachedNowNext = ConcurrentHashMap(guideCache?.nowNext.orEmpty())
                     cachedPlaylistAt = cached.loadedAtEpochMs
-                    cachedEpgAt = guideCache?.loadedAtEpochMs ?: cached.loadedAtEpochMs
+                    cachedEpgAt = guideCache?.epgLoadedAtEpochMs
+                        ?.takeIf { it > 0L }
+                        ?: 0L
                     if (cached.channels.size > LargeIptvListChannelCount) {
                         System.err.println("[EPG-Memory] cached snapshot skipped full guide hydration for ${cached.channels.size} channels")
                     }
@@ -2518,8 +2557,6 @@ class IptvRepository @Inject constructor(
                             addRecentCandidate(recent, p, recentProgramLimitForChannel(channelsById[channelId]))
                         }
                         p.isLive(nowMs) -> now = p
-                        p.startUtcMillis > nowMs && next == null -> next = p
-                        p.startUtcMillis > nowMs && later == null -> later = p
                         p.startUtcMillis > nowMs -> {
                             upcoming.add(p)
                             if (upcoming.size >= epgUpcomingProgramLimit) {
@@ -2529,6 +2566,9 @@ class IptvRepository @Inject constructor(
                     }
                 }
             }
+
+            next = upcoming.getOrNull(0)
+            later = upcoming.getOrNull(1)
 
             result[channelId] = IptvNowNext(
                 now = now,
@@ -2810,10 +2850,9 @@ class IptvRepository @Inject constructor(
             val missingXmlChannels = channels.filter { channel ->
                 !hasProgramData(mergedNowNext[channel.id])
             }
-            val hasXtreamRequestedChannels = channelsByCredentials.isNotEmpty()
             var xmlFallback: Map<String, IptvNowNext> = emptyMap()
             var isXmlCached = false
-            if (missingXmlChannels.isNotEmpty() && !preferFullCatchupHistory && !hasXtreamRequestedChannels) {
+            if (missingXmlChannels.isNotEmpty() && !preferFullCatchupHistory) {
                 val result = fetchVisibleXmlEpgForChannels(config, missingXmlChannels)
                 xmlFallback = result.first
                 isXmlCached = result.second
@@ -2823,11 +2862,6 @@ class IptvRepository @Inject constructor(
                         "[EPG-Refresh] XMLTV visible fallback added ${xmlFallback.size} channels"
                     )
                 }
-            } else if (missingXmlChannels.isNotEmpty() && hasXtreamRequestedChannels) {
-                System.err.println(
-                    "[EPG-Refresh] Skipping XMLTV visible fallback for Xtream channels; " +
-                        "missing=${missingXmlChannels.size}"
-                )
             }
             if (mergedNowNext.isEmpty()) return@withContext null
 
@@ -2951,7 +2985,8 @@ class IptvRepository @Inject constructor(
             config = config,
             channels = channels,
             nowNext = nowNext,
-            loadedAtMs = loadedAtMs.coerceAtLeast(cachedPlaylistAt.coerceAtLeast(loadedAtMs))
+            loadedAtMs = loadedAtMs.coerceAtLeast(cachedPlaylistAt.coerceAtLeast(loadedAtMs)),
+            epgLoadedAtMs = cachedEpgAt
         )
     }
 
@@ -3121,6 +3156,7 @@ class IptvRepository @Inject constructor(
         xtreamSeriesEpisodeInFlight = emptyMap()
         cacheOwnerProfileId = null
         cacheOwnerConfigSig = null
+        cacheOwnerEpgSig = null
         currentEpgIndexKey = ""
         // Drop derived per-creds caches that depend on the catalogs above.
         cachedXtreamVodCategories = emptyList()
@@ -3164,16 +3200,56 @@ class IptvRepository @Inject constructor(
         runCatching { channelCacheFile().delete() }
     }
 
+    private fun epgSourceMarkerKey(profileId: String, sourceSignature: String): String {
+        return "iptv_epg_source_signature_${sha1Hex(profileId.trim().ifBlank { "default" })}_$sourceSignature"
+    }
+
+    private fun storedEpgSourceSignature(profileId: String, sourceSignature: String): String? {
+        return runCatching {
+            context.getSharedPreferences("arvio_iptv_prefs", Context.MODE_PRIVATE)
+                .getString(epgSourceMarkerKey(profileId, sourceSignature), null)
+        }.getOrNull()
+    }
+
+    private fun rememberEpgSourceSignature(
+        profileId: String,
+        sourceSignature: String,
+        epgSignature: String
+    ) {
+        runCatching {
+            context.getSharedPreferences("arvio_iptv_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putString(epgSourceMarkerKey(profileId, sourceSignature), epgSignature)
+                .apply()
+        }
+    }
+
     private fun ensureCacheOwnership(profileId: String, config: IptvConfig) {
         val sig = buildSourceSignature(config)
+        val epgSig = buildEpgSourceSignature(config)
+        val sourceKey = epgIndexKey(profileId, config)
         val ownerChanged = cacheOwnerProfileId != null && cacheOwnerProfileId != profileId
         val configChanged = cacheOwnerConfigSig != null && cacheOwnerConfigSig != sig
+        val epgChanged = cacheOwnerEpgSig != null && cacheOwnerEpgSig != epgSig
+        val persistedEpgChanged = storedEpgSourceSignature(profileId, sig)?.let { it != epgSig } ?: true
         if (ownerChanged || configChanged) {
             invalidateCache()
+        } else if (epgChanged || persistedEpgChanged) {
+            // The playlist/source identity is unchanged, but its guide endpoint
+            // changed. Never let the old guide survive that edit: the channel
+            // store is still valid, while the EPG rows and compact guide cache
+            // are now from a different feed.
+            cachedNowNext = ConcurrentHashMap()
+            cachedEpgAt = 0L
+            discoveredM3uEpgUrls.clear()
+            runCatching { epgIndex.deleteSource(sourceKey) }
+            runCatching { cacheFile().delete() }
         }
         cacheOwnerProfileId = profileId
         cacheOwnerConfigSig = sig
-        currentEpgIndexKey = epgIndexKey(profileId, config)
+        cacheOwnerEpgSig = epgSig
+        currentEpgIndexKey = sourceKey
+        rememberEpgSourceSignature(profileId, sig, epgSig)
     }
 
     private fun m3uUrlKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_m3u_url")
@@ -6104,10 +6180,10 @@ class IptvRepository @Inject constructor(
         val startBound = nowMs - pastWindowMs
         val endBound = nowMs + futureWindowMs
         return listings.filter { listing ->
-            val startMs = listing.startTimestamp?.toLongOrNull()?.let { it * 1000L }
+            val startMs = parseXtreamTimestampMillis(listing.startTimestamp)
                 ?: parseXtreamDateTime(listing.start)
                 ?: return@filter false
-            val stopMs = listing.stopTimestamp?.toLongOrNull()?.let { it * 1000L }
+            val stopMs = parseXtreamTimestampMillis(listing.stopTimestamp)
                 ?: parseXtreamDateTime(listing.end)
                 ?: return@filter false
             stopMs > startBound && startMs < endBound
@@ -6124,7 +6200,7 @@ class IptvRepository @Inject constructor(
             if (listing.streamId.isNullOrBlank()) {
                 listing.copy(streamId = streamIdValue)
             } else {
-                listing
+                listing.copy(streamId = listing.streamId.trim())
             }
         }
     }
@@ -6234,6 +6310,7 @@ class IptvRepository @Inject constructor(
         rawKey: String?,
         channelId: String
     ) {
+        if (!isUsefulGuideIdentity(rawKey)) return
         guideKeyCandidates(rawKey).forEach { key ->
             target.getOrPut(key) { mutableListOf() }.let { ids ->
                 if (channelId !in ids) ids += channelId
@@ -6245,12 +6322,21 @@ class IptvRepository @Inject constructor(
         lookup: Map<String, List<String>>,
         rawKey: String?
     ): List<String> {
-        if (rawKey.isNullOrBlank()) return emptyList()
-        val resolved = LinkedHashSet<String>()
-        guideKeyCandidates(rawKey).forEach { key ->
-            lookup[key]?.let { resolved.addAll(it) }
+        if (!isUsefulGuideIdentity(rawKey)) return emptyList()
+        val normalized = normalizeChannelKey(rawKey.orEmpty())
+        lookup[normalized]
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { return it.distinct() }
+
+        // Prefer the first usable normalization rather than unioning every
+        // alias bucket. Unioning lets a weak alias such as "news" attach the
+        // same programme to unrelated channels that merely share a word.
+        for (key in guideKeyCandidates(rawKey)) {
+            if (key == normalized) continue
+            val ids = lookup[key]
+            if (!ids.isNullOrEmpty()) return ids.distinct()
         }
-        return resolved.toList()
+        return emptyList()
     }
 
     /**
@@ -6722,7 +6808,7 @@ class IptvRepository @Inject constructor(
         // Detect and save server timezone offset
         val sampleListing = listings.firstOrNull { it.startTimestamp != null && !it.start.isNullOrBlank() }
         if (sampleListing != null) {
-            val startMs = sampleListing.startTimestamp?.toLongOrNull()?.let { it * 1000L }
+            val startMs = parseXtreamTimestampMillis(sampleListing.startTimestamp)
             val parsedMs = parseXtreamDateTime(sampleListing.start)
             if (startMs != null && parsedMs != null) {
                 val offset = parsedMs - startMs
@@ -6742,10 +6828,10 @@ class IptvRepository @Inject constructor(
         val channelProgramsMap = mutableMapOf<String, ChannelPrograms>()
 
         for (listing in listings) {
-            val startMs = listing.startTimestamp?.toLongOrNull()?.let { it * 1000L }
+            val startMs = parseXtreamTimestampMillis(listing.startTimestamp)
                 ?: parseXtreamDateTime(listing.start)
                 ?: continue
-            val stopMs = listing.stopTimestamp?.toLongOrNull()?.let { it * 1000L }
+            val stopMs = parseXtreamTimestampMillis(listing.stopTimestamp)
                 ?: parseXtreamDateTime(listing.end)
                 ?: continue
 
@@ -6767,38 +6853,48 @@ class IptvRepository @Inject constructor(
             val resolvedChannelIds = mutableSetOf<String>()
 
             val exactStreamIds = listing.streamId
+                ?.trim()
                 ?.let { sid -> streamIdToChannelIds[sid] }
                 .orEmpty()
-            if (forceCatchupHistory && exactStreamIds.isNotEmpty()) {
+            if (exactStreamIds.isNotEmpty()) {
                 resolvedChannelIds.addAll(exactStreamIds)
-                // Some providers only expose catch-up on one quality variant
-                // while all variants share the same EPG identity. Keep rows
-                // separate, but fan the guide history out inside the same
-                // provider/EPG family so 4K/FHD/HD/SD rows can all show the
-                // same aired programme list.
-                exactStreamIds.forEach { exactChannelId ->
-                    channelsById[exactChannelId]?.let { exactChannel ->
-                        resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, exactChannel.epgId))
-                        resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, exactChannel.tvgName))
-                        exactChannel.variantKey?.let { variantKey ->
-                            resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, variantKey))
+                if (forceCatchupHistory) {
+                    // Some providers only expose catch-up on one quality
+                    // variant while all variants share the same EPG identity.
+                    // Keep ordinary short-EPG rows stream-specific; only the
+                    // explicit history sweep fans that data out to the guide
+                    // family.
+                    exactStreamIds.forEach { exactChannelId ->
+                        channelsById[exactChannelId]?.let { exactChannel ->
+                            resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, exactChannel.epgId))
+                            resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, exactChannel.tvgName))
+                            exactChannel.variantKey?.let { variantKey ->
+                                resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, variantKey))
+                            }
                         }
                     }
                 }
             } else {
                 // Match by epg_id / channel_id field
-                listing.channelId?.let { cid ->
-                    resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, cid))
+                val epgStreamMatches = listing.epgId
+                    ?.trim()
+                    ?.let { streamIdToChannelIds[it] }
+                    .orEmpty()
+                if (epgStreamMatches.isNotEmpty()) {
+                    // Some panels omit stream_id but return it as epg_id.
+                    resolvedChannelIds.addAll(epgStreamMatches)
+                } else {
+                    val channelMatches = listing.channelId
+                        ?.let { resolveChannelIdsFromLookup(epgIdToChannelIds, it) }
+                        .orEmpty()
+                    if (channelMatches.isNotEmpty()) {
+                        resolvedChannelIds.addAll(channelMatches)
+                    } else {
+                        resolvedChannelIds.addAll(
+                            listing.epgId?.let { resolveChannelIdsFromLookup(epgIdToChannelIds, it) }.orEmpty()
+                        )
+                    }
                 }
-                listing.lang?.let { lang ->
-                    resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, lang))
-                }
-                listing.epgId?.let { eid ->
-                    // epg_id can be the stream_id in some providers
-                    streamIdToChannelIds[eid]?.let { resolvedChannelIds.addAll(it) }
-                    resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, eid))
-                }
-                resolvedChannelIds.addAll(exactStreamIds)
             }
 
             for (channelId in resolvedChannelIds) {
@@ -6817,7 +6913,12 @@ class IptvRepository @Inject constructor(
         // Build NowNext from sorted programs
         val result = mutableMapOf<String, IptvNowNext>()
         for ((channelId, cp) in channelProgramsMap) {
-            val sorted = cp.programs.sortedBy { it.startUtcMillis }
+            val sorted = cp.programs
+                .asSequence()
+                .filter { it.endUtcMillis > it.startUtcMillis }
+                .distinctBy { programKey(it) }
+                .sortedBy { it.startUtcMillis }
+                .toList()
             var now: IptvProgram? = null
             var next: IptvProgram? = null
             var later: IptvProgram? = null
@@ -6847,8 +6948,6 @@ class IptvRepository @Inject constructor(
                             )
                         }
                         p.isLive(nowMs) -> now = p
-                        p.startUtcMillis > nowMs && next == null -> next = p
-                        p.startUtcMillis > nowMs && later == null -> later = p
                         p.startUtcMillis > nowMs -> {
                             upcoming.add(p)
                             if (upcoming.size >= epgUpcomingProgramLimit) {
@@ -6858,6 +6957,9 @@ class IptvRepository @Inject constructor(
                     }
                 }
             }
+
+            next = upcoming.getOrNull(0)
+            later = upcoming.getOrNull(1)
 
             result[channelId] = IptvNowNext(
                 now = now,
@@ -6879,15 +6981,48 @@ class IptvRepository @Inject constructor(
      * Parse Xtream datetime strings like "2024-01-01 12:00:00" to epoch millis.
      */
     private fun parseXtreamDateTime(dateStr: String?): Long? {
-        if (dateStr.isNullOrBlank()) return null
-        return try {
-            val formatter = IptvRepoDateRegexes.SPACE_SECOND_PATTERN
-            val local = java.time.LocalDateTime.parse(dateStr, formatter)
-            // Xtream times are typically UTC
-            local.atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
-        } catch (_: Exception) {
-            null
+        val value = dateStr?.trim().orEmpty()
+        if (value.isBlank()) return null
+
+        // A few providers return ISO timestamps even though the Xtream API
+        // normally uses `yyyy-MM-dd HH:mm:ss`. Respect an explicit offset when
+        // one is present instead of silently shifting the programme by the TV
+        // box's local timezone.
+        runCatching {
+            OffsetDateTime.parse(value, DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                .toInstant()
+                .toEpochMilli()
+        }.getOrNull()?.let { return it }
+        runCatching {
+            Instant.parse(value).toEpochMilli()
+        }.getOrNull()?.let { return it }
+
+        return sequenceOf(
+            IptvRepoDateRegexes.SPACE_SECOND_PATTERN,
+            IptvRepoDateRegexes.SPACE_MINUTE_PATTERN,
+            IptvRepoDateRegexes.ISO_LOCAL_SECOND_PATTERN,
+            IptvRepoDateRegexes.ISO_LOCAL_MINUTE_PATTERN
+        ).firstNotNullOfOrNull { formatter ->
+            runCatching {
+                LocalDateTime.parse(value, formatter)
+                    // Xtream's timestamp fields are UTC when no offset is
+                    // supplied. Epoch fields remain the preferred source.
+                    .atZone(java.time.ZoneOffset.UTC)
+                    .toInstant()
+                    .toEpochMilli()
+            }.getOrNull()
         }
+    }
+
+    private fun parseXtreamTimestampMillis(rawValue: String?): Long? {
+        val raw = rawValue?.trim().orEmpty()
+        val value = raw.toLongOrNull() ?: return null
+        if (value <= 0L) return null
+
+        // Xtream usually returns Unix seconds, but some panels return Unix
+        // milliseconds. Detect the unit rather than multiplying a millisecond
+        // value into the far future and dropping every programme as invisible.
+        return if (value >= 100_000_000_000L) value else value * 1000L
     }
 
     private fun saveServerOffset(creds: XtreamCredentials, offset: Long) {
@@ -7151,7 +7286,7 @@ class IptvRepository @Inject constructor(
                             if (!xmlId.isNullOrBlank()) {
                                 val display = normalizeChannelKey(parser.nextText().orEmpty())
                                 if (display.isNotBlank()) {
-                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup }
+                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup.aliases }
                                     if (isUseful) {
                                         xmlChannelNameMap.getOrPut(xmlId) { mutableSetOf() }.add(display)
                                     }
@@ -7191,34 +7326,34 @@ class IptvRepository @Inject constructor(
                             currentXmlChannelId = null
                         }
                         parser.name.equals("programme", ignoreCase = true) -> {
-                        val key = currentChannelKey
-                        val resolvedChannels = key?.let {
-                            xmlChannelResolveCache[it] ?: resolveXmlTvChannels(it, xmlChannelNameMap, keyLookup)
-                                .also { resolved -> xmlChannelResolveCache[it] = resolved }
-                        }.orEmpty()
-                        if (resolvedChannels.isNotEmpty() && currentStop > currentStart) {
-                            val program = IptvProgram(
-                                title = currentTitle ?: context.getString(R.string.program_unknown),
-                                description = currentDesc,
-                                startUtcMillis = currentStart,
-                                endUtcMillis = currentStop
-                            )
+                            val key = currentChannelKey
+                            val resolvedChannels = key?.let {
+                                xmlChannelResolveCache[it] ?: resolveXmlTvChannels(it, xmlChannelNameMap, keyLookup)
+                                    .also { resolved -> xmlChannelResolveCache[it] = resolved }
+                            }.orEmpty()
+                            if (resolvedChannels.isNotEmpty() && currentStop > currentStart) {
+                                val program = IptvProgram(
+                                    title = currentTitle ?: context.getString(R.string.program_unknown),
+                                    description = currentDesc,
+                                    startUtcMillis = currentStart,
+                                    endUtcMillis = currentStop
+                                )
 
-                            resolvedChannels.forEach { channel ->
-                                val nowProgram = pickNow(nowCandidates[channel.id], program, nowUtc)
-                                nowCandidates[channel.id] = nowProgram
-                                if (program.startUtcMillis > nowUtc) {
-                                    val future = upcomingCandidates.getOrPut(channel.id) { mutableListOf() }
-                                    addUpcomingCandidate(future, program, limit = epgUpcomingProgramLimit)
-                                } else if (program.endUtcMillis <= nowUtc && program.endUtcMillis > recentCutoffByChannelId.getValue(channel.id)) {
-                                    val recent = recentCandidates.getOrPut(channel.id) { mutableListOf() }
-                                    val limit = recentLimitByChannelId.getValue(channel.id)
-                                    addRecentCandidate(recent, program, limit)
+                                resolvedChannels.forEach { channel ->
+                                    val nowProgram = pickNow(nowCandidates[channel.id], program, nowUtc)
+                                    nowCandidates[channel.id] = nowProgram
+                                    if (program.startUtcMillis > nowUtc) {
+                                        val future = upcomingCandidates.getOrPut(channel.id) { mutableListOf() }
+                                        addUpcomingCandidate(future, program, limit = epgUpcomingProgramLimit)
+                                    } else if (program.endUtcMillis <= nowUtc && program.endUtcMillis > recentCutoffByChannelId.getValue(channel.id)) {
+                                        val recent = recentCandidates.getOrPut(channel.id) { mutableListOf() }
+                                        val limit = recentLimitByChannelId.getValue(channel.id)
+                                        addRecentCandidate(recent, program, limit)
+                                    }
                                 }
                             }
+                            currentChannelKey = null
                         }
-                        currentChannelKey = null
-                    }
                     }
                 }
             }
@@ -7324,7 +7459,7 @@ class IptvRepository @Inject constructor(
                             if (!xmlId.isNullOrBlank()) {
                                 val display = normalizeChannelKey(textBuffer.toString())
                                 if (display.isNotBlank()) {
-                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup }
+                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup.aliases }
                                     if (isUseful) {
                                         xmlChannelNameMap.getOrPut(xmlId) { mutableSetOf() }.add(display)
                                     }
@@ -7367,15 +7502,15 @@ class IptvRepository @Inject constructor(
                             resolvedChannels.forEach { channel ->
                                 val nowProgram = pickNow(nowCandidates[channel.id], program, nowUtc)
                                 nowCandidates[channel.id] = nowProgram
-                            if (program.startUtcMillis > nowUtc) {
-                                val future = upcomingCandidates.getOrPut(channel.id) { mutableListOf() }
-                                addUpcomingCandidate(future, program, limit = epgUpcomingProgramLimit)
-                            } else if (program.endUtcMillis <= nowUtc && program.endUtcMillis > recentCutoffByChannelId.getValue(channel.id)) {
-                                // Recently ended program – keep for the past-window in the EPG guide
-                                val recent = recentCandidates.getOrPut(channel.id) { mutableListOf() }
-                                val limit = recentLimitByChannelId.getValue(channel.id)
-                                addRecentCandidate(recent, program, limit)
-                            }
+                                if (program.startUtcMillis > nowUtc) {
+                                    val future = upcomingCandidates.getOrPut(channel.id) { mutableListOf() }
+                                    addUpcomingCandidate(future, program, limit = epgUpcomingProgramLimit)
+                                } else if (program.endUtcMillis <= nowUtc && program.endUtcMillis > recentCutoffByChannelId.getValue(channel.id)) {
+                                    // Recently ended program – keep for the past-window in the EPG guide
+                                    val recent = recentCandidates.getOrPut(channel.id) { mutableListOf() }
+                                    val limit = recentLimitByChannelId.getValue(channel.id)
+                                    addRecentCandidate(recent, program, limit)
+                                }
                             }
                         }
                         currentChannelKey = null
@@ -7594,13 +7729,14 @@ class IptvRepository @Inject constructor(
 
     private fun mergeCachedGuideSlice(existing: IptvNowNext?, fresh: IptvNowNext): IptvNowNext {
         if (existing == null) return fresh
+        val nowMs = System.currentTimeMillis()
         return IptvNowNext(
-            now = fresh.now ?: existing.now,
-            next = fresh.next ?: existing.next,
-            later = fresh.later ?: existing.later,
+            now = fresh.now ?: existing.now?.takeIf { it.endUtcMillis > nowMs },
+            next = fresh.next ?: existing.next?.takeIf { it.startUtcMillis > nowMs },
+            later = fresh.later ?: existing.later?.takeIf { it.startUtcMillis > nowMs },
             upcoming = mergeCachedPrograms(existing.upcoming, fresh.upcoming)
                 .asSequence()
-                .filter { it.startUtcMillis > 0L }
+                .filter { it.startUtcMillis > nowMs && it.endUtcMillis > nowMs }
                 .take(epgUpcomingProgramLimit)
                 .toList(),
             recent = mergeCachedPrograms(existing.recent, fresh.recent)
@@ -7876,17 +8012,45 @@ class IptvRepository @Inject constructor(
         return normalizeChannelKey(value).replace(NON_ALPHA_NUM_REGEX_INLINE, "")
     }
 
-    private fun buildChannelKeyLookup(channels: List<IptvChannel>): Map<String, List<IptvChannel>> {
-        val map = LinkedHashMap<String, MutableList<IptvChannel>>(channels.size * 8)
+    private fun isUsefulGuideIdentity(value: String?): Boolean {
+        val normalized = normalizeChannelKey(value.orEmpty())
+        return normalized.isNotBlank() && normalized !in setOf("0", "none", "null", "n/a", "unknown", "-")
+    }
+
+    private data class XmlTvChannelLookup(
+        val exactIdentity: Map<String, List<IptvChannel>>,
+        val aliases: Map<String, List<IptvChannel>>,
+    )
+
+    private fun buildChannelKeyLookup(channels: List<IptvChannel>): XmlTvChannelLookup {
+        val exactIdentity = LinkedHashMap<String, MutableList<IptvChannel>>(channels.size * 2)
+        val aliases = LinkedHashMap<String, MutableList<IptvChannel>>(channels.size * 8)
+
+        fun addTo(target: MutableMap<String, MutableList<IptvChannel>>, raw: String?, channel: IptvChannel) {
+            val key = normalizeChannelKey(raw.orEmpty())
+            if (key.isBlank()) return
+            target.getOrPut(key) { mutableListOf() }
+                .apply { if (none { it.id == channel.id }) add(channel) }
+        }
+
         channels.forEach { channel ->
+            sequenceOf(
+                channel.epgId,
+                channel.tvgName,
+                extractAttr(channel.rawTitle, "tvg-id"),
+                extractAttr(channel.rawTitle, "tvg-name"),
+                channel.name
+            ).filter(::isUsefulGuideIdentity)
+                .forEach { value -> addTo(exactIdentity, value, channel) }
+
             val candidates = mutableSetOf<String>()
             candidates += guideKeyCandidates(channel.name)
 
-            channel.epgId?.takeIf { it.isNotBlank() }?.let { epgId ->
+            channel.epgId?.takeIf(::isUsefulGuideIdentity)?.let { epgId ->
                 candidates += guideKeyCandidates(epgId)
             }
 
-            channel.tvgName?.takeIf { it.isNotBlank() }?.let { tvgName ->
+            channel.tvgName?.takeIf(::isUsefulGuideIdentity)?.let { tvgName ->
                 candidates += guideKeyCandidates(tvgName)
             }
             extractAttr(channel.rawTitle, "tvg-name")?.takeIf { it.isNotBlank() }?.let { tvgName ->
@@ -7894,33 +8058,89 @@ class IptvRepository @Inject constructor(
             }
 
             candidates.filter { it.isNotBlank() }.forEach { key ->
-                val bucket = map.getOrPut(key) { mutableListOf() }
+                val bucket = aliases.getOrPut(key) { mutableListOf() }
                 if (bucket.none { it.id == channel.id }) {
                     bucket += channel
                 }
             }
         }
-        return map
+        return XmlTvChannelLookup(
+            exactIdentity = exactIdentity,
+            aliases = aliases,
+        )
     }
 
     private fun resolveXmlTvChannels(
         xmlChannelKey: String,
         xmlChannelNameMap: Map<String, Set<String>>,
-        keyLookup: Map<String, List<IptvChannel>>
+        keyLookup: XmlTvChannelLookup
     ): List<IptvChannel> {
         val normalized = normalizeChannelKey(xmlChannelKey)
 
+        keyLookup.exactIdentity[normalized]?.let { candidates ->
+            selectXmlTvCandidates(
+                candidates = candidates,
+                allowSharedIdentity = isUsefulGuideIdentity(xmlChannelKey),
+            )?.let { return it }
+        }
         guideKeyCandidates(xmlChannelKey).forEach { key ->
-            keyLookup[key]?.let { return it }
+            keyLookup.aliases[key]?.let { candidates ->
+                selectXmlTvCandidates(candidates)?.let { return it }
+            }
         }
 
         val names = xmlChannelNameMap[normalized].orEmpty()
         names.forEach { display ->
+            val displayKey = normalizeChannelKey(display)
+            keyLookup.exactIdentity[displayKey]?.let { candidates ->
+                selectXmlTvCandidates(
+                    candidates = candidates,
+                    allowSharedIdentity = isUsefulGuideIdentity(display),
+                )?.let { return it }
+            }
             guideKeyCandidates(display).forEach { key ->
-                keyLookup[key]?.let { return it }
+                keyLookup.aliases[key]?.let { candidates ->
+                    selectXmlTvCandidates(candidates)?.let { return it }
+                }
             }
         }
         return emptyList()
+    }
+
+    /**
+     * Do not let a weak alias (for example `news` or `channel1`) attach one
+     * XMLTV programme to unrelated rows. Multiple rows are only valid when
+     * they are clearly the same EPG identity or quality variant family.
+     */
+    private fun selectXmlTvCandidates(
+        candidates: List<IptvChannel>,
+        allowSharedIdentity: Boolean = true,
+    ): List<IptvChannel>? {
+        val distinct = candidates.distinctBy { it.id }
+        if (distinct.isEmpty()) return null
+        if (distinct.size == 1) return distinct
+
+        val exactEpgIds = distinct.mapNotNull { it.epgId?.trim()?.takeIf { value -> value.isNotBlank() } }
+            .map(::normalizeChannelKey)
+            .toSet()
+        if (allowSharedIdentity && exactEpgIds.size == 1) return distinct
+
+        val exactTvgNames = distinct.mapNotNull { it.tvgName?.trim()?.takeIf { value -> value.isNotBlank() } }
+            .map(::normalizeChannelKey)
+            .toSet()
+        if (allowSharedIdentity && exactTvgNames.size == 1) return distinct
+
+        val familyKeys = distinct.map { channel ->
+            normalizeLooseKey(
+                stripQualitySuffixes(
+                    channel.epgId?.takeIf(::isUsefulGuideIdentity)
+                        ?: channel.tvgName?.takeIf(::isUsefulGuideIdentity)
+                        ?: channel.name
+                )
+            )
+        }.filter { it.isNotBlank() }.toSet()
+        val groups = distinct.map { normalizeLooseKey(it.group) }.filter { it.isNotBlank() }.toSet()
+        return if (familyKeys.size == 1 && groups.size == 1) distinct else null
     }
 
     private fun scopedProviderGuideLookupChannels(
@@ -8156,6 +8376,27 @@ class IptvRepository @Inject constructor(
             .joinToString("") { "%02x".format(it) }
     }
 
+    private fun buildEpgSourceSignature(config: IptvConfig): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val playlistSignature = config.playlists.joinToString(separator = "||") { playlist ->
+            listOf(
+                playlist.id.trim(),
+                playlist.m3uUrl.trim(),
+                playlist.epgUrl.trim(),
+                playlist.epgUrls.orEmpty().joinToString(",") { it.trim() },
+                playlist.enabled.toString()
+            ).joinToString("|")
+        }
+        val raw = listOf(
+            "epg-sources-v1",
+            config.m3uUrl.trim(),
+            config.epgUrl.trim(),
+            playlistSignature
+        ).joinToString("||")
+        return digest.digest(raw.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
     private fun epgIndexKey(profileId: String, config: IptvConfig): String =
         "${profileId.trim().ifBlank { "default" }}|${buildSourceSignature(config)}"
 
@@ -8176,7 +8417,8 @@ class IptvRepository @Inject constructor(
         config: IptvConfig,
         channels: List<IptvChannel>,
         nowNext: Map<String, IptvNowNext>,
-        loadedAtMs: Long
+        loadedAtMs: Long,
+        epgLoadedAtMs: Long = cachedEpgAt
     ) {
         runCatching {
             // Channels are persisted to the SQLite channel store (streamed, bounded
@@ -8225,6 +8467,7 @@ class IptvRepository @Inject constructor(
                 channels = emptyList(),
                 nowNext = compactNowNext,
                 loadedAtEpochMs = loadedAtMs,
+                epgLoadedAtEpochMs = epgLoadedAtMs.takeIf { it > 0L } ?: 0L,
                 configSignature = buildConfigSignature(config),
                 sourceSignature = buildSourceSignature(config),
                 discoveredEpgUrls = discoveredM3uEpgUrls

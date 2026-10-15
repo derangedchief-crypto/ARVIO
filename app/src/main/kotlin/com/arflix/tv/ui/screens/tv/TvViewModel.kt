@@ -63,6 +63,9 @@ private const val EpgVodLookupTimeoutMs = 2_500L
 private const val LargeListCompleteGuideCoverageTarget = 0.75f
 private const val PlaybackEpgBackfillResumeDelayMs = 90_000L
 private const val LargeListCompleteEpgBackfillStartupDelayMs = 180_000L
+private const val AutomaticEpgInitialDelayMs = 2_000L
+private const val AutomaticEpgRefreshIntervalMs = 10 * 60_000L
+private const val AutomaticEpgRefreshChannelLimit = 96
 
 data class TvUiState(
     val isLoading: Boolean = false,
@@ -313,6 +316,9 @@ class TvViewModel @Inject constructor(
                 val configChanged = lastObservedConfigSignature != null &&
                     lastObservedConfigSignature != newConfigSignature
                 lastObservedConfigSignature = newConfigSignature
+                if (configChanged) {
+                    lastAutomaticEpgReloadAt = 0L
+                }
                 val snapshot = _uiState.value.snapshot.copy(
                     favoriteGroups = favoriteGroups,
                     favoriteChannels = favoriteChannels,
@@ -760,11 +766,16 @@ class TvViewModel @Inject constructor(
         fresh: com.arflix.tv.data.model.IptvNowNext
     ): com.arflix.tv.data.model.IptvNowNext {
         if (existing == null) return fresh
+        val nowMs = System.currentTimeMillis()
         return com.arflix.tv.data.model.IptvNowNext(
-            now = fresh.now ?: existing.now,
-            next = fresh.next ?: existing.next,
-            later = fresh.later ?: existing.later,
-            upcoming = if (fresh.upcoming.isNotEmpty()) fresh.upcoming else existing.upcoming,
+            now = fresh.now ?: existing.now?.takeIf { it.endUtcMillis > nowMs },
+            next = fresh.next ?: existing.next?.takeIf { it.startUtcMillis > nowMs },
+            later = fresh.later ?: existing.later?.takeIf { it.startUtcMillis > nowMs },
+            upcoming = if (fresh.upcoming.isNotEmpty()) {
+                fresh.upcoming
+            } else {
+                existing.upcoming.filter { it.startUtcMillis > nowMs && it.endUtcMillis > nowMs }
+            },
             recent = if (fresh.recent.isNotEmpty()) fresh.recent else existing.recent,
         )
     }
@@ -951,11 +962,48 @@ class TvViewModel @Inject constructor(
     private fun startPeriodicEpgRefresh() {
         if (periodicEpgJob?.isActive == true) return
         periodicEpgJob = viewModelScope.launch {
+            var firstPass = true
             while (true) {
-                kotlinx.coroutines.delay(60_000L)
+                kotlinx.coroutines.delay(if (firstPass) AutomaticEpgInitialDelayMs else 60_000L)
+                firstPass = false
                 val state = _uiState.value
                 if (state.isConfigured && state.snapshot.channels.isNotEmpty()) {
                     refreshGuideFromCache()
+
+                    if (
+                        (pauseEpgBackfillDuringPlayback && liveTvPlaybackActive) ||
+                        refreshJob?.isActive == true ||
+                        visibleEpgRefreshJob?.isActive == true ||
+                        fullEpgWarmupJob?.isActive == true ||
+                        completeEpgBackfillJob?.isActive == true
+                    ) continue
+
+                    val now = System.currentTimeMillis()
+                    val cacheAge = iptvRepository.cachedEpgAgeMs()
+                    if (
+                        now - lastAutomaticEpgReloadAt >= AutomaticEpgRefreshIntervalMs &&
+                        cacheAge >= AutomaticEpgRefreshIntervalMs
+                    ) {
+                        val refreshIds = buildPriorityEpgChannelIds(
+                            state = _uiState.value,
+                            maxChannels = AutomaticEpgRefreshChannelLimit
+                        )
+                        if (refreshIds.isNotEmpty()) {
+                            lastAutomaticEpgReloadAt = now
+                            val refreshed = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    iptvRepository.refreshEpgForChannels(
+                                        channelIds = refreshIds,
+                                        maxChannels = refreshIds.size,
+                                        preferFullCatchupHistory = false,
+                                    )
+                                }.getOrNull()
+                            }
+                            if (!refreshed.isNullOrEmpty()) {
+                                mergeNowNext(refreshed)
+                            }
+                        }
+                    }
                 }
             }
         }

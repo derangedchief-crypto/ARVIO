@@ -1,16 +1,19 @@
 package com.arflix.tv.data.repository
 
+import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.data.model.IptvNowNext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.fail
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.InputStream
-import java.lang.reflect.Constructor
 import java.util.Collections
+import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 
 class IptvRepositoryOptimizationTest {
@@ -198,5 +201,156 @@ class IptvRepositoryOptimizationTest {
             val cause = e.cause
             assertEquals(IptvRepository.EpgNotModifiedException::class.java, cause?.javaClass)
         }
+    }
+
+    @Test
+    fun testXtreamAliasResolutionPrefersExactKeyInsteadOfUnioningWeakAliases() {
+        val repository = newRepository()
+        val method = IptvRepository::class.java.getDeclaredMethod(
+            "resolveChannelIdsFromLookup",
+            Map::class.java,
+            String::class.java
+        )
+        method.isAccessible = true
+
+        val lookup = linkedMapOf(
+            "news hd" to listOf("channel-news-hd"),
+            "newshd" to listOf("channel-news-hd"),
+            "news" to listOf("unrelated-news-channel")
+        )
+
+        @Suppress("UNCHECKED_CAST")
+        val resolved = method.invoke(repository, lookup, "News HD") as List<String>
+
+        assertEquals(listOf("channel-news-hd"), resolved)
+    }
+
+    @Test
+    fun testXmltvExactIdentityWinsOverQualityAlias() {
+        val repository = newRepository()
+        val hdChannel = IptvChannel(
+            id = "channel-news-hd",
+            name = "News HD",
+            streamUrl = "https://example.test/live/1",
+            group = "News",
+            epgId = "news hd"
+        )
+        val baseChannel = IptvChannel(
+            id = "channel-news",
+            name = "News",
+            streamUrl = "https://example.test/live/2",
+            group = "News",
+            epgId = "news"
+        )
+
+        val buildLookup = IptvRepository::class.java.getDeclaredMethod(
+            "buildChannelKeyLookup",
+            List::class.java
+        ).apply { isAccessible = true }
+        val lookup = buildLookup.invoke(repository, listOf(hdChannel, baseChannel))
+        val resolve = IptvRepository::class.java.getDeclaredMethod(
+            "resolveXmlTvChannels",
+            String::class.java,
+            Map::class.java,
+            lookup.javaClass
+        ).apply { isAccessible = true }
+
+        @Suppress("UNCHECKED_CAST")
+        val resolved = resolve.invoke(
+            repository,
+            "news",
+            emptyMap<String, Set<String>>(),
+            lookup
+        ) as List<IptvChannel>
+
+        assertEquals(listOf("channel-news"), resolved.map { it.id })
+    }
+
+    @Test
+    fun testXtreamNowNextUsesDifferentUpcomingProgramsForNextAndLater() {
+        val repository = newRepository()
+        val listingClass = Class.forName(
+            "com.arflix.tv.data.repository.IptvRepository\$XtreamEpgListing"
+        )
+        val listingConstructor = listingClass.declaredConstructors
+            .single { it.parameterTypes.size == 12 }
+            .apply { isAccessible = true }
+        val credentialsClass = Class.forName(
+            "com.arflix.tv.data.repository.IptvRepository\$XtreamCredentials"
+        )
+        val credentials = credentialsClass.declaredConstructors
+            .single { it.parameterTypes.size == 3 }
+            .apply { isAccessible = true }
+            .newInstance("https://example.test", "user", "password")
+
+        val nowSeconds = System.currentTimeMillis() / 1_000L
+        fun listing(title: String, startOffsetSeconds: Long): Any {
+            val start = nowSeconds + startOffsetSeconds
+            val stop = start + 1_500L
+            val encodedTitle = Base64.getEncoder().encodeToString(title.toByteArray())
+            return listingConstructor.newInstance(
+                null,
+                null,
+                encodedTitle,
+                null,
+                null,
+                null,
+                null,
+                null,
+                start.toString(),
+                stop.toString(),
+                "7",
+                null
+            )
+        }
+
+        val buildMethod = IptvRepository::class.java.getDeclaredMethod(
+            "buildNowNextFromXtreamListings",
+            credentialsClass,
+            List::class.java,
+            Map::class.java,
+            Map::class.java,
+            Map::class.java,
+            Boolean::class.javaPrimitiveType!!
+        )
+        buildMethod.isAccessible = true
+
+        @Suppress("UNCHECKED_CAST")
+        val result = buildMethod.invoke(
+            repository,
+            credentials,
+            listOf(
+                listing("First programme", 600L),
+                listing("First programme", 600L),
+                listing("Second programme", 2_400L),
+                listing("Third programme", 4_200L)
+            ),
+            emptyMap<String, List<String>>(),
+            mapOf("7" to listOf("channel-7")),
+            mapOf(
+                "channel-7" to IptvChannel(
+                    id = "channel-7",
+                    name = "Channel 7",
+                    streamUrl = "https://example.test/live/7",
+                    group = "News",
+                    xtreamStreamId = 7
+                )
+            ),
+            false
+        ) as Map<String, IptvNowNext>
+
+        val item = result.getValue("channel-7")
+        assertEquals("First programme", item.next?.title)
+        assertEquals("Second programme", item.later?.title)
+        assertNotEquals(item.next?.startUtcMillis, item.later?.startUtcMillis)
+        assertEquals(3, item.upcoming.size)
+    }
+
+    private fun newRepository(): IptvRepository {
+        val context = io.mockk.mockk<android.content.Context>(relaxed = true)
+        val okHttpClient = io.mockk.mockk<okhttp3.OkHttpClient>(relaxed = true)
+        val profileManager = io.mockk.mockk<com.arflix.tv.data.repository.ProfileManager>(relaxed = true)
+        val invalidationBus = io.mockk.mockk<com.arflix.tv.data.repository.CloudSyncInvalidationBus>(relaxed = true)
+        return IptvRepository(context, okHttpClient, profileManager, invalidationBus)
     }
 }
