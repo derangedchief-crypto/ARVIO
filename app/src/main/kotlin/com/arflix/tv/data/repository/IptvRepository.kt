@@ -2152,7 +2152,7 @@ class IptvRepository @Inject constructor(
                             // the channels that were actually refreshed.
                             phaseANowNext.putAll(cachedFallbackNowNext)
                             parsed.forEach { (channelId, fresh) ->
-                                if (hasProgramData(fresh) || channelId !in phaseANowNext) {
+                                if (hasProgramData(fresh) || !phaseANowNext.containsKey(channelId)) {
                                     phaseANowNext[channelId] = fresh
                                     if (hasProgramData(fresh)) {
                                         phaseAFreshNetworkChannelIds += channelId
