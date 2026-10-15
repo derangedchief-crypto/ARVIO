@@ -8,8 +8,10 @@ import android.os.Build
 import android.util.Log
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -38,6 +40,7 @@ import com.arflix.tv.util.DiagnosticsManager
 import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.worker.TraktSyncWorker
+import com.arflix.tv.worker.IptvEpgRefreshWorker
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -109,6 +112,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             initialDelayMs = 4_000L,
             minIntervalMs = 0L
         )
+        scheduleIptvEpgRefresh()
 
         // Initialize global DNS provider and user agent from DataStore before network calls.
         appScope.launch(Dispatchers.IO) {
@@ -320,6 +324,36 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             TraktSyncWorker.WORK_NAME,
             ExistingPeriodicWorkPolicy.KEEP,
             syncRequest
+        )
+    }
+
+    /** Keep the persisted IPTV guide index fresh even when Live TV is closed. */
+    private fun scheduleIptvEpgRefresh() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+        val appOpenRequest = OneTimeWorkRequestBuilder<IptvEpgRefreshWorker>()
+            .setInitialDelay(IptvEpgRefreshWorker.APP_OPEN_DELAY_SECONDS, TimeUnit.SECONDS)
+            .setConstraints(constraints)
+            .addTag(IptvEpgRefreshWorker.TAG)
+            .build()
+        val periodicRequest = PeriodicWorkRequestBuilder<IptvEpgRefreshWorker>(
+            IptvEpgRefreshWorker.PERIODIC_INTERVAL_HOURS,
+            TimeUnit.HOURS
+        )
+            .setConstraints(constraints)
+            .addTag(IptvEpgRefreshWorker.TAG)
+            .build()
+
+        WorkManager.getInstance(this).enqueueUniqueWork(
+            IptvEpgRefreshWorker.APP_OPEN_WORK_NAME,
+            ExistingWorkPolicy.KEEP,
+            appOpenRequest
+        )
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            IptvEpgRefreshWorker.PERIODIC_WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            periodicRequest
         )
     }
 
