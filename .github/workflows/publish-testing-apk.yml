@@ -9,12 +9,9 @@ name: Publish Testing APK
 # without one overwriting the other — see the `internalTest` build type in
 # app/build.gradle.kts for exactly what differs from `staging`.
 #
-# Deliberately does NOT publish a GitHub Release the way Publish Customer
-# Release does. The in-app updater checks /repos/{owner}/{repo}/releases/latest
-# for the PRODUCTION app — creating a Release here at all risks that endpoint
-# ever resolving to a test build instead of a real one. This workflow only
-# uploads a plain CI artifact (Actions run page -> Artifacts), which the
-# updater never looks at.
+# Publishes the APK both as a CI artifact and to the dedicated `testing`
+# prerelease channel. Internal-test builds use that channel; production builds
+# continue to use /releases/latest and never see this APK.
 #
 # Run manually from Actions -> Publish Testing APK -> Run workflow, picking
 # the `staging/testing` branch (or whichever branch has the in-progress
@@ -31,7 +28,7 @@ on:
         default: staging/testing
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish-testing-apk:
@@ -145,6 +142,42 @@ jobs:
           name: extremetv-testing-apk
           path: ${{ steps.apk.outputs.path }}
           retention-days: 30
+
+      - name: Publish testing update channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=testing
+          RELEASE_APK=ExtremeTV-Test-latest.apk
+          cp "${{ steps.apk.outputs.path }}" "$RELEASE_APK"
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            while IFS= read -r asset; do
+              if [ -n "$asset" ]; then
+                gh release delete-asset "$TAG" "$asset" --repo "${{ github.repository }}" --yes
+              fi
+            done < <(gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')
+
+            gh release edit "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "${{ steps.version.outputs.name }}" \
+              --notes "Testing APK from ${{ github.event.inputs.branch }}." \
+              --prerelease \
+              --latest=false
+          else
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --target "$GITHUB_SHA" \
+              --title "${{ steps.version.outputs.name }}" \
+              --notes "Testing APK from ${{ github.event.inputs.branch }}." \
+              --prerelease \
+              --latest=false
+          fi
+
+          gh release upload "$TAG" "$RELEASE_APK" \
+            --repo "${{ github.repository }}" \
+            --clobber
 
       - name: Upload R8 mapping file
         if: always()
