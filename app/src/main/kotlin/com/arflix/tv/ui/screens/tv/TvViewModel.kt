@@ -52,6 +52,7 @@ private const val EpgAttemptedStateLimit = 2_400
 private const val LargeIptvListChannelCount = 10_000
 private const val StandardPriorityEpgLimit = 3_200
 private const val LargeListPriorityCacheLimit = 360
+private const val RetainedVisibleGuideChannelLimit = 480
 private const val LargeListFocusedNetworkEpgLimit = 24
 private const val LargeListFavoriteEpgPasses = 12
 private const val LargeListFavoritePrefetchLookahead = 28
@@ -187,6 +188,11 @@ class TvViewModel @Inject constructor(
     private val currentChannelEpgRefreshAt = LinkedHashMap<String, Long>()
     private val epgNetworkRefreshLock = Any()
     private val epgNetworkRefreshInFlight = LinkedHashSet<String>()
+    // The SQLite index holds the whole guide, but window reads are asynchronous.
+    // Keep a small LRU-like set of recently displayed rows in the UI snapshot so
+    // returning from the player never shows an empty guide while that read runs.
+    private val retainedVisibleGuideChannelIds = LinkedHashSet<String>()
+    private val retainedVisibleGuideLock = Any()
 
     private data class VisibleEpgDrain(
         val ids: List<String>,
@@ -684,6 +690,7 @@ class TvViewModel @Inject constructor(
 
     private fun mergeNowNext(updated: Map<String, com.arflix.tv.data.model.IptvNowNext>) {
         if (updated.isEmpty()) return
+        retainVisibleGuideChannels(updated.keys)
         val current = _uiState.value
         val updatedIds = updated.keys
         val mergedNowNext = current.snapshot.nowNext.toMutableMap().apply {
@@ -746,6 +753,7 @@ class TvViewModel @Inject constructor(
         )
         val keepIds = LinkedHashSet<String>(LargeListPriorityCacheLimit + 180)
         priorityIds.forEach(keepIds::add)
+        retainedVisibleGuideChannelIdsSnapshot().forEach(keepIds::add)
         snapshot.favoriteChannels
             .asSequence()
             .map { it.trim() }
@@ -754,7 +762,7 @@ class TvViewModel @Inject constructor(
         keepChannelIds
             .asSequence()
             .filter { it.isNotBlank() }
-            .take(180)
+            .take(240)
             .forEach(keepIds::add)
         if (keepIds.isEmpty()) {
             return snapshot.copy(nowNext = emptyMap())
@@ -764,6 +772,25 @@ class TvViewModel @Inject constructor(
         System.err.println("[EPG-Memory] capped UI guide ${snapshot.nowNext.size} -> ${cappedNowNext.size} for ${snapshot.channels.size} channels")
         return snapshot.copy(nowNext = cappedNowNext)
     }
+
+    private fun retainVisibleGuideChannels(channelIds: Collection<String>) {
+        synchronized(retainedVisibleGuideLock) {
+            channelIds.asSequence()
+                .filter { it.isNotBlank() }
+                .forEach { channelId ->
+                    // Move a revisited row to the newest end of the eviction order.
+                    retainedVisibleGuideChannelIds.remove(channelId)
+                    retainedVisibleGuideChannelIds.add(channelId)
+                }
+            while (retainedVisibleGuideChannelIds.size > RetainedVisibleGuideChannelLimit) {
+                val oldest = retainedVisibleGuideChannelIds.firstOrNull() ?: break
+                retainedVisibleGuideChannelIds.remove(oldest)
+            }
+        }
+    }
+
+    private fun retainedVisibleGuideChannelIdsSnapshot(): List<String> =
+        synchronized(retainedVisibleGuideLock) { retainedVisibleGuideChannelIds.toList() }
 
     private fun mergeGuideSlice(
         existing: com.arflix.tv.data.model.IptvNowNext?,
@@ -1487,6 +1514,10 @@ class TvViewModel @Inject constructor(
         allowFocusedNetworkRefresh: Boolean = false
     ) {
         if (channelIds.isEmpty()) return
+        // Retain the rows the user can currently see before any asynchronous
+        // refresh. This bridges player exit and category changes without
+        // retaining the full guide in Compose state.
+        retainVisibleGuideChannels(channelIds)
         val largeList = isActiveLargeIptvList()
         val firstPaintLimit = if (largeList) 8 else 28
         val selectedId = selectedChannelId
