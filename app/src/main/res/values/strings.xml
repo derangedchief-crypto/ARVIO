@@ -986,6 +986,8 @@
     <string name="update_msg_downloading">Downloading update...</string>
     <string name="update_msg_ready_subtitle">%1$s is ready to install.</string>
     <string name="update_msg_installing">Installing update... Please follow the system prompt.</string>
+    <string name="update_msg_installed">Update installed. Restart the app to finish applying it.</string>
+    <string name="update_msg_installed_version">Installed version %1$s. Restart the app to finish applying it.</string>
     <string name="update_msg_failed">Update failed.</string>
     <string name="update_msg_uptodate">You already have the latest version installed.</string>
     <string name="update_msg_no_info">No release information available.</string>
@@ -1016,6 +1018,7 @@
     <string name="update_install_invalid">Update package is invalid or corrupted.</string>
     <string name="update_install_storage">Not enough storage to install update.</string>
     <string name="update_install_failed">Update install failed.</string>
+    <string name="update_error_package_mismatch">This update is for a different app variant (%2$s), not the installed variant (%1$s).</string>
     <string name="player_ai_no_key">AI subtitles: no API key set. Add it in Settings → General.</string>
     <string name="player_ai_rate_limited">AI subtitles: rate limit hit — translation paused.</string>
     <string name="player_ai_invalid_key">AI subtitles: invalid API key.</string>
