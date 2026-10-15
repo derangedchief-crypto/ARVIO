@@ -19,6 +19,17 @@ class LiveTvStartupTest {
         streamUrl = "http://example.test/$id",
     )
 
+    @Test
+    fun openingTheTvDestinationDoesNotAutoplay() {
+        assertThat(LiveTvStartup.shouldAutoPlay(null)).isFalse()
+        assertThat(LiveTvStartup.shouldAutoPlay("   ")).isFalse()
+    }
+
+    @Test
+    fun explicitChannelRequestMayStartPlayback() {
+        assertThat(LiveTvStartup.shouldAutoPlay("channel-42")).isTrue()
+    }
+
     // ── Resuming the last channel ──────────────────────────────────────────
 
     @Test

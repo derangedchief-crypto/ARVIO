@@ -142,8 +142,12 @@ private const val GuideVisibleFirstRowsAllChannels = 18
 private const val CatchupSeekStepMs = 30_000L
 private const val CatchupUrlAnchorGranularityMs = 60_000L
 private const val IptvPlaybackUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
-private const val VisibleGuidePastWindowMs = 48L * 60L * 60_000L
-private const val VisibleGuideFutureWindowMs = 48L * 60L * 60_000L
+// Query the same span the widest on-screen grid can actually render. The old
+// ±48-hour query inflated every 144-row window into thousands of programme
+// objects, most never visible, and made category/focus movement jank badly on
+// entry-level TV hardware.
+private const val VisibleGuidePastWindowMs = 2L * 60L * 60_000L
+private const val VisibleGuideFutureWindowMs = 10L * 60L * 60_000L
 private const val EpgGuideLookupTimeoutMs = 2_500L
 
 private fun digitForTvKeyCode(keyCode: Int): Int? = when (keyCode) {
@@ -158,36 +162,6 @@ private fun digitForTvKeyCode(keyCode: Int): Int? = when (keyCode) {
     AndroidKeyEvent.KEYCODE_8, AndroidKeyEvent.KEYCODE_NUMPAD_8 -> 8
     AndroidKeyEvent.KEYCODE_9, AndroidKeyEvent.KEYCODE_NUMPAD_9 -> 9
     else -> null
-}
-
-private fun chooseStartupChannelId(
-    filteredChannels: List<EnrichedChannel>,
-    filteredChannelIds: Set<String>,
-    explicitInitialChannelId: String?,
-    sessionLastChannelId: String,
-    hasOpenedBefore: Boolean,
-    favoriteChannelIds: List<String>,
-    isFullyEnriched: Boolean,
-): String? {
-    explicitInitialChannelId
-        ?.takeIf { id -> id in filteredChannelIds }
-        ?.let { return it }
-    if (explicitInitialChannelId != null && !isFullyEnriched) return null
-
-    favoriteChannelIds
-        .firstOrNull { id -> id in filteredChannelIds }
-        ?.let { return it }
-    if (favoriteChannelIds.isNotEmpty() && !isFullyEnriched) return null
-
-    if (hasOpenedBefore) {
-        sessionLastChannelId
-            .takeIf { id -> id.isNotBlank() && id in filteredChannelIds }
-            ?.let { return it }
-
-        if (sessionLastChannelId.isNotBlank() && !isFullyEnriched) return null
-    }
-
-    return filteredChannels.first().id
 }
 
 internal fun selectPagedChannelsInProviderOrder(
@@ -447,7 +421,10 @@ fun LiveTvScreen(
     val coroutineScope = rememberCoroutineScope()
     val guideClockMillis by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
-            delay(30_000L)
+            // Grid boundaries are minute-granular. A 30-second full-guide
+            // recomposition and SQLite read made the remote feel sluggish
+            // without changing any displayed programme cell.
+            delay(60_000L)
             value = System.currentTimeMillis()
         }
     }
@@ -1017,10 +994,13 @@ fun LiveTvScreen(
         if (channel == null) return null
         return state.snapshot.nowNext[channel.id]
     }
-    // Playing channel — default to the one we were navigated to, else the first
-    // channel of the first non-empty category.
+    // Only an explicit route is allowed to begin playback. Opening the TV tab
+    // itself is browse-first: restore focus/guide context, but do not open a
+    // network stream until the user selects a channel.
     val rememberedChannelByCategory = remember { mutableMapOf<String, String>() }
-    var playingChannelId by rememberSaveable { mutableStateOf<String?>(initialChannelId) }
+    var playingChannelId by rememberSaveable {
+        mutableStateOf(initialChannelId?.takeIf(LiveTvStartup::shouldAutoPlay))
+    }
     KeepScreenOn(active = playingChannelId != null)
     LaunchedEffect(playingChannelId) {
         viewModel.setLiveTvPlaybackActive(playingChannelId != null)
@@ -1437,49 +1417,26 @@ fun LiveTvScreen(
         state.epgLoadingChannelIds.any { it in guideStatusIds }
     }
 
-    // Pick the startup channel only after saved IPTV preferences/session have
-    // loaded. Favorites win over a stale recent channel, then we fall back to
-    // the persisted recent channel, then the first filtered entry.
+    // Restore a browse/focus anchor only after saved IPTV preferences/session
+    // have loaded. This deliberately does not assign playingChannelId: entering
+    // Live TV must not autoplay the last, favourite, or first provider stream.
     LaunchedEffect(filteredChannelsWindowKey, playingChannelId, initialChannelId, state.tvSession, state.snapshot.favoriteChannels, visibleEnrichedState.value.all.size, state.iptvPreferencesLoaded, state.tvSessionLoaded, selectedProviderId, startupChannelApplied) {
         val startupStateReady = state.iptvPreferencesLoaded && state.tvSessionLoaded
-        val playingVisible = playingChannelId?.let { id -> id in visibleEnrichedState.value.index.byId } == true
         if (!startupChannelApplied && filteredChannels.isNotEmpty() && (initialChannelId != null || startupStateReady)) {
-            val startupChannelId = chooseStartupChannelId(
-                filteredChannels = filteredChannels,
-                filteredChannelIds = filteredChannelIndexById.keys,
-                explicitInitialChannelId = initialChannelId?.takeIf { selectedProviderId == "all" || it in visibleEnrichedState.value.index.byId },
-                sessionLastChannelId = state.tvSession.lastChannelId,
-                hasOpenedBefore = state.tvSession.lastOpenedAt > 0L,
-                favoriteChannelIds = state.snapshot.favoriteChannels,
-                isFullyEnriched = visibleEnrichedState.value.all.isNotEmpty(),
-            )
-            if (startupChannelId != null) {
-                val displayId = displayChannelIdFor(startupChannelId, visibleEnrichedState.value.index.byId, variantGroups)
-                    ?: startupChannelId
-                playingChannelId = startupChannelId
+            val startupFocusId = initialChannelId
+                ?.takeIf { selectedProviderId == "all" || it in visibleEnrichedState.value.index.byId }
+                ?: state.tvSession.lastChannelId?.takeIf { it in filteredChannelIndexById }
+                ?: filteredChannels.firstOrNull()?.id
+            if (startupFocusId != null) {
+                val displayId = displayChannelIdFor(startupFocusId, visibleEnrichedState.value.index.byId, variantGroups)
+                    ?: startupFocusId
                 focusedChannelId = displayId
                 epgPrefetchAnchorId = displayId
                 rememberedChannelByCategory[selectedCategoryId] = displayId
                 filteredChannelIndexById[displayId]
                     ?.let { setGuideWindow(guideWindowAround(it, filteredChannels.size)) }
                 startupChannelApplied = true
-                System.err.println("[EPG-Startup] channel=$startupChannelId focus=$displayId")
-            }
-        } else if (playingChannelId == null && filteredChannels.isNotEmpty() && startupStateReady && !isGuideUserNavigating()) {
-            val fallbackChannelId = chooseStartupChannelId(
-                filteredChannels = filteredChannels,
-                filteredChannelIds = filteredChannelIndexById.keys,
-                explicitInitialChannelId = null,
-                sessionLastChannelId = state.tvSession.lastChannelId,
-                hasOpenedBefore = state.tvSession.lastOpenedAt > 0L,
-                favoriteChannelIds = state.snapshot.favoriteChannels,
-                isFullyEnriched = visibleEnrichedState.value.all.isNotEmpty(),
-            )
-            if (fallbackChannelId != null) {
-                playingChannelId = fallbackChannelId
-                focusedChannelId = displayChannelIdFor(fallbackChannelId, visibleEnrichedState.value.index.byId, variantGroups)
-                    ?: fallbackChannelId
-                epgPrefetchAnchorId = focusedChannelId
+                System.err.println("[EPG-Startup] browse-focus=$displayId autoplay=false")
             }
         }
         if ((focusedChannelId == null || focusedChannelId !in filteredChannelIndexById) && !isGuideUserNavigating()) {

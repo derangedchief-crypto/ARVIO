@@ -350,6 +350,26 @@ class IptvRepository @Inject constructor(
     private var cacheOwnerEpgSig: String? = null
     @Volatile
     private var currentEpgIndexKey: String = ""
+    // The database remains the guide source of truth. This tiny L1 cache only
+    // avoids rebuilding the same visible programme window when the user moves
+    // between the player and guide, or briefly changes sections and returns.
+    // Entries are invalidated on every index write, so it can never mask fresh
+    // guide data or a corrected channel mapping.
+    private data class IndexedGuideWindowCacheKey(
+        val sourceKey: String,
+        val channelIds: Set<String>,
+        val startMinute: Long,
+        val endMinute: Long,
+    )
+    private val indexedGuideWindowCacheLock = Any()
+    private val indexedGuideWindowCache = object : LinkedHashMap<
+        IndexedGuideWindowCacheKey,
+        Map<String, IptvNowNext>
+    >(6, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<IndexedGuideWindowCacheKey, Map<String, IptvNowNext>>?
+        ): Boolean = size > 6
+    }
     @Volatile
     private var xtreamVodCacheKey: String? = null
     @Volatile
@@ -2674,8 +2694,17 @@ class IptvRepository @Inject constructor(
         if (channelIds.isEmpty() || startMs >= endMs) return emptyMap()
         val indexKey = currentEpgIndexKey
         if (indexKey.isBlank()) return emptyMap()
+        val cacheKey = IndexedGuideWindowCacheKey(
+            sourceKey = indexKey,
+            channelIds = channelIds.filterTo(LinkedHashSet(channelIds.size)) { it.isNotBlank() },
+            startMinute = startMs / 60_000L,
+            endMinute = endMs / 60_000L,
+        )
+        synchronized(indexedGuideWindowCacheLock) {
+            indexedGuideWindowCache[cacheKey]?.let { return it }
+        }
         val nowMs = System.currentTimeMillis()
-        return runCatching {
+        val result = runCatching {
             buildMap {
                 epgIndex.loadWindow(indexKey, channelIds, startMs, endMs)
                     .forEach { (channelId, programs) ->
@@ -2705,6 +2734,10 @@ class IptvRepository @Inject constructor(
         }.onFailure { error ->
             System.err.println("[EPG-Index] visible window read failed: ${error.message}")
         }.getOrDefault(emptyMap())
+        synchronized(indexedGuideWindowCacheLock) {
+            indexedGuideWindowCache[cacheKey] = result
+        }
+        return result
     }
 
     /**
@@ -3010,6 +3043,7 @@ class IptvRepository @Inject constructor(
         if (!hasAnyProgramData(nowNext)) return
         runCatching {
             epgIndex.replaceAll(currentEpgIndexKey(config), nowNext, updatedAtMs)
+            clearIndexedGuideWindowCache()
         }.onFailure { error ->
             System.err.println("[EPG-Index] Failed to replace guide index: ${error.message}")
         }
@@ -3023,9 +3057,14 @@ class IptvRepository @Inject constructor(
         if (!hasAnyProgramData(nowNext)) return
         runCatching {
             epgIndex.replaceChannels(currentEpgIndexKey(config), nowNext, updatedAtMs)
+            clearIndexedGuideWindowCache()
         }.onFailure { error ->
             System.err.println("[EPG-Index] Failed to update guide index: ${error.message}")
         }
+    }
+
+    private fun clearIndexedGuideWindowCache() {
+        synchronized(indexedGuideWindowCacheLock) { indexedGuideWindowCache.clear() }
     }
 
     private fun countIndexedGuideChannels(): Int {
@@ -6558,7 +6597,10 @@ class IptvRepository @Inject constructor(
             )
             if (batchNowNext.isNotEmpty()) {
                 if (indexKey.isNotBlank()) {
-                    runCatching { epgIndex.replaceChannels(indexKey, batchNowNext, System.currentTimeMillis()) }
+                    runCatching {
+                        epgIndex.replaceChannels(indexKey, batchNowNext, System.currentTimeMillis())
+                        clearIndexedGuideWindowCache()
+                    }
                 }
                 totalIndexed += batchNowNext.size
                 if (firstBatch.isEmpty()) firstBatch = batchNowNext
