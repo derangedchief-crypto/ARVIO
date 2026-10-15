@@ -37,11 +37,10 @@ android {
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
         minSdk = 23
         targetSdk = 36
-        versionCode = 342
-        versionName = "2.0.026"
+        versionCode = 343
+        versionName = "2.0.027"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
-        buildConfigField("String", "UPDATE_RELEASE_TAG", "\"\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
         // Was capped to control managed-Supabase usage costs. Self-hosted has no
         // per-request billing, so full realtime sync is safe to run at full strength.
@@ -206,11 +205,10 @@ android {
             initWith(getByName("staging"))
             applicationIdSuffix = ".test"
             versionNameSuffix = "-test"
-            // Testing APKs use the dedicated prerelease channel published by
-            // publish-testing-apk.yml. The production latest release contains
-            // the .beta package and must never be offered to this .test app.
-            buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "true")
-            buildConfigField("String", "UPDATE_RELEASE_TAG", "\"testing\"")
+            // The testing APK is intentionally not published as a GitHub
+            // Release. Do not offer the production updater, whose APK has the
+            // staging (.beta) application id and cannot update this .test app.
+            buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "false")
         }
     }
 
