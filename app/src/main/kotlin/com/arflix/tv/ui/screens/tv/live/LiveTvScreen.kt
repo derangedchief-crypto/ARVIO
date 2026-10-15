@@ -2595,16 +2595,17 @@ fun LiveTvScreen(
     }
 
     // Keep the ExoPlayer attached to exactly one PlayerView while the
-    // fullscreen layer animates in and out. During the reverse animation both
-    // the guide (with its mini-player) and fullscreen layer are composed; if
-    // both views claim the player, the fullscreen view can be removed while it
-    // still owns the video surface, leaving the mini-player frozen.
+    // fullscreen layer animates in and out. Ownership follows the logical
+    // fullscreen state rather than the animation progress: when exiting,
+    // switch to the newly composed mini view *before* the outgoing fullscreen
+    // TextureView can be disposed. Waiting for progress to reach zero races
+    // SurfaceTexture teardown on several Android TV devices and leaves the
+    // decoder stuck on the removed fullscreen surface.
     val fsProgress by animateFloatAsState(
         targetValue = if (isFullScreen) 1f else 0f,
         animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
         label = "tv-fullscreen-progress",
     )
-    val fullscreenSurfaceActive = fsProgress > 0f
     var miniPlayerView by remember { mutableStateOf<PlayerView?>(null) }
     var fullPlayerView by remember { mutableStateOf<PlayerView?>(null) }
     var attachedPlayerView by remember { mutableStateOf<PlayerView?>(null) }
@@ -2622,8 +2623,12 @@ fun LiveTvScreen(
         if (attachedPlayerView === view) attachedPlayerView = null
     }
 
-    LaunchedEffect(exoPlayer, fullscreenSurfaceActive, miniPlayerView, fullPlayerView) {
-        val targetView = if (fullscreenSurfaceActive) fullPlayerView else miniPlayerView
+    LaunchedEffect(exoPlayer, isFullScreen, miniPlayerView, fullPlayerView) {
+        val targetView = if (isFullScreen) fullPlayerView else miniPlayerView
+        // The destination AndroidView is composed in the same frame as the
+        // state transition. Do not detach the current surface during that
+        // short window; wait until there is a real replacement target.
+        if (targetView == null) return@LaunchedEffect
         val previousView = attachedPlayerView
         if (previousView === targetView) return@LaunchedEffect
 
@@ -2632,6 +2637,9 @@ fun LiveTvScreen(
         // the reverse fullscreen transition safe on TV Surface/TextureView.
         PlayerView.switchTargetView(exoPlayer, previousView, targetView)
         attachedPlayerView = targetView
+        if (exoPlayer.playWhenReady) {
+            exoPlayer.play()
+        }
     }
 
     Box(
