@@ -69,7 +69,7 @@ class ApkInstallReceiver : BroadcastReceiver() {
 
             PackageInstaller.STATUS_SUCCESS -> {
                 Log.i(TAG, "Update installed successfully.")
-                updateStatusManager.updateStatus(UpdateStatus.Success)
+                updateStatusManager.updateStatus(UpdateStatus.Success())
                 // No toast needed — the new APK is installing/replacing the running process.
             }
 
