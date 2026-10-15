@@ -56,7 +56,13 @@ class AppUpdateRepository @Inject constructor(
     suspend fun getLatestUpdate(): Result<AppUpdate> {
         return withContext(Dispatchers.IO) {
             runCatching {
-                val url = "https://api.github.com/repos/${BuildConfig.GITHUB_OWNER}/${BuildConfig.GITHUB_REPO}/releases/latest"
+                val channelTag = BuildConfig.UPDATE_RELEASE_TAG.trim()
+                val releasePath = if (channelTag.isBlank()) {
+                    "latest"
+                } else {
+                    "tags/$channelTag"
+                }
+                val url = "https://api.github.com/repos/${BuildConfig.GITHUB_OWNER}/${BuildConfig.GITHUB_REPO}/releases/$releasePath"
                 val request = Request.Builder()
                     .url(url)
                     .header("Accept", "application/vnd.github+json")
@@ -77,18 +83,26 @@ class AppUpdateRepository @Inject constructor(
                     val dto = gson.fromJson(body, GitHubReleaseDto::class.java)
                         ?: error(context.getString(R.string.update_error_empty_release_response))
 
-                    if (dto.draft || dto.prerelease) {
+                    if (dto.draft || (channelTag.isBlank() && dto.prerelease)) {
                         error(context.getString(R.string.update_error_draft_prerelease))
                     }
 
                     val tag = dto.tagName?.takeIf { it.isNotBlank() }
                         ?: dto.name?.takeIf { it.isNotBlank() }
                         ?: error(context.getString(R.string.update_error_missing_release_tag))
+                    // The rolling staging tag is not a version, so use the
+                    // release title (the workflow sets it to 2.0.xxx) for
+                    // comparison and for the update dialog.
+                    val displayVersion = if (channelTag.isBlank()) {
+                        tag
+                    } else {
+                        dto.name?.takeIf { it.isNotBlank() } ?: tag
+                    }
                     val asset = AbiSelector.chooseBestApkAsset(dto.assets)
                         ?: error(context.getString(R.string.update_error_no_apk_asset))
 
                     AppUpdate(
-                        tag = tag,
+                        tag = displayVersion,
                         title = dto.name?.takeIf { it.isNotBlank() } ?: tag,
                         notes = dto.body.orEmpty(),
                         releaseUrl = dto.htmlUrl,
