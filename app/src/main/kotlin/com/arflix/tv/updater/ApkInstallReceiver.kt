@@ -29,6 +29,16 @@ class ApkInstallReceiver : BroadcastReceiver() {
     lateinit var updateStatusManager: UpdateStatusManager
 
     override fun onReceive(context: Context, intent: Intent) {
+        // Updating an APK terminates the old process. Android TV launchers do
+        // not reliably restore it afterward, so explicitly bring up the new
+        // package once PackageManager reports that replacement is complete.
+        // This is also the fallback for installers that do not deliver the
+        // session STATUS_SUCCESS callback to the replaced process.
+        if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            launchUpdatedApp(context)
+            return
+        }
+
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
 
@@ -70,7 +80,7 @@ class ApkInstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_SUCCESS -> {
                 Log.i(TAG, "Update installed successfully.")
                 updateStatusManager.updateStatus(UpdateStatus.Success())
-                // No toast needed — the new APK is installing/replacing the running process.
+                launchUpdatedApp(context)
             }
 
             PackageInstaller.STATUS_FAILURE,
@@ -106,6 +116,23 @@ class ApkInstallReceiver : BroadcastReceiver() {
         } catch (_: Exception) {
             // Receiver may not have a main looper in some paths; swallow silently.
         }
+    }
+
+    private fun launchUpdatedApp(context: Context) {
+        val packageManager = context.packageManager
+        val launchIntent = packageManager.getLeanbackLaunchIntentForPackage(context.packageName)
+            ?: packageManager.getLaunchIntentForPackage(context.packageName)
+        if (launchIntent == null) {
+            Log.w(TAG, "Installed update but could not resolve launch Activity.")
+            return
+        }
+        launchIntent.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TASK
+        )
+        runCatching { context.startActivity(launchIntent) }
+            .onFailure { error -> Log.e(TAG, "Failed to launch installed update.", error) }
     }
 
     companion object {
