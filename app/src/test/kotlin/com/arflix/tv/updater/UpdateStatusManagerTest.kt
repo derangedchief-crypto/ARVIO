@@ -19,7 +19,7 @@ class UpdateStatusManagerTest {
 
         manager.updateStatus(UpdateStatus.UpdateAvailable(update))
         manager.updateStatus(UpdateStatus.Installing(update))
-        manager.updateStatus(UpdateStatus.Success)
+        manager.updateStatus(UpdateStatus.Success())
 
         val status = manager.status.value
         assertThat(status).isInstanceOf(UpdateStatus.Success::class.java)
