@@ -2156,11 +2156,22 @@ class IptvRepository @Inject constructor(
             if (allowNetworkEpgFetch) {
                 discoverEmbeddedEpgSourcesIfNeeded(activePlaylists)
             }
+            val skipRedundantBackgroundEpgReload = shouldReuseFreshBackgroundGuide(
+                isBackgroundWork = backgroundEpgWork,
+                requestedForcedRefresh = forceEpgReload,
+                cachedEpgAtMs = cachedEpgAt,
+                indexedProgramCount = countIndexedGuidePrograms(),
+                nowMs = now,
+            )
+            val effectiveForceEpgReload = forceEpgReload && !skipRedundantBackgroundEpgReload
+            if (skipRedundantBackgroundEpgReload) {
+                System.err.println("[EPG] background refresh reused fresh durable guide")
+            }
             val epgCandidates = resolveScopedEpgCandidates(config)
             var epgUpdated = false
             val cachedHasPrograms = hasAnyProgramData(cachedNowNext)
             val cachedEpgIsFresh = cachedEpgAt > 0L && now - cachedEpgAt < epgCacheMs
-            val shouldUseCachedEpg = !forceEpgReload && (
+            val shouldUseCachedEpg = !effectiveForceEpgReload && (
                 (cachedHasPrograms && (!allowNetworkEpgFetch || cachedEpgIsFresh)) ||
                     (!cachedHasPrograms && now - cachedEpgAt < epgEmptyRetryMs)
                 )
@@ -2171,7 +2182,7 @@ class IptvRepository @Inject constructor(
             val xtreamProviderGroups = groupXtreamChannelsByCredentials(config, channels)
             val hasXtreamChannels = xtreamProviderGroups.isNotEmpty()
             val shouldFetchBroadShortEpg = allowBroadShortEpg || epgCandidates.isEmpty() || channels.size <= LargeIptvListChannelCount
-            System.err.println("[EPG] loadSnapshot: forceEpgReload=$forceEpgReload shouldUseCachedEpg=$shouldUseCachedEpg cachedHasPrograms=$cachedHasPrograms xtreamProviders=${xtreamProviderGroups.size} hasXtreamChannels=$hasXtreamChannels epgCandidates=${epgCandidates.size} broadShort=$shouldFetchBroadShortEpg")
+            System.err.println("[EPG] loadSnapshot: forceEpgReload=$effectiveForceEpgReload shouldUseCachedEpg=$shouldUseCachedEpg cachedHasPrograms=$cachedHasPrograms xtreamProviders=${xtreamProviderGroups.size} hasXtreamChannels=$hasXtreamChannels epgCandidates=${epgCandidates.size} broadShort=$shouldFetchBroadShortEpg")
             val cachedFallbackNowNext = if (channels.size > LargeIptvListChannelCount) {
                 emptyMap()
             } else {
@@ -2378,7 +2389,7 @@ class IptvRepository @Inject constructor(
                 epgWarning = epgWarning,
                 loadedAt = loadedAtInstant
             ).also {
-                if (forcePlaylistReload || forceEpgReload || cachedChannelsFromDisk == null || epgUpdated) {
+                if (forcePlaylistReload || effectiveForceEpgReload || cachedChannelsFromDisk == null || epgUpdated) {
                     writeCache(
                         config = config,
                         channels = channels,
@@ -6161,7 +6172,8 @@ class IptvRepository @Inject constructor(
 
     private fun fetchAndParseEpg(url: String, channels: List<IptvChannel>): Map<String, IptvNowNext> {
         throwIfEpgMustYieldToPlayback()
-        val onPartialGuide: (Map<String, IptvNowNext>) -> Unit = ::persistPartialEpgIndex
+        val partialGuideWriter = IncrementalGuideBatchWriter(::persistPartialEpgIndex)
+        val onPartialGuide: (Map<String, IptvNowNext>) -> Unit = partialGuideWriter::submit
         val hasDbEntries = currentEpgIndexKey.isNotBlank() && runCatching {
             epgIndex.countPrograms(currentEpgIndexKey)
         }.getOrDefault(0) > 0
@@ -6188,6 +6200,7 @@ class IptvRepository @Inject constructor(
 
         val primaryUserAgent = OkHttpProvider.userAgentOr(IPTV_USER_AGENT)
         val fallbackUserAgent = OkHttpProvider.userAgentOr(BROWSER_USER_AGENT)
+        try {
         var response = iptvHttpClient.newCall(epgRequest(url, primaryUserAgent)).execute()
         if (response.code == 304) {
             response.close()
@@ -6261,6 +6274,9 @@ class IptvRepository @Inject constructor(
                     cleanupStaleEpgTempFiles(maxAgeMs = 60_000L)
                 }
             }
+        }
+        } finally {
+            partialGuideWriter.finish()
         }
     }
 
@@ -7413,9 +7429,10 @@ class IptvRepository @Inject constructor(
 
         var eventsSincePlaybackCheck = 0
         var parsedProgramsSinceCommit = 0
+        var commitProgramThreshold = InitialIncrementalEpgCommitProgramCount
         val dirtyChannelIds = LinkedHashSet<String>()
         fun commitPartialGuideIfNeeded(force: Boolean = false) {
-            if (!force && parsedProgramsSinceCommit < IncrementalEpgCommitProgramCount) return
+            if (!force && parsedProgramsSinceCommit < commitProgramThreshold) return
             if (dirtyChannelIds.isEmpty()) return
             val partial = buildPartialNowNextResult(
                 channelIds = dirtyChannelIds,
@@ -7426,6 +7443,7 @@ class IptvRepository @Inject constructor(
             if (partial.isNotEmpty()) onPartialGuide(partial)
             dirtyChannelIds.clear()
             parsedProgramsSinceCommit = 0
+            commitProgramThreshold = IncrementalEpgCommitProgramCount
         }
         while (eventType != XmlPullParser.END_DOCUMENT) {
             if (++eventsSincePlaybackCheck == 256) {
@@ -7561,9 +7579,10 @@ class IptvRepository @Inject constructor(
         var currentDesc: String? = null
         var elementsSincePlaybackCheck = 0
         var parsedProgramsSinceCommit = 0
+        var commitProgramThreshold = InitialIncrementalEpgCommitProgramCount
         val dirtyChannelIds = LinkedHashSet<String>()
         fun commitPartialGuideIfNeeded(force: Boolean = false) {
-            if (!force && parsedProgramsSinceCommit < IncrementalEpgCommitProgramCount) return
+            if (!force && parsedProgramsSinceCommit < commitProgramThreshold) return
             if (dirtyChannelIds.isEmpty()) return
             val partial = buildPartialNowNextResult(
                 channelIds = dirtyChannelIds,
@@ -7574,6 +7593,7 @@ class IptvRepository @Inject constructor(
             if (partial.isNotEmpty()) onPartialGuide(partial)
             dirtyChannelIds.clear()
             parsedProgramsSinceCommit = 0
+            commitProgramThreshold = IncrementalEpgCommitProgramCount
         }
         var readingDisplayName = false
         var readingTitle = false
@@ -9537,7 +9557,10 @@ class IptvRepository @Inject constructor(
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val CONFIG_KEY_ALIAS = "arvio_iptv_config_v1"
         const val MAX_IPTV_CACHE_BYTES = 25L * 1024L * 1024L
-        const val IncrementalEpgCommitProgramCount = 192
+        // First rows reach SQLite immediately; the larger steady batch avoids
+        // spending most of a low-end TV's time in tiny SQLite transactions.
+        const val InitialIncrementalEpgCommitProgramCount = 64
+        const val IncrementalEpgCommitProgramCount = 1_024
         val PARTIAL_PAGED_CACHE_REPAIR_COUNTS = setOf(144, 240)
         const val IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
         const val BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
