@@ -1124,6 +1124,7 @@ fun LiveTvScreen(
 
     var guideWindowStart by rememberSaveable { mutableIntStateOf(0) }
     var guideWindowEnd by rememberSaveable { mutableIntStateOf(GuideInitialWindowRows) }
+    val guidePageRequestGate = remember { TvGuidePageRequestGate() }
     fun setGuideWindow(window: Pair<Int, Int>) {
         val total = filteredChannels.size
         val start = window.first.coerceIn(0, total.coerceAtLeast(0))
@@ -1132,9 +1133,11 @@ fun LiveTvScreen(
         guideWindowEnd = end
     }
     fun requestGuideWindowBefore() {
+        if (!guidePageRequestGate.shouldRequest(TvGuideDirection.UP, System.currentTimeMillis())) return
         setGuideWindow(expandGuideWindowBefore(guideWindowStart, guideWindowEnd))
     }
     fun requestGuideWindowAfter() {
+        if (!guidePageRequestGate.shouldRequest(TvGuideDirection.DOWN, System.currentTimeMillis())) return
         val hasMorePagedRows = selectedCategoryTotalCount > filteredChannels.size
         if (hasMorePagedRows && guideWindowEnd >= (filteredChannels.size - GuidePageRows).coerceAtLeast(0)) {
             pagedLoadedLimit = (pagedLoadedLimit + GuidePagedLoadStepRows)
