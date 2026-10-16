@@ -135,7 +135,7 @@ fun XtreamGateScreen(
         ) {
             Column(
                 modifier = Modifier
-                    .widthIn(max = 420.dp)
+                    .widthIn(max = 460.dp)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))
                     .background(Color(0xFF151520))
@@ -143,23 +143,41 @@ fun XtreamGateScreen(
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Brush.linearGradient(listOf(Cyan, Purple, Pink)))
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "EXTREME TV",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ArcticBlack,
+                    )
+                }
+
+                Spacer(18.dp)
+
                 Text(
-                    text = "Extreme TV Network",
-                    fontSize = 22.sp,
+                    text = "Activate your TV",
+                    fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
 
-                Spacer(6.dp)
+                Spacer(10.dp)
 
                 Text(
                     text = if (SHOW_SKIP_BUTTON) {
-                        "Enter your activation code, or skip for now"
+                        "Enter the six-digit code supplied with your subscription, or skip for now."
                     } else {
-                        "Enter your six-digit activation code to continue"
+                        "Enter the six-digit code supplied with your subscription to continue."
                     },
                     fontSize = 13.sp,
-                    color = Color.White.copy(alpha = 0.6f)
+                    color = Color.White.copy(alpha = 0.64f),
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 Spacer(28.dp)
@@ -184,8 +202,9 @@ fun XtreamGateScreen(
                 GateTextField(
                     value = uiState.activationCode,
                     onValueChange = viewModel::onActivationCodeChange,
-                    placeholder = "6-digit Activation Code",
+                    placeholder = "• • • • • •",
                     keyboardType = KeyboardType.Number,
+                    isActivationCode = true,
                     imeAction = ImeAction.Done,
                     keyboardActions = KeyboardActions(
                         onDone = {
@@ -209,7 +228,7 @@ fun XtreamGateScreen(
                         viewModel.submit(onSuccess = onLoginSuccess)
                     },
                     text = when {
-                        !uiState.isSubmitting -> "Sign In"
+                        !uiState.isSubmitting -> "Activate"
                         !uiState.progressText.isNullOrBlank() -> uiState.progressText!!
                         else -> "Signing in…"
                     },
@@ -219,6 +238,14 @@ fun XtreamGateScreen(
                         .fillMaxWidth()
                         .focusRequester(buttonFocusRequester)
                         .onFocusChanged { if (it.isFocused) focusedField = "button" }
+                )
+
+                Spacer(18.dp)
+                Text(
+                    text = "Your code connects this device to your existing subscription.",
+                    fontSize = 12.sp,
+                    color = Color.White.copy(alpha = 0.42f),
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 // Skip opt-out: fully removed from the layout (no spacer, no invisible
@@ -264,6 +291,7 @@ internal fun GateTextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     onRequestKeyboard: () -> Unit = {},
     isPassword: Boolean = false,
+    isActivationCode: Boolean = false,
     isFocused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -293,9 +321,10 @@ internal fun GateTextField(
                 .fillMaxWidth()
                 .padding(horizontal = 18.dp, vertical = 16.dp),
             textStyle = TextStyle(
-                fontSize = 15.sp,
+                fontSize = if (isActivationCode) 23.sp else 15.sp,
                 color = TextPrimary,
-                fontWeight = FontWeight.Normal
+                fontWeight = if (isActivationCode) FontWeight.SemiBold else FontWeight.Normal,
+                letterSpacing = if (isActivationCode) 5.sp else 0.sp,
             ),
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
             keyboardActions = keyboardActions,
