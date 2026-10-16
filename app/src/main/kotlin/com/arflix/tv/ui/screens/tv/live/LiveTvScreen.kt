@@ -135,7 +135,7 @@ private enum class LiveTvFocusZone {
 
 private const val GuideInitialWindowRows = 48
 private const val GuidePageRows = 48
-private const val GuideMaxWindowRows = 144
+internal const val GuideMaxWindowRows = 144
 private const val GuidePagedLoadStepRows = 192
 private const val GuideVisibleFirstRows = 28
 private const val GuideVisibleFirstRowsAllChannels = 18
@@ -505,9 +505,9 @@ fun LiveTvScreen(
                 0
             }
         }
-        if (snapshot.size in 1..500 && pagedTotal <= 10_000) {
+        if (snapshot.size in 1..500 && !shouldUsePagedChannelStore(snapshot.size, pagedTotal)) {
             var attempt = 0
-            while (attempt < 20 && pagedTotal <= 10_000) {
+            while (attempt < 20 && !shouldUsePagedChannelStore(snapshot.size, pagedTotal)) {
                 delay(250L)
                 pagedTotal = withContext(Dispatchers.IO) {
                     if (viewModel.iptvRepository.pagedChannelsReady()) {
@@ -516,15 +516,16 @@ fun LiveTvScreen(
                         0
                     }
                 }
-                if (pagedTotal > 10_000) {
+                if (shouldUsePagedChannelStore(snapshot.size, pagedTotal)) {
                     System.err.println("[IPTV-PagedUI] paged store became ready after ${attempt + 1} checks total=$pagedTotal snapshot=${snapshot.size}")
                 }
                 attempt++
             }
         }
-        if (pagedTotal > 10_000) {
+        val usePagedStore = shouldUsePagedChannelStore(snapshot.size, pagedTotal)
+        if (usePagedStore) {
             lastKnownPagedTotal = pagedTotal
-        } else if (lastKnownPagedTotal > 10_000) {
+        } else if (shouldUsePagedChannelStore(snapshot.size, lastKnownPagedTotal)) {
             // The paged channel store can briefly report "not ready" during a
             // category switch even though the full IPTV index was already shown.
             // Do not let that transient state collapse the guide back to the
@@ -532,8 +533,9 @@ fun LiveTvScreen(
             // paged path using the last verified total.
             pagedTotal = lastKnownPagedTotal
         }
+        val hasPagedStoreWindow = shouldUsePagedChannelStore(snapshot.size, pagedTotal)
         System.err.println("[IPTV-PagedUI] snapshot=${snapshot.size} pagedTotal=$pagedTotal category=$selectedCategoryId loadedLimit=$pagedLoadedLimit")
-        if (pagedTotal > 10_000) {
+        if (hasPagedStoreWindow) {
             val signature = buildString {
                 append("paged:")
                 append(pagedTotal)
