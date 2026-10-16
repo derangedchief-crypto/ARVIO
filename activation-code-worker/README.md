@@ -33,6 +33,15 @@ log or paste real customer credentials into tickets or source control.
 
 ## Installation
 
+The deployment ZIP contains a preconfigured `.env` and `install.sh`. After
+extracting it into `/opt/iptv-activation-worker`, installation is one command:
+
+```bash
+sudo bash /opt/iptv-activation-worker/install.sh
+```
+
+The manual steps below are retained as a recovery reference only.
+
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin activationworker
 sudo mkdir -p /opt/iptv-activation-worker /var/log/iptv-activation-worker
