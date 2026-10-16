@@ -1,0 +1,20 @@
+[Unit]
+Description=Extreme IPTV activation-code worker
+After=network.target
+
+[Service]
+Type=simple
+User=activationworker
+Group=activationworker
+WorkingDirectory=/opt/iptv-activation-worker
+Environment="PATH=/opt/iptv-activation-worker/venv/bin"
+ExecStart=/opt/iptv-activation-worker/venv/bin/uvicorn main:app --host 127.0.0.1 --port 9092 --workers 2
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/iptv-activation-worker
+
+[Install]
+WantedBy=multi-user.target
