@@ -383,10 +383,10 @@ class IptvRepository @Inject constructor(
     private val indexedGuideWindowCacheLock = Any()
     private val indexedGuideWindowCache = object : LinkedHashMap<
         IndexedGuideWindowCacheKey,
-        Map<String, IptvNowNext>
+        IndexedGuideViewport
     >(6, 0.75f, true) {
         override fun removeEldestEntry(
-            eldest: MutableMap.MutableEntry<IndexedGuideWindowCacheKey, Map<String, IptvNowNext>>?
+            eldest: MutableMap.MutableEntry<IndexedGuideWindowCacheKey, IndexedGuideViewport>?
         ): Boolean = size > 6
     }
     @Volatile
@@ -2715,14 +2715,25 @@ class IptvRepository @Inject constructor(
     fun pagedSearchChannels(query: String, limit: Int): List<IptvChannel> =
         runCatching { channelStore.search(currentEpgIndexKey, query, limit) }.getOrDefault(emptyList())
 
-    fun indexedGuideWindow(
+    /** Exact programme spans for one on-screen guide viewport. */
+    data class IndexedGuideViewport(
+        val programsByChannel: Map<String, List<IptvProgram>>,
+        val sourceGeneration: Long,
+        val sourceStatus: String,
+    ) {
+        companion object {
+            val Empty = IndexedGuideViewport(emptyMap(), 0L, "unavailable")
+        }
+    }
+
+    fun indexedGuideViewport(
         channelIds: Set<String>,
         startMs: Long,
         endMs: Long
-    ): Map<String, IptvNowNext> {
-        if (channelIds.isEmpty() || startMs >= endMs) return emptyMap()
+    ): IndexedGuideViewport {
+        if (channelIds.isEmpty() || startMs >= endMs) return IndexedGuideViewport.Empty
         val indexKey = currentEpgIndexKey
-        if (indexKey.isBlank()) return emptyMap()
+        if (indexKey.isBlank()) return IndexedGuideViewport.Empty
         val cacheKey = IndexedGuideWindowCacheKey(
             sourceKey = indexKey,
             channelIds = channelIds.filterTo(LinkedHashSet(channelIds.size)) { it.isNotBlank() },
@@ -2732,37 +2743,16 @@ class IptvRepository @Inject constructor(
         synchronized(indexedGuideWindowCacheLock) {
             indexedGuideWindowCache[cacheKey]?.let { return it }
         }
-        val nowMs = System.currentTimeMillis()
         val result = runCatching {
-            buildMap {
-                epgIndex.loadWindow(indexKey, channelIds, startMs, endMs)
-                    .forEach { (channelId, programs) ->
-                    if (programs.isEmpty()) return@forEach
-                    val sorted = programs
-                        .asSequence()
-                        .filter { it.endUtcMillis > it.startUtcMillis }
-                        .distinctBy { "${it.startUtcMillis}|${it.endUtcMillis}|${it.title}" }
-                        .sortedBy { it.startUtcMillis }
-                        .toList()
-                    if (sorted.isEmpty()) return@forEach
-                    val now = sorted.lastOrNull { it.isLive(nowMs) }
-                    val future = sorted.filter { it.startUtcMillis > nowMs }
-                    val recent = sorted.filter { it.endUtcMillis <= nowMs }
-                    put(
-                        channelId,
-                        IptvNowNext(
-                            now = now,
-                            next = future.getOrNull(0),
-                            later = future.getOrNull(1),
-                            upcoming = future.take(96),
-                            recent = recent.takeLast(96)
-                        )
-                    )
-                }
-            }
+            val source = epgIndex.sourceState(indexKey)
+            IndexedGuideViewport(
+                programsByChannel = epgIndex.loadWindow(indexKey, channelIds, startMs, endMs),
+                sourceGeneration = source?.generation ?: 0L,
+                sourceStatus = source?.status ?: "unavailable",
+            )
         }.onFailure { error ->
             System.err.println("[EPG-Index] visible window read failed: ${error.message}")
-        }.getOrDefault(emptyMap())
+        }.getOrDefault(IndexedGuideViewport.Empty)
         synchronized(indexedGuideWindowCacheLock) {
             indexedGuideWindowCache[cacheKey] = result
         }

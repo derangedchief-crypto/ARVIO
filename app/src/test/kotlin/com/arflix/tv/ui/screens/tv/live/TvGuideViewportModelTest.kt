@@ -13,7 +13,8 @@ class TvGuideViewportModelTest {
         val after = IptvProgram("After", null, 150L, 200L)
         val model = buildTvGuideViewportModel(
             channelIds = listOf("one"),
-            nowNext = mapOf("one" to IptvNowNext(now = before, next = overlap, upcoming = listOf(overlap, after))),
+            indexedPrograms = mapOf("one" to listOf(before, overlap, overlap, after)),
+            fallbackNowNext = emptyMap(),
             windowStartMillis = 100L,
             windowEndMillis = 160L,
         )
@@ -25,7 +26,8 @@ class TvGuideViewportModelTest {
     fun leavesUnmatchedChannelsEmptyInsteadOfBorrowingProgrammeData() {
         val model = buildTvGuideViewportModel(
             channelIds = listOf("one", "two"),
-            nowNext = mapOf("one" to IptvNowNext(now = IptvProgram("One", null, 0L, 100L))),
+            indexedPrograms = emptyMap(),
+            fallbackNowNext = mapOf("one" to IptvNowNext(now = IptvProgram("One", null, 0L, 100L))),
             windowStartMillis = 0L,
             windowEndMillis = 200L,
         )

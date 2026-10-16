@@ -267,6 +267,31 @@ private fun mergeGuideSlices(
     )
 }
 
+private fun Map<String, List<IptvProgram>>.toNowNextSlices(nowMillis: Long): Map<String, IptvNowNext> =
+    buildMap(size) {
+        this@toNowNextSlices.forEach { (channelId, programs) ->
+            val sorted = programs.asSequence()
+                .filter { it.endUtcMillis > it.startUtcMillis }
+                .distinctBy { "${it.startUtcMillis}:${it.endUtcMillis}:${it.title}" }
+                .sortedBy { it.startUtcMillis }
+                .toList()
+            if (sorted.isEmpty()) return@forEach
+            val now = sorted.lastOrNull { it.isLive(nowMillis) }
+            val future = sorted.filter { it.startUtcMillis > nowMillis }
+            val recent = sorted.filter { it.endUtcMillis <= nowMillis }
+            put(
+                channelId,
+                IptvNowNext(
+                    now = now,
+                    next = future.getOrNull(0),
+                    later = future.getOrNull(1),
+                    upcoming = future,
+                    recent = recent,
+                ),
+            )
+        }
+    }
+
 private fun EnrichedChannel.guideFallbackKeys(): List<String> {
     val playlistId = StalkerPortalSupport.playlistIdFromChannelId(id)
     val prefix = playlistId.ifBlank { "default" }
@@ -1189,8 +1214,8 @@ fun LiveTvScreen(
             guideChannels.forEachIndexed { index, channel -> put(channel.id, index) }
         }
     }
-    var retainedIndexedGuideNowNext by remember(selectedProviderId) {
-        mutableStateOf<Map<String, IptvNowNext>>(emptyMap())
+    var retainedIndexedGuidePrograms by remember(selectedProviderId) {
+        mutableStateOf<Map<String, List<IptvProgram>>>(emptyMap())
     }
     LaunchedEffect(guideChannels, guideClockMillis, guideIndexRevision) {
         val ids = guideChannels
@@ -1205,16 +1230,16 @@ fun LiveTvScreen(
         val end = guideClockMillis + VisibleGuideFutureWindowMs
         val startedAt = System.currentTimeMillis()
         val indexed = withContext(Dispatchers.IO) {
-            viewModel.iptvRepository.indexedGuideWindow(ids, start, end)
+            viewModel.iptvRepository.indexedGuideViewport(ids, start, end)
         }
         // Do not clear old cells when switching a category, returning from the
         // player, or receiving an incremental parser revision. Replace only
         // the rows SQLite has just authoritatively answered; that preserves a
         // correct last frame until its replacement is ready, without keeping
         // stale programme mappings after the query completes.
-        val retained = LinkedHashMap(retainedIndexedGuideNowNext)
+        val retained = LinkedHashMap(retainedIndexedGuidePrograms)
         ids.forEach(retained::remove)
-        retained.putAll(indexed)
+        retained.putAll(indexed.programsByChannel)
         while (retained.size > RetainedIndexedGuideRows) {
             retained.entries.iterator().run {
                 if (hasNext()) {
@@ -1223,17 +1248,21 @@ fun LiveTvScreen(
                 }
             }
         }
-        retainedIndexedGuideNowNext = retained
+        retainedIndexedGuidePrograms = retained
         System.err.println(
-            "[TV-Metrics] indexed guide visible=${indexed.size}/${ids.size} " +
-                "rows=${guideChannels.size} in ${System.currentTimeMillis() - startedAt}ms"
+            "[TV-Metrics] indexed guide visible=${indexed.programsByChannel.size}/${ids.size} " +
+                "rows=${guideChannels.size} generation=${indexed.sourceGeneration} " +
+                "status=${indexed.sourceStatus} in ${System.currentTimeMillis() - startedAt}ms"
         )
     }
-    val effectiveGuideNowNext = remember(state.snapshot.nowNext, retainedIndexedGuideNowNext, guideChannels) {
+    val indexedGuideNowNext = remember(retainedIndexedGuidePrograms, guideClockMillis) {
+        retainedIndexedGuidePrograms.toNowNextSlices(guideClockMillis)
+    }
+    val effectiveGuideNowNext = remember(state.snapshot.nowNext, indexedGuideNowNext, guideChannels) {
         HashMap<String, IptvNowNext>(guideChannels.size).apply {
             guideChannels.forEach { channel ->
                 mergeGuideSlices(
-                    retainedIndexedGuideNowNext[channel.id],
+                    indexedGuideNowNext[channel.id],
                     state.snapshot.nowNext[channel.id]
                 )?.let { put(channel.id, it) }
             }
@@ -2799,7 +2828,9 @@ fun LiveTvScreen(
                         channelWindowOffset = normalizedGuideStart,
                         totalChannelCount = selectedCategoryTotalCount,
                         clockTickMillis = guideClockMillis,
-                        nowNext = effectiveGuideNowNext,
+                        indexedPrograms = retainedIndexedGuidePrograms,
+                        fallbackNowNext = state.snapshot.nowNext,
+                        channelNowNext = effectiveGuideNowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
                         epgAttemptedChannelIds = state.epgAttemptedChannelIds,
                         isGuideBackfillLoading = false,
@@ -2942,7 +2973,9 @@ fun LiveTvScreen(
                         channelWindowOffset = normalizedGuideStart,
                         totalChannelCount = selectedCategoryTotalCount,
                         clockTickMillis = guideClockMillis,
-                        nowNext = effectiveGuideNowNext,
+                        indexedPrograms = retainedIndexedGuidePrograms,
+                        fallbackNowNext = state.snapshot.nowNext,
+                        channelNowNext = effectiveGuideNowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
                         epgAttemptedChannelIds = state.epgAttemptedChannelIds,
                         isGuideBackfillLoading = false,

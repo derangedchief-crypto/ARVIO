@@ -91,7 +91,9 @@ fun TvGuideViewport(
     channelWindowOffset: Int = 0,
     totalChannelCount: Int = channels.size,
     clockTickMillis: Long,
-    nowNext: Map<String, IptvNowNext>,
+    indexedPrograms: Map<String, List<IptvProgram>>,
+    fallbackNowNext: Map<String, IptvNowNext>,
+    channelNowNext: Map<String, IptvNowNext>,
     epgLoadingChannelIds: Set<String> = emptySet(),
     epgAttemptedChannelIds: Set<String> = emptySet(),
     isGuideBackfillLoading: Boolean = false,
@@ -168,10 +170,11 @@ fun TvGuideViewport(
         (((windowEndMillis - windowStartMillis) / 60_000L) / 30L).toInt().coerceAtLeast(1)
     }
     val slots = remember(windowStartMillis, slotCount) { buildHalfHourSlots(windowStartMillis, slotCount) }
-    val viewportModel = remember(channels, nowNext, windowStartMillis, windowEndMillis) {
+    val viewportModel = remember(channels, indexedPrograms, fallbackNowNext, windowStartMillis, windowEndMillis) {
         buildTvGuideViewportModel(
             channelIds = channels.map { it.id },
-            nowNext = nowNext,
+            indexedPrograms = indexedPrograms,
+            fallbackNowNext = fallbackNowNext,
             windowStartMillis = windowStartMillis,
             windowEndMillis = windowEndMillis,
         )
@@ -508,7 +511,7 @@ fun TvGuideViewport(
                                 channel = ch,
                                 isActive = ch.id == selectedChannelId || (gridFocused && locallyFocused),
                                 clockTickMillis = clockTickMillis,
-                                nowNext = nowNext[ch.id],
+                                nowNext = channelNowNext[ch.id],
                                 isFavorite = ch.id in favorites,
                                 stripe = idx % 2 == 1,
                                 onClick = { onChannelSelect(ch) },

@@ -20,19 +20,16 @@ internal data class TvGuideViewportModel(
 
 internal fun buildTvGuideViewportModel(
     channelIds: Collection<String>,
-    nowNext: Map<String, IptvNowNext>,
+    indexedPrograms: Map<String, List<IptvProgram>>,
+    fallbackNowNext: Map<String, IptvNowNext>,
     windowStartMillis: Long,
     windowEndMillis: Long,
 ): TvGuideViewportModel {
     require(windowEndMillis > windowStartMillis)
     val rows = LinkedHashMap<String, List<IptvProgram>>(channelIds.size)
     channelIds.forEach { channelId ->
-        val item = nowNext[channelId] ?: return@forEach
-        val programs = sequenceOf(
-            item.recent.asSequence(),
-            sequenceOf(item.now, item.next, item.later).filterNotNull(),
-            item.upcoming.asSequence(),
-        )
+        val programs = (indexedPrograms[channelId] ?: fallbackNowNext[channelId].toProgramSequence())
+            .asSequence()
             .flatten()
             .filter { it.endUtcMillis > windowStartMillis && it.startUtcMillis < windowEndMillis }
             .distinctBy { Triple(it.startUtcMillis, it.endUtcMillis, it.title) }
@@ -41,4 +38,15 @@ internal fun buildTvGuideViewportModel(
         if (programs.isNotEmpty()) rows[channelId] = programs
     }
     return TvGuideViewportModel(windowStartMillis, windowEndMillis, rows)
+}
+
+private fun IptvNowNext?.toProgramSequence(): List<IptvProgram> {
+    val item = this ?: return emptyList()
+    return buildList {
+        addAll(item.recent)
+        item.now?.let(::add)
+        item.next?.let(::add)
+        item.later?.let(::add)
+        addAll(item.upcoming)
+    }
 }
