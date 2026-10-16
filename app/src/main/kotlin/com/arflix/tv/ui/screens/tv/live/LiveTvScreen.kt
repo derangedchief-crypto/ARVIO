@@ -1704,6 +1704,16 @@ fun LiveTvScreen(
         runCatching { sidebarFocus.requestFocus() }
     }
 
+    fun focusSelectedCategory() {
+        noteGuideUserNavigation()
+        focusZone = LiveTvFocusZone.CATEGORY_LIST
+        // The sidebar owns a requester for the active category. Signal it
+        // rather than focusing the sidebar container, whose first focusable
+        // child is Search.
+        focusCategoryRailSignal += 1
+        runCatching { sidebarFocus.requestFocus() }
+    }
+
     // Keep focus in the sidebar while that zone is active — but NOT while the
     // channel list is still loading. During a load the list is recomposing
     // underneath the focused item, so Compose keeps dropping focus and this
@@ -2892,7 +2902,7 @@ fun LiveTvScreen(
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
                         onOpenVariants = { channel -> openVariantPicker(channel) },
-                        onMoveLeftFromChannels = { focusPlaylistSearch() },
+                        onMoveLeftFromChannels = { focusSelectedCategory() },
                         onEnterEpg = { channel -> focusEpg(channel.id) },
                         onExitEpg = { channel -> focusChannelList(channel?.id ?: focusedChannelId ?: playingChannelId) },
                         onRequestPreviousChannels = ::requestGuideWindowBefore,
@@ -3041,7 +3051,7 @@ fun LiveTvScreen(
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
                         onOpenVariants = { channel -> openVariantPicker(channel) },
-                        onMoveLeftFromChannels = { focusPlaylistSearch() },
+                        onMoveLeftFromChannels = { focusSelectedCategory() },
                         onEnterEpg = { channel -> focusEpg(channel.id) },
                         onExitEpg = { channel -> focusChannelList(channel?.id ?: focusedChannelId ?: playingChannelId) },
                         onRequestPreviousChannels = ::requestGuideWindowBefore,

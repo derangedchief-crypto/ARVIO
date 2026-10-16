@@ -49,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -198,6 +199,7 @@ fun CategorySidebar(
     // both must be corrected.
     var userChoseSearch by remember { mutableStateOf(false) }
     var categoryHasHadFocus by remember { mutableStateOf(false) }
+    var handledCategoryFocusSignal by remember { mutableIntStateOf(0) }
 
     fun onCategoryFocused() {
         categoryHasHadFocus = true
@@ -205,7 +207,13 @@ fun CategorySidebar(
     }
 
     LaunchedEffect(categoriesLoaded, focusCategorySignal, searchHasFocus, userChoseSearch, isTouchDevice) {
-        if (isTouchDevice || !categoriesLoaded || userChoseSearch) return@LaunchedEffect
+        // An explicit return from the guide must always restore the selected
+        // category, even if the user previously visited search. `userChoseSearch`
+        // only protects ordinary layout recomposition from stealing focus.
+        val explicitlyReturningToCategory = focusCategorySignal != handledCategoryFocusSignal
+        if (isTouchDevice || !categoriesLoaded || (userChoseSearch && !explicitlyReturningToCategory)) {
+            return@LaunchedEffect
+        }
         if (LiveTvStartup.shouldFocusSearch(focusSearchSignal)) return@LaunchedEffect
         // A single claim is not enough: the mini player attaches its video
         // surface a beat after the screen opens, that takes the platform focus,
@@ -216,9 +224,13 @@ fun CategorySidebar(
         repeat(LiveTvStartup.INITIAL_FOCUS_ATTEMPTS) {
             val took = runCatching { selectedCategoryFocusRequester.requestFocus() }.isSuccess ||
                 runCatching { firstCategoryFocusRequester.requestFocus() }.isSuccess
-            if (took) return@LaunchedEffect
+            if (took) {
+                handledCategoryFocusSignal = focusCategorySignal
+                return@LaunchedEffect
+            }
             delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
         }
+        handledCategoryFocusSignal = focusCategorySignal
     }
 
     LaunchedEffect(focusSearchSignal) {
