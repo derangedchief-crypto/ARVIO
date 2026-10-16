@@ -34,4 +34,19 @@ class TvGuideViewportModelTest {
 
         assertThat(model.programsFor("two")).isEmpty()
     }
+
+    @Test
+    fun prefersExactIndexedProgrammeSpansOverSnapshotFallback() {
+        val indexed = IptvProgram("Indexed", null, 0L, 100L)
+        val fallback = IptvProgram("Fallback", null, 0L, 100L)
+        val model = buildTvGuideViewportModel(
+            channelIds = listOf("one"),
+            indexedPrograms = mapOf("one" to listOf(indexed)),
+            fallbackNowNext = mapOf("one" to IptvNowNext(now = fallback)),
+            windowStartMillis = 0L,
+            windowEndMillis = 200L,
+        )
+
+        assertThat(model.programsFor("one")).containsExactly(indexed)
+    }
 }

@@ -148,6 +148,7 @@ private const val IptvPlaybackUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
 // entry-level TV hardware.
 private const val VisibleGuidePastWindowMs = 2L * 60L * 60_000L
 private const val VisibleGuideFutureWindowMs = 6L * 60L * 60_000L
+private const val GuideViewportBucketMs = 30L * 60_000L
 // Keep the current and immediately previous guide pages warm while the next
 // indexed query is in flight. This cache is source-scoped and every queried
 // channel is replaced (including with empty data) once SQLite responds.
@@ -1217,7 +1218,15 @@ fun LiveTvScreen(
     var retainedIndexedGuidePrograms by remember(selectedProviderId) {
         mutableStateOf<Map<String, List<IptvProgram>>>(emptyMap())
     }
-    LaunchedEffect(guideChannels, guideClockMillis, guideIndexRevision) {
+    val guideViewportRequestGate = remember { TvGuideViewportRequestGate() }
+    val guideViewportStartMs = remember(guideClockMillis) {
+        guideClockMillis - (guideClockMillis % GuideViewportBucketMs) - VisibleGuidePastWindowMs
+    }
+    val guideViewportEndMs = remember(guideViewportStartMs) {
+        guideViewportStartMs + VisibleGuidePastWindowMs + VisibleGuideFutureWindowMs
+    }
+    LaunchedEffect(guideChannels, guideViewportStartMs, guideIndexRevision) {
+        val requestId = guideViewportRequestGate.beginRequest()
         val ids = guideChannels
             .asSequence()
             .map { it.id }
@@ -1226,12 +1235,11 @@ fun LiveTvScreen(
         if (ids.isEmpty()) {
             return@LaunchedEffect
         }
-        val start = guideClockMillis - VisibleGuidePastWindowMs
-        val end = guideClockMillis + VisibleGuideFutureWindowMs
         val startedAt = System.currentTimeMillis()
         val indexed = withContext(Dispatchers.IO) {
-            viewModel.iptvRepository.indexedGuideViewport(ids, start, end)
+            viewModel.iptvRepository.indexedGuideViewport(ids, guideViewportStartMs, guideViewportEndMs)
         }
+        if (!guideViewportRequestGate.isCurrent(requestId)) return@LaunchedEffect
         // Do not clear old cells when switching a category, returning from the
         // player, or receiving an incremental parser revision. Replace only
         // the rows SQLite has just authoritatively answered; that preserves a
