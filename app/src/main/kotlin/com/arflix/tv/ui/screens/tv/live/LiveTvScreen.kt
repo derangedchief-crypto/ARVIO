@@ -1155,7 +1155,9 @@ fun LiveTvScreen(
         ).joinToString("|")
     }
     var guideScopeKey by rememberSaveable { mutableStateOf("") }
+    val guideViewportMemory = remember { TvGuideViewportMemory() }
     LaunchedEffect(selectedProviderId, selectedCategoryId) {
+        guideViewportMemory.remember(guideScopeKey, guideWindowStart, guideWindowEnd)
         guideScopeKey = ""
         guideWindowStart = 0
         guideWindowEnd = GuideInitialWindowRows
@@ -1164,12 +1166,17 @@ fun LiveTvScreen(
         if (filteredChannels.isEmpty()) return@LaunchedEffect
         val nextScopeKey = "$selectedProviderId|$selectedCategoryId"
         if (guideScopeKey != nextScopeKey) {
-            val anchorId = rememberedChannelByCategory[selectedCategoryId]
-                ?: focusedChannelId
-                ?: playingChannelId
-                ?: initialChannelId
-            val anchorIndex = anchorId?.let(filteredChannelIndexById::get) ?: 0
-            setGuideWindow(guideWindowAround(anchorIndex, filteredChannels.size))
+            val rememberedWindow = guideViewportMemory.restore(nextScopeKey)
+            if (rememberedWindow != null) {
+                setGuideWindow(rememberedWindow.first to (rememberedWindow.last + 1))
+            } else {
+                val anchorId = rememberedChannelByCategory[selectedCategoryId]
+                    ?: focusedChannelId
+                    ?: playingChannelId
+                    ?: initialChannelId
+                val anchorIndex = anchorId?.let(filteredChannelIndexById::get) ?: 0
+                setGuideWindow(guideWindowAround(anchorIndex, filteredChannels.size))
+            }
             guideScopeKey = nextScopeKey
         } else if (guideWindowStart >= filteredChannels.size) {
             setGuideWindow(guideWindowAround(filteredChannels.lastIndex, filteredChannels.size))
