@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from sshtunnel import SSHTunnelForwarder
 
-APP = FastAPI(title="Extreme EPG Worker")
+app = FastAPI(title="Extreme EPG Worker")
 ROOT = Path(os.getenv("EPG_DATA_DIR", "/var/lib/iptv-epg-worker"))
 DB = ROOT / "guide.sqlite"
 GZ = ROOT / "guide.sqlite.gz"
@@ -65,21 +65,21 @@ def refresh():
         _state.update(updated_at=int(time.time() * 1000), programmes=count, channels=len(ids), error=None)
     except Exception as error: _state["error"] = str(error)
 
-@APP.on_event("startup")
+@app.on_event("startup")
 def schedule():
     def loop():
         while True: refresh(); time.sleep(24 * 60 * 60)
     threading.Thread(target=loop, daemon=True).start()
 
-@APP.get("/health")
+@app.get("/health")
 def health(): return {"status": "ok", **_state}
 
-@APP.get("/epg/manifest")
+@app.get("/epg/manifest")
 def manifest():
     if not GZ.exists(): raise HTTPException(503, "Guide is still building")
     return {**_state, "bytes": GZ.stat().st_size, "sha256": hashlib.sha256(GZ.read_bytes()).hexdigest()}
 
-@APP.get("/epg/full.sqlite.gz")
+@app.get("/epg/full.sqlite.gz")
 def download():
     if not GZ.exists(): raise HTTPException(503, "Guide is still building")
     return FileResponse(GZ, media_type="application/gzip", filename="guide.sqlite.gz")
