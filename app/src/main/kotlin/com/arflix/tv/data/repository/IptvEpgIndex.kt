@@ -31,17 +31,18 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             """
             CREATE TABLE epg_programs (
                 source_key TEXT NOT NULL,
+                generation INTEGER NOT NULL,
                 channel_id TEXT NOT NULL,
                 start_ms INTEGER NOT NULL,
                 end_ms INTEGER NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT,
-                PRIMARY KEY(source_key, channel_id, start_ms, end_ms, title)
+                PRIMARY KEY(source_key, generation, channel_id, start_ms, end_ms, title)
             )
             """.trimIndent()
         )
         db.execSQL(
-            "CREATE INDEX idx_epg_programs_window ON epg_programs(source_key, channel_id, start_ms, end_ms)"
+            "CREATE INDEX idx_epg_programs_window ON epg_programs(source_key, generation, channel_id, start_ms, end_ms)"
         )
         db.execSQL(
             """
@@ -57,16 +58,13 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 2) {
+        if (oldVersion < 4) {
+            // v4 adds a generation to every programme key. Recreate the
+            // compact index rather than attempting to retrofit a SQLite
+            // primary key; XMLTV can safely repopulate it in the background.
             db.execSQL("DROP TABLE IF EXISTS epg_programs")
             db.execSQL("DROP TABLE IF EXISTS epg_sources")
             onCreate(db)
-            return
-        }
-        if (oldVersion < 3) {
-            db.execSQL("ALTER TABLE epg_sources ADD COLUMN generation INTEGER NOT NULL DEFAULT 0")
-            db.execSQL("ALTER TABLE epg_sources ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'")
-            db.execSQL("ALTER TABLE epg_sources ADD COLUMN refresh_started_ms INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -120,9 +118,15 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         if (sourceKey.isBlank() || nowNext.isEmpty()) return
 
         writableDatabase.runInTransaction {
-            delete("epg_programs", "source_key = ?", arrayOf(sourceKey))
-            insertNowNextRows(sourceKey, nowNext)
-            completeSourceRefresh(sourceKey, updatedAtMs)
+            ensureSource(sourceKey, updatedAtMs)
+            val nextGeneration = activeGeneration(sourceKey) + 1L
+            delete(
+                "epg_programs",
+                "source_key = ? AND generation = ?",
+                arrayOf(sourceKey, nextGeneration.toString()),
+            )
+            insertNowNextRows(sourceKey, nextGeneration, nowNext)
+            completeSourceRefresh(sourceKey, nextGeneration, updatedAtMs)
         }
     }
 
@@ -130,16 +134,22 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         if (sourceKey.isBlank() || nowNext.isEmpty()) return
 
         writableDatabase.runInTransaction {
+            ensureSource(sourceKey, updatedAtMs)
+            val generation = ensureActiveGeneration(sourceKey)
             nowNext.keys
                 .asSequence()
                 .filter { it.isNotBlank() }
                 .chunked(MAX_SQL_ARGS - 1)
                 .forEach { channelIds ->
                     val placeholders = channelIds.joinToString(",") { "?" }
-                    val args = arrayOf(sourceKey) + channelIds.toTypedArray()
-                    delete("epg_programs", "source_key = ? AND channel_id IN ($placeholders)", args)
+                    val args = arrayOf(sourceKey, generation.toString()) + channelIds.toTypedArray()
+                    delete(
+                        "epg_programs",
+                        "source_key = ? AND generation = ? AND channel_id IN ($placeholders)",
+                        args,
+                    )
                 }
-            insertNowNextRows(sourceKey, nowNext)
+            insertNowNextRows(sourceKey, generation, nowNext)
             touchSourceForPartialUpdate(sourceKey, updatedAtMs)
         }
     }
@@ -156,8 +166,11 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         val endBound = nowMs + futureWindowMs
         val grouped = LinkedHashMap<String, MutableList<IptvProgram>>()
 
+        val generation = sourceState(sourceKey)?.generation ?: return emptyMap()
+        if (generation <= 0L) return emptyMap()
         readableDatabase.useQueryChunks(
             sourceKey = sourceKey,
+            generation = generation,
             channelIds = channelIds,
             startBound = startBound,
             endBound = endBound
@@ -190,8 +203,11 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         if (sourceKey.isBlank() || channelIds.isEmpty() || endMs <= startMs) return emptyMap()
         val grouped = LinkedHashMap<String, MutableList<IptvProgram>>()
 
+        val generation = sourceState(sourceKey)?.generation ?: return emptyMap()
+        if (generation <= 0L) return emptyMap()
         readableDatabase.useQueryChunks(
             sourceKey = sourceKey,
+            generation = generation,
             channelIds = channelIds,
             startBound = startMs,
             endBound = endMs
@@ -243,6 +259,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
 
     private fun SQLiteDatabase.useQueryChunks(
         sourceKey: String,
+        generation: Long,
         channelIds: Set<String>,
         startBound: Long,
         endBound: Long,
@@ -251,13 +268,14 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         channelIds
             .asSequence()
             .filter { it.isNotBlank() }
-            .chunked(MAX_SQL_ARGS - 3)
+            .chunked(MAX_SQL_ARGS - 4)
             .forEach { chunk ->
                 val placeholders = chunk.joinToString(",") { "?" }
                 val sql = """
                     SELECT channel_id, start_ms, end_ms, title, description
                     FROM epg_programs
                     WHERE source_key = ?
+                      AND generation = ?
                       AND channel_id IN ($placeholders)
                       AND end_ms > ?
                       AND start_ms < ?
@@ -265,6 +283,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                 """.trimIndent()
                 val args = buildList {
                     add(sourceKey)
+                    add(generation.toString())
                     addAll(chunk)
                     add(startBound.toString())
                     add(endBound.toString())
@@ -311,12 +330,16 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    private fun SQLiteDatabase.insertNowNextRows(sourceKey: String, nowNext: Map<String, IptvNowNext>) {
+    private fun SQLiteDatabase.insertNowNextRows(
+        sourceKey: String,
+        generation: Long,
+        nowNext: Map<String, IptvNowNext>,
+    ) {
         val statement = compileStatement(
             """
             INSERT OR REPLACE INTO epg_programs
-            (source_key, channel_id, start_ms, end_ms, title, description)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (source_key, generation, channel_id, start_ms, end_ms, title, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """.trimIndent()
         )
         try {
@@ -335,14 +358,15 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     val description = program.description?.trim()?.take(MAX_DESCRIPTION_CHARS)
                     statement.clearBindings()
                     statement.bindString(1, sourceKey)
-                    statement.bindString(2, normalizedId)
-                    statement.bindLong(3, program.startUtcMillis)
-                    statement.bindLong(4, program.endUtcMillis)
-                    statement.bindString(5, titleTrimmed)
+                    statement.bindLong(2, generation)
+                    statement.bindString(3, normalizedId)
+                    statement.bindLong(4, program.startUtcMillis)
+                    statement.bindLong(5, program.endUtcMillis)
+                    statement.bindString(6, titleTrimmed)
                     if (description.isNullOrBlank()) {
-                        statement.bindNull(6)
+                        statement.bindNull(7)
                     } else {
-                        statement.bindString(6, description)
+                        statement.bindString(7, description)
                     }
                     statement.executeInsert()
                 }
@@ -359,10 +383,6 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
     }
 
     private fun SQLiteDatabase.touchSourceForPartialUpdate(sourceKey: String, updatedAtMs: Long) {
-        execSQL(
-            "INSERT OR IGNORE INTO epg_sources(source_key, updated_ms, generation, status, refresh_started_ms) VALUES (?, ?, 0, 'ready', 0)",
-            arrayOf<Any?>(sourceKey, updatedAtMs),
-        )
         // Do not advance generation or mark a refreshing guide as ready: a
         // partial parser batch is usable immediately but is not a completed
         // replacement for the previous source generation.
@@ -372,15 +392,40 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         )
     }
 
-    private fun SQLiteDatabase.completeSourceRefresh(sourceKey: String, updatedAtMs: Long) {
+    private fun SQLiteDatabase.ensureSource(sourceKey: String, updatedAtMs: Long) {
         execSQL(
             "INSERT OR IGNORE INTO epg_sources(source_key, updated_ms, generation, status, refresh_started_ms) VALUES (?, ?, 0, 'ready', 0)",
             arrayOf<Any?>(sourceKey, updatedAtMs),
         )
+    }
+
+    private fun SQLiteDatabase.activeGeneration(sourceKey: String): Long = rawQuery(
+        "SELECT generation FROM epg_sources WHERE source_key = ?",
+        arrayOf(sourceKey),
+    ).use { cursor ->
+        if (cursor.moveToFirst()) cursor.getLong(0) else 0L
+    }
+
+    private fun SQLiteDatabase.ensureActiveGeneration(sourceKey: String): Long {
+        val current = activeGeneration(sourceKey)
+        if (current > 0L) return current
         execSQL(
-            "UPDATE epg_sources SET updated_ms = ?, generation = generation + 1, status = 'ready', refresh_started_ms = 0 WHERE source_key = ?",
-            arrayOf<Any?>(updatedAtMs, sourceKey),
+            "UPDATE epg_sources SET generation = 1 WHERE source_key = ?",
+            arrayOf(sourceKey),
         )
+        return 1L
+    }
+
+    private fun SQLiteDatabase.completeSourceRefresh(
+        sourceKey: String,
+        generation: Long,
+        updatedAtMs: Long,
+    ) {
+        execSQL(
+            "UPDATE epg_sources SET updated_ms = ?, generation = ?, status = 'ready', refresh_started_ms = 0 WHERE source_key = ?",
+            arrayOf<Any?>(updatedAtMs, generation, sourceKey),
+        )
+        delete("epg_programs", "source_key = ? AND generation != ?", arrayOf(sourceKey, generation.toString()))
     }
 
     private fun buildNowNext(programs: List<IptvProgram>, nowMs: Long): IptvNowNext? {
@@ -440,7 +485,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         // bloated it with up to 336 programmes/channel; loading 360 such channels into
         // memory churned the heap and crashed the Live TV page. Recreating it clears
         // that, and the reduced caps below keep per-channel memory bounded.
-        const val DATABASE_VERSION = 3
+        const val DATABASE_VERSION = 4
         const val MAX_SQL_ARGS = 900
         const val MAX_DESCRIPTION_CHARS = 200
         // ±48h of guide needs only ~24-48 programmes each way. Keeping 96+240 held far
