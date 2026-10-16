@@ -61,10 +61,13 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 private const val EpgPastWindowMinutes = 2 * 60
-// Past 48h + future 48h: the guide shows a full ±48h span so users can scroll back
-// for catch-up and forward to plan. The SQLite guide index keeps a wider window
-// (past 48h / future 96h) so this data is already available without a refetch.
-private const val EpgFutureWindowMinutes = 10 * 60
+// The database retains a wider window for catch-up and planning. The renderer
+// itself needs only a near-now slice and requests another bounded viewport as
+// the user navigates.
+// The renderer is a viewport, not a full guide canvas. Six hours ahead keeps
+// its measured layout bounded on entry-level TV hardware; the indexed source
+// still retains a wider window for later navigation.
+private const val EpgFutureWindowMinutes = 6 * 60
 private const val CompactEpgPastWindowMinutes = 90
 private const val CompactEpgFutureWindowMinutes = 6 * 60
 private const val ChannelWindowPrefetchThreshold = 10
@@ -75,14 +78,15 @@ enum class EpgGridFocusMode {
 }
 
 /**
- * EPG grid per spec §3.4.
- * Window: (now - 1h rounded to :30) → +9h = 10h wide.
+ * Viewport-first Live TV renderer.
+ * Window: a bounded near-now range backed by SQLite, never the provider's
+ * full XMLTV payload.
  * Constants: 5dp/min, 150dp per 30min, rows 84dp tall.
  * Scroll sync: header ↔ body (horizontal) + channel column ↔ body (vertical).
  */
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun EpgGrid(
+fun TvGuideViewport(
     channels: List<EnrichedChannel>,
     channelWindowOffset: Int = 0,
     totalChannelCount: Int = channels.size,
@@ -164,6 +168,14 @@ fun EpgGrid(
         (((windowEndMillis - windowStartMillis) / 60_000L) / 30L).toInt().coerceAtLeast(1)
     }
     val slots = remember(windowStartMillis, slotCount) { buildHalfHourSlots(windowStartMillis, slotCount) }
+    val viewportModel = remember(channels, nowNext, windowStartMillis, windowEndMillis) {
+        buildTvGuideViewportModel(
+            channelIds = channels.map { it.id },
+            nowNext = nowNext,
+            windowStartMillis = windowStartMillis,
+            windowEndMillis = windowEndMillis,
+        )
+    }
 
     // Shared horizontal scroll state between header and body rows.
     val hScroll = rememberScrollState()
@@ -245,18 +257,18 @@ fun EpgGrid(
         val anchorIdx = anchorId?.let(channelIndexById::get)
             ?: selectedChannelId?.let(channelIndexById::get)
             ?: return true
-        val targetIdx = anchorIdx + delta
-        return when {
-            targetIdx < 0 -> {
-                onRequestPreviousChannels()
-                true
-            }
-            targetIdx >= channels.size -> {
-                onRequestNextChannels()
-                true
-            }
-            else -> keepChannelFocus(targetIdx)
+        val result = TvGuideNavigation.move(
+            cursor = TvGuideCursor(rowIndex = anchorIdx),
+            direction = if (delta < 0) TvGuideDirection.UP else TvGuideDirection.DOWN,
+            rowCount = channels.size,
+            programCountForRow = { row -> programFocusTargets[channels.getOrNull(row)?.id].orEmpty().size },
+        )
+        when {
+            result.requestPreviousPage -> onRequestPreviousChannels()
+            result.requestNextPage -> onRequestNextChannels()
+            else -> keepChannelFocus(result.cursor.rowIndex)
         }
+        return true
     }
 
     // Scroll the grid to the active channel whenever the selection changes
@@ -551,14 +563,7 @@ fun EpgGrid(
                                     .fillMaxHeight()
                                     .horizontalScroll(hScroll)
                             ) {
-                                val rowPrograms = remember(
-                                    ch.id,
-                                    nowNext[ch.id],
-                                    windowStartMillis,
-                                    windowEndMillis,
-                                ) {
-                                    programsInWindow(nowNext[ch.id], windowStartMillis, windowEndMillis)
-                                }
+                                val rowPrograms = viewportModel.programsFor(ch.id)
                                 val isGuideLoading = hasGuideSource &&
                                     rowPrograms.isEmpty() &&
                                     (
@@ -600,7 +605,37 @@ fun EpgGrid(
                                         }
                                     },
                                     onMoveVertically = { targetRowIdx, anchorStartMin ->
-                                        requestNearestProgramFocus(targetRowIdx, anchorStartMin)
+                                        val direction = if (targetRowIdx < idx) {
+                                            TvGuideDirection.UP
+                                        } else {
+                                            TvGuideDirection.DOWN
+                                        }
+                                        val result = TvGuideNavigation.move(
+                                            cursor = TvGuideCursor(
+                                                rowIndex = idx,
+                                                lane = TvGuideFocusLane.PROGRAMS,
+                                                timeAnchorMinutes = anchorStartMin,
+                                            ),
+                                            direction = direction,
+                                            rowCount = channels.size,
+                                            programCountForRow = { row ->
+                                                programFocusTargets[channels.getOrNull(row)?.id].orEmpty().size
+                                            },
+                                        )
+                                        when {
+                                            result.requestPreviousPage -> {
+                                                onRequestPreviousChannels()
+                                                true
+                                            }
+                                            result.requestNextPage -> {
+                                                onRequestNextChannels()
+                                                true
+                                            }
+                                            else -> requestNearestProgramFocus(
+                                                result.cursor.rowIndex,
+                                                result.cursor.timeAnchorMinutes,
+                                            )
+                                        }
                                     },
                                     onMoveLeftFromStart = {
                                         onExitEpg(ch)
@@ -831,26 +866,6 @@ private fun roundedGuideWindowStart(nowMillis: Long, pastWindowMinutes: Int): Lo
     return roundedNow - pastWindowMinutes * 60_000L
 }
 
-private fun programsInWindow(
-    item: IptvNowNext?,
-    start: Long,
-    end: Long,
-): List<IptvProgram> {
-    if (item == null) return emptyList()
-    val buf = ArrayList<IptvProgram>(16)
-    fun add(p: IptvProgram?) {
-        if (p == null) return
-        if (p.endUtcMillis > start && p.startUtcMillis < end) buf.add(p)
-    }
-    item.recent.forEach(::add)
-    add(item.now)
-    add(item.next)
-    add(item.later)
-    item.upcoming.forEach(::add)
-    return buf.distinctBy { Triple(it.startUtcMillis, it.endUtcMillis, it.title) }
-        .sortedBy { it.startUtcMillis }
-}
-
 private data class ProgramPlacement(
     val program: IptvProgram,
     val startMin: Int,
@@ -993,4 +1008,3 @@ private fun addPlaceholderPlacement(
         isPlaceholder = true,
     )
 }
-

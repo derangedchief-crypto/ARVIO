@@ -147,7 +147,11 @@ private const val IptvPlaybackUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
 // objects, most never visible, and made category/focus movement jank badly on
 // entry-level TV hardware.
 private const val VisibleGuidePastWindowMs = 2L * 60L * 60_000L
-private const val VisibleGuideFutureWindowMs = 10L * 60L * 60_000L
+private const val VisibleGuideFutureWindowMs = 6L * 60L * 60_000L
+// Keep the current and immediately previous guide pages warm while the next
+// indexed query is in flight. This cache is source-scoped and every queried
+// channel is replaced (including with empty data) once SQLite responds.
+private const val RetainedIndexedGuideRows = GuideMaxWindowRows * 2
 private const val EpgGuideLookupTimeoutMs = 2_500L
 
 private fun digitForTvKeyCode(keyCode: Int): Int? = when (keyCode) {
@@ -1185,7 +1189,9 @@ fun LiveTvScreen(
             guideChannels.forEachIndexed { index, channel -> put(channel.id, index) }
         }
     }
-    val indexedGuideNowNextState = remember { mutableStateOf<Map<String, IptvNowNext>>(emptyMap()) }
+    var retainedIndexedGuideNowNext by remember(selectedProviderId) {
+        mutableStateOf<Map<String, IptvNowNext>>(emptyMap())
+    }
     LaunchedEffect(guideChannels, guideClockMillis, guideIndexRevision) {
         val ids = guideChannels
             .asSequence()
@@ -1193,7 +1199,6 @@ fun LiveTvScreen(
             .filter { it.isNotBlank() }
             .toSet()
         if (ids.isEmpty()) {
-            indexedGuideNowNextState.value = emptyMap()
             return@LaunchedEffect
         }
         val start = guideClockMillis - VisibleGuidePastWindowMs
@@ -1202,18 +1207,33 @@ fun LiveTvScreen(
         val indexed = withContext(Dispatchers.IO) {
             viewModel.iptvRepository.indexedGuideWindow(ids, start, end)
         }
-        indexedGuideNowNextState.value = indexed
+        // Do not clear old cells when switching a category, returning from the
+        // player, or receiving an incremental parser revision. Replace only
+        // the rows SQLite has just authoritatively answered; that preserves a
+        // correct last frame until its replacement is ready, without keeping
+        // stale programme mappings after the query completes.
+        val retained = LinkedHashMap(retainedIndexedGuideNowNext)
+        ids.forEach(retained::remove)
+        retained.putAll(indexed)
+        while (retained.size > RetainedIndexedGuideRows) {
+            retained.entries.iterator().run {
+                if (hasNext()) {
+                    next()
+                    remove()
+                }
+            }
+        }
+        retainedIndexedGuideNowNext = retained
         System.err.println(
             "[TV-Metrics] indexed guide visible=${indexed.size}/${ids.size} " +
                 "rows=${guideChannels.size} in ${System.currentTimeMillis() - startedAt}ms"
         )
     }
-    val indexedGuideNowNext = indexedGuideNowNextState.value
-    val effectiveGuideNowNext = remember(state.snapshot.nowNext, indexedGuideNowNext, guideChannels) {
+    val effectiveGuideNowNext = remember(state.snapshot.nowNext, retainedIndexedGuideNowNext, guideChannels) {
         HashMap<String, IptvNowNext>(guideChannels.size).apply {
             guideChannels.forEach { channel ->
                 mergeGuideSlices(
-                    indexedGuideNowNext[channel.id],
+                    retainedIndexedGuideNowNext[channel.id],
                     state.snapshot.nowNext[channel.id]
                 )?.let { put(channel.id, it) }
             }
@@ -2774,7 +2794,7 @@ fun LiveTvScreen(
                         onOpenSearch = { searchOpen = true },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    EpgGrid(
+                    TvGuideViewport(
                         channels = guideChannels,
                         channelWindowOffset = normalizedGuideStart,
                         totalChannelCount = selectedCategoryTotalCount,
@@ -2917,7 +2937,7 @@ fun LiveTvScreen(
                         onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    EpgGrid(
+                    TvGuideViewport(
                         channels = guideChannels,
                         channelWindowOffset = normalizedGuideStart,
                         totalChannelCount = selectedCategoryTotalCount,
