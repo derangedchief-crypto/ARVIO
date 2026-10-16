@@ -6172,7 +6172,7 @@ class IptvRepository @Inject constructor(
 
     private fun fetchAndParseEpg(url: String, channels: List<IptvChannel>): Map<String, IptvNowNext> {
         throwIfEpgMustYieldToPlayback()
-        val partialGuideWriter = IncrementalGuideBatchWriter(::persistPartialEpgIndex)
+        val partialGuideWriter = IncrementalGuideBatchWriter(write = ::persistPartialEpgIndex)
         val onPartialGuide: (Map<String, IptvNowNext>) -> Unit = partialGuideWriter::submit
         val hasDbEntries = currentEpgIndexKey.isNotBlank() && runCatching {
             epgIndex.countPrograms(currentEpgIndexKey)
