@@ -2,6 +2,7 @@
 
 package com.arflix.tv.ui.screens.tv.live
 
+import android.view.LayoutInflater
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -42,7 +43,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
@@ -93,7 +93,6 @@ internal fun liveTvMiniPlayerLayout(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun MiniPlayerRow(
-    exoPlayer: ExoPlayer,
     channel: EnrichedChannel?,
     clockTickMillis: Long,
     nowNext: IptvNowNext?,
@@ -102,6 +101,8 @@ fun MiniPlayerRow(
     onFullscreenClick: (() -> Unit)? = null,
     variantCount: Int = 1,
     onOpenVariants: (() -> Unit)? = null,
+    onPlayerViewCreated: ((PlayerView) -> Unit)? = null,
+    onPlayerViewReleased: ((PlayerView) -> Unit)? = null,
     compact: Boolean = false,
     landscapeCompact: Boolean = false,
     modifier: Modifier = Modifier,
@@ -116,10 +117,11 @@ fun MiniPlayerRow(
             verticalAlignment = Alignment.Top,
         ) {
             VideoCard(
-                exoPlayer = exoPlayer,
                 channel = channel,
                 landscapeCompact = true,
                 onFullscreenClick = onFullscreenClick,
+                onPlayerViewCreated = onPlayerViewCreated,
+                onPlayerViewReleased = onPlayerViewReleased,
             )
             InfoColumn(
                 channel = channel,
@@ -143,10 +145,11 @@ fun MiniPlayerRow(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             VideoCard(
-                exoPlayer = exoPlayer,
                 channel = channel,
                 compact = true,
                 onFullscreenClick = onFullscreenClick,
+                onPlayerViewCreated = onPlayerViewCreated,
+                onPlayerViewReleased = onPlayerViewReleased,
                 modifier = Modifier.fillMaxWidth(),
             )
             InfoColumn(
@@ -169,9 +172,10 @@ fun MiniPlayerRow(
             verticalAlignment = Alignment.Top,
         ) {
             VideoCard(
-                exoPlayer = exoPlayer,
                 channel = channel,
                 onFullscreenClick = onFullscreenClick,
+                onPlayerViewCreated = onPlayerViewCreated,
+                onPlayerViewReleased = onPlayerViewReleased,
             )
             InfoColumn(
                 channel = channel,
@@ -190,11 +194,12 @@ fun MiniPlayerRow(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun VideoCard(
-    exoPlayer: ExoPlayer,
     channel: EnrichedChannel?,
     compact: Boolean = false,
     landscapeCompact: Boolean = false,
     onFullscreenClick: (() -> Unit)? = null,
+    onPlayerViewCreated: ((PlayerView) -> Unit)? = null,
+    onPlayerViewReleased: ((PlayerView) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val deviceType = LocalDeviceType.current
@@ -242,16 +247,19 @@ private fun VideoCard(
             )
             AndroidView(
                 factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        this.player = exoPlayer
+                    val view = (LayoutInflater.from(ctx)
+                        .inflate(R.layout.live_tv_player_view, null) as PlayerView).apply {
                         useController = false
                         setKeepContentOnPlayerReset(true)
                     }
+                    onPlayerViewCreated?.invoke(view)
+                    view
                 },
                 update = { view ->
-                    if (view.player !== exoPlayer) {
-                        view.player = exoPlayer
-                    }
+                    onPlayerViewCreated?.invoke(view)
+                },
+                onRelease = { view ->
+                    onPlayerViewReleased?.invoke(view)
                 },
                 modifier = Modifier.fillMaxSize(),
             )

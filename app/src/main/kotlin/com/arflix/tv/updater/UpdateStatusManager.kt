@@ -13,7 +13,7 @@ sealed class UpdateStatus {
     data class Downloading(val progress: Float?, val update: AppUpdate) : UpdateStatus()
     data class ReadyToInstall(val apkPath: String, val update: AppUpdate) : UpdateStatus()
     data class Installing(val update: AppUpdate?) : UpdateStatus()
-    data object Success : UpdateStatus()
+    data class Success(val update: AppUpdate? = null) : UpdateStatus()
     data class Failure(val message: String, val update: AppUpdate? = null) : UpdateStatus()
 }
 
@@ -31,6 +31,7 @@ class UpdateStatusManager @Inject constructor() {
             is UpdateStatus.Downloading -> newStatus.also { lastUpdate = it.update }
             is UpdateStatus.ReadyToInstall -> newStatus.also { lastUpdate = it.update }
             is UpdateStatus.Installing -> newStatus.also { if (it.update != null) lastUpdate = it.update }
+            is UpdateStatus.Success -> newStatus.copy(update = newStatus.update ?: lastUpdate)
             is UpdateStatus.Failure -> {
                 val update = newStatus.update ?: lastUpdate
                 if (update != null) newStatus.copy(update = update) else newStatus

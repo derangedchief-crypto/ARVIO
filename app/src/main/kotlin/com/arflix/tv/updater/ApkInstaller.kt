@@ -53,6 +53,14 @@ object ApkInstaller {
 
             val apkPackage = apkInfo?.packageName ?: return null
 
+            if (apkPackage != context.packageName) {
+                return context.getString(
+                    R.string.update_error_package_mismatch,
+                    context.packageName,
+                    apkPackage,
+                )
+            }
+
             // Get the signing info of the currently installed app
             val installedInfo: PackageInfo? = try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

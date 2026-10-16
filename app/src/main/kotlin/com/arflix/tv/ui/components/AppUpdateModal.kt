@@ -53,6 +53,7 @@ import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.updater.UpdateStatus
+import com.arflix.tv.updater.VersionUtils
 
 private data class ActionButtonConfig(
     val label: String,
@@ -177,7 +178,7 @@ fun AppUpdateModal(
                     is UpdateStatus.ReadyToInstall -> stringResource(R.string.update_msg_ready_subtitle, status.update.title)
                     is UpdateStatus.Installing -> stringResource(R.string.update_msg_installing)
                     is UpdateStatus.Failure -> stringResource(R.string.update_msg_failed)
-                    is UpdateStatus.Success -> stringResource(R.string.update_msg_uptodate)
+                    is UpdateStatus.Success -> stringResource(R.string.update_msg_installed)
                     is UpdateStatus.Idle -> stringResource(R.string.update_msg_no_info)
                 }
                 androidx.compose.material3.Text(subtitle, style = ArflixTypography.body, color = TextSecondary)
@@ -190,12 +191,15 @@ fun AppUpdateModal(
                         color = TextSecondary.copy(alpha = 0.78f)
                     )
                 } else if (status is UpdateStatus.Success) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    androidx.compose.material3.Text(
-                        text = stringResource(R.string.update_msg_current_uptodate, BuildConfig.VERSION_NAME.substringBefore("-")),
-                        style = ArflixTypography.caption,
-                        color = TextSecondary.copy(alpha = 0.78f)
-                    )
+                    val installedVersion = status.update?.tag?.let(VersionUtils::normalize)
+                    if (!installedVersion.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        androidx.compose.material3.Text(
+                            text = stringResource(R.string.update_msg_installed_version, installedVersion),
+                            style = ArflixTypography.caption,
+                            color = TextSecondary.copy(alpha = 0.78f)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))

@@ -11,6 +11,15 @@ import com.arflix.tv.data.model.IptvChannel
 object LiveTvStartup {
 
     /**
+     * Opening the TV destination is for browsing.  It must never start an
+     * arbitrary provider stream merely because a previous session remembered a
+     * channel.  A route with a channel id is an explicit play request from a
+     * user action elsewhere in the app, so that remains supported.
+     */
+    fun shouldAutoPlay(explicitChannelId: String?): Boolean =
+        !explicitChannelId.isNullOrBlank()
+
+    /**
      * Which channel Live TV should open on.
      *
      * Order: an explicit request (deep link, "continue watching" action) wins;

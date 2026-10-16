@@ -10,11 +10,11 @@ import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.model.PlaylistGroupKey
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
-import com.arflix.tv.ui.screens.tv.live.LiveTvGuideSources
 import com.arflix.tv.ui.screens.tv.live.runEpgLookupWithTimeout
 import com.arflix.tv.data.repository.IptvPlaybackTarget
 import com.arflix.tv.data.repository.IptvPlaybackUrlResolver
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.IptvEpgPlaybackGate
 import com.arflix.tv.data.repository.IptvTvSessionState
 import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.arflix.tv.ui.screens.tv.live.epgChannelAllowsVodSearch
@@ -52,6 +52,7 @@ private const val EpgAttemptedStateLimit = 2_400
 private const val LargeIptvListChannelCount = 10_000
 private const val StandardPriorityEpgLimit = 3_200
 private const val LargeListPriorityCacheLimit = 360
+private const val RetainedVisibleGuideChannelLimit = 480
 private const val LargeListFocusedNetworkEpgLimit = 24
 private const val LargeListFavoriteEpgPasses = 12
 private const val LargeListFavoritePrefetchLookahead = 28
@@ -62,7 +63,12 @@ private const val CurrentChannelEpgRefreshThrottleMs = 12_000L
 private const val EpgVodLookupTimeoutMs = 2_500L
 private const val LargeListCompleteGuideCoverageTarget = 0.75f
 private const val PlaybackEpgBackfillResumeDelayMs = 90_000L
-private const val LargeListCompleteEpgBackfillStartupDelayMs = 180_000L
+private const val LargeListCompleteEpgBackfillStartupDelayMs = 5_000L
+private const val LargeListBackgroundEpgBatchSize = 48
+private const val LargeListBackgroundEpgBatchDelayMs = 250L
+private const val AutomaticEpgInitialDelayMs = 2_000L
+private const val AutomaticEpgRefreshIntervalMs = 10 * 60_000L
+private const val AutomaticEpgRefreshChannelLimit = 96
 
 data class TvUiState(
     val isLoading: Boolean = false,
@@ -82,6 +88,8 @@ data class TvUiState(
     val epgLoadingChannelIds: Set<String> = emptySet(),
     val epgAttemptedChannelIds: Set<String> = emptySet(),
     val epgBackfillInProgress: Boolean = false,
+    val epgBackfillProgress: Int? = null,
+    val epgBackfillMessage: String? = null,
     val epgVodActionsEnabled: Boolean = true,
 ) {
     val isConfigured: Boolean get() =
@@ -96,6 +104,7 @@ data class TvUiState(
 class TvViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     val iptvRepository: IptvRepository,
+    private val epgPlaybackGate: IptvEpgPlaybackGate,
     private val cloudSyncRepository: CloudSyncRepository,
     private val mediaRepository: com.arflix.tv.data.repository.MediaRepository,
 ) : ViewModel() {
@@ -146,20 +155,14 @@ class TvViewModel @Inject constructor(
     private var lastFullEpgWarmupKey: String? = null
     private var completeEpgBackfillJob: Job? = null
     private var lastCompleteEpgBackfillKey: String? = null
+    private var largeListBackgroundEpgJob: Job? = null
+    private var lastLargeListBackgroundEpgKey: String? = null
     private var lastVisibleForcedCompleteEpgAt: Long = 0L
     private var lastCompleteEpgBackfillCompletedAt: Long = 0L
     private var liveTvPlaybackActive: Boolean = false
-    // Set to true to restore the original behavior: defer/cancel the full EPG
-    // guide backfill entirely while a channel is playing. That protection was
-    // added after a measured crash — filling ~10k guide-capable channels
-    // concurrently with an interactive UI exceeded a 384MB heap cap and crashed
-    // during navigation. Disabled (not removed) here because Live TV auto-plays
-    // the first stream the instant the screen opens, so this was deferring on
-    // essentially every session before the backfill got a real chance to run —
-    // for a channel list this size (low hundreds, not ~10k), that measured
-    // crash threshold is unlikely to apply. Re-enable if large channel lists
-    // start crashing low-end hardware again.
-    private val pauseEpgBackfillDuringPlayback: Boolean = false
+    // EPG work preloads while the app is idle, then always yields to actual
+    // live playback. Browse-first entry leaves enough idle time to warm it.
+    private val pauseEpgBackfillDuringPlayback: Boolean = true
     private var deferredCompleteEpgBackfill: Boolean = false
     private val deferredCompleteEpgPriorityIds = LinkedHashSet<String>()
     private var deferredCompleteEpgBackfillJob: Job? = null
@@ -180,6 +183,11 @@ class TvViewModel @Inject constructor(
     private val currentChannelEpgRefreshAt = LinkedHashMap<String, Long>()
     private val epgNetworkRefreshLock = Any()
     private val epgNetworkRefreshInFlight = LinkedHashSet<String>()
+    // The SQLite index holds the whole guide, but window reads are asynchronous.
+    // Keep a small LRU-like set of recently displayed rows in the UI snapshot so
+    // returning from the player never shows an empty guide while that read runs.
+    private val retainedVisibleGuideChannelIds = LinkedHashSet<String>()
+    private val retainedVisibleGuideLock = Any()
 
     private data class VisibleEpgDrain(
         val ids: List<String>,
@@ -313,6 +321,9 @@ class TvViewModel @Inject constructor(
                 val configChanged = lastObservedConfigSignature != null &&
                     lastObservedConfigSignature != newConfigSignature
                 lastObservedConfigSignature = newConfigSignature
+                if (configChanged) {
+                    lastAutomaticEpgReloadAt = 0L
+                }
                 val snapshot = _uiState.value.snapshot.copy(
                     favoriteGroups = favoriteGroups,
                     favoriteChannels = favoriteChannels,
@@ -674,6 +685,7 @@ class TvViewModel @Inject constructor(
 
     private fun mergeNowNext(updated: Map<String, com.arflix.tv.data.model.IptvNowNext>) {
         if (updated.isEmpty()) return
+        retainVisibleGuideChannels(updated.keys)
         val current = _uiState.value
         val updatedIds = updated.keys
         val mergedNowNext = current.snapshot.nowNext.toMutableMap().apply {
@@ -736,6 +748,7 @@ class TvViewModel @Inject constructor(
         )
         val keepIds = LinkedHashSet<String>(LargeListPriorityCacheLimit + 180)
         priorityIds.forEach(keepIds::add)
+        retainedVisibleGuideChannelIdsSnapshot().forEach(keepIds::add)
         snapshot.favoriteChannels
             .asSequence()
             .map { it.trim() }
@@ -744,7 +757,7 @@ class TvViewModel @Inject constructor(
         keepChannelIds
             .asSequence()
             .filter { it.isNotBlank() }
-            .take(180)
+            .take(240)
             .forEach(keepIds::add)
         if (keepIds.isEmpty()) {
             return snapshot.copy(nowNext = emptyMap())
@@ -755,16 +768,40 @@ class TvViewModel @Inject constructor(
         return snapshot.copy(nowNext = cappedNowNext)
     }
 
+    private fun retainVisibleGuideChannels(channelIds: Collection<String>) {
+        synchronized(retainedVisibleGuideLock) {
+            channelIds.asSequence()
+                .filter { it.isNotBlank() }
+                .forEach { channelId ->
+                    // Move a revisited row to the newest end of the eviction order.
+                    retainedVisibleGuideChannelIds.remove(channelId)
+                    retainedVisibleGuideChannelIds.add(channelId)
+                }
+            while (retainedVisibleGuideChannelIds.size > RetainedVisibleGuideChannelLimit) {
+                val oldest = retainedVisibleGuideChannelIds.firstOrNull() ?: break
+                retainedVisibleGuideChannelIds.remove(oldest)
+            }
+        }
+    }
+
+    private fun retainedVisibleGuideChannelIdsSnapshot(): List<String> =
+        synchronized(retainedVisibleGuideLock) { retainedVisibleGuideChannelIds.toList() }
+
     private fun mergeGuideSlice(
         existing: com.arflix.tv.data.model.IptvNowNext?,
         fresh: com.arflix.tv.data.model.IptvNowNext
     ): com.arflix.tv.data.model.IptvNowNext {
         if (existing == null) return fresh
+        val nowMs = System.currentTimeMillis()
         return com.arflix.tv.data.model.IptvNowNext(
-            now = fresh.now ?: existing.now,
-            next = fresh.next ?: existing.next,
-            later = fresh.later ?: existing.later,
-            upcoming = if (fresh.upcoming.isNotEmpty()) fresh.upcoming else existing.upcoming,
+            now = fresh.now ?: existing.now?.takeIf { it.endUtcMillis > nowMs },
+            next = fresh.next ?: existing.next?.takeIf { it.startUtcMillis > nowMs },
+            later = fresh.later ?: existing.later?.takeIf { it.startUtcMillis > nowMs },
+            upcoming = if (fresh.upcoming.isNotEmpty()) {
+                fresh.upcoming
+            } else {
+                existing.upcoming.filter { it.startUtcMillis > nowMs && it.endUtcMillis > nowMs }
+            },
             recent = if (fresh.recent.isNotEmpty()) fresh.recent else existing.recent,
         )
     }
@@ -874,15 +911,33 @@ class TvViewModel @Inject constructor(
         }
     }
 
-    private fun setEpgBackfillInProgress(inProgress: Boolean) {
+    private fun setEpgBackfillInProgress(
+        inProgress: Boolean,
+        progress: Int? = null,
+        message: String? = null,
+    ) {
         val current = _uiState.value
-        if (current.epgBackfillInProgress == inProgress) return
-        setUiState(current.copy(epgBackfillInProgress = inProgress))
+        val safeProgress = progress?.coerceIn(0, 100)
+        val nextProgress = if (inProgress) safeProgress else null
+        val nextMessage = if (inProgress) message?.takeIf { it.isNotBlank() } else null
+        if (
+            current.epgBackfillInProgress == inProgress &&
+            current.epgBackfillProgress == nextProgress &&
+            current.epgBackfillMessage == nextMessage
+        ) return
+        setUiState(
+            current.copy(
+                epgBackfillInProgress = inProgress,
+                epgBackfillProgress = nextProgress,
+                epgBackfillMessage = nextMessage,
+            ),
+        )
     }
 
     fun setLiveTvPlaybackActive(active: Boolean) {
         if (liveTvPlaybackActive == active) return
         liveTvPlaybackActive = active
+        epgPlaybackGate.setPlaybackActive(active)
         // The full-guide backfill is deferred while a channel preview is playing.
         // Measured reason: filling all ~10k guide-capable channels' EPG concurrently
         // with an interactive UI exceeds this device's 384MB heap cap and crashes
@@ -951,11 +1006,48 @@ class TvViewModel @Inject constructor(
     private fun startPeriodicEpgRefresh() {
         if (periodicEpgJob?.isActive == true) return
         periodicEpgJob = viewModelScope.launch {
+            var firstPass = true
             while (true) {
-                kotlinx.coroutines.delay(60_000L)
+                kotlinx.coroutines.delay(if (firstPass) AutomaticEpgInitialDelayMs else 60_000L)
+                firstPass = false
                 val state = _uiState.value
                 if (state.isConfigured && state.snapshot.channels.isNotEmpty()) {
                     refreshGuideFromCache()
+
+                    if (
+                        (pauseEpgBackfillDuringPlayback && liveTvPlaybackActive) ||
+                        refreshJob?.isActive == true ||
+                        visibleEpgRefreshJob?.isActive == true ||
+                        fullEpgWarmupJob?.isActive == true ||
+                        completeEpgBackfillJob?.isActive == true
+                    ) continue
+
+                    val now = System.currentTimeMillis()
+                    val cacheAge = iptvRepository.cachedEpgAgeMs()
+                    if (
+                        now - lastAutomaticEpgReloadAt >= AutomaticEpgRefreshIntervalMs &&
+                        cacheAge >= AutomaticEpgRefreshIntervalMs
+                    ) {
+                        val refreshIds = buildPriorityEpgChannelIds(
+                            state = _uiState.value,
+                            maxChannels = AutomaticEpgRefreshChannelLimit
+                        )
+                        if (refreshIds.isNotEmpty()) {
+                            lastAutomaticEpgReloadAt = now
+                            val refreshed = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    iptvRepository.refreshEpgForChannels(
+                                        channelIds = refreshIds,
+                                        maxChannels = refreshIds.size,
+                                        preferFullCatchupHistory = false,
+                                    )
+                                }.getOrNull()
+                            }
+                            if (!refreshed.isNullOrEmpty()) {
+                                mergeNowNext(refreshed)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1053,6 +1145,72 @@ class TvViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Xtream-only large playlists cannot use the single-pass XMLTV indexer. They
+     * previously fetched guide rows only after a category became visible, making
+     * every newly opened category look empty before its own request completed.
+     *
+     * Walk the paged channel store in small, persisted batches instead. Results
+     * are intentionally not merged into the UI snapshot: that would retain a
+     * full 10k+ channel guide in Compose memory. The category path reads each
+     * prepared batch from the SQLite guide index as soon as it is selected.
+     */
+    private fun startLargeListBackgroundEpgIndex(state: TvUiState) {
+        val totalChannels = runCatching { iptvRepository.pagedChannelStoreCount() }.getOrDefault(0)
+        if (totalChannels <= 0) return
+        if (totalChannels <= LargeIptvListChannelCount && !isLargeIptvList(state.snapshot.channels.size)) return
+        val configSignature = state.config.syncSignature()
+        val indexKey = "$configSignature|$totalChannels"
+        if (indexKey == lastLargeListBackgroundEpgKey) return
+
+        lastLargeListBackgroundEpgKey = indexKey
+        largeListBackgroundEpgJob?.cancel()
+        largeListBackgroundEpgJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(2_000L)
+            var offset = 0
+            var indexed = 0
+            while (offset < totalChannels && _uiState.value.config.syncSignature() == configSignature) {
+                // Keep interactive category work ahead of the background walk.
+                if (visibleEpgRefreshJob?.isActive == true) {
+                    delay(LargeListBackgroundEpgBatchDelayMs)
+                    continue
+                }
+                val batch = iptvRepository.pagedChannelWindow(
+                    groupTitle = null,
+                    offset = offset,
+                    limit = LargeListBackgroundEpgBatchSize
+                )
+                if (batch.isEmpty()) break
+                offset += batch.size
+
+                val ids = batch.mapTo(LinkedHashSet()) { it.id }
+                val cached = iptvRepository.reDeriveCachedNowNext(ids).orEmpty()
+                val missingIds = ids.filterNot { id -> hasUsefulVisibleGuideData(cached[id]) }.toSet()
+                if (missingIds.isNotEmpty()) {
+                    val refreshed = runCatching {
+                        iptvRepository.refreshEpgForChannels(
+                            channelIds = missingIds,
+                            maxChannels = missingIds.size,
+                            preferFullCatchupHistory = false
+                        )
+                    }.getOrNull()
+                    indexed += refreshed?.size ?: 0
+                }
+                delay(LargeListBackgroundEpgBatchDelayMs)
+            }
+            System.err.println(
+                "[EPG-Background] completed large-list guide index; " +
+                    "visited=$offset/$totalChannels updated=$indexed"
+            )
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (largeListBackgroundEpgJob === job) {
+                    largeListBackgroundEpgJob = null
+                }
+            }
+        }
+    }
+
     private fun startCompleteEpgBackfill(
         force: Boolean = false,
         priorityChannelIds: Collection<String> = emptyList()
@@ -1085,19 +1243,13 @@ class TvViewModel @Inject constructor(
             deferCompleteEpgBackfill(priorityChannelIds)
             return
         }
-        // A large list is only dangerous for the Xtream path, which fans out into
-        // one HTTP call per channel. An XMLTV source is a single file parsed with
-        // SAX, keeping only now/next/recent per channel, so it stays bounded no
-        // matter how many programmes the file holds — and it is the ONLY way a
-        // plain-M3U playlist can ever get a guide, because refreshEpgForChannels
-        // (the "loads on demand" fallback) skips every channel without Xtream
-        // credentials. Blocking it here left large M3U playlists with no EPG at
-        // all: verified on device, the guide stayed empty indefinitely.
-        if (largeList && !LiveTvGuideSources.hasXmltvSource(state.config)) {
-            setEpgBackfillInProgress(false)
-            System.err.println("[EPG-Complete] Skipping on-device full guide backfill for large playlist; visible guide loads on demand")
-            return
-        }
+        // XMLTV may be declared in the M3U's #EXTM3U header rather than in the
+        // saved settings. That source is discovered only while loadSnapshot()
+        // reads the playlist, so a configuration-only check here incorrectly
+        // classified large plain-M3U lists as Xtream-only and skipped the one
+        // operation that can populate their guide. The repository resolves the
+        // actual scoped candidates at runtime; no candidate means no XMLTV
+        // request, while a discovered candidate is parsed in one bounded pass.
         val indexedGuideChannels = if (largeList) {
             runCatching { iptvRepository.indexedGuideChannelCount() }.getOrDefault(0)
         } else {
@@ -1146,7 +1298,10 @@ class TvViewModel @Inject constructor(
         } else {
             coverage >= 0.98f && ageMs < 6 * 60 * 60_000L
         }
-        if (!force && cacheLooksComplete) return
+        if (!force && cacheLooksComplete) {
+            setEpgBackfillInProgress(false)
+            return
+        }
         if (completeEpgBackfillJob?.isActive == true) return
 
         val backfillKey = buildString {
@@ -1172,6 +1327,10 @@ class TvViewModel @Inject constructor(
                     "delay=${if (force) 0 else LargeListCompleteEpgBackfillStartupDelayMs / 1000}s"
             )
         }
+        // This is deliberately raised when the work is scheduled rather than
+        // after its idle delay: users should never be left wondering whether a
+        // blank guide is loading or broken.
+        setEpgBackfillInProgress(true, message = "Preparing full guide")
         completeEpgBackfillJob = viewModelScope.launch(Dispatchers.IO) {
             val startupDelay = when {
                 largeList && !force -> LargeListCompleteEpgBackfillStartupDelayMs
@@ -1187,7 +1346,7 @@ class TvViewModel @Inject constructor(
             if (largeList) {
                 System.err.println("[EPG-Complete] Starting large-list full guide index after idle delay")
             }
-            setEpgBackfillInProgress(true)
+            setEpgBackfillInProgress(true, message = "Loading full guide")
             val snapshot = try {
                 kotlinx.coroutines.withTimeoutOrNull(900_000L) {
                     iptvRepository.loadSnapshot(
@@ -1196,6 +1355,11 @@ class TvViewModel @Inject constructor(
                         allowNetworkEpgFetch = true,
                         allowBroadShortEpg = !largeList,
                         onProgress = { progress ->
+                            setEpgBackfillInProgress(
+                                inProgress = true,
+                                progress = progress.percent,
+                                message = progress.message,
+                            )
                             System.err.println("[EPG-Complete] ${progress.message} ${progress.percent ?: ""}".trim())
                         }
                     )
@@ -1364,6 +1528,10 @@ class TvViewModel @Inject constructor(
         allowFocusedNetworkRefresh: Boolean = false
     ) {
         if (channelIds.isEmpty()) return
+        // Retain the rows the user can currently see before any asynchronous
+        // refresh. This bridges player exit and category changes without
+        // retaining the full guide in Compose state.
+        retainVisibleGuideChannels(channelIds)
         val largeList = isActiveLargeIptvList()
         val firstPaintLimit = if (largeList) 8 else 28
         val selectedId = selectedChannelId
