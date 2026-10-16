@@ -1227,6 +1227,14 @@ fun LiveTvScreen(
             guideChannels.forEachIndexed { index, channel -> put(channel.id, index) }
         }
     }
+    // A full backfill can be intentionally deferred, while the currently
+    // displayed rows are already fetching their own guide. Mobile must expose
+    // both states; otherwise it looks as though tapping a category did nothing.
+    val visibleGuideLoadInProgress = state.epgBackfillInProgress || guideChannels.any { channel ->
+        channel.id in state.epgLoadingChannelIds
+    }
+    val visibleGuideLoadMessage = state.epgBackfillMessage
+        ?: if (visibleGuideLoadInProgress) "Loading visible guide" else null
     var retainedIndexedGuidePrograms by remember(selectedProviderId) {
         mutableStateOf<Map<String, List<IptvProgram>>>(emptyMap())
     }
@@ -2844,9 +2852,9 @@ fun LiveTvScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     GuideBackfillStatus(
-                        inProgress = state.epgBackfillInProgress,
+                        inProgress = visibleGuideLoadInProgress,
                         percent = state.epgBackfillProgress,
-                        message = state.epgBackfillMessage,
+                        message = visibleGuideLoadMessage,
                     )
                     TvGuideViewport(
                         channels = guideChannels,
@@ -2858,7 +2866,7 @@ fun LiveTvScreen(
                         channelNowNext = effectiveGuideNowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
                         epgAttemptedChannelIds = state.epgAttemptedChannelIds,
-                        isGuideBackfillLoading = state.epgBackfillInProgress,
+                        isGuideBackfillLoading = visibleGuideLoadInProgress,
                         hasGuideSource = state.hasPotentialGuideSource,
                         selectedChannelId = selectedDisplayChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
@@ -2994,9 +3002,9 @@ fun LiveTvScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     GuideBackfillStatus(
-                        inProgress = state.epgBackfillInProgress,
+                        inProgress = visibleGuideLoadInProgress,
                         percent = state.epgBackfillProgress,
-                        message = state.epgBackfillMessage,
+                        message = visibleGuideLoadMessage,
                     )
                     TvGuideViewport(
                         channels = guideChannels,
@@ -3008,7 +3016,7 @@ fun LiveTvScreen(
                         channelNowNext = effectiveGuideNowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
                         epgAttemptedChannelIds = state.epgAttemptedChannelIds,
-                        isGuideBackfillLoading = state.epgBackfillInProgress,
+                        isGuideBackfillLoading = visibleGuideLoadInProgress,
                         hasGuideSource = state.hasPotentialGuideSource,
                         selectedChannelId = selectedDisplayChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
