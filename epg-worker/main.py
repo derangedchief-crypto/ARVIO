@@ -1,6 +1,8 @@
 """Daily full XMLTV indexer. Runs separately from activation login."""
 import gzip
 import hashlib
+import json
+import multiprocessing
 import os
 import shutil
 import sqlite3
@@ -23,6 +25,10 @@ GZ = ROOT / "guide.sqlite.gz"
 HOST = os.getenv("EPG_XMLTV_HOST", "https://tv.extremeiptv.net").rstrip("/")
 _state = {"updated_at": 0, "programmes": 0, "channels": 0, "error": None, "phase": "idle", "started_at": 0, "downloaded_bytes": 0, "total_bytes": 0}
 
+def update_state(**values):
+    _state.update(values); ROOT.mkdir(parents=True, exist_ok=True)
+    (ROOT / "progress.json").write_text(json.dumps(_state))
+
 def active_line():
     with SSHTunnelForwarder((os.environ["PANEL_SSH_HOST"], int(os.getenv("PANEL_SSH_PORT", "22"))), ssh_username=os.environ["PANEL_SSH_USERNAME"], ssh_password=os.environ["PANEL_SSH_PASSWORD"], remote_bind_address=(os.getenv("PANEL_DB_HOST", "127.0.0.1"), int(os.getenv("PANEL_DB_PORT", "3306")))) as tunnel:
         conn = mysql.connector.connect(host="127.0.0.1", port=tunnel.local_bind_port, database=os.getenv("PANEL_DB_NAME", "overcast"), user=os.getenv("PANEL_DB_USERNAME", "root"), password=os.getenv("PANEL_DB_PASSWORD", ""))
@@ -37,18 +43,18 @@ def parse_time(value):
 
 def refresh():
     try:
-        _state.update(phase="connecting", started_at=int(time.time() * 1000), downloaded_bytes=0, total_bytes=0, error=None)
+        update_state(phase="connecting", started_at=int(time.time() * 1000), downloaded_bytes=0, total_bytes=0, error=None)
         line = active_line()
-        _state["phase"] = "downloading"
+        update_state(phase="downloading")
         response = requests.get(f"{HOST}/xmltv.php", params=line, stream=True, timeout=(20, 900))
         response.raise_for_status()
-        _state["total_bytes"] = int(response.headers.get("content-length") or 0)
+        update_state(total_bytes=int(response.headers.get("content-length") or 0))
         ROOT.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(dir=ROOT, suffix=".xml", delete=False) as raw:
             for chunk in response.iter_content(1024 * 1024):
-                raw.write(chunk); _state["downloaded_bytes"] += len(chunk)
+                raw.write(chunk); update_state(downloaded_bytes=_state["downloaded_bytes"] + len(chunk))
             raw_path = Path(raw.name)
-        _state["phase"] = "indexing"
+        update_state(phase="indexing")
         temp = ROOT / "guide.next.sqlite"; temp.unlink(missing_ok=True)
         db = sqlite3.connect(temp); db.executescript("CREATE TABLE channels(channel_id TEXT PRIMARY KEY, display_name TEXT); CREATE TABLE programmes(channel_id TEXT,start_ms INTEGER,end_ms INTEGER,title TEXT,description TEXT); CREATE INDEX ix_programmes ON programmes(channel_id,start_ms,end_ms);")
         count = 0; ids = set()
@@ -63,22 +69,27 @@ def refresh():
                 if channel and start and end:
                     title=(node.findtext("title") or "").strip(); desc=(node.findtext("desc") or "").strip()
                     db.execute("INSERT INTO programmes VALUES(?,?,?,?,?)", (channel, parse_time(start), parse_time(end), title, desc)); count += 1; ids.add(channel)
-                    if count % 10_000 == 0: _state.update(programmes=count, channels=len(ids))
+                    if count % 10_000 == 0: update_state(programmes=count, channels=len(ids))
                 node.clear()
         db.commit(); db.close(); raw_path.unlink(missing_ok=True)
         temp.replace(DB)
         with open(DB, "rb") as source, gzip.open(GZ, "wb", compresslevel=6) as target: shutil.copyfileobj(source, target)
-        _state.update(updated_at=int(time.time() * 1000), programmes=count, channels=len(ids), error=None, phase="ready")
-    except Exception as error: _state.update(error=str(error), phase="failed")
+        update_state(updated_at=int(time.time() * 1000), programmes=count, channels=len(ids), error=None, phase="ready")
+    except Exception as error: update_state(error=str(error), phase="failed")
 
 @app.on_event("startup")
 def schedule():
     def loop():
-        while True: refresh(); time.sleep(24 * 60 * 60)
+        while True:
+            process = multiprocessing.Process(target=refresh)
+            process.start(); process.join()
+            time.sleep(24 * 60 * 60)
     threading.Thread(target=loop, daemon=True).start()
 
 @app.get("/health")
-def health(): return {"status": "ok", **_state}
+def health():
+    try: return {"status": "ok", **json.loads((ROOT / "progress.json").read_text())}
+    except Exception: return {"status": "ok", **_state}
 
 @app.get("/epg/manifest")
 def manifest():
