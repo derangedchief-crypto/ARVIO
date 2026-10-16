@@ -21,7 +21,7 @@ ROOT = Path(os.getenv("EPG_DATA_DIR", "/var/lib/iptv-epg-worker"))
 DB = ROOT / "guide.sqlite"
 GZ = ROOT / "guide.sqlite.gz"
 HOST = os.getenv("EPG_XMLTV_HOST", "https://tv.extremeiptv.net").rstrip("/")
-_state = {"updated_at": 0, "programmes": 0, "channels": 0, "error": None}
+_state = {"updated_at": 0, "programmes": 0, "channels": 0, "error": None, "phase": "idle", "started_at": 0, "downloaded_bytes": 0, "total_bytes": 0}
 
 def active_line():
     with SSHTunnelForwarder((os.environ["PANEL_SSH_HOST"], int(os.getenv("PANEL_SSH_PORT", "22"))), ssh_username=os.environ["PANEL_SSH_USERNAME"], ssh_password=os.environ["PANEL_SSH_PASSWORD"], remote_bind_address=(os.getenv("PANEL_DB_HOST", "127.0.0.1"), int(os.getenv("PANEL_DB_PORT", "3306")))) as tunnel:
@@ -37,13 +37,18 @@ def parse_time(value):
 
 def refresh():
     try:
+        _state.update(phase="connecting", started_at=int(time.time() * 1000), downloaded_bytes=0, total_bytes=0, error=None)
         line = active_line()
+        _state["phase"] = "downloading"
         response = requests.get(f"{HOST}/xmltv.php", params=line, stream=True, timeout=(20, 900))
         response.raise_for_status()
+        _state["total_bytes"] = int(response.headers.get("content-length") or 0)
         ROOT.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(dir=ROOT, suffix=".xml", delete=False) as raw:
-            for chunk in response.iter_content(1024 * 1024): raw.write(chunk)
+            for chunk in response.iter_content(1024 * 1024):
+                raw.write(chunk); _state["downloaded_bytes"] += len(chunk)
             raw_path = Path(raw.name)
+        _state["phase"] = "indexing"
         temp = ROOT / "guide.next.sqlite"; temp.unlink(missing_ok=True)
         db = sqlite3.connect(temp); db.executescript("CREATE TABLE channels(channel_id TEXT PRIMARY KEY, display_name TEXT); CREATE TABLE programmes(channel_id TEXT,start_ms INTEGER,end_ms INTEGER,title TEXT,description TEXT); CREATE INDEX ix_programmes ON programmes(channel_id,start_ms,end_ms);")
         count = 0; ids = set()
@@ -58,12 +63,13 @@ def refresh():
                 if channel and start and end:
                     title=(node.findtext("title") or "").strip(); desc=(node.findtext("desc") or "").strip()
                     db.execute("INSERT INTO programmes VALUES(?,?,?,?,?)", (channel, parse_time(start), parse_time(end), title, desc)); count += 1; ids.add(channel)
+                    if count % 10_000 == 0: _state.update(programmes=count, channels=len(ids))
                 node.clear()
         db.commit(); db.close(); raw_path.unlink(missing_ok=True)
         temp.replace(DB)
         with open(DB, "rb") as source, gzip.open(GZ, "wb", compresslevel=6) as target: shutil.copyfileobj(source, target)
-        _state.update(updated_at=int(time.time() * 1000), programmes=count, channels=len(ids), error=None)
-    except Exception as error: _state["error"] = str(error)
+        _state.update(updated_at=int(time.time() * 1000), programmes=count, channels=len(ids), error=None, phase="ready")
+    except Exception as error: _state.update(error=str(error), phase="failed")
 
 @app.on_event("startup")
 def schedule():
