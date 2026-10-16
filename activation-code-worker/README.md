@@ -1,23 +1,19 @@
 # IPTV activation-code worker
 
 Resolves a customer's six-digit `customers.activation_code` to their existing
-Xtream username and password. It is deliberately separate from `1. Worker`:
-the reseller portal's permissions and API must not be enlarged for the Android
-activation flow.
+Xtream username and password. It is deliberately separate from `1. Worker`.
 
 ## Request path
 
 ```text
-Android app → Netlify `activation-code` function → this worker → panel MariaDB
+Android app → this worker → panel MariaDB
 ```
 
-Only Netlify knows `ACTIVATION_WORKER_SHARED_SECRET`; the Android app must
-never call this worker, have the shared secret, SSH access, or DB credentials.
-
-The worker accepts only HMAC-signed `POST /activate` requests. It resolves a
-code only when exactly one `customers` row is `enabled = 1`, `activated = 1`,
-and unexpired. It intentionally gives the same error for unknown, expired,
-disabled, and duplicate codes.
+The app calls this worker over HTTPS. The worker is the only system with SSH
+or database access. It accepts `POST /activate`, applies a strict per-IP
+attempt limit, and resolves a code only when exactly one `customers` row is
+`enabled = 1`, `activated = 1`, and unexpired. It intentionally gives the
+same error for unknown, expired, disabled, and duplicate codes.
 
 ## Panel prerequisite
 
@@ -55,11 +51,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Generate a distinct secret, add it to `.env` as
-`ACTIVATION_WORKER_SHARED_SECRET`, and add the same value to the Netlify site
-environment as `ACTIVATION_WORKER_SHARED_SECRET`. Also set
-`ACTIVATION_WORKER_URL` there to this worker's private HTTPS base URL. Set the
-panel SSH/MariaDB values to the same tunnel details used by `1. Worker`.
+Set the panel SSH/MariaDB values to the same tunnel details used by `1. Worker`.
 
 ```bash
 sudo cp iptv-activation-worker.service /etc/systemd/system/
@@ -70,9 +62,8 @@ curl http://127.0.0.1:9092/health
 
 ## Reverse proxy
 
-Expose HTTPS only for Netlify-to-worker traffic. HMAC remains mandatory even
-behind the proxy. Do not expose port 9092 publicly or use an Android-embedded
-secret as worker authentication.
+Expose HTTPS through Nginx only. Do not expose port 9092 publicly or embed
+panel credentials in the Android app.
 
 ## Before production
 

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.repository.IptvPlaylistEntry
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.IptvActivationRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileRepository
 import com.arflix.tv.data.repository.StreamRepository
@@ -31,8 +32,7 @@ private const val ENTITLEMENT_INSTALL_TIMEOUT_MS = 15_000L
 private const val ENTITLEMENT_REMOVE_TIMEOUT_MS = 5_000L
 
 data class XtreamGateUiState(
-    val username: String = "",
-    val password: String = "",
+    val activationCode: String = "",
     val isSubmitting: Boolean = false,
     val progressText: String? = null,
     val errorMessage: String? = null
@@ -41,6 +41,7 @@ data class XtreamGateUiState(
 @HiltViewModel
 class XtreamGateViewModel @Inject constructor(
     private val iptvRepository: IptvRepository,
+    private val activationRepository: IptvActivationRepository,
     private val profileRepository: ProfileRepository,
     private val profileManager: ProfileManager,
     private val entitlementsRepository: XtreamEntitlementsRepository,
@@ -53,26 +54,34 @@ class XtreamGateViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(XtreamGateUiState())
     val uiState: StateFlow<XtreamGateUiState> = _uiState.asStateFlow()
 
-    fun onUsernameChange(value: String) {
-        _uiState.value = _uiState.value.copy(username = value, errorMessage = null)
-    }
-
-    fun onPasswordChange(value: String) {
-        _uiState.value = _uiState.value.copy(password = value, errorMessage = null)
+    fun onActivationCodeChange(value: String) {
+        _uiState.value = _uiState.value.copy(
+            activationCode = value.filter(Char::isDigit).take(6),
+            errorMessage = null,
+        )
     }
 
     fun submit(onSuccess: () -> Unit) {
         val current = _uiState.value
         if (current.isSubmitting) return
-        val username = current.username.trim()
-        val password = current.password
-        if (username.isBlank() || password.isBlank()) {
-            _uiState.value = current.copy(errorMessage = "Enter your username and password.")
+        val activationCode = current.activationCode
+        if (activationCode.length != 6) {
+            _uiState.value = current.copy(errorMessage = "Enter your six-digit activation code.")
             return
         }
         _uiState.value = current.copy(isSubmitting = true, errorMessage = null, progressText = "Signing in…")
         viewModelScope.launch {
             try {
+                val credentials = activationRepository.resolve(activationCode).getOrElse { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isSubmitting = false,
+                        progressText = null,
+                        errorMessage = error.message ?: "Invalid or inactive activation code.",
+                    )
+                    return@launch
+                }
+                val username = credentials.username
+                val password = credentials.password
                 val result = iptvRepository.verifyXtreamLogin(XTREAM_GATE_HOST_URL, username, password)
                 if (!result.success) {
                     _uiState.value = _uiState.value.copy(

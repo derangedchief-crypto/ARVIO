@@ -17,8 +17,6 @@ def _require(name: str) -> str:
 
 
 class Settings:
-    shared_secret = _require("ACTIVATION_WORKER_SHARED_SECRET")
-
     ssh_host = _require("PANEL_SSH_HOST")
     ssh_port = int(os.getenv("PANEL_SSH_PORT", "22"))
     ssh_username = _require("PANEL_SSH_USERNAME")

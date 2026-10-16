@@ -20,7 +20,9 @@ apt-get install -y python3-venv
 install -d -o "$service_user" -g "$service_user" "$log_dir"
 
 chown -R root:"$service_user" "$worker_dir"
-chmod 750 "$worker_dir"
+# Allow the service account to create the generated virtual environment.
+# The directory is locked back to read/execute after installation.
+chmod 770 "$worker_dir"
 chmod 640 "$worker_dir/.env"
 
 # The directory may contain a virtual environment created by root or by an
@@ -30,13 +32,22 @@ rm -rf "$worker_dir/venv"
 sudo -u "$service_user" python3 -m venv "$worker_dir/venv"
 sudo -u "$service_user" "$worker_dir/venv/bin/pip" install --upgrade pip
 sudo -u "$service_user" "$worker_dir/venv/bin/pip" install -r "$worker_dir/requirements.txt"
+chmod 750 "$worker_dir"
 
 install -m 644 "$worker_dir/iptv-activation-worker.service" /etc/systemd/system/iptv-activation-worker.service
 systemctl daemon-reload
 systemctl enable --now iptv-activation-worker
 systemctl restart iptv-activation-worker
 
-sleep 2
-curl --fail --silent --show-error http://127.0.0.1:9092/health
-echo
-echo "Activation worker installed and running."
+for _ in {1..15}; do
+  if curl --fail --silent --show-error http://127.0.0.1:9092/health; then
+    echo
+    echo "Activation worker installed and running."
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Worker service did not become healthy within 15 seconds." >&2
+systemctl status iptv-activation-worker --no-pager >&2 || true
+exit 1

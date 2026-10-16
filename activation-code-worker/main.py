@@ -6,16 +6,15 @@ activation code over an SSH tunnel, and only an active unexpired customer line
 may be returned. Do not expose this service directly to clients.
 """
 
-import hashlib
-import hmac
 import logging
 import threading
 import time
+from collections import defaultdict, deque
 from contextlib import contextmanager
 
 import mysql.connector
 import mysql.connector.pooling
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 from sshtunnel import SSHTunnelForwarder
 
@@ -36,22 +35,21 @@ _pool: mysql.connector.pooling.MySQLConnectionPool | None = None
 _tunnel_lock = threading.Lock()
 
 
-def verify_signature(raw_body: bytes, signature: str | None, timestamp: str | None) -> bool:
-    """Accept HMAC-SHA256(timestamp + '.' + raw JSON), max five minutes old."""
-    if not signature or not timestamp:
-        return False
-    try:
-        issued_at = int(timestamp)
-    except ValueError:
-        return False
-    if abs(time.time() - issued_at) > 300:
-        return False
-    expected = hmac.new(
-        settings.shared_secret.encode(),
-        f"{timestamp}.".encode() + raw_body,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+_attempts: dict[str, deque[float]] = defaultdict(deque)
+_attempt_lock = threading.Lock()
+
+
+def allow_attempt(client_ip: str) -> bool:
+    """Bound online guessing for the public, six-digit activation endpoint."""
+    now = time.time()
+    with _attempt_lock:
+        attempts = _attempts[client_ip]
+        while attempts and attempts[0] <= now - 600:
+            attempts.popleft()
+        if len(attempts) >= 6:
+            return False
+        attempts.append(now)
+        return True
 
 
 def ensure_tunnel_and_pool(force: bool = False) -> None:
@@ -123,7 +121,6 @@ def panel_cursor():
 
 class ActivationRequest(BaseModel):
     activation_code: str = Field(..., pattern=r"^\d{6}$")
-    client_id: str = Field(..., min_length=32, max_length=64, pattern=r"^[a-f0-9]+$")
 
 
 class ActivationResponse(BaseModel):
@@ -141,14 +138,11 @@ def health() -> dict:
 @app.post("/activate", response_model=ActivationResponse)
 async def activate(
     request: Request,
-    x_activation_signature: str | None = Header(None),
-    x_activation_timestamp: str | None = Header(None),
 ):
-    raw_body = await request.body()
-    if not verify_signature(raw_body, x_activation_signature, x_activation_timestamp):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    body = ActivationRequest.model_validate_json(raw_body)
+    client_ip = request.headers.get("x-real-ip") or request.client.host
+    if not allow_attempt(client_ip):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    body = ActivationRequest.model_validate_json(await request.body())
     try:
         with panel_cursor() as cursor:
             # The code column is expected to be unique. Detect bad/duplicate data
@@ -168,9 +162,9 @@ async def activate(
 
     if len(matches) != 1:
         # Same response for an unknown, expired, disabled, or duplicate code.
-        log.warning("Activation rejected for client=%s", body.client_id[:12])
+        log.warning("Activation rejected for client=%s", client_ip)
         return ActivationResponse(ok=False, error="Invalid or inactive activation code.")
 
     row = matches[0]
-    log.info("Activation succeeded for client=%s", body.client_id[:12])
+    log.info("Activation succeeded for client=%s", client_ip)
     return ActivationResponse(ok=True, username=str(row["username"]), password=str(row["password"]))

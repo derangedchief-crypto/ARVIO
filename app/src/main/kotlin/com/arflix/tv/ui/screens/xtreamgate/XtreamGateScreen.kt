@@ -89,14 +89,13 @@ fun XtreamGateScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-    var focusedField by remember { mutableStateOf("username") }
-    val usernameFocusRequester = remember { FocusRequester() }
-    val passwordFocusRequester = remember { FocusRequester() }
+    var focusedField by remember { mutableStateOf("activation") }
+    val activationFocusRequester = remember { FocusRequester() }
     val buttonFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(Unit) {
-        usernameFocusRequester.requestFocus()
+        activationFocusRequester.requestFocus()
     }
 
     Box(
@@ -155,9 +154,9 @@ fun XtreamGateScreen(
 
                 Text(
                     text = if (SHOW_SKIP_BUTTON) {
-                        "Sign in with your Xtream account, or skip for now"
+                        "Enter your activation code, or skip for now"
                     } else {
-                        "Sign in with your Xtream account to continue"
+                        "Enter your six-digit activation code to continue"
                     },
                     fontSize = 13.sp,
                     color = Color.White.copy(alpha = 0.6f)
@@ -183,28 +182,10 @@ fun XtreamGateScreen(
                 }
 
                 GateTextField(
-                    value = uiState.username,
-                    onValueChange = viewModel::onUsernameChange,
-                    placeholder = "Username",
-                    imeAction = ImeAction.Next,
-                    keyboardActions = KeyboardActions(
-                        onNext = { passwordFocusRequester.requestFocus() }
-                    ),
-                    onRequestKeyboard = { keyboardController?.show() },
-                    isFocused = focusedField == "username",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(usernameFocusRequester)
-                        .onFocusChanged { if (it.isFocused) focusedField = "username" }
-                )
-
-                Spacer(16.dp)
-
-                GateTextField(
-                    value = uiState.password,
-                    onValueChange = viewModel::onPasswordChange,
-                    placeholder = "Password",
-                    isPassword = true,
+                    value = uiState.activationCode,
+                    onValueChange = viewModel::onActivationCodeChange,
+                    placeholder = "6-digit Activation Code",
+                    keyboardType = KeyboardType.Number,
                     imeAction = ImeAction.Done,
                     keyboardActions = KeyboardActions(
                         onDone = {
@@ -213,11 +194,11 @@ fun XtreamGateScreen(
                         }
                     ),
                     onRequestKeyboard = { keyboardController?.show() },
-                    isFocused = focusedField == "password",
+                    isFocused = focusedField == "activation",
                     modifier = Modifier
                         .fillMaxWidth()
-                        .focusRequester(passwordFocusRequester)
-                        .onFocusChanged { if (it.isFocused) focusedField = "password" }
+                        .focusRequester(activationFocusRequester)
+                        .onFocusChanged { if (it.isFocused) focusedField = "activation" }
                 )
 
                 Spacer(24.dp)

@@ -884,73 +884,6 @@ async function handleAuthLogin(event) {
   }
 }
 
-/**
- * Resolves an IPTV activation code through the private worker. The app only
- * authenticates to this function with its normal app key; the server-only
- * worker secret is used to HMAC the onward request and never ships in an APK.
- */
-async function handleActivationCode(event) {
-  const preflight = options(event);
-  if (preflight) return preflight;
-  const wrongMethod = methodGuard(event, ["POST"]);
-  if (wrongMethod) return wrongMethod;
-  try {
-    assertAppRequest(event);
-    const body = parseBody(event);
-    const activationCode = String(body.activation_code || "").trim();
-    if (!/^\d{6}$/.test(activationCode)) {
-      return json(400, { error: "Enter a six-digit activation code." });
-    }
-
-    const workerUrl = String(process.env.ACTIVATION_WORKER_URL || "").trim().replace(/\/$/, "");
-    const workerSecret = String(process.env.ACTIVATION_WORKER_SHARED_SECRET || "");
-    if (!workerUrl || workerSecret.length < 32) {
-      const error = new Error("Activation service is unavailable");
-      error.statusCode = 503;
-      throw error;
-    }
-
-    // Do not forward a raw IP address. This one-way, server-secret-derived
-    // identifier gives the worker useful audit context without personal data.
-    const clientIp = getHeader(event.headers, "x-nf-client-connection-ip") ||
-      getHeader(event.headers, "x-forwarded-for").split(",")[0].trim() || "unknown";
-    const payload = JSON.stringify({
-      activation_code: activationCode,
-      client_id: privacyHash("activation-client", clientIp)
-    });
-    const timestamp = String(Math.floor(Date.now() / 1000));
-    const signature = crypto
-      .createHmac("sha256", workerSecret)
-      .update(`${timestamp}.${payload}`)
-      .digest("hex");
-
-    const response = await fetch(`${workerUrl}/activate`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-activation-timestamp": timestamp,
-        "x-activation-signature": signature
-      },
-      body: payload,
-      signal: AbortSignal.timeout(10_000)
-    });
-    const result = await response.json().catch(() => null);
-    if (!response.ok || !result || result.ok !== true) {
-      // Preserve only deliberate user-facing errors; never expose network or
-      // database details from the private worker.
-      return json(response.status === 400 ? 400 : 401, {
-        error: result?.error || "Invalid or inactive activation code."
-      });
-    }
-    if (!result.username || !result.password) {
-      throw new Error("Activation service returned an incomplete result");
-    }
-    return json(200, { ok: true, username: result.username, password: result.password });
-  } catch (error) {
-    return handlerError(event, error, "Activation is temporarily unavailable.");
-  }
-}
-
 async function handleAuthPasswordStart(event) {
   const preflight = options(event);
   if (preflight) return preflight;
@@ -2732,7 +2665,6 @@ module.exports = {
   runAccountDeletionJob,
   handleRetentionCleanup,
   handleAuthLogin,
-  handleActivationCode,
   handleAuthPasswordStart,
   handleAuthPasswordComplete,
   handleAuthRefresh,
