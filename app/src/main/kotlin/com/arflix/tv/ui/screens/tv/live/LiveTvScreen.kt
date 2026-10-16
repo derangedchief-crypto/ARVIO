@@ -401,6 +401,10 @@ fun LiveTvScreen(
     // the instant the user backs out — matters on a long-running IPTV flow
     // where the ViewModel pushes EPG refreshes every few seconds.
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // Durable XMLTV batches advance this even when the large in-memory snapshot
+    // is intentionally capped. Refresh just the visible guide viewport rather
+    // than waiting for the entire provider guide to finish parsing.
+    val guideIndexRevision by viewModel.iptvRepository.guideIndexRevision.collectAsStateWithLifecycle()
     val currentUiState by rememberUpdatedState(state)
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -1182,7 +1186,7 @@ fun LiveTvScreen(
         }
     }
     val indexedGuideNowNextState = remember { mutableStateOf<Map<String, IptvNowNext>>(emptyMap()) }
-    LaunchedEffect(guideChannels, guideClockMillis) {
+    LaunchedEffect(guideChannels, guideClockMillis, guideIndexRevision) {
         val ids = guideChannels
             .asSequence()
             .map { it.id }

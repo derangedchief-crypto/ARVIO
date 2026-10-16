@@ -25,6 +25,9 @@ import com.google.gson.reflect.TypeToken
 import com.google.gson.stream.JsonReader
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
@@ -259,6 +262,12 @@ class IptvRepository @Inject constructor(
         }, "Arvio-Epg-Background")
     }.asCoroutineDispatcher()
     private val maxSeriesEpisodeCacheEntries = 8
+    // Monotonically advances after a durable guide batch commits. The TV UI
+    // observes this instead of waiting for a full XMLTV file to finish parsing.
+    private val _guideIndexRevision = MutableStateFlow(0L)
+    val guideIndexRevision: StateFlow<Long> = _guideIndexRevision.asStateFlow()
+    private val guideIndexRevisionLock = Any()
+    private var lastGuideIndexRevisionAtMs = 0L
 
     @Volatile
     private var cachedChannels: List<IptvChannel> = emptyList()
@@ -3059,6 +3068,7 @@ class IptvRepository @Inject constructor(
         runCatching {
             epgIndex.replaceAll(currentEpgIndexKey(config), nowNext, updatedAtMs)
             clearIndexedGuideWindowCache()
+            signalGuideIndexChanged(force = true)
         }.onFailure { error ->
             System.err.println("[EPG-Index] Failed to replace guide index: ${error.message}")
         }
@@ -3073,13 +3083,45 @@ class IptvRepository @Inject constructor(
         runCatching {
             epgIndex.replaceChannels(currentEpgIndexKey(config), nowNext, updatedAtMs)
             clearIndexedGuideWindowCache()
+            signalGuideIndexChanged(force = true)
         }.onFailure { error ->
             System.err.println("[EPG-Index] Failed to update guide index: ${error.message}")
         }
     }
 
+    /**
+     * Makes parsed XMLTV rows visible as bounded batches instead of withholding
+     * the whole guide until a 20–150 MB file has finished parsing. Existing
+     * rows for unrelated channels stay intact, so cancellation by playback
+     * leaves a useful, durable partial guide rather than a blank screen.
+     */
+    private fun persistPartialEpgIndex(nowNext: Map<String, IptvNowNext>) {
+        if (!hasAnyProgramData(nowNext)) return
+        val sourceKey = currentEpgIndexKey
+        if (sourceKey.isBlank()) return
+        runCatching {
+            epgIndex.replaceChannels(sourceKey, nowNext, System.currentTimeMillis())
+            clearIndexedGuideWindowCache()
+            signalGuideIndexChanged()
+        }.onFailure { error ->
+            System.err.println("[EPG-Index] Failed to commit incremental guide batch: ${error.message}")
+        }
+    }
+
     private fun clearIndexedGuideWindowCache() {
         synchronized(indexedGuideWindowCacheLock) { indexedGuideWindowCache.clear() }
+    }
+
+    private fun signalGuideIndexChanged(force: Boolean = false) {
+        synchronized(guideIndexRevisionLock) {
+            val now = System.currentTimeMillis()
+            // Parsing can commit many batches per second. A guide row does not
+            // need that cadence, and emitting every commit re-composes the TV
+            // screen faster than an entry-level box can render it.
+            if (!force && now - lastGuideIndexRevisionAtMs < 500L) return
+            lastGuideIndexRevisionAtMs = now
+            _guideIndexRevision.value = _guideIndexRevision.value + 1L
+        }
     }
 
     private fun countIndexedGuideChannels(): Int {
@@ -6124,6 +6166,7 @@ class IptvRepository @Inject constructor(
 
     private fun fetchAndParseEpg(url: String, channels: List<IptvChannel>): Map<String, IptvNowNext> {
         throwIfEpgMustYieldToPlayback()
+        val onPartialGuide: (Map<String, IptvNowNext>) -> Unit = ::persistPartialEpgIndex
         val hasDbEntries = currentEpgIndexKey.isNotBlank() && runCatching {
             epgIndex.countPrograms(currentEpgIndexKey)
         }.getOrDefault(0) > 0
@@ -6185,7 +6228,7 @@ class IptvRepository @Inject constructor(
             // Only spool to disk and retry if the stream parse fails.
             try {
                 val sanitized = BackslashEscapeSanitizingInputStream(prepared)
-                return parseXmlTvNowNext(BufferedInputStream(sanitized), channels)
+                return parseXmlTvNowNext(BufferedInputStream(sanitized), channels, onPartialGuide)
             } catch (streamError: Exception) {
                 if (streamError is kotlinx.coroutines.CancellationException) throw streamError
                 // Streaming parse failed – the network stream is consumed, so we
@@ -6209,13 +6252,13 @@ class IptvRepository @Inject constructor(
 
                     try {
                         return FileInputStream(tmpFile).use { input ->
-                            parseXmlTvNowNext(BufferedInputStream(input), channels)
+                            parseXmlTvNowNext(BufferedInputStream(input), channels, onPartialGuide)
                         }
                     } catch (_: Exception) {
                         // Final fallback: SAX parser (different engine).
                         return FileInputStream(tmpFile).use { input ->
                             val sanitized2 = BackslashEscapeSanitizingInputStream(BufferedInputStream(input))
-                            parseXmlTvNowNextWithSax(BufferedInputStream(sanitized2), channels)
+                            parseXmlTvNowNextWithSax(BufferedInputStream(sanitized2), channels, onPartialGuide)
                         }
                     }
                 } finally {
@@ -6623,6 +6666,7 @@ class IptvRepository @Inject constructor(
                     runCatching {
                         epgIndex.replaceChannels(indexKey, batchNowNext, System.currentTimeMillis())
                         clearIndexedGuideWindowCache()
+                        signalGuideIndexChanged()
                     }
                 }
                 totalIndexed += batchNowNext.size
@@ -7342,7 +7386,8 @@ class IptvRepository @Inject constructor(
 
     private fun parseXmlTvNowNext(
         input: InputStream,
-        channels: List<IptvChannel>
+        channels: List<IptvChannel>,
+        onPartialGuide: (Map<String, IptvNowNext>) -> Unit = {},
     ): Map<String, IptvNowNext> {
         if (channels.isEmpty()) return emptyMap()
 
@@ -7372,6 +7417,21 @@ class IptvRepository @Inject constructor(
         var eventType = parser.eventType
 
         var eventsSincePlaybackCheck = 0
+        var parsedProgramsSinceCommit = 0
+        val dirtyChannelIds = LinkedHashSet<String>()
+        fun commitPartialGuideIfNeeded(force: Boolean = false) {
+            if (!force && parsedProgramsSinceCommit < IncrementalEpgCommitProgramCount) return
+            if (dirtyChannelIds.isEmpty()) return
+            val partial = buildPartialNowNextResult(
+                channelIds = dirtyChannelIds,
+                nowCandidates = nowCandidates,
+                upcomingCandidates = upcomingCandidates,
+                recentCandidates = recentCandidates,
+            )
+            if (partial.isNotEmpty()) onPartialGuide(partial)
+            dirtyChannelIds.clear()
+            parsedProgramsSinceCommit = 0
+        }
         while (eventType != XmlPullParser.END_DOCUMENT) {
             if (++eventsSincePlaybackCheck == 256) {
                 eventsSincePlaybackCheck = 0
@@ -7452,7 +7512,10 @@ class IptvRepository @Inject constructor(
                                         val limit = recentLimitByChannelId.getValue(channel.id)
                                         addRecentCandidate(recent, program, limit)
                                     }
+                                    dirtyChannelIds += channel.id
                                 }
+                                parsedProgramsSinceCommit++
+                                commitPartialGuideIfNeeded()
                             }
                             currentChannelKey = null
                         }
@@ -7462,12 +7525,14 @@ class IptvRepository @Inject constructor(
             eventType = parser.next()
         }
 
+        commitPartialGuideIfNeeded(force = true)
         return buildParsedNowNextResult(channels, nowCandidates, upcomingCandidates, recentCandidates)
     }
 
     private fun parseXmlTvNowNextWithSax(
         input: InputStream,
-        channels: List<IptvChannel>
+        channels: List<IptvChannel>,
+        onPartialGuide: (Map<String, IptvNowNext>) -> Unit = {},
     ): Map<String, IptvNowNext> {
         if (channels.isEmpty()) return emptyMap()
 
@@ -7500,6 +7565,21 @@ class IptvRepository @Inject constructor(
         var currentTitle: String? = null
         var currentDesc: String? = null
         var elementsSincePlaybackCheck = 0
+        var parsedProgramsSinceCommit = 0
+        val dirtyChannelIds = LinkedHashSet<String>()
+        fun commitPartialGuideIfNeeded(force: Boolean = false) {
+            if (!force && parsedProgramsSinceCommit < IncrementalEpgCommitProgramCount) return
+            if (dirtyChannelIds.isEmpty()) return
+            val partial = buildPartialNowNextResult(
+                channelIds = dirtyChannelIds,
+                nowCandidates = nowCandidates,
+                upcomingCandidates = upcomingCandidates,
+                recentCandidates = recentCandidates,
+            )
+            if (partial.isNotEmpty()) onPartialGuide(partial)
+            dirtyChannelIds.clear()
+            parsedProgramsSinceCommit = 0
+        }
         var readingDisplayName = false
         var readingTitle = false
         var readingDesc = false
@@ -7618,7 +7698,10 @@ class IptvRepository @Inject constructor(
                                     val limit = recentLimitByChannelId.getValue(channel.id)
                                     addRecentCandidate(recent, program, limit)
                                 }
+                                dirtyChannelIds += channel.id
                             }
+                            parsedProgramsSinceCommit++
+                            commitPartialGuideIfNeeded()
                         }
                         currentChannelKey = null
                         currentStart = 0L
@@ -7645,7 +7728,28 @@ class IptvRepository @Inject constructor(
             )
         }
 
+        commitPartialGuideIfNeeded(force = true)
         return buildParsedNowNextResult(channels, nowCandidates, upcomingCandidates, recentCandidates)
+    }
+
+    private fun buildPartialNowNextResult(
+        channelIds: Collection<String>,
+        nowCandidates: Map<String, IptvProgram?>,
+        upcomingCandidates: Map<String, List<IptvProgram>>,
+        recentCandidates: Map<String, List<IptvProgram>>,
+    ): Map<String, IptvNowNext> = buildMap {
+        channelIds.asSequence().filter { it.isNotBlank() }.forEach { channelId ->
+            val future = upcomingCandidates[channelId].orEmpty()
+            val recent = recentCandidates[channelId].orEmpty().sortedBy { it.startUtcMillis }
+            val nowNext = IptvNowNext(
+                now = nowCandidates[channelId],
+                next = future.getOrNull(0),
+                later = future.getOrNull(1),
+                upcoming = future,
+                recent = recent,
+            )
+            if (hasProgramData(nowNext)) put(channelId, nowNext)
+        }
     }
 
     private fun buildParsedNowNextResult(
@@ -9438,6 +9542,7 @@ class IptvRepository @Inject constructor(
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val CONFIG_KEY_ALIAS = "arvio_iptv_config_v1"
         const val MAX_IPTV_CACHE_BYTES = 25L * 1024L * 1024L
+        const val IncrementalEpgCommitProgramCount = 192
         val PARTIAL_PAGED_CACHE_REPAIR_COUNTS = setOf(144, 240)
         const val IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
         const val BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
