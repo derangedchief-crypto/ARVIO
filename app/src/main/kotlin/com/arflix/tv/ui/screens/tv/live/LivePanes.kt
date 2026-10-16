@@ -6,10 +6,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
@@ -50,6 +53,50 @@ fun LoadingPane(message: String?, percent: Int) {
             LinearProgressIndicator(
                 progress = { (percent / 100f).coerceIn(0f, 1f) },
                 modifier = Modifier.padding(top = 12.dp).width(260.dp),
+                color = LiveColors.Accent,
+                trackColor = LiveColors.Divider,
+            )
+        }
+    }
+}
+
+/** Visible until the durable full-guide refresh finishes, not just until a row appears. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun GuideBackfillStatus(
+    inProgress: Boolean,
+    percent: Int?,
+    message: String?,
+    modifier: Modifier = Modifier,
+) {
+    if (!inProgress) return
+    val progress = percent?.coerceIn(0, 100)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(LiveColors.PanelDeep)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(
+                modifier = Modifier.width(18.dp).height(18.dp),
+                color = LiveColors.Accent,
+                strokeWidth = 2.dp,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = buildString {
+                    append("Loading EPG")
+                    progress?.let { append(" · $it%") }
+                    if (!message.isNullOrBlank()) append(" — $message")
+                },
+                style = LiveType.CellTitle.copy(color = LiveColors.Fg),
+            )
+        }
+        if (progress != null) {
+            LinearProgressIndicator(
+                progress = { progress / 100f },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 color = LiveColors.Accent,
                 trackColor = LiveColors.Divider,
             )

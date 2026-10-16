@@ -2843,6 +2843,11 @@ fun LiveTvScreen(
                         onOpenSearch = { searchOpen = true },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    GuideBackfillStatus(
+                        inProgress = state.epgBackfillInProgress,
+                        percent = state.epgBackfillProgress,
+                        message = state.epgBackfillMessage,
+                    )
                     TvGuideViewport(
                         channels = guideChannels,
                         channelWindowOffset = normalizedGuideStart,
@@ -2853,7 +2858,7 @@ fun LiveTvScreen(
                         channelNowNext = effectiveGuideNowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
                         epgAttemptedChannelIds = state.epgAttemptedChannelIds,
-                        isGuideBackfillLoading = false,
+                        isGuideBackfillLoading = state.epgBackfillInProgress,
                         hasGuideSource = state.hasPotentialGuideSource,
                         selectedChannelId = selectedDisplayChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
@@ -2988,6 +2993,11 @@ fun LiveTvScreen(
                         onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    GuideBackfillStatus(
+                        inProgress = state.epgBackfillInProgress,
+                        percent = state.epgBackfillProgress,
+                        message = state.epgBackfillMessage,
+                    )
                     TvGuideViewport(
                         channels = guideChannels,
                         channelWindowOffset = normalizedGuideStart,
@@ -2998,7 +3008,7 @@ fun LiveTvScreen(
                         channelNowNext = effectiveGuideNowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
                         epgAttemptedChannelIds = state.epgAttemptedChannelIds,
-                        isGuideBackfillLoading = false,
+                        isGuideBackfillLoading = state.epgBackfillInProgress,
                         hasGuideSource = state.hasPotentialGuideSource,
                         selectedChannelId = selectedDisplayChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,

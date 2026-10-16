@@ -88,6 +88,8 @@ data class TvUiState(
     val epgLoadingChannelIds: Set<String> = emptySet(),
     val epgAttemptedChannelIds: Set<String> = emptySet(),
     val epgBackfillInProgress: Boolean = false,
+    val epgBackfillProgress: Int? = null,
+    val epgBackfillMessage: String? = null,
     val epgVodActionsEnabled: Boolean = true,
 ) {
     val isConfigured: Boolean get() =
@@ -909,10 +911,27 @@ class TvViewModel @Inject constructor(
         }
     }
 
-    private fun setEpgBackfillInProgress(inProgress: Boolean) {
+    private fun setEpgBackfillInProgress(
+        inProgress: Boolean,
+        progress: Int? = null,
+        message: String? = null,
+    ) {
         val current = _uiState.value
-        if (current.epgBackfillInProgress == inProgress) return
-        setUiState(current.copy(epgBackfillInProgress = inProgress))
+        val safeProgress = progress?.coerceIn(0, 100)
+        val nextProgress = if (inProgress) safeProgress else null
+        val nextMessage = if (inProgress) message?.takeIf { it.isNotBlank() } else null
+        if (
+            current.epgBackfillInProgress == inProgress &&
+            current.epgBackfillProgress == nextProgress &&
+            current.epgBackfillMessage == nextMessage
+        ) return
+        setUiState(
+            current.copy(
+                epgBackfillInProgress = inProgress,
+                epgBackfillProgress = nextProgress,
+                epgBackfillMessage = nextMessage,
+            ),
+        )
     }
 
     fun setLiveTvPlaybackActive(active: Boolean) {
@@ -1279,7 +1298,10 @@ class TvViewModel @Inject constructor(
         } else {
             coverage >= 0.98f && ageMs < 6 * 60 * 60_000L
         }
-        if (!force && cacheLooksComplete) return
+        if (!force && cacheLooksComplete) {
+            setEpgBackfillInProgress(false)
+            return
+        }
         if (completeEpgBackfillJob?.isActive == true) return
 
         val backfillKey = buildString {
@@ -1305,6 +1327,10 @@ class TvViewModel @Inject constructor(
                     "delay=${if (force) 0 else LargeListCompleteEpgBackfillStartupDelayMs / 1000}s"
             )
         }
+        // This is deliberately raised when the work is scheduled rather than
+        // after its idle delay: users should never be left wondering whether a
+        // blank guide is loading or broken.
+        setEpgBackfillInProgress(true, message = "Preparing full guide")
         completeEpgBackfillJob = viewModelScope.launch(Dispatchers.IO) {
             val startupDelay = when {
                 largeList && !force -> LargeListCompleteEpgBackfillStartupDelayMs
@@ -1320,7 +1346,7 @@ class TvViewModel @Inject constructor(
             if (largeList) {
                 System.err.println("[EPG-Complete] Starting large-list full guide index after idle delay")
             }
-            setEpgBackfillInProgress(true)
+            setEpgBackfillInProgress(true, message = "Loading full guide")
             val snapshot = try {
                 kotlinx.coroutines.withTimeoutOrNull(900_000L) {
                     iptvRepository.loadSnapshot(
@@ -1329,6 +1355,11 @@ class TvViewModel @Inject constructor(
                         allowNetworkEpgFetch = true,
                         allowBroadShortEpg = !largeList,
                         onProgress = { progress ->
+                            setEpgBackfillInProgress(
+                                inProgress = true,
+                                progress = progress.percent,
+                                message = progress.message,
+                            )
                             System.err.println("[EPG-Complete] ${progress.message} ${progress.percent ?: ""}".trim())
                         }
                     )
