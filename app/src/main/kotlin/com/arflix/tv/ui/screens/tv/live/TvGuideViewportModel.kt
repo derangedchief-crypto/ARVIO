@@ -30,7 +30,6 @@ internal fun buildTvGuideViewportModel(
     channelIds.forEach { channelId ->
         val programs = (indexedPrograms[channelId] ?: fallbackNowNext[channelId].toProgramSequence())
             .asSequence()
-            .flatten()
             .filter { it.endUtcMillis > windowStartMillis && it.startUtcMillis < windowEndMillis }
             .distinctBy { Triple(it.startUtcMillis, it.endUtcMillis, it.title) }
             .sortedBy { it.startUtcMillis }
