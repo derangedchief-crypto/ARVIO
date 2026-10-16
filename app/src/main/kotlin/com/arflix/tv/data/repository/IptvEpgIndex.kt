@@ -75,11 +75,11 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         writableDatabase.runInTransaction {
             execSQL(
                 "INSERT OR IGNORE INTO epg_sources(source_key, updated_ms, generation, status, refresh_started_ms) VALUES (?, ?, 0, 'refreshing', ?)",
-                arrayOf(sourceKey, 0L, startedAtMs),
+                arrayOf<Any?>(sourceKey, 0L, startedAtMs),
             )
             execSQL(
                 "UPDATE epg_sources SET status = 'refreshing', refresh_started_ms = ? WHERE source_key = ?",
-                arrayOf(startedAtMs, sourceKey),
+                arrayOf<Any?>(startedAtMs, sourceKey),
             )
         }
     }
@@ -96,7 +96,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         if (sourceKey.isBlank()) return
         writableDatabase.execSQL(
             "UPDATE epg_sources SET updated_ms = ?, status = 'ready', refresh_started_ms = 0 WHERE source_key = ?",
-            arrayOf(updatedAtMs, sourceKey),
+            arrayOf<Any?>(updatedAtMs, sourceKey),
         )
     }
 
@@ -361,25 +361,25 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
     private fun SQLiteDatabase.touchSourceForPartialUpdate(sourceKey: String, updatedAtMs: Long) {
         execSQL(
             "INSERT OR IGNORE INTO epg_sources(source_key, updated_ms, generation, status, refresh_started_ms) VALUES (?, ?, 0, 'ready', 0)",
-            arrayOf(sourceKey, updatedAtMs),
+            arrayOf<Any?>(sourceKey, updatedAtMs),
         )
         // Do not advance generation or mark a refreshing guide as ready: a
         // partial parser batch is usable immediately but is not a completed
         // replacement for the previous source generation.
         execSQL(
             "UPDATE epg_sources SET updated_ms = ? WHERE source_key = ? AND status != 'refreshing'",
-            arrayOf(updatedAtMs, sourceKey),
+            arrayOf<Any?>(updatedAtMs, sourceKey),
         )
     }
 
     private fun SQLiteDatabase.completeSourceRefresh(sourceKey: String, updatedAtMs: Long) {
         execSQL(
             "INSERT OR IGNORE INTO epg_sources(source_key, updated_ms, generation, status, refresh_started_ms) VALUES (?, ?, 0, 'ready', 0)",
-            arrayOf(sourceKey, updatedAtMs),
+            arrayOf<Any?>(sourceKey, updatedAtMs),
         )
         execSQL(
             "UPDATE epg_sources SET updated_ms = ?, generation = generation + 1, status = 'ready', refresh_started_ms = 0 WHERE source_key = ?",
-            arrayOf(updatedAtMs, sourceKey),
+            arrayOf<Any?>(updatedAtMs, sourceKey),
         )
     }
 
