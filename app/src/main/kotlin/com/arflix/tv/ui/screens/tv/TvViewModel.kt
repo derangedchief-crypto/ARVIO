@@ -10,11 +10,11 @@ import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.model.PlaylistGroupKey
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
-import com.arflix.tv.ui.screens.tv.live.LiveTvGuideSources
 import com.arflix.tv.ui.screens.tv.live.runEpgLookupWithTimeout
 import com.arflix.tv.data.repository.IptvPlaybackTarget
 import com.arflix.tv.data.repository.IptvPlaybackUrlResolver
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.IptvEpgPlaybackGate
 import com.arflix.tv.data.repository.IptvTvSessionState
 import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.arflix.tv.ui.screens.tv.live.epgChannelAllowsVodSearch
@@ -102,6 +102,7 @@ data class TvUiState(
 class TvViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     val iptvRepository: IptvRepository,
+    private val epgPlaybackGate: IptvEpgPlaybackGate,
     private val cloudSyncRepository: CloudSyncRepository,
     private val mediaRepository: com.arflix.tv.data.repository.MediaRepository,
 ) : ViewModel() {
@@ -157,17 +158,9 @@ class TvViewModel @Inject constructor(
     private var lastVisibleForcedCompleteEpgAt: Long = 0L
     private var lastCompleteEpgBackfillCompletedAt: Long = 0L
     private var liveTvPlaybackActive: Boolean = false
-    // Set to true to restore the original behavior: defer/cancel the full EPG
-    // guide backfill entirely while a channel is playing. That protection was
-    // added after a measured crash — filling ~10k guide-capable channels
-    // concurrently with an interactive UI exceeded a 384MB heap cap and crashed
-    // during navigation. Disabled (not removed) here because Live TV auto-plays
-    // the first stream the instant the screen opens, so this was deferring on
-    // essentially every session before the backfill got a real chance to run —
-    // for a channel list this size (low hundreds, not ~10k), that measured
-    // crash threshold is unlikely to apply. Re-enable if large channel lists
-    // start crashing low-end hardware again.
-    private val pauseEpgBackfillDuringPlayback: Boolean = false
+    // EPG work preloads while the app is idle, then always yields to actual
+    // live playback. Browse-first entry leaves enough idle time to warm it.
+    private val pauseEpgBackfillDuringPlayback: Boolean = true
     private var deferredCompleteEpgBackfill: Boolean = false
     private val deferredCompleteEpgPriorityIds = LinkedHashSet<String>()
     private var deferredCompleteEpgBackfillJob: Job? = null
@@ -925,6 +918,7 @@ class TvViewModel @Inject constructor(
     fun setLiveTvPlaybackActive(active: Boolean) {
         if (liveTvPlaybackActive == active) return
         liveTvPlaybackActive = active
+        epgPlaybackGate.setPlaybackActive(active)
         // The full-guide backfill is deferred while a channel preview is playing.
         // Measured reason: filling all ~10k guide-capable channels' EPG concurrently
         // with an interactive UI exceeds this device's 384MB heap cap and crashes
@@ -933,7 +927,7 @@ class TvViewModel @Inject constructor(
         // stays within budget. (The backfill that DOES run when playback is idle now
         // streams in bounded batches — see fetchXtreamFullEpg — so it can't OOM.)
         if (active) {
-            if (pauseEpgBackfillDuringPlayback && !canFetchXmltvGuideDuringPlayback(_uiState.value.config)) {
+            if (pauseEpgBackfillDuringPlayback) {
                 deferredCompleteEpgBackfillJob?.cancel()
                 deferredCompleteEpgBackfillJob = null
                 if (completeEpgBackfillJob?.isActive == true) {
@@ -947,11 +941,6 @@ class TvViewModel @Inject constructor(
         } else {
             scheduleDeferredCompleteEpgBackfill()
         }
-    }
-
-    private fun canFetchXmltvGuideDuringPlayback(config: IptvConfig): Boolean {
-        return LiveTvGuideSources.hasXmltvSource(config) ||
-            iptvRepository.hasDiscoveredM3uEpgSource()
     }
 
     private fun deferCompleteEpgBackfill(priorityChannelIds: Collection<String>) {
@@ -1231,10 +1220,7 @@ class TvViewModel @Inject constructor(
             )
             return
         }
-        if (pauseEpgBackfillDuringPlayback &&
-            liveTvPlaybackActive &&
-            !canFetchXmltvGuideDuringPlayback(state.config)
-        ) {
+        if (pauseEpgBackfillDuringPlayback && liveTvPlaybackActive) {
             deferCompleteEpgBackfill(priorityChannelIds)
             return
         }
@@ -1327,10 +1313,7 @@ class TvViewModel @Inject constructor(
                 else -> 250L
             }
             delay(startupDelay)
-            if (pauseEpgBackfillDuringPlayback &&
-                liveTvPlaybackActive &&
-                !canFetchXmltvGuideDuringPlayback(state.config)
-            ) {
+            if (pauseEpgBackfillDuringPlayback && liveTvPlaybackActive) {
                 deferCompleteEpgBackfill(priorityChannelIds)
                 return@launch
             }

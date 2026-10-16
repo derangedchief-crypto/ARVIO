@@ -144,7 +144,7 @@ class IptvRepositoryOptimizationTest {
         val okHttpClient = io.mockk.mockk<okhttp3.OkHttpClient>(relaxed = true)
         val profileManager = io.mockk.mockk<com.arflix.tv.data.repository.ProfileManager>(relaxed = true)
         val invalidationBus = io.mockk.mockk<com.arflix.tv.data.repository.CloudSyncInvalidationBus>(relaxed = true)
-        val repository = IptvRepository(context, okHttpClient, profileManager, invalidationBus)
+        val repository = IptvRepository(context, okHttpClient, profileManager, invalidationBus, IptvEpgPlaybackGate())
 
         // Get private field guideKeyCandidatesCache using reflection
         val cacheField = IptvRepository::class.java.getDeclaredField("guideKeyCandidatesCache")
@@ -191,7 +191,7 @@ class IptvRepositoryOptimizationTest {
         io.mockk.every { call.execute() } returns response
         io.mockk.every { customClient.newCall(any()) } returns call
 
-        val repository = IptvRepository(context, okHttpClient, profileManager, invalidationBus)
+        val repository = IptvRepository(context, okHttpClient, profileManager, invalidationBus, IptvEpgPlaybackGate())
         val method = IptvRepository::class.java.getDeclaredMethod("fetchAndParseEpg", String::class.java, List::class.java)
         method.isAccessible = true
 
@@ -485,6 +485,6 @@ class IptvRepositoryOptimizationTest {
         val okHttpClient = io.mockk.mockk<okhttp3.OkHttpClient>(relaxed = true)
         val profileManager = io.mockk.mockk<com.arflix.tv.data.repository.ProfileManager>(relaxed = true)
         val invalidationBus = io.mockk.mockk<com.arflix.tv.data.repository.CloudSyncInvalidationBus>(relaxed = true)
-        return IptvRepository(context, okHttpClient, profileManager, invalidationBus)
+        return IptvRepository(context, okHttpClient, profileManager, invalidationBus, IptvEpgPlaybackGate())
     }
 }

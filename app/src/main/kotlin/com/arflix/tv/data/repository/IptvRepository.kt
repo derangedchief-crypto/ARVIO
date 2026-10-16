@@ -1,6 +1,7 @@
 package com.arflix.tv.data.repository
 
 import android.content.Context
+import android.os.Process
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -68,6 +69,7 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import javax.xml.XMLConstants
@@ -79,6 +81,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.xml.parsers.SAXParserFactory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -238,7 +241,8 @@ class IptvRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val okHttpClient: OkHttpClient,
     private val profileManager: ProfileManager,
-    private val invalidationBus: CloudSyncInvalidationBus
+    private val invalidationBus: CloudSyncInvalidationBus,
+    private val epgPlaybackGate: IptvEpgPlaybackGate,
 ) {
     private val gson = Gson()
     private val loadMutex = Mutex()
@@ -248,6 +252,12 @@ class IptvRepository @Inject constructor(
     private val xtreamSeriesEpisodeInFlightMutex = Mutex()
     private val epgIndex by lazy { IptvEpgIndex(context) }
     private val channelStore by lazy { IptvChannelStore(context) }
+    private val backgroundEpgDispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread({
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            runnable.run()
+        }, "Arvio-Epg-Background")
+    }.asCoroutineDispatcher()
     private val maxSeriesEpisodeCacheEntries = 8
 
     @Volatile
@@ -1918,11 +1928,12 @@ class IptvRepository @Inject constructor(
         forceEpgReload: Boolean = false,
         allowNetworkEpgFetch: Boolean = false,
         allowBroadShortEpg: Boolean = true,
+        backgroundEpgWork: Boolean = false,
         onProgress: (IptvLoadProgress) -> Unit = {},
         onChannelsReady: suspend (List<IptvChannel>) -> Unit = {},
         onEpgChunkReady: suspend (Map<String, IptvNowNext>) -> Unit = {}
     ): IptvSnapshot {
-        return withContext(Dispatchers.IO) {
+        return withContext(if (backgroundEpgWork) backgroundEpgDispatcher else Dispatchers.IO) {
             loadMutex.withLock {
             cleanupStaleEpgTempFiles()
             onProgress(IptvLoadProgress(context.getString(R.string.iptv_starting_load), 2))
@@ -2255,6 +2266,7 @@ class IptvRepository @Inject constructor(
                             }
                         } else {
                             val exception = attempt.exceptionOrNull()
+                            if (exception is kotlinx.coroutines.CancellationException) throw exception
                             if (exception is EpgNotModifiedException) {
                                 System.err.println("[EPG] XMLTV candidate ${index + 1} is unchanged (HTTP 304). Loading existing index...")
                                 val existing = runCatching {
@@ -2299,6 +2311,9 @@ class IptvRepository @Inject constructor(
                     nowNext.putAll(phaseBResult)
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException && epgPlaybackGate.shouldYieldToPlayback()) {
+                    throw e
+                }
                 System.err.println("[EPG] Phase B timeout/error: ${e.message}")
             }
 
@@ -6101,7 +6116,14 @@ class IptvRepository @Inject constructor(
         }
     }
 
+    private fun throwIfEpgMustYieldToPlayback() {
+        if (epgPlaybackGate.shouldYieldToPlayback()) {
+            throw kotlinx.coroutines.CancellationException("Live playback takes priority over EPG parsing")
+        }
+    }
+
     private fun fetchAndParseEpg(url: String, channels: List<IptvChannel>): Map<String, IptvNowNext> {
+        throwIfEpgMustYieldToPlayback()
         val hasDbEntries = currentEpgIndexKey.isNotBlank() && runCatching {
             epgIndex.countPrograms(currentEpgIndexKey)
         }.getOrDefault(0) > 0
@@ -6165,6 +6187,7 @@ class IptvRepository @Inject constructor(
                 val sanitized = BackslashEscapeSanitizingInputStream(prepared)
                 return parseXmlTvNowNext(BufferedInputStream(sanitized), channels)
             } catch (streamError: Exception) {
+                if (streamError is kotlinx.coroutines.CancellationException) throw streamError
                 // Streaming parse failed – the network stream is consumed, so we
                 // cannot retry from it.  Check if we got a useful partial result
                 // or need to re-download.  Re-download and spool to disk for retries.
@@ -7348,7 +7371,12 @@ class IptvRepository @Inject constructor(
         parser.setInput(input, null)
         var eventType = parser.eventType
 
+        var eventsSincePlaybackCheck = 0
         while (eventType != XmlPullParser.END_DOCUMENT) {
+            if (++eventsSincePlaybackCheck == 256) {
+                eventsSincePlaybackCheck = 0
+                throwIfEpgMustYieldToPlayback()
+            }
             when (eventType) {
                 XmlPullParser.START_TAG -> {
                     when (parser.name.lowercase(Locale.US)) {
@@ -7471,6 +7499,7 @@ class IptvRepository @Inject constructor(
         var currentStop = 0L
         var currentTitle: String? = null
         var currentDesc: String? = null
+        var elementsSincePlaybackCheck = 0
         var readingDisplayName = false
         var readingTitle = false
         var readingDesc = false
@@ -7478,6 +7507,10 @@ class IptvRepository @Inject constructor(
 
         val handler = object : DefaultHandler() {
             override fun startElement(uri: String?, localName: String?, qName: String?, attributes: Attributes?) {
+                if (++elementsSincePlaybackCheck == 256) {
+                    elementsSincePlaybackCheck = 0
+                    throwIfEpgMustYieldToPlayback()
+                }
                 val name = (localName ?: qName ?: "").lowercase(Locale.US)
                 when (name) {
                     "channel" -> {
