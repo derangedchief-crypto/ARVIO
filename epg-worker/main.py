@@ -45,9 +45,14 @@ def refresh():
             for chunk in response.iter_content(1024 * 1024): raw.write(chunk)
             raw_path = Path(raw.name)
         temp = ROOT / "guide.next.sqlite"; temp.unlink(missing_ok=True)
-        db = sqlite3.connect(temp); db.executescript("CREATE TABLE programmes(channel_id TEXT,start_ms INTEGER,end_ms INTEGER,title TEXT,description TEXT); CREATE INDEX ix_programmes ON programmes(channel_id,start_ms,end_ms);")
+        db = sqlite3.connect(temp); db.executescript("CREATE TABLE channels(channel_id TEXT PRIMARY KEY, display_name TEXT); CREATE TABLE programmes(channel_id TEXT,start_ms INTEGER,end_ms INTEGER,title TEXT,description TEXT); CREATE INDEX ix_programmes ON programmes(channel_id,start_ms,end_ms);")
         count = 0; ids = set()
         for _, node in ET.iterparse(raw_path, events=("end",)):
+            if node.tag == "channel":
+                channel = node.attrib.get("id", "")
+                if channel:
+                    db.execute("INSERT OR REPLACE INTO channels VALUES(?,?)", (channel, (node.findtext("display-name") or "").strip()))
+                node.clear()
             if node.tag == "programme":
                 channel=node.attrib.get("channel", ""); start=node.attrib.get("start", ""); end=node.attrib.get("stop", "")
                 if channel and start and end:
