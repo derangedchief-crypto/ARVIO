@@ -23,6 +23,10 @@ chown -R root:"$service_user" "$worker_dir"
 chmod 750 "$worker_dir"
 chmod 640 "$worker_dir/.env"
 
+# The directory may contain a virtual environment created by root or by an
+# earlier deployment. It is generated state, so recreate it for the service
+# account instead of inheriting incompatible ownership.
+rm -rf "$worker_dir/venv"
 sudo -u "$service_user" python3 -m venv "$worker_dir/venv"
 sudo -u "$service_user" "$worker_dir/venv/bin/pip" install --upgrade pip
 sudo -u "$service_user" "$worker_dir/venv/bin/pip" install -r "$worker_dir/requirements.txt"
