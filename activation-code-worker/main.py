@@ -150,7 +150,9 @@ async def activate(
             cursor.execute(
                 "SELECT username, password FROM customers "
                 "WHERE activation_code = %s "
-                "AND enabled = 1 AND activated = 1 AND exp_date > %s "
+                "AND enabled = 1 AND activated = 1 "
+                # Unlimited panel lines have no expiry (`NULL` or `0`).
+                "AND (exp_date IS NULL OR exp_date = 0 OR exp_date > %s) "
                 "LIMIT 2",
                 (body.activation_code, int(time.time())),
             )
