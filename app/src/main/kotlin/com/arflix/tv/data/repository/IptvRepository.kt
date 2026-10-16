@@ -2984,7 +2984,12 @@ class IptvRepository @Inject constructor(
         channels: List<IptvChannel>
     ): Pair<Map<String, IptvNowNext>, Boolean> {
         if (channels.isEmpty()) return Pair(emptyMap(), false)
-        val candidates = resolveScopedEpgCandidates(config)
+        // The visible grid must never queue behind another playlist's XMLTV
+        // download. A multi-provider setup used to take the first two global
+        // candidates, which meant a category belonging to provider 4/5 could
+        // wait through two unrelated, often huge, guide files before its own
+        // source was considered.
+        val candidates = resolveScopedEpgCandidatesForChannels(config, channels)
         if (candidates.isEmpty()) return Pair(emptyMap(), false)
 
         val playlistKey = channels
@@ -5910,6 +5915,34 @@ class IptvRepository @Inject constructor(
         }
             .filter { it.url.isNotBlank() }
             .distinctBy { "${it.playlistId.orEmpty()}|${it.url}" }
+    }
+
+    /**
+     * Keep a focused guide request inside the provider scope of the displayed
+     * channels. Unscoped URLs remain a fallback because a single provider can
+     * legitimately publish one shared XMLTV file.
+     */
+    private fun resolveScopedEpgCandidatesForChannels(
+        config: IptvConfig,
+        channels: List<IptvChannel>
+    ): List<ScopedEpgCandidate> {
+        if (channels.isEmpty()) return emptyList()
+        val requestedPlaylistIds = channels
+            .asSequence()
+            .map { it.id.substringBefore(':', missingDelimiterValue = "") }
+            .filter { it.isNotBlank() }
+            .toSet()
+        return resolveScopedEpgCandidates(config)
+            .filter { candidate ->
+                candidate.playlistId.isNullOrBlank() ||
+                    candidate.playlistId?.let { it in requestedPlaylistIds } == true
+            }
+            .sortedBy { candidate ->
+                // A source tied to an active displayed provider beats a shared
+                // fallback; stable sorting keeps the provider's configured
+                // source order intact.
+                if (candidate.playlistId?.let { it in requestedPlaylistIds } == true) 0 else 1
+            }
     }
 
     private fun channelsForScopedEpgCandidate(
