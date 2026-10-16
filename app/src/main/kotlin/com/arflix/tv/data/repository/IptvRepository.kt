@@ -2222,6 +2222,7 @@ class IptvRepository @Inject constructor(
             // PHASE B: Slow EPG (XMLTV) — background async job
             // ═══════════════════════════════════════════════════════════
             val xmltvJob = if (allowNetworkEpgFetch && epgCandidates.isNotEmpty() && !shouldUseCachedEpg) {
+                runCatching { epgIndex.beginRefresh(currentEpgIndexKey(config)) }
                 async {
                     val phaseB = ConcurrentHashMap(phaseANowNext)
                     var bestCoverage = epgCoverageRatio(channels, phaseB)
@@ -2305,6 +2306,10 @@ class IptvRepository @Inject constructor(
                     }
                     if (resolved && xmltvChanged) {
                         persistEpgIndexAll(config, phaseB, System.currentTimeMillis())
+                    } else if (resolved) {
+                        runCatching { epgIndex.markRefreshReady(currentEpgIndexKey(config)) }
+                    } else if (!resolved) {
+                        runCatching { epgIndex.markRefreshFailed(currentEpgIndexKey(config)) }
                     }
                     phaseB
                 }

@@ -19,6 +19,13 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
     null,
     DATABASE_VERSION
 ) {
+    data class SourceState(
+        val generation: Long,
+        val status: String,
+        val updatedAtMs: Long,
+        val refreshStartedAtMs: Long,
+    )
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -40,16 +47,73 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             """
             CREATE TABLE epg_sources (
                 source_key TEXT PRIMARY KEY NOT NULL,
-                updated_ms INTEGER NOT NULL
+                updated_ms INTEGER NOT NULL,
+                generation INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'ready',
+                refresh_started_ms INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent()
         )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS epg_programs")
-        db.execSQL("DROP TABLE IF EXISTS epg_sources")
-        onCreate(db)
+        if (oldVersion < 2) {
+            db.execSQL("DROP TABLE IF EXISTS epg_programs")
+            db.execSQL("DROP TABLE IF EXISTS epg_sources")
+            onCreate(db)
+            return
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE epg_sources ADD COLUMN generation INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE epg_sources ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'")
+            db.execSQL("ALTER TABLE epg_sources ADD COLUMN refresh_started_ms INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
+    fun beginRefresh(sourceKey: String, startedAtMs: Long = System.currentTimeMillis()) {
+        if (sourceKey.isBlank()) return
+        writableDatabase.runInTransaction {
+            execSQL(
+                "INSERT OR IGNORE INTO epg_sources(source_key, updated_ms, generation, status, refresh_started_ms) VALUES (?, ?, 0, 'refreshing', ?)",
+                arrayOf(sourceKey, 0L, startedAtMs),
+            )
+            execSQL(
+                "UPDATE epg_sources SET status = 'refreshing', refresh_started_ms = ? WHERE source_key = ?",
+                arrayOf(startedAtMs, sourceKey),
+            )
+        }
+    }
+
+    fun markRefreshFailed(sourceKey: String) {
+        if (sourceKey.isBlank()) return
+        writableDatabase.execSQL(
+            "UPDATE epg_sources SET status = 'stale' WHERE source_key = ?",
+            arrayOf(sourceKey),
+        )
+    }
+
+    fun markRefreshReady(sourceKey: String, updatedAtMs: Long = System.currentTimeMillis()) {
+        if (sourceKey.isBlank()) return
+        writableDatabase.execSQL(
+            "UPDATE epg_sources SET updated_ms = ?, status = 'ready', refresh_started_ms = 0 WHERE source_key = ?",
+            arrayOf(updatedAtMs, sourceKey),
+        )
+    }
+
+    fun sourceState(sourceKey: String): SourceState? {
+        if (sourceKey.isBlank()) return null
+        return readableDatabase.rawQuery(
+            "SELECT generation, status, updated_ms, refresh_started_ms FROM epg_sources WHERE source_key = ?",
+            arrayOf(sourceKey),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            SourceState(
+                generation = cursor.getLong(0),
+                status = cursor.getString(1).orEmpty(),
+                updatedAtMs = cursor.getLong(2),
+                refreshStartedAtMs = cursor.getLong(3),
+            )
+        }
     }
 
     fun replaceAll(sourceKey: String, nowNext: Map<String, IptvNowNext>, updatedAtMs: Long) {
@@ -58,7 +122,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         writableDatabase.runInTransaction {
             delete("epg_programs", "source_key = ?", arrayOf(sourceKey))
             insertNowNextRows(sourceKey, nowNext)
-            upsertSource(sourceKey, updatedAtMs)
+            completeSourceRefresh(sourceKey, updatedAtMs)
         }
     }
 
@@ -76,7 +140,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     delete("epg_programs", "source_key = ? AND channel_id IN ($placeholders)", args)
                 }
             insertNowNextRows(sourceKey, nowNext)
-            upsertSource(sourceKey, updatedAtMs)
+            touchSourceForPartialUpdate(sourceKey, updatedAtMs)
         }
     }
 
@@ -294,14 +358,29 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    private fun SQLiteDatabase.upsertSource(sourceKey: String, updatedAtMs: Long) {
-        compileStatement(
-            "INSERT OR REPLACE INTO epg_sources(source_key, updated_ms) VALUES (?, ?)"
-        ).use { statement ->
-            statement.bindString(1, sourceKey)
-            statement.bindLong(2, updatedAtMs)
-            statement.executeInsert()
-        }
+    private fun SQLiteDatabase.touchSourceForPartialUpdate(sourceKey: String, updatedAtMs: Long) {
+        execSQL(
+            "INSERT OR IGNORE INTO epg_sources(source_key, updated_ms, generation, status, refresh_started_ms) VALUES (?, ?, 0, 'ready', 0)",
+            arrayOf(sourceKey, updatedAtMs),
+        )
+        // Do not advance generation or mark a refreshing guide as ready: a
+        // partial parser batch is usable immediately but is not a completed
+        // replacement for the previous source generation.
+        execSQL(
+            "UPDATE epg_sources SET updated_ms = ? WHERE source_key = ? AND status != 'refreshing'",
+            arrayOf(updatedAtMs, sourceKey),
+        )
+    }
+
+    private fun SQLiteDatabase.completeSourceRefresh(sourceKey: String, updatedAtMs: Long) {
+        execSQL(
+            "INSERT OR IGNORE INTO epg_sources(source_key, updated_ms, generation, status, refresh_started_ms) VALUES (?, ?, 0, 'ready', 0)",
+            arrayOf(sourceKey, updatedAtMs),
+        )
+        execSQL(
+            "UPDATE epg_sources SET updated_ms = ?, generation = generation + 1, status = 'ready', refresh_started_ms = 0 WHERE source_key = ?",
+            arrayOf(updatedAtMs, sourceKey),
+        )
     }
 
     private fun buildNowNext(programs: List<IptvProgram>, nowMs: Long): IptvNowNext? {
@@ -357,11 +436,11 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
 
     private companion object {
         const val DATABASE_NAME = "arvio_iptv_epg_index.db"
-        // v2: drops the guide table on upgrade. A previous build's full-guide backfill
+        // v2 dropped the guide table on upgrade. A previous build's full-guide backfill
         // bloated it with up to 336 programmes/channel; loading 360 such channels into
         // memory churned the heap and crashed the Live TV page. Recreating it clears
         // that, and the reduced caps below keep per-channel memory bounded.
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
         const val MAX_SQL_ARGS = 900
         const val MAX_DESCRIPTION_CHARS = 200
         // ±48h of guide needs only ~24-48 programmes each way. Keeping 96+240 held far
