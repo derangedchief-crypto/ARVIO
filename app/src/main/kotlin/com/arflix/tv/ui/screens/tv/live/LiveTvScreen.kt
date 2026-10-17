@@ -1066,15 +1066,10 @@ fun LiveTvScreen(
         pendingFocusCommit[0] = channel.id to selectedCategoryId
         focusCommitJob[0]?.cancel()
         focusCommitJob[0] = focusCommitScope.launch {
-            // Settle window before committing focus. Each commit fans out into the
-            // EPG pipeline (per-channel HTTP fetch + JSON parse + guide merges) and a
-            // wide recomposition. At 140ms the commit fired on EVERY step of a held
-            // d-pad scroll, allocating millions of objects per sweep and dragging the
-            // heap toward the cap (measured: 2s+ frames, 273 blocking GCs in 40
-            // presses). 450ms skips the intermediate rows during continuous scrolling
-            // and only commits where the user actually stops; visible focus highlight
-            // still moves instantly (it's driven by Compose focus, not this commit).
-            delay(450L)
+            // Focus now hydrates only one indexed row, so it is safe to follow normal
+            // D-pad movement closely instead of making the user move beyond a visible
+            // page before the guide catches up.
+            delay(80L)
             val (channelId, categoryId) = pendingFocusCommit[0] ?: return@launch
             if (focusedChannelId != channelId) {
                 focusedChannelId = channelId
@@ -1246,13 +1241,23 @@ fun LiveTvScreen(
     val guideViewportEndMs = remember(guideViewportStartMs) {
         guideViewportStartMs + VisibleGuidePastWindowMs + VisibleGuideFutureWindowMs
     }
-    LaunchedEffect(guideChannels, guideViewportStartMs, guideIndexRevision) {
+    // The full guide lives in SQLite. Query one focused row at a time rather
+    // than merging a category-sized guide window whenever the list advances.
+    val guideViewportChannelIds = remember(
+        guideChannels,
+        selectedDisplayChannelId,
+        focusedChannelId,
+        playingChannelId,
+    ) {
+        val preferredId = selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId
+        listOfNotNull(
+            preferredId?.takeIf { id -> guideChannels.any { it.id == id } }
+                ?: guideChannels.firstOrNull()?.id
+        ).toSet()
+    }
+    LaunchedEffect(guideViewportChannelIds, guideViewportStartMs, guideIndexRevision) {
         val requestId = guideViewportRequestGate.beginRequest()
-        val ids = guideChannels
-            .asSequence()
-            .map { it.id }
-            .filter { it.isNotBlank() }
-            .toSet()
+        val ids = guideViewportChannelIds
         if (ids.isEmpty()) {
             return@LaunchedEffect
         }
@@ -1328,91 +1333,8 @@ fun LiveTvScreen(
         ?: selectedDisplayChannelId
         ?: focusedChannelId
         ?: playingChannelId
-    val epgPrefetchIds = remember(
-        guideChannels,
-        guideChannelIndexById,
-        selectedCategoryId,
-        epgAnchorChannelId,
-        selectedDisplayChannelId,
-        playingChannelId,
-        focusedChannelId,
-        favSet,
-        filteredChannels,
-    ) {
-        val maxPrefetch = if (selectedCategoryId == "all") 96 else 180
-        val visibleFirstRows = if (selectedCategoryId == "all") GuideVisibleFirstRowsAllChannels else GuideVisibleFirstRows
-        val selectedSeedChannelId = epgAnchorChannelId ?: selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId
-        val anchorAbsoluteIndex = selectedSeedChannelId?.let(filteredChannelIndexById::get)
-            ?: normalizedGuideStart
-        val anchorWindowIndex = (anchorAbsoluteIndex - normalizedGuideStart)
-            .takeIf { it in guideChannels.indices }
-            ?: 0
-        buildList<String> {
-            fun addChannel(channel: EnrichedChannel?) {
-                val id = channel?.id ?: return
-                if (!contains(id)) add(id)
-            }
-            fun addGuideFirst(index: Int) {
-                val channel = guideChannels.getOrNull(index) ?: return
-                if (channel.hasGuideIdentity()) addChannel(channel)
-            }
-
-            // Favorites are the user's explicit fast-start set. They should get
-            // guide priority even when the current category is "All" or a large
-            // provider group where favorites were prepended into the first window.
-            filteredChannels
-                .asSequence()
-                .filter { it.id in favSet }
-                .filter { it.id in visibleChannelsById }
-                .take(24)
-                .forEach(::addChannel)
-
-            // First paint must target the selected/focused row plus the rows visible
-            // below it. These may lack tvg-id but still have an Xtream stream
-            // id that can return direct short/full EPG data.
-            addChannel(selectedSeedChannelId?.let(visibleChannelsById::get))
-            addChannel(guideChannels.getOrNull(anchorWindowIndex))
-            var nearIndex = anchorWindowIndex + 1
-            var nearCount = 0
-            while (nearIndex < guideChannels.size && nearCount < visibleFirstRows && size < maxPrefetch) {
-                addChannel(guideChannels[nearIndex])
-                nearIndex++
-                nearCount++
-            }
-            var nearBackIndex = anchorWindowIndex - 1
-            var nearBackCount = 0
-            while (nearBackIndex >= 0 && nearBackCount < 8 && size < maxPrefetch) {
-                addChannel(guideChannels[nearBackIndex])
-                nearBackIndex--
-                nearBackCount++
-            }
-
-            var index = anchorWindowIndex + 1
-            while (index < guideChannels.size && size < maxPrefetch) {
-                addGuideFirst(index)
-                index++
-            }
-            var backIndex = anchorWindowIndex - 1
-            var backCount = 0
-            while (backIndex >= 0 && backCount < 24 && size < maxPrefetch) {
-                addGuideFirst(backIndex)
-                backIndex--
-                backCount++
-            }
-            index = 0
-            while (index < guideChannels.size && size < maxPrefetch) {
-                addGuideFirst(index)
-                index++
-            }
-            index = 0
-            while (index < guideChannels.size && size < maxPrefetch) {
-                val channel = guideChannels[index]
-                if (!channel.hasGuideIdentity()) {
-                    addChannel(channel)
-                }
-                index++
-            }
-        }
+    val epgPrefetchIds = remember(epgAnchorChannelId, selectedDisplayChannelId, focusedChannelId, playingChannelId) {
+        listOfNotNull(epgAnchorChannelId ?: selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId)
     }
     LaunchedEffect(selectedCategoryId, epgPrefetchIds, epgAnchorChannelId, state.iptvPreferencesLoaded, state.tvSessionLoaded, state.tvSession.lastChannelId, guideChannelIndexById, startupChannelApplied, playingChannelId, selectedDisplayChannelId, focusedChannelId) {
         val startupReady = state.iptvPreferencesLoaded && state.tvSessionLoaded
@@ -1425,8 +1347,8 @@ fun LiveTvScreen(
             viewModel.prefetchVisibleCategoryEpg(
                 channelIds = epgPrefetchIds,
                 selectedChannelId = selectedId,
-                eagerLimit = if (selectedCategoryTotalCount > 10_000) 8 else if (selectedCategoryId == "all") 12 else 24,
-                backgroundLimit = if (selectedCategoryTotalCount > 10_000) 24 else if (selectedCategoryId == "all") 48 else 96,
+                eagerLimit = 1,
+                backgroundLimit = 1,
                 allowFocusedNetworkRefresh = true,
             )
         }
@@ -1970,6 +1892,13 @@ fun LiveTvScreen(
 
     fun selectChannel(channel: EnrichedChannel, currentProgram: IptvProgram? = null) {
         val sameChannel = isSamePlayingChannel(channel)
+        // Selecting the channel that is already playing is the TV-remote
+        // fullscreen gesture. Do not send it through the optional VOD lookup:
+        // that lookup can open the Watch Live / Stream Now dialog instead.
+        if (sameChannel) {
+            playLiveFullscreen(channel)
+            return
+        }
         when (
             channelRowInteractionAction(
                 isSamePlayingChannel = sameChannel,
