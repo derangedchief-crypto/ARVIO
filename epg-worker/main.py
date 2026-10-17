@@ -30,8 +30,8 @@ def update_state(**values):
     (ROOT / "progress.json").write_text(json.dumps(_state))
 
 def active_line():
-    with SSHTunnelForwarder((os.environ["PANEL_SSH_HOST"], int(os.getenv("PANEL_SSH_PORT", "22"))), ssh_username=os.environ["PANEL_SSH_USERNAME"], ssh_password=os.environ["PANEL_SSH_PASSWORD"], remote_bind_address=(os.getenv("PANEL_DB_HOST", "127.0.0.1"), int(os.getenv("PANEL_DB_PORT", "3306")))) as tunnel:
-        conn = mysql.connector.connect(host="127.0.0.1", port=tunnel.local_bind_port, database=os.getenv("PANEL_DB_NAME", "overcast"), user=os.getenv("PANEL_DB_USERNAME", "root"), password=os.getenv("PANEL_DB_PASSWORD", ""))
+    with SSHTunnelForwarder((os.environ["PANEL_SSH_HOST"], int(os.getenv("PANEL_SSH_PORT", "22"))), ssh_username=os.environ["PANEL_SSH_USERNAME"], ssh_password=os.environ["PANEL_SSH_PASSWORD"], remote_bind_address=(os.getenv("PANEL_DB_HOST", "127.0.0.1"), int(os.getenv("PANEL_DB_PORT", "3306")),), ssh_timeout=15, tunnel_timeout=15) as tunnel:
+        conn = mysql.connector.connect(host="127.0.0.1", port=tunnel.local_bind_port, database=os.getenv("PANEL_DB_NAME", "overcast"), user=os.getenv("PANEL_DB_USERNAME", "root"), password=os.getenv("PANEL_DB_PASSWORD", ""), connection_timeout=15)
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT username,password FROM customers WHERE enabled=1 AND activated=1 AND (exp_date IS NULL OR exp_date=0 OR exp_date>UNIX_TIMESTAMP()) ORDER BY id LIMIT 1")
         row = cur.fetchone(); conn.close()
