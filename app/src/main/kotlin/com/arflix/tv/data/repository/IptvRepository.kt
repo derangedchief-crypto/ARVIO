@@ -2236,7 +2236,14 @@ class IptvRepository @Inject constructor(
             val xmltvJob = if (allowNetworkEpgFetch && epgCandidates.isNotEmpty() && !shouldUseCachedEpg) {
                 runCatching { epgIndex.beginRefresh(currentEpgIndexKey(config)) }
                 async {
-                    if (importDailyWorkerGuide(config, channels)) return@async emptyMap<String, IptvNowNext>()
+                    // The worker writes the complete guide into the on-device index,
+                    // but this load also needs a compact now/next slice to keep the
+                    // currently rendered guide populated until its normal indexed
+                    // window reads take over. Returning an empty map here replaced
+                    // a working guide with blank cells after refresh.
+                    importDailyWorkerGuide(config, channels)
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { return@async it }
                     val phaseB = ConcurrentHashMap(phaseANowNext)
                     var bestCoverage = epgCoverageRatio(channels, phaseB)
                     var resolved = false
@@ -3087,13 +3094,16 @@ class IptvRepository @Inject constructor(
         }
     }
 
-    private suspend fun importDailyWorkerGuide(config: IptvConfig, channels: List<IptvChannel>): Boolean = withContext(Dispatchers.IO) {
-        if (channels.isEmpty()) return@withContext false
+    private suspend fun importDailyWorkerGuide(
+        config: IptvConfig,
+        channels: List<IptvChannel>
+    ): Map<String, IptvNowNext> = withContext(Dispatchers.IO) {
+        if (channels.isEmpty()) return@withContext emptyMap()
         val file = File.createTempFile("daily_epg_", ".sqlite", context.cacheDir)
         try {
             iptvHttpClient.newCall(Request.Builder().url(DAILY_GUIDE_URL).build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                GZIPInputStream(response.body?.byteStream() ?: return@withContext false).use { input -> file.outputStream().use(input::copyTo) }
+                if (!response.isSuccessful) return@withContext emptyMap()
+                GZIPInputStream(response.body?.byteStream() ?: return@withContext emptyMap()).use { input -> file.outputStream().use(input::copyTo) }
             }
             SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
                 val names = LinkedHashMap<String, MutableSet<String>>()
@@ -3109,11 +3119,20 @@ class IptvRepository @Inject constructor(
                     }
                 }
                 val guide = imported.mapValues { (_, rows) -> IptvNowNext(upcoming = rows.distinctBy { "${it.startUtcMillis}|${it.endUtcMillis}|${it.title}" }) }
-                if (guide.isEmpty()) return@withContext false
+                if (guide.isEmpty()) return@withContext emptyMap()
                 persistEpgIndexAll(config, guide)
-                true
+                // Return the compact 48-hour index view, not the entire imported
+                // XMLTV payload. The full guide remains in SQLite and is queried by
+                // visible guide windows as the user browses.
+                epgIndex.loadNowNext(
+                    sourceKey = currentEpgIndexKey(config),
+                    channelIds = channels.mapTo(LinkedHashSet()) { it.id },
+                )
             }
-        } catch (_: Exception) { false } finally { file.delete() }
+        } catch (error: Exception) {
+            System.err.println("[EPG-Worker] Daily guide import failed: ${error.message}")
+            emptyMap()
+        } finally { file.delete() }
     }
 
     private fun persistEpgIndexChannels(
