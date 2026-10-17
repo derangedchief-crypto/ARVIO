@@ -6,6 +6,7 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.SystemClock
 import android.view.LayoutInflater
 import android.content.pm.ActivityInfo
 import com.arflix.tv.util.findActivity
@@ -2234,6 +2235,8 @@ fun LiveTvScreen(
     var lastPreparedHeaders by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var lastPreparedCatchupOffsetMs by remember { mutableLongStateOf(-1L) }
     var playerRetryCount by remember { mutableIntStateOf(0) }
+    var retryInFlight by remember { mutableStateOf(false) }
+    var lastPlaybackReadyAtMs by remember { mutableLongStateOf(0L) }
     var playbackDiagnostic by remember { mutableStateOf<PlaybackDiagnostic?>(null) }
 
     fun prepareStream(
@@ -2303,7 +2306,11 @@ fun LiveTvScreen(
         lastPreparedIsHls = isHls
         lastPreparedHeaders = headers
         lastPreparedCatchupOffsetMs = if (playingCatchupProgram != null) catchupUrlAnchorOffsetMs else -1L
-        if (resetRetry) playerRetryCount = 0
+        if (resetRetry) {
+            playerRetryCount = 0
+            retryInFlight = false
+            lastPlaybackReadyAtMs = 0L
+        }
         if (resetRetry) {
             playbackDiagnostic = PlaybackDiagnostic(
                 title = if (playingCatchupProgram != null && initialPositionMs > 0L) context.getString(R.string.live_diag_seeking_catchup) else context.getString(R.string.live_diag_starting_stream),
@@ -2511,6 +2518,7 @@ fun LiveTvScreen(
                 if (playbackState == Player.STATE_READY) {
                     playbackDiagnostic = null
                     playerIsBuffering = false
+                    lastPlaybackReadyAtMs = SystemClock.elapsedRealtime()
                 }
             }
 
@@ -2526,6 +2534,18 @@ fun LiveTvScreen(
                 playerIsBuffering = false
                 val prepared = lastPreparedStreamUrl ?: return
                 val preparedIsHls = lastPreparedIsHls
+                // ExoPlayer can report more than one error callback for the same
+                // failed preparation. Never let those callbacks queue parallel
+                // decoder teardowns/rebuilds; that is especially destructive on
+                // low-memory TV hardware and makes an otherwise playing stream
+                // stutter until the old six-retry loop eventually freezes it.
+                if (retryInFlight) return
+                val now = SystemClock.elapsedRealtime()
+                if (lastPlaybackReadyAtMs > 0L && now - lastPlaybackReadyAtMs >= 15_000L) {
+                    // A stream that ran cleanly for a while gets one fresh recovery
+                    // opportunity for a later network interruption.
+                    playerRetryCount = 0
+                }
                 val nextAttempt = playerRetryCount + 1
                 playerRetryCount = nextAttempt
                 val retryChannel = playingChannel?.source
@@ -2542,14 +2562,10 @@ fun LiveTvScreen(
                 val maxRetryCount = if (retryProgram != null) {
                     (catchupCandidateCount - 1).coerceAtLeast(0).coerceAtMost(2)
                 } else {
-                    // Was 3 (retry window ~3.5s of delay, ~5s observed end-to-end).
-                    // Real-world IPTV glitches (a momentary unrecognized-container
-                    // error from the origin, transient network blip, etc.) can
-                    // outlast that — giving up right as the glitch would likely
-                    // have cleared on its own reads to the user as a permanent
-                    // freeze. Extending to 6 roughly doubles the window before
-                    // surfacing a real error, without retrying forever.
-                    6
+                    // Live sources receive a single controlled recovery. Repeated
+                    // full decoder rebuilds made healthy streams choppy and then
+                    // left the player frozen after six failed attempts.
+                    1
                 }
                 if (nextAttempt > maxRetryCount) {
                     playbackDiagnostic = PlaybackDiagnostic(
@@ -2566,6 +2582,7 @@ fun LiveTvScreen(
                     return
                 }
                 val retryHeaders = retryChannel?.requestHeaders ?: lastPreparedHeaders
+                retryInFlight = true
                 coroutineScope.launch {
                     delay(350L * nextAttempt)
                     val retryTarget = runCatching {
@@ -2601,6 +2618,7 @@ fun LiveTvScreen(
                         detail = "Attempt $nextAttempt/$maxRetryCount after ${classifyPlaybackError(error)}",
                         severity = PlaybackDiagnosticSeverity.Warning,
                     )
+                    retryInFlight = false
                     prepareStream(
                         stream = retryTarget.url,
                         isHls = retryTarget.isHls,
