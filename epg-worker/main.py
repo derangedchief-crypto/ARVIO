@@ -23,6 +23,7 @@ ROOT = Path(os.getenv("EPG_DATA_DIR", "/var/lib/iptv-epg-worker"))
 DB = ROOT / "guide.sqlite"
 GZ = ROOT / "guide.sqlite.gz"
 HOST = os.getenv("EPG_XMLTV_HOST", "https://tv.extremeiptv.net").rstrip("/")
+SOURCE_URL = os.getenv("EPG_XMLTV_URL", "").strip()
 _state = {"updated_at": 0, "programmes": 0, "channels": 0, "error": None, "phase": "idle", "started_at": 0, "downloaded_bytes": 0, "total_bytes": 0}
 
 def update_state(**values):
@@ -50,7 +51,7 @@ def refresh():
         update_state(phase="connecting", started_at=int(time.time() * 1000), downloaded_bytes=0, total_bytes=0, error=None)
         line = active_line()
         update_state(phase="downloading")
-        response = requests.get(f"{HOST}/xmltv.php", params=line, stream=True, timeout=(20, 900))
+        response = requests.get(SOURCE_URL or f"{HOST}/xmltv.php", params=None if SOURCE_URL else line, stream=True, timeout=(20, 900))
         response.raise_for_status()
         update_state(total_bytes=int(response.headers.get("content-length") or 0))
         ROOT.mkdir(parents=True, exist_ok=True)
