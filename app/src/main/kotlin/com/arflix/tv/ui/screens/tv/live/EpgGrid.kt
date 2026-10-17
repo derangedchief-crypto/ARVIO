@@ -71,7 +71,6 @@ private const val EpgFutureWindowMinutes = 6 * 60
 private const val CompactEpgPastWindowMinutes = 90
 private const val CompactEpgFutureWindowMinutes = 6 * 60
 private const val ChannelWindowPrefetchThreshold = 10
-private const val PreparedGuideRowBuffer = 12
 
 enum class EpgGridFocusMode {
     ChannelList,
@@ -171,22 +170,14 @@ fun TvGuideViewport(
         (((windowEndMillis - windowStartMillis) / 60_000L) / 30L).toInt().coerceAtLeast(1)
     }
     val slots = remember(windowStartMillis, slotCount) { buildHalfHourSlots(windowStartMillis, slotCount) }
-    // Keep full programme data in SQLite, but only turn it into Compose cell
-    // placements for visible rows plus a small navigation buffer. Building
-    // placements for a 100+ channel category on every focus move caused jank.
     val hScroll = rememberScrollState()
     val channelListState = rememberLazyListState()
-    var preparedFirstRow by remember(channels) { mutableIntStateOf(0) }
-    var preparedLastRow by remember(channels) { mutableIntStateOf(minOf(channels.lastIndex, 24)) }
-    val preparedChannels = remember(channels, preparedFirstRow, preparedLastRow) {
-        if (channels.isEmpty()) emptyList() else channels.subList(
-            preparedFirstRow.coerceIn(0, channels.lastIndex),
-            (preparedLastRow + 1).coerceIn(0, channels.size),
-        )
-    }
-    val viewportModel = remember(preparedChannels, indexedPrograms, fallbackNowNext, windowStartMillis, windowEndMillis) {
+    // The LazyColumn handles visual row virtualization. Its backing model must
+    // remain complete because program focus/navigation can request a row before
+    // it has entered the visible-layout window.
+    val viewportModel = remember(channels, indexedPrograms, fallbackNowNext, windowStartMillis, windowEndMillis) {
         buildTvGuideViewportModel(
-            channelIds = preparedChannels.map { it.id },
+            channelIds = channels.map { it.id },
             indexedPrograms = indexedPrograms,
             fallbackNowNext = fallbackNowNext,
             windowStartMillis = windowStartMillis,
@@ -367,8 +358,6 @@ fun TvGuideViewport(
         }
             .distinctUntilChanged()
             .collect { (first, last) ->
-                preparedFirstRow = (first - PreparedGuideRowBuffer).coerceAtLeast(0)
-                preparedLastRow = (last + PreparedGuideRowBuffer).coerceAtMost(channels.lastIndex)
                 if (first <= ChannelWindowPrefetchThreshold && channelWindowOffset > 0) {
                     onRequestPreviousChannels()
                 }
