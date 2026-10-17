@@ -1234,6 +1234,9 @@ fun LiveTvScreen(
     var retainedIndexedGuidePrograms by remember(selectedProviderId) {
         mutableStateOf<Map<String, List<IptvProgram>>>(emptyMap())
     }
+    var visibleGuideChannelIds by remember(selectedProviderId, selectedCategoryId) {
+        mutableStateOf<Set<String>>(emptySet())
+    }
     val guideViewportRequestGate = remember { TvGuideViewportRequestGate() }
     val guideViewportStartMs = remember(guideClockMillis) {
         guideClockMillis - (guideClockMillis % GuideViewportBucketMs) - VisibleGuidePastWindowMs
@@ -1241,23 +1244,29 @@ fun LiveTvScreen(
     val guideViewportEndMs = remember(guideViewportStartMs) {
         guideViewportStartMs + VisibleGuidePastWindowMs + VisibleGuideFutureWindowMs
     }
-    // The full guide lives in SQLite. Query one focused row at a time rather
-    // than merging a category-sized guide window whenever the list advances.
+    // Start with the focused row until LazyColumn reports its visible rows. After
+    // that, diff against the rows already queried: a normal one-row scroll adds
+    // exactly one SQLite request while previously loaded guide rows stay intact.
     val guideViewportChannelIds = remember(
+        visibleGuideChannelIds,
         guideChannels,
         selectedDisplayChannelId,
         focusedChannelId,
         playingChannelId,
     ) {
-        val preferredId = selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId
-        listOfNotNull(
-            preferredId?.takeIf { id -> guideChannels.any { it.id == id } }
-                ?: guideChannels.firstOrNull()?.id
-        ).toSet()
+        val availableIds = guideChannels.asSequence().map { it.id }.toSet()
+        visibleGuideChannelIds
+            .filterTo(LinkedHashSet()) { it in availableIds }
+            .ifEmpty {
+                val preferredId = selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId
+                listOfNotNull(preferredId?.takeIf { it in availableIds } ?: guideChannels.firstOrNull()?.id).toSet()
+            }
     }
-    LaunchedEffect(guideViewportChannelIds, guideViewportStartMs, guideIndexRevision) {
+    val guideViewportCacheKey = "$selectedProviderId|$selectedCategoryId|$guideViewportStartMs|$guideIndexRevision"
+    var requestedGuideViewportIds by remember(guideViewportCacheKey) { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(guideViewportChannelIds, guideViewportCacheKey) {
         val requestId = guideViewportRequestGate.beginRequest()
-        val ids = guideViewportChannelIds
+        val ids = guideViewportChannelIds - requestedGuideViewportIds
         if (ids.isEmpty()) {
             return@LaunchedEffect
         }
@@ -1266,6 +1275,7 @@ fun LiveTvScreen(
             viewModel.iptvRepository.indexedGuideViewport(ids, guideViewportStartMs, guideViewportEndMs)
         }
         if (!guideViewportRequestGate.isCurrent(requestId)) return@LaunchedEffect
+        requestedGuideViewportIds = requestedGuideViewportIds + ids
         // Do not clear old cells when switching a category, returning from the
         // player, or receiving an incremental parser revision. Replace only
         // the rows SQLite has just authoritatively answered; that preserves a
@@ -2845,6 +2855,7 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
+                        onVisibleChannelsChanged = { ids -> visibleGuideChannelIds = ids },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
@@ -2994,6 +3005,7 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
+                        onVisibleChannelsChanged = { ids -> visibleGuideChannelIds = ids },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
