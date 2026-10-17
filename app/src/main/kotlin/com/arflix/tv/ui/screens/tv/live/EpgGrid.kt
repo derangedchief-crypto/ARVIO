@@ -71,6 +71,7 @@ private const val EpgFutureWindowMinutes = 6 * 60
 private const val CompactEpgPastWindowMinutes = 90
 private const val CompactEpgFutureWindowMinutes = 6 * 60
 private const val ChannelWindowPrefetchThreshold = 10
+private const val PreparedGuideRowBuffer = 12
 
 enum class EpgGridFocusMode {
     ChannelList,
@@ -170,9 +171,22 @@ fun TvGuideViewport(
         (((windowEndMillis - windowStartMillis) / 60_000L) / 30L).toInt().coerceAtLeast(1)
     }
     val slots = remember(windowStartMillis, slotCount) { buildHalfHourSlots(windowStartMillis, slotCount) }
-    val viewportModel = remember(channels, indexedPrograms, fallbackNowNext, windowStartMillis, windowEndMillis) {
+    // Keep full programme data in SQLite, but only turn it into Compose cell
+    // placements for visible rows plus a small navigation buffer. Building
+    // placements for a 100+ channel category on every focus move caused jank.
+    val hScroll = rememberScrollState()
+    val channelListState = rememberLazyListState()
+    var preparedFirstRow by remember(channels) { mutableIntStateOf(0) }
+    var preparedLastRow by remember(channels) { mutableIntStateOf(minOf(channels.lastIndex, 24)) }
+    val preparedChannels = remember(channels, preparedFirstRow, preparedLastRow) {
+        if (channels.isEmpty()) emptyList() else channels.subList(
+            preparedFirstRow.coerceIn(0, channels.lastIndex),
+            (preparedLastRow + 1).coerceIn(0, channels.size),
+        )
+    }
+    val viewportModel = remember(preparedChannels, indexedPrograms, fallbackNowNext, windowStartMillis, windowEndMillis) {
         buildTvGuideViewportModel(
-            channelIds = channels.map { it.id },
+            channelIds = preparedChannels.map { it.id },
             indexedPrograms = indexedPrograms,
             fallbackNowNext = fallbackNowNext,
             windowStartMillis = windowStartMillis,
@@ -180,10 +194,6 @@ fun TvGuideViewport(
         )
     }
 
-    // Shared horizontal scroll state between header and body rows.
-    val hScroll = rememberScrollState()
-    // A single LazyListState handles vertical scrolling for both channels and EPG.
-    val channelListState = rememberLazyListState()
     var didPositionInitialSelection by remember(channels) { mutableStateOf(false) }
     var activeChannelFocusId by remember(channels) { mutableStateOf(selectedChannelId) }
     var pendingChannelFocusId by remember(channels) { mutableStateOf<String?>(null) }
@@ -357,6 +367,8 @@ fun TvGuideViewport(
         }
             .distinctUntilChanged()
             .collect { (first, last) ->
+                preparedFirstRow = (first - PreparedGuideRowBuffer).coerceAtLeast(0)
+                preparedLastRow = (last + PreparedGuideRowBuffer).coerceAtMost(channels.lastIndex)
                 if (first <= ChannelWindowPrefetchThreshold && channelWindowOffset > 0) {
                     onRequestPreviousChannels()
                 }
