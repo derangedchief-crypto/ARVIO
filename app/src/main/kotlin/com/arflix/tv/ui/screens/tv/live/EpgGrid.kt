@@ -107,7 +107,6 @@ fun TvGuideViewport(
     onChannelSelect: (EnrichedChannel) -> Unit,
     onProgramSelect: (EnrichedChannel, IptvProgram?) -> Unit = { channel, _ -> onChannelSelect(channel) },
     onChannelFocused: (EnrichedChannel) -> Unit = {},
-    onVisibleChannelsChanged: (Set<String>) -> Unit = {},
     onChannelFavoriteToggle: (String) -> Unit,
     favorites: Set<String>,
     variantCountFor: (EnrichedChannel) -> Int = { 1 },
@@ -401,13 +400,6 @@ fun TvGuideViewport(
         }
             .distinctUntilChanged()
             .collect { (first, last) ->
-                val visibleIds = channels
-                    .subList(first.coerceIn(0, channels.size), (last + 1).coerceIn(0, channels.size))
-                    .asSequence()
-                    .map { it.id }
-                    .filter { it.isNotBlank() }
-                    .toCollection(LinkedHashSet())
-                onVisibleChannelsChanged(visibleIds)
                 if (first <= ChannelWindowPrefetchThreshold && channelWindowOffset > 0) {
                     onRequestPreviousChannels()
                 }

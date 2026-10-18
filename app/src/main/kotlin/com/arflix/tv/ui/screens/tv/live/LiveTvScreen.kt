@@ -153,7 +153,11 @@ private const val GuideViewportBucketMs = 30L * 60_000L
 // Keep the current and immediately previous guide pages warm while the next
 // indexed query is in flight. This cache is source-scoped and every queried
 // channel is replaced (including with empty data) once SQLite responds.
-private const val RetainedIndexedGuideRows = GuideMaxWindowRows * 2
+// The on-screen list is virtualized, but the local index is cheap to read in
+// batches. Keep a substantial runway around it so D-pad repeats never cause a
+// database read or guide-model rebuild on the focused row.
+private const val GuideIndexLookaheadRows = 96
+private const val RetainedIndexedGuideRows = GuideMaxWindowRows + (GuideIndexLookaheadRows * 2)
 private const val EpgGuideLookupTimeoutMs = 2_500L
 
 private fun digitForTvKeyCode(keyCode: Int): Int? = when (keyCode) {
@@ -1234,9 +1238,6 @@ fun LiveTvScreen(
     var retainedIndexedGuidePrograms by remember(selectedProviderId) {
         mutableStateOf<Map<String, List<IptvProgram>>>(emptyMap())
     }
-    var visibleGuideChannelIds by remember(selectedProviderId, selectedCategoryId) {
-        mutableStateOf<Set<String>>(emptySet())
-    }
     val guideViewportRequestGate = remember { TvGuideViewportRequestGate() }
     val guideViewportStartMs = remember(guideClockMillis) {
         guideClockMillis - (guideClockMillis % GuideViewportBucketMs) - VisibleGuidePastWindowMs
@@ -1244,23 +1245,28 @@ fun LiveTvScreen(
     val guideViewportEndMs = remember(guideViewportStartMs) {
         guideViewportStartMs + VisibleGuidePastWindowMs + VisibleGuideFutureWindowMs
     }
-    // Start with the focused row until LazyColumn reports its visible rows. After
-    // that, diff against the rows already queried: a normal one-row scroll adds
-    // exactly one SQLite request while previously loaded guide rows stay intact.
+    // Read a rolling runway from the full local EPG index rather than querying
+    // one newly visible row for each D-pad press. The guide stays virtualized,
+    // but fast scrolling now lands on already-hydrated programme cells.
     val guideViewportChannelIds = remember(
-        visibleGuideChannelIds,
-        guideChannels,
-        selectedDisplayChannelId,
-        focusedChannelId,
-        playingChannelId,
+        filteredChannels,
+        normalizedGuideStart,
+        normalizedGuideEnd,
     ) {
-        val availableIds = guideChannels.asSequence().map { it.id }.toSet()
-        visibleGuideChannelIds
-            .filterTo(LinkedHashSet()) { it in availableIds }
-            .ifEmpty {
-                val preferredId = selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId
-                listOfNotNull(preferredId?.takeIf { it in availableIds } ?: guideChannels.firstOrNull()?.id).toSet()
+        if (filteredChannels.isEmpty()) {
+            emptySet()
+        } else {
+            val beforeStart = (normalizedGuideStart - GuideIndexLookaheadRows).coerceAtLeast(0)
+            val afterEnd = (normalizedGuideEnd + GuideIndexLookaheadRows).coerceAtMost(filteredChannels.size)
+            // Add the current guide window last. If the bounded retained map
+            // needs to evict a row, lookahead goes first — never the rows the
+            // user is looking at right now.
+            buildSet {
+                filteredChannels.subList(beforeStart, normalizedGuideStart).forEach { add(it.id) }
+                filteredChannels.subList(normalizedGuideEnd, afterEnd).forEach { add(it.id) }
+                filteredChannels.subList(normalizedGuideStart, normalizedGuideEnd).forEach { add(it.id) }
             }
+        }
     }
     val guideViewportCacheKey = "$selectedProviderId|$selectedCategoryId|$guideViewportStartMs|$guideIndexRevision"
     var requestedGuideViewportIds by remember(guideViewportCacheKey) { mutableStateOf<Set<String>>(emptySet()) }
@@ -1284,6 +1290,12 @@ fun LiveTvScreen(
         val retained = LinkedHashMap(retainedIndexedGuidePrograms)
         ids.forEach(retained::remove)
         retained.putAll(indexed.programsByChannel)
+        // Re-touch the actual rendered window after each batch. The buffer is
+        // allowed to roll away as navigation advances, but currently displayed
+        // rows must remain resident even while the user holds Down/Up.
+        guideChannels.forEach { channel ->
+            retained.remove(channel.id)?.let { programs -> retained[channel.id] = programs }
+        }
         while (retained.size > RetainedIndexedGuideRows) {
             retained.entries.iterator().run {
                 if (hasNext()) {
@@ -2863,7 +2875,6 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
-                        onVisibleChannelsChanged = { ids -> visibleGuideChannelIds = ids },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
@@ -3013,7 +3024,6 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
-                        onVisibleChannelsChanged = { ids -> visibleGuideChannelIds = ids },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
