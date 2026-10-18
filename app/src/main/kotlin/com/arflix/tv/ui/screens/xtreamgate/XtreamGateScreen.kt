@@ -125,8 +125,8 @@ fun XtreamGateScreen(
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            Color(0xE60A2137),
-                            Color(0xF20A1424),
+                            Color(0x960A2137),
+                            Color(0xC40A1424),
                         ),
                         radius = 900f
                     )
@@ -367,21 +367,23 @@ internal fun GateTextField(
 private fun PosterWallBackground() {
     val posters = remember {
         listOf(
-            "https://image.tmdb.org/t/p/w342/q6y0Go1tsGEsmtFryDOJo3dEmqu.jpg",
-            "https://image.tmdb.org/t/p/w342/3bhkrj58Vtu7enYsRolD1fZdja1.jpg",
-            "https://image.tmdb.org/t/p/w342/8UlWHLMpgZm9bx6QYh0NFoq67TZ.jpg",
-            "https://image.tmdb.org/t/p/w342/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg",
-            "https://image.tmdb.org/t/p/w342/uC6TTUhPpQCmgldGyYveKRAu8JN.jpg",
-            "https://image.tmdb.org/t/p/w342/3Kblg8qOQbrxZ0p4HjaO0lyDqSM.jpg",
-            "https://image.tmdb.org/t/p/w342/8Vt6mWEReuy4Of61Lnj5Xj704m8.jpg",
-            "https://image.tmdb.org/t/p/w342/5KCVkau1HEl7ZzfPsKAPM0sMiKc.jpg",
-            "https://image.tmdb.org/t/p/w342/6t8ESsNqii0z69lU6u1063ZwnN3.jpg",
-            "https://image.tmdb.org/t/p/w342/74hLDKjD5aGYOotO6esUVaeISa2.jpg",
-            "https://image.tmdb.org/t/p/w342/5J89gAtd1r1WbAiVtYqXcJ3M3nS.jpg",
-            "https://image.tmdb.org/t/p/w342/2cal3GZ2s5UO1D8wJgY4K1v2r1I.jpg",
-            "https://image.tmdb.org/t/p/w342/7WsyChQLEftFiDOVTGkv3hFpyyt.jpg",
-            "https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg",
-            "https://image.tmdb.org/t/p/w342/4qfh0t9WlK31o3HqPdP1vP5gR5.jpg",
+            "https://image.tmdb.org/t/p/w342/q6y0Go1tsGEsmtFryDOJo3dEmqu.jpg", // Shawshank
+            "https://image.tmdb.org/t/p/w342/3bhkrj58Vtu7enYsRolD1fZdja1.jpg", // Dark Knight
+            "https://image.tmdb.org/t/p/w342/8UlWHLMpgZm9bx6QYh0NFoq67TZ.jpg", // Coco
+            "https://image.tmdb.org/t/p/w342/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg", // Lord of the Rings
+            "https://image.tmdb.org/t/p/w342/f89U3ADr1oiB1s9GkdPOEpXUk5H.jpg", // Matrix
+            "https://image.tmdb.org/t/p/w342/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg", // Inception
+            "https://image.tmdb.org/t/p/w342/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg", // Interstellar
+            "https://image.tmdb.org/t/p/w342/d5iIlFn5s0ImszYzBPb8JPIfbXD.jpg", // Pulp Fiction
+            "https://image.tmdb.org/t/p/w342/ty8TGRuvJLPUmAR1H1nRIsgwvim.jpg", // Gladiator
+            "https://image.tmdb.org/t/p/w342/9xjZS2rlVxm8SFx8kPC3aIGCOYQ.jpg", // Titanic
+            "https://image.tmdb.org/t/p/w342/wuMc08IPKEatf9rnMNXvIDxqP4W.jpg", // Harry Potter
+            "https://image.tmdb.org/t/p/w342/udDclJoHjfjb8Ekgsd4FDteOkCU.jpg", // Joker
+            "https://image.tmdb.org/t/p/w342/kyeqWdyUXW608qlYkRqosgbbJyK.jpg", // Avatar
+            "https://image.tmdb.org/t/p/w342/to0spRl1CMDvyUbOnbb4fTk3VAd.jpg", // Deadpool
+            "https://image.tmdb.org/t/p/w342/iuFNMS8U5cb6xfzi51Dbkovj7vM.jpg", // Barbie
+            "https://image.tmdb.org/t/p/w342/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg", // Oppenheimer
+            "https://image.tmdb.org/t/p/w342/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg", // Dune
         )
     }
     val columns = remember(posters) { posters.chunked(3) }
@@ -389,7 +391,7 @@ private fun PosterWallBackground() {
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .graphicsLayer(alpha = 0.48f),
+            .graphicsLayer(alpha = 0.82f),
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
     ) {
         columns.forEachIndexed { index, column ->
