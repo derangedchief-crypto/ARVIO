@@ -7,7 +7,9 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -28,6 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -36,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -56,6 +61,7 @@ import com.arflix.tv.ui.theme.Purple
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextTertiary
 import com.arflix.tv.ui.theme.appBackgroundDark
+import coil.compose.AsyncImage
 
 /**
  * Set to true to re-enable the "Skip for now" opt-out on the Xtream gate.
@@ -111,14 +117,16 @@ fun XtreamGateScreen(
                 )
             )
     ) {
+        PosterWallBackground()
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            Color(0xFF1F2937).copy(alpha = 0.25f),
-                            Color.Transparent
+                            Color(0xE60A2137),
+                            Color(0xF20A1424),
                         ),
                         radius = 900f
                     )
@@ -325,6 +333,7 @@ internal fun GateTextField(
                 color = TextPrimary,
                 fontWeight = if (isActivationCode) FontWeight.SemiBold else FontWeight.Normal,
                 letterSpacing = if (isActivationCode) 5.sp else 0.sp,
+                textAlign = if (isActivationCode) TextAlign.Center else TextAlign.Start,
             ),
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
             keyboardActions = keyboardActions,
@@ -332,14 +341,81 @@ internal fun GateTextField(
             cursorBrush = SolidColor(Cyan),
             visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
             decorationBox = { innerTextField ->
-                Box {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = if (isActivationCode) Alignment.Center else Alignment.CenterStart,
+                ) {
                     if (value.isEmpty()) {
-                        Text(text = placeholder, fontSize = 15.sp, color = TextTertiary)
+                        Text(
+                            text = placeholder,
+                            fontSize = if (isActivationCode) 20.sp else 15.sp,
+                            color = TextTertiary,
+                            textAlign = if (isActivationCode) TextAlign.Center else TextAlign.Start,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                     innerTextField()
                 }
             }
         )
+    }
+}
+
+/** A muted, resilient poster wall: artwork is decorative and login stays usable
+ * if the device is offline or any image is unavailable. */
+@Composable
+private fun PosterWallBackground() {
+    val posters = remember {
+        listOf(
+            "https://image.tmdb.org/t/p/w342/q6y0Go1tsGEsmtFryDOJo3dEmqu.jpg",
+            "https://image.tmdb.org/t/p/w342/3bhkrj58Vtu7enYsRolD1fZdja1.jpg",
+            "https://image.tmdb.org/t/p/w342/8UlWHLMpgZm9bx6QYh0NFoq67TZ.jpg",
+            "https://image.tmdb.org/t/p/w342/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg",
+            "https://image.tmdb.org/t/p/w342/uC6TTUhPpQCmgldGyYveKRAu8JN.jpg",
+            "https://image.tmdb.org/t/p/w342/3Kblg8qOQbrxZ0p4HjaO0lyDqSM.jpg",
+            "https://image.tmdb.org/t/p/w342/8Vt6mWEReuy4Of61Lnj5Xj704m8.jpg",
+            "https://image.tmdb.org/t/p/w342/5KCVkau1HEl7ZzfPsKAPM0sMiKc.jpg",
+            "https://image.tmdb.org/t/p/w342/6t8ESsNqii0z69lU6u1063ZwnN3.jpg",
+            "https://image.tmdb.org/t/p/w342/74hLDKjD5aGYOotO6esUVaeISa2.jpg",
+            "https://image.tmdb.org/t/p/w342/5J89gAtd1r1WbAiVtYqXcJ3M3nS.jpg",
+            "https://image.tmdb.org/t/p/w342/2cal3GZ2s5UO1D8wJgY4K1v2r1I.jpg",
+            "https://image.tmdb.org/t/p/w342/7WsyChQLEftFiDOVTGkv3hFpyyt.jpg",
+            "https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg",
+            "https://image.tmdb.org/t/p/w342/4qfh0t9WlK31o3HqPdP1vP5gR5.jpg",
+        )
+    }
+    val columns = remember(posters) { posters.chunked(3) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer(alpha = 0.48f),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+    ) {
+        columns.forEachIndexed { index, column ->
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .graphicsLayer(
+                        rotationZ = if (index % 2 == 0) -3f else 3f,
+                        translationY = if (index % 2 == 0) -42f else 24f,
+                    ),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+            ) {
+                column.forEach { poster ->
+                    AsyncImage(
+                        model = poster,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp)),
+                    )
+                }
+            }
+        }
     }
 }
 
