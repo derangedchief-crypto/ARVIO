@@ -1347,6 +1347,10 @@ fun LiveTvScreen(
         listOfNotNull(epgAnchorChannelId ?: selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId)
     }
     LaunchedEffect(selectedCategoryId, epgPrefetchIds, epgAnchorChannelId, state.iptvPreferencesLoaded, state.tvSessionLoaded, state.tvSession.lastChannelId, guideChannelIndexById, startupChannelApplied, playingChannelId, selectedDisplayChannelId, focusedChannelId) {
+        // The indexed snapshot already serves the guide viewport. Keep all
+        // optional network/cache prefetch off the playback path so browsing
+        // channels cannot steal CPU or bandwidth from the active stream.
+        if (playingChannelId != null) return@LaunchedEffect
         val startupReady = state.iptvPreferencesLoaded && state.tvSessionLoaded
         if (startupReady && startupChannelApplied && epgPrefetchIds.isNotEmpty()) {
             val selectedId = epgAnchorChannelId
@@ -1363,17 +1367,16 @@ fun LiveTvScreen(
             )
         }
     }
-    LaunchedEffect(playingChannelId, selectedDisplayChannelId, focusedChannelId, state.iptvPreferencesLoaded, state.tvSessionLoaded, startupChannelApplied) {
-        val ids = listOfNotNull(playingChannelId, selectedDisplayChannelId, focusedChannelId)
-            .filter { it.isNotBlank() }
-            .distinct()
-        val selectedId = playingChannelId ?: selectedDisplayChannelId ?: focusedChannelId
-        if (ids.isEmpty() || selectedId.isNullOrBlank()) return@LaunchedEffect
+    LaunchedEffect(playingChannelId, state.iptvPreferencesLoaded, state.tvSessionLoaded, startupChannelApplied) {
+        // Do not refresh multiple guide rows merely because the user moves the
+        // browse focus while video is playing. That competing SQLite/network
+        // work was enough to make streams stutter on entry-level TV hardware.
+        val selectedId = playingChannelId ?: return@LaunchedEffect
         if (state.iptvPreferencesLoaded && state.tvSessionLoaded && startupChannelApplied) {
-            System.err.println("[EPG-Current] ids=${ids.take(4)} selected=$selectedId")
+            System.err.println("[EPG-Current] playing=$selectedId")
             viewModel.refreshCurrentChannelEpg(selectedId, forceNetworkForLargeList = true)
             viewModel.prefetchVisibleCategoryEpg(
-                channelIds = ids,
+                channelIds = listOf(selectedId),
                 selectedChannelId = selectedId,
                 eagerLimit = 1,
                 backgroundLimit = 1,
@@ -1389,7 +1392,12 @@ fun LiveTvScreen(
         visibleChannels,
     ) {
         buildList {
-            listOfNotNull(epgAnchorChannelId, selectedDisplayChannelId, focusedChannelId, playingChannelId)
+            val candidateIds = if (playingChannelId != null) {
+                listOf(playingChannelId)
+            } else {
+                listOfNotNull(epgAnchorChannelId, selectedDisplayChannelId, focusedChannelId)
+            }
+            candidateIds
                 .forEach { id ->
                     val channel = visibleChannelsById[id] ?: return@forEach
                     if (channel.supportsCatchupHistory() && channel.id !in this) {

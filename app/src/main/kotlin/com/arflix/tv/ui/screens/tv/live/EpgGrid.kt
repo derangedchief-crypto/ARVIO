@@ -219,6 +219,13 @@ fun TvGuideViewport(
         }
     }
 
+    fun isRowVisible(rowIdx: Int): Boolean {
+        val visibleItems = channelListState.layoutInfo.visibleItemsInfo
+        val first = visibleItems.firstOrNull()?.index ?: return false
+        val last = visibleItems.lastOrNull()?.index ?: return false
+        return rowIdx in first..last
+    }
+
     fun requestProgramFocus(rowIdx: Int, targetIdx: Int): Boolean {
         val channel = channels.getOrNull(rowIdx) ?: return false
         val requesters = programFocusRequesters[channel.id].orEmpty()
@@ -252,6 +259,23 @@ fun TvGuideViewport(
         activeChannelFocusId = channel.id
         pendingChannelFocusId = channel.id
         onChannelFocused(channel)
+        // LazyColumn precomposes one row outside the visible bounds. Its
+        // FocusRequester can succeed while that row is still hidden, causing
+        // a second Down press before the list catches up. Reveal the target
+        // first, then give it focus.
+        if (!isRowVisible(rowIdx)) {
+            scope.launch {
+                scrollTargetIntoViewport(rowIdx)
+                repeat(4) { attempt ->
+                    val requester = channelFocusRequesters[channel.id]
+                    if (requester != null && runCatching { requester.requestFocus() }.isSuccess) {
+                        return@launch
+                    }
+                    if (attempt < 3) delay(16L)
+                }
+            }
+            return true
+        }
         channelFocusRequesters[channel.id]?.let { requester ->
             if (runCatching { requester.requestFocus() }.isSuccess) {
                 return true
