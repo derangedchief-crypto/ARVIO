@@ -2236,6 +2236,7 @@ class IptvRepository @Inject constructor(
             val xmltvJob = if (allowNetworkEpgFetch && epgCandidates.isNotEmpty() && !shouldUseCachedEpg) {
                 runCatching { epgIndex.beginRefresh(currentEpgIndexKey(config)) }
                 async {
+                    try {
                     // The worker writes the complete guide into the on-device index,
                     // but this load also needs a compact now/next slice to keep the
                     // currently rendered guide populated until its normal indexed
@@ -2332,6 +2333,12 @@ class IptvRepository @Inject constructor(
                         runCatching { epgIndex.markRefreshFailed(currentEpgIndexKey(config)) }
                     }
                     phaseB
+                    } catch (error: kotlinx.coroutines.CancellationException) {
+                        // Keep the prior generation queryable, but make this incomplete
+                        // attempt visible to the next launch so it is automatically retried.
+                        runCatching { epgIndex.markRefreshFailed(currentEpgIndexKey(config)) }
+                        throw error
+                    }
                 }
             } else {
                 null
@@ -2670,6 +2677,18 @@ class IptvRepository @Inject constructor(
     fun indexedGuideChannelCount(): Int = countIndexedGuideChannels()
 
     fun indexedGuideProgramCount(): Int = countIndexedGuidePrograms()
+
+    /** Records scheduled guide work durably, so an interrupted refresh is retried. */
+    fun markGuideRefreshPending(config: IptvConfig) {
+        runCatching { epgIndex.beginRefresh(currentEpgIndexKey(config)) }
+    }
+
+    fun hasIncompleteGuideRefresh(config: IptvConfig): Boolean = runCatching {
+        epgIndex.sourceState(currentEpgIndexKey(config))
+            ?.status
+            ?.let { it != "ready" }
+            ?: false
+    }.getOrDefault(false)
 
     // ── Paged channel access (Stage 2) ─────────────────────────────────────────
     // Backed by the SQLite channel store so the Live TV UI can page the channel
