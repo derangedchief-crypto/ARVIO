@@ -7,7 +7,9 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -28,6 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -36,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -56,6 +61,7 @@ import com.arflix.tv.ui.theme.Purple
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextTertiary
 import com.arflix.tv.ui.theme.appBackgroundDark
+import coil.compose.AsyncImage
 
 /**
  * Set to true to re-enable the "Skip for now" opt-out on the Xtream gate.
@@ -89,14 +95,13 @@ fun XtreamGateScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-    var focusedField by remember { mutableStateOf("username") }
-    val usernameFocusRequester = remember { FocusRequester() }
-    val passwordFocusRequester = remember { FocusRequester() }
+    var focusedField by remember { mutableStateOf("activation") }
+    val activationFocusRequester = remember { FocusRequester() }
     val buttonFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(Unit) {
-        usernameFocusRequester.requestFocus()
+        activationFocusRequester.requestFocus()
     }
 
     Box(
@@ -112,14 +117,16 @@ fun XtreamGateScreen(
                 )
             )
     ) {
+        PosterWallBackground()
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            Color(0xFF1F2937).copy(alpha = 0.25f),
-                            Color.Transparent
+                            Color(0x960A2137),
+                            Color(0xC40A1424),
                         ),
                         radius = 900f
                     )
@@ -136,7 +143,7 @@ fun XtreamGateScreen(
         ) {
             Column(
                 modifier = Modifier
-                    .widthIn(max = 420.dp)
+                    .widthIn(max = 460.dp)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))
                     .background(Color(0xFF151520))
@@ -144,23 +151,41 @@ fun XtreamGateScreen(
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Brush.linearGradient(listOf(Cyan, Purple, Pink)))
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "EXTREME TV",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ArcticBlack,
+                    )
+                }
+
+                Spacer(18.dp)
+
                 Text(
-                    text = "Extreme TV Network",
-                    fontSize = 22.sp,
+                    text = "Activate your TV",
+                    fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
 
-                Spacer(6.dp)
+                Spacer(10.dp)
 
                 Text(
                     text = if (SHOW_SKIP_BUTTON) {
-                        "Sign in with your Xtream account, or skip for now"
+                        "Enter the six-digit code supplied with your subscription, or skip for now."
                     } else {
-                        "Sign in with your Xtream account to continue"
+                        "Enter the six-digit code supplied with your subscription to continue."
                     },
                     fontSize = 13.sp,
-                    color = Color.White.copy(alpha = 0.6f)
+                    color = Color.White.copy(alpha = 0.64f),
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 Spacer(28.dp)
@@ -183,28 +208,11 @@ fun XtreamGateScreen(
                 }
 
                 GateTextField(
-                    value = uiState.username,
-                    onValueChange = viewModel::onUsernameChange,
-                    placeholder = "Username",
-                    imeAction = ImeAction.Next,
-                    keyboardActions = KeyboardActions(
-                        onNext = { passwordFocusRequester.requestFocus() }
-                    ),
-                    onRequestKeyboard = { keyboardController?.show() },
-                    isFocused = focusedField == "username",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(usernameFocusRequester)
-                        .onFocusChanged { if (it.isFocused) focusedField = "username" }
-                )
-
-                Spacer(16.dp)
-
-                GateTextField(
-                    value = uiState.password,
-                    onValueChange = viewModel::onPasswordChange,
-                    placeholder = "Password",
-                    isPassword = true,
+                    value = uiState.activationCode,
+                    onValueChange = viewModel::onActivationCodeChange,
+                    placeholder = "• • • • • •",
+                    keyboardType = KeyboardType.Number,
+                    isActivationCode = true,
                     imeAction = ImeAction.Done,
                     keyboardActions = KeyboardActions(
                         onDone = {
@@ -213,11 +221,11 @@ fun XtreamGateScreen(
                         }
                     ),
                     onRequestKeyboard = { keyboardController?.show() },
-                    isFocused = focusedField == "password",
+                    isFocused = focusedField == "activation",
                     modifier = Modifier
                         .fillMaxWidth()
-                        .focusRequester(passwordFocusRequester)
-                        .onFocusChanged { if (it.isFocused) focusedField = "password" }
+                        .focusRequester(activationFocusRequester)
+                        .onFocusChanged { if (it.isFocused) focusedField = "activation" }
                 )
 
                 Spacer(24.dp)
@@ -228,7 +236,7 @@ fun XtreamGateScreen(
                         viewModel.submit(onSuccess = onLoginSuccess)
                     },
                     text = when {
-                        !uiState.isSubmitting -> "Sign In"
+                        !uiState.isSubmitting -> "Activate"
                         !uiState.progressText.isNullOrBlank() -> uiState.progressText!!
                         else -> "Signing in…"
                     },
@@ -238,6 +246,14 @@ fun XtreamGateScreen(
                         .fillMaxWidth()
                         .focusRequester(buttonFocusRequester)
                         .onFocusChanged { if (it.isFocused) focusedField = "button" }
+                )
+
+                Spacer(18.dp)
+                Text(
+                    text = "Your code connects this device to your existing subscription.",
+                    fontSize = 12.sp,
+                    color = Color.White.copy(alpha = 0.42f),
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 // Skip opt-out: fully removed from the layout (no spacer, no invisible
@@ -283,6 +299,7 @@ internal fun GateTextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     onRequestKeyboard: () -> Unit = {},
     isPassword: Boolean = false,
+    isActivationCode: Boolean = false,
     isFocused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -312,9 +329,11 @@ internal fun GateTextField(
                 .fillMaxWidth()
                 .padding(horizontal = 18.dp, vertical = 16.dp),
             textStyle = TextStyle(
-                fontSize = 15.sp,
+                fontSize = if (isActivationCode) 23.sp else 15.sp,
                 color = TextPrimary,
-                fontWeight = FontWeight.Normal
+                fontWeight = if (isActivationCode) FontWeight.SemiBold else FontWeight.Normal,
+                letterSpacing = if (isActivationCode) 5.sp else 0.sp,
+                textAlign = if (isActivationCode) TextAlign.Center else TextAlign.Start,
             ),
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
             keyboardActions = keyboardActions,
@@ -322,14 +341,83 @@ internal fun GateTextField(
             cursorBrush = SolidColor(Cyan),
             visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
             decorationBox = { innerTextField ->
-                Box {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = if (isActivationCode) Alignment.Center else Alignment.CenterStart,
+                ) {
                     if (value.isEmpty()) {
-                        Text(text = placeholder, fontSize = 15.sp, color = TextTertiary)
+                        Text(
+                            text = placeholder,
+                            fontSize = if (isActivationCode) 20.sp else 15.sp,
+                            color = TextTertiary,
+                            textAlign = if (isActivationCode) TextAlign.Center else TextAlign.Start,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                     innerTextField()
                 }
             }
         )
+    }
+}
+
+/** A muted, resilient poster wall: artwork is decorative and login stays usable
+ * if the device is offline or any image is unavailable. */
+@Composable
+private fun PosterWallBackground() {
+    val posters = remember {
+        listOf(
+            "https://image.tmdb.org/t/p/w342/q6y0Go1tsGEsmtFryDOJo3dEmqu.jpg", // Shawshank
+            "https://image.tmdb.org/t/p/w342/3bhkrj58Vtu7enYsRolD1fZdja1.jpg", // Dark Knight
+            "https://image.tmdb.org/t/p/w342/8UlWHLMpgZm9bx6QYh0NFoq67TZ.jpg", // Coco
+            "https://image.tmdb.org/t/p/w342/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg", // Lord of the Rings
+            "https://image.tmdb.org/t/p/w342/f89U3ADr1oiB1s9GkdPOEpXUk5H.jpg", // Matrix
+            "https://image.tmdb.org/t/p/w342/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg", // Inception
+            "https://image.tmdb.org/t/p/w342/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg", // Interstellar
+            "https://image.tmdb.org/t/p/w342/d5iIlFn5s0ImszYzBPb8JPIfbXD.jpg", // Pulp Fiction
+            "https://image.tmdb.org/t/p/w342/ty8TGRuvJLPUmAR1H1nRIsgwvim.jpg", // Gladiator
+            "https://image.tmdb.org/t/p/w342/9xjZS2rlVxm8SFx8kPC3aIGCOYQ.jpg", // Titanic
+            "https://image.tmdb.org/t/p/w342/wuMc08IPKEatf9rnMNXvIDxqP4W.jpg", // Harry Potter
+            "https://image.tmdb.org/t/p/w342/udDclJoHjfjb8Ekgsd4FDteOkCU.jpg", // Joker
+            "https://image.tmdb.org/t/p/w342/kyeqWdyUXW608qlYkRqosgbbJyK.jpg", // Avatar
+            "https://image.tmdb.org/t/p/w342/to0spRl1CMDvyUbOnbb4fTk3VAd.jpg", // Deadpool
+            "https://image.tmdb.org/t/p/w342/iuFNMS8U5cb6xfzi51Dbkovj7vM.jpg", // Barbie
+            "https://image.tmdb.org/t/p/w342/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg", // Oppenheimer
+            "https://image.tmdb.org/t/p/w342/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg", // Dune
+        )
+    }
+    val columns = remember(posters) { posters.chunked(3) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer(alpha = 0.82f),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+    ) {
+        columns.forEachIndexed { index, column ->
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .graphicsLayer(
+                        rotationZ = if (index % 2 == 0) -3f else 3f,
+                        translationY = if (index % 2 == 0) -42f else 24f,
+                    ),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+            ) {
+                column.forEach { poster ->
+                    AsyncImage(
+                        model = poster,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp)),
+                    )
+                }
+            }
+        }
     }
 }
 

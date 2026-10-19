@@ -218,7 +218,10 @@ private fun VideoCard(
                     else -> Modifier.size(LiveDims.MiniPlayerWidth, LiveDims.MiniPlayerHeight)
                 }
             )
-            .clickable(enabled = isTouchDevice && onFullscreenClick != null) {
+            // TV remote users must be able to focus/select the player too. Leaving
+            // this touch-only let DPAD centre fall through to the guide programme
+            // behind it, opening the Watch Live/Stream Now dialog instead.
+            .clickable(enabled = onFullscreenClick != null) {
                 onFullscreenClick?.invoke()
             }
             .clip(RoundedCornerShape(LiveDims.VideoRadius))

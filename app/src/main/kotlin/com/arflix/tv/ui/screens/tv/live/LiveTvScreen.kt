@@ -6,6 +6,7 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.SystemClock
 import android.view.LayoutInflater
 import android.content.pm.ActivityInfo
 import com.arflix.tv.util.findActivity
@@ -152,7 +153,11 @@ private const val GuideViewportBucketMs = 30L * 60_000L
 // Keep the current and immediately previous guide pages warm while the next
 // indexed query is in flight. This cache is source-scoped and every queried
 // channel is replaced (including with empty data) once SQLite responds.
-private const val RetainedIndexedGuideRows = GuideMaxWindowRows * 2
+// The on-screen list is virtualized, but the local index is cheap to read in
+// batches. Keep a substantial runway around it so D-pad repeats never cause a
+// database read or guide-model rebuild on the focused row.
+private const val GuideIndexLookaheadRows = 96
+private const val RetainedIndexedGuideRows = GuideMaxWindowRows + (GuideIndexLookaheadRows * 2)
 private const val EpgGuideLookupTimeoutMs = 2_500L
 
 private fun digitForTvKeyCode(keyCode: Int): Int? = when (keyCode) {
@@ -1065,15 +1070,10 @@ fun LiveTvScreen(
         pendingFocusCommit[0] = channel.id to selectedCategoryId
         focusCommitJob[0]?.cancel()
         focusCommitJob[0] = focusCommitScope.launch {
-            // Settle window before committing focus. Each commit fans out into the
-            // EPG pipeline (per-channel HTTP fetch + JSON parse + guide merges) and a
-            // wide recomposition. At 140ms the commit fired on EVERY step of a held
-            // d-pad scroll, allocating millions of objects per sweep and dragging the
-            // heap toward the cap (measured: 2s+ frames, 273 blocking GCs in 40
-            // presses). 450ms skips the intermediate rows during continuous scrolling
-            // and only commits where the user actually stops; visible focus highlight
-            // still moves instantly (it's driven by Compose focus, not this commit).
-            delay(450L)
+            // Focus now hydrates only one indexed row, so it is safe to follow normal
+            // D-pad movement closely instead of making the user move beyond a visible
+            // page before the guide catches up.
+            delay(80L)
             val (channelId, categoryId) = pendingFocusCommit[0] ?: return@launch
             if (focusedChannelId != channelId) {
                 focusedChannelId = channelId
@@ -1245,13 +1245,34 @@ fun LiveTvScreen(
     val guideViewportEndMs = remember(guideViewportStartMs) {
         guideViewportStartMs + VisibleGuidePastWindowMs + VisibleGuideFutureWindowMs
     }
-    LaunchedEffect(guideChannels, guideViewportStartMs, guideIndexRevision) {
+    // Read a rolling runway from the full local EPG index rather than querying
+    // one newly visible row for each D-pad press. The guide stays virtualized,
+    // but fast scrolling now lands on already-hydrated programme cells.
+    val guideViewportChannelIds = remember(
+        filteredChannels,
+        normalizedGuideStart,
+        normalizedGuideEnd,
+    ) {
+        if (filteredChannels.isEmpty()) {
+            emptySet()
+        } else {
+            val beforeStart = (normalizedGuideStart - GuideIndexLookaheadRows).coerceAtLeast(0)
+            val afterEnd = (normalizedGuideEnd + GuideIndexLookaheadRows).coerceAtMost(filteredChannels.size)
+            // Add the current guide window last. If the bounded retained map
+            // needs to evict a row, lookahead goes first — never the rows the
+            // user is looking at right now.
+            buildSet {
+                filteredChannels.subList(beforeStart, normalizedGuideStart).forEach { add(it.id) }
+                filteredChannels.subList(normalizedGuideEnd, afterEnd).forEach { add(it.id) }
+                filteredChannels.subList(normalizedGuideStart, normalizedGuideEnd).forEach { add(it.id) }
+            }
+        }
+    }
+    val guideViewportCacheKey = "$selectedProviderId|$selectedCategoryId|$guideViewportStartMs|$guideIndexRevision"
+    var requestedGuideViewportIds by remember(guideViewportCacheKey) { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(guideViewportChannelIds, guideViewportCacheKey) {
         val requestId = guideViewportRequestGate.beginRequest()
-        val ids = guideChannels
-            .asSequence()
-            .map { it.id }
-            .filter { it.isNotBlank() }
-            .toSet()
+        val ids = guideViewportChannelIds - requestedGuideViewportIds
         if (ids.isEmpty()) {
             return@LaunchedEffect
         }
@@ -1260,6 +1281,7 @@ fun LiveTvScreen(
             viewModel.iptvRepository.indexedGuideViewport(ids, guideViewportStartMs, guideViewportEndMs)
         }
         if (!guideViewportRequestGate.isCurrent(requestId)) return@LaunchedEffect
+        requestedGuideViewportIds = requestedGuideViewportIds + ids
         // Do not clear old cells when switching a category, returning from the
         // player, or receiving an incremental parser revision. Replace only
         // the rows SQLite has just authoritatively answered; that preserves a
@@ -1268,6 +1290,12 @@ fun LiveTvScreen(
         val retained = LinkedHashMap(retainedIndexedGuidePrograms)
         ids.forEach(retained::remove)
         retained.putAll(indexed.programsByChannel)
+        // Re-touch the actual rendered window after each batch. The buffer is
+        // allowed to roll away as navigation advances, but currently displayed
+        // rows must remain resident even while the user holds Down/Up.
+        guideChannels.forEach { channel ->
+            retained.remove(channel.id)?.let { programs -> retained[channel.id] = programs }
+        }
         while (retained.size > RetainedIndexedGuideRows) {
             retained.entries.iterator().run {
                 if (hasNext()) {
@@ -1327,93 +1355,14 @@ fun LiveTvScreen(
         ?: selectedDisplayChannelId
         ?: focusedChannelId
         ?: playingChannelId
-    val epgPrefetchIds = remember(
-        guideChannels,
-        guideChannelIndexById,
-        selectedCategoryId,
-        epgAnchorChannelId,
-        selectedDisplayChannelId,
-        playingChannelId,
-        focusedChannelId,
-        favSet,
-        filteredChannels,
-    ) {
-        val maxPrefetch = if (selectedCategoryId == "all") 96 else 180
-        val visibleFirstRows = if (selectedCategoryId == "all") GuideVisibleFirstRowsAllChannels else GuideVisibleFirstRows
-        val selectedSeedChannelId = epgAnchorChannelId ?: selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId
-        val anchorAbsoluteIndex = selectedSeedChannelId?.let(filteredChannelIndexById::get)
-            ?: normalizedGuideStart
-        val anchorWindowIndex = (anchorAbsoluteIndex - normalizedGuideStart)
-            .takeIf { it in guideChannels.indices }
-            ?: 0
-        buildList<String> {
-            fun addChannel(channel: EnrichedChannel?) {
-                val id = channel?.id ?: return
-                if (!contains(id)) add(id)
-            }
-            fun addGuideFirst(index: Int) {
-                val channel = guideChannels.getOrNull(index) ?: return
-                if (channel.hasGuideIdentity()) addChannel(channel)
-            }
-
-            // Favorites are the user's explicit fast-start set. They should get
-            // guide priority even when the current category is "All" or a large
-            // provider group where favorites were prepended into the first window.
-            filteredChannels
-                .asSequence()
-                .filter { it.id in favSet }
-                .filter { it.id in visibleChannelsById }
-                .take(24)
-                .forEach(::addChannel)
-
-            // First paint must target the selected/focused row plus the rows visible
-            // below it. These may lack tvg-id but still have an Xtream stream
-            // id that can return direct short/full EPG data.
-            addChannel(selectedSeedChannelId?.let(visibleChannelsById::get))
-            addChannel(guideChannels.getOrNull(anchorWindowIndex))
-            var nearIndex = anchorWindowIndex + 1
-            var nearCount = 0
-            while (nearIndex < guideChannels.size && nearCount < visibleFirstRows && size < maxPrefetch) {
-                addChannel(guideChannels[nearIndex])
-                nearIndex++
-                nearCount++
-            }
-            var nearBackIndex = anchorWindowIndex - 1
-            var nearBackCount = 0
-            while (nearBackIndex >= 0 && nearBackCount < 8 && size < maxPrefetch) {
-                addChannel(guideChannels[nearBackIndex])
-                nearBackIndex--
-                nearBackCount++
-            }
-
-            var index = anchorWindowIndex + 1
-            while (index < guideChannels.size && size < maxPrefetch) {
-                addGuideFirst(index)
-                index++
-            }
-            var backIndex = anchorWindowIndex - 1
-            var backCount = 0
-            while (backIndex >= 0 && backCount < 24 && size < maxPrefetch) {
-                addGuideFirst(backIndex)
-                backIndex--
-                backCount++
-            }
-            index = 0
-            while (index < guideChannels.size && size < maxPrefetch) {
-                addGuideFirst(index)
-                index++
-            }
-            index = 0
-            while (index < guideChannels.size && size < maxPrefetch) {
-                val channel = guideChannels[index]
-                if (!channel.hasGuideIdentity()) {
-                    addChannel(channel)
-                }
-                index++
-            }
-        }
+    val epgPrefetchIds = remember(epgAnchorChannelId, selectedDisplayChannelId, focusedChannelId, playingChannelId) {
+        listOfNotNull(epgAnchorChannelId ?: selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId)
     }
     LaunchedEffect(selectedCategoryId, epgPrefetchIds, epgAnchorChannelId, state.iptvPreferencesLoaded, state.tvSessionLoaded, state.tvSession.lastChannelId, guideChannelIndexById, startupChannelApplied, playingChannelId, selectedDisplayChannelId, focusedChannelId) {
+        // The indexed snapshot already serves the guide viewport. Keep all
+        // optional network/cache prefetch off the playback path so browsing
+        // channels cannot steal CPU or bandwidth from the active stream.
+        if (playingChannelId != null) return@LaunchedEffect
         val startupReady = state.iptvPreferencesLoaded && state.tvSessionLoaded
         if (startupReady && startupChannelApplied && epgPrefetchIds.isNotEmpty()) {
             val selectedId = epgAnchorChannelId
@@ -1424,23 +1373,22 @@ fun LiveTvScreen(
             viewModel.prefetchVisibleCategoryEpg(
                 channelIds = epgPrefetchIds,
                 selectedChannelId = selectedId,
-                eagerLimit = if (selectedCategoryTotalCount > 10_000) 8 else if (selectedCategoryId == "all") 12 else 24,
-                backgroundLimit = if (selectedCategoryTotalCount > 10_000) 24 else if (selectedCategoryId == "all") 48 else 96,
+                eagerLimit = 1,
+                backgroundLimit = 1,
                 allowFocusedNetworkRefresh = true,
             )
         }
     }
-    LaunchedEffect(playingChannelId, selectedDisplayChannelId, focusedChannelId, state.iptvPreferencesLoaded, state.tvSessionLoaded, startupChannelApplied) {
-        val ids = listOfNotNull(playingChannelId, selectedDisplayChannelId, focusedChannelId)
-            .filter { it.isNotBlank() }
-            .distinct()
-        val selectedId = playingChannelId ?: selectedDisplayChannelId ?: focusedChannelId
-        if (ids.isEmpty() || selectedId.isNullOrBlank()) return@LaunchedEffect
+    LaunchedEffect(playingChannelId, state.iptvPreferencesLoaded, state.tvSessionLoaded, startupChannelApplied) {
+        // Do not refresh multiple guide rows merely because the user moves the
+        // browse focus while video is playing. That competing SQLite/network
+        // work was enough to make streams stutter on entry-level TV hardware.
+        val selectedId = playingChannelId ?: return@LaunchedEffect
         if (state.iptvPreferencesLoaded && state.tvSessionLoaded && startupChannelApplied) {
-            System.err.println("[EPG-Current] ids=${ids.take(4)} selected=$selectedId")
+            System.err.println("[EPG-Current] playing=$selectedId")
             viewModel.refreshCurrentChannelEpg(selectedId, forceNetworkForLargeList = true)
             viewModel.prefetchVisibleCategoryEpg(
-                channelIds = ids,
+                channelIds = listOf(selectedId),
                 selectedChannelId = selectedId,
                 eagerLimit = 1,
                 backgroundLimit = 1,
@@ -1456,7 +1404,12 @@ fun LiveTvScreen(
         visibleChannels,
     ) {
         buildList {
-            listOfNotNull(epgAnchorChannelId, selectedDisplayChannelId, focusedChannelId, playingChannelId)
+            val candidateIds = if (playingChannelId != null) {
+                listOf(playingChannelId)
+            } else {
+                listOfNotNull(epgAnchorChannelId, selectedDisplayChannelId, focusedChannelId)
+            }
+            candidateIds
                 .forEach { id ->
                     val channel = visibleChannelsById[id] ?: return@forEach
                     if (channel.supportsCatchupHistory() && channel.id !in this) {
@@ -1969,6 +1922,13 @@ fun LiveTvScreen(
 
     fun selectChannel(channel: EnrichedChannel, currentProgram: IptvProgram? = null) {
         val sameChannel = isSamePlayingChannel(channel)
+        // Selecting the channel that is already playing is the TV-remote
+        // fullscreen gesture. Do not send it through the optional VOD lookup:
+        // that lookup can open the Watch Live / Stream Now dialog instead.
+        if (sameChannel) {
+            playLiveFullscreen(channel)
+            return
+        }
         when (
             channelRowInteractionAction(
                 isSamePlayingChannel = sameChannel,
@@ -2234,6 +2194,8 @@ fun LiveTvScreen(
     var lastPreparedHeaders by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var lastPreparedCatchupOffsetMs by remember { mutableLongStateOf(-1L) }
     var playerRetryCount by remember { mutableIntStateOf(0) }
+    var retryInFlight by remember { mutableStateOf(false) }
+    var lastPlaybackReadyAtMs by remember { mutableLongStateOf(0L) }
     var playbackDiagnostic by remember { mutableStateOf<PlaybackDiagnostic?>(null) }
 
     fun prepareStream(
@@ -2303,7 +2265,11 @@ fun LiveTvScreen(
         lastPreparedIsHls = isHls
         lastPreparedHeaders = headers
         lastPreparedCatchupOffsetMs = if (playingCatchupProgram != null) catchupUrlAnchorOffsetMs else -1L
-        if (resetRetry) playerRetryCount = 0
+        if (resetRetry) {
+            playerRetryCount = 0
+            retryInFlight = false
+            lastPlaybackReadyAtMs = 0L
+        }
         if (resetRetry) {
             playbackDiagnostic = PlaybackDiagnostic(
                 title = if (playingCatchupProgram != null && initialPositionMs > 0L) context.getString(R.string.live_diag_seeking_catchup) else context.getString(R.string.live_diag_starting_stream),
@@ -2511,6 +2477,7 @@ fun LiveTvScreen(
                 if (playbackState == Player.STATE_READY) {
                     playbackDiagnostic = null
                     playerIsBuffering = false
+                    lastPlaybackReadyAtMs = SystemClock.elapsedRealtime()
                 }
             }
 
@@ -2526,6 +2493,18 @@ fun LiveTvScreen(
                 playerIsBuffering = false
                 val prepared = lastPreparedStreamUrl ?: return
                 val preparedIsHls = lastPreparedIsHls
+                // ExoPlayer can report more than one error callback for the same
+                // failed preparation. Never let those callbacks queue parallel
+                // decoder teardowns/rebuilds; that is especially destructive on
+                // low-memory TV hardware and makes an otherwise playing stream
+                // stutter until the old six-retry loop eventually freezes it.
+                if (retryInFlight) return
+                val now = SystemClock.elapsedRealtime()
+                if (lastPlaybackReadyAtMs > 0L && now - lastPlaybackReadyAtMs >= 15_000L) {
+                    // A stream that ran cleanly for a while gets one fresh recovery
+                    // opportunity for a later network interruption.
+                    playerRetryCount = 0
+                }
                 val nextAttempt = playerRetryCount + 1
                 playerRetryCount = nextAttempt
                 val retryChannel = playingChannel?.source
@@ -2542,14 +2521,10 @@ fun LiveTvScreen(
                 val maxRetryCount = if (retryProgram != null) {
                     (catchupCandidateCount - 1).coerceAtLeast(0).coerceAtMost(2)
                 } else {
-                    // Was 3 (retry window ~3.5s of delay, ~5s observed end-to-end).
-                    // Real-world IPTV glitches (a momentary unrecognized-container
-                    // error from the origin, transient network blip, etc.) can
-                    // outlast that — giving up right as the glitch would likely
-                    // have cleared on its own reads to the user as a permanent
-                    // freeze. Extending to 6 roughly doubles the window before
-                    // surfacing a real error, without retrying forever.
-                    6
+                    // Live sources receive a single controlled recovery. Repeated
+                    // full decoder rebuilds made healthy streams choppy and then
+                    // left the player frozen after six failed attempts.
+                    1
                 }
                 if (nextAttempt > maxRetryCount) {
                     playbackDiagnostic = PlaybackDiagnostic(
@@ -2566,6 +2541,7 @@ fun LiveTvScreen(
                     return
                 }
                 val retryHeaders = retryChannel?.requestHeaders ?: lastPreparedHeaders
+                retryInFlight = true
                 coroutineScope.launch {
                     delay(350L * nextAttempt)
                     val retryTarget = runCatching {
@@ -2601,6 +2577,7 @@ fun LiveTvScreen(
                         detail = "Attempt $nextAttempt/$maxRetryCount after ${classifyPlaybackError(error)}",
                         severity = PlaybackDiagnosticSeverity.Warning,
                     )
+                    retryInFlight = false
                     prepareStream(
                         stream = retryTarget.url,
                         isHls = retryTarget.isHls,

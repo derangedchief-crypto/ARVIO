@@ -1,0 +1,22 @@
+[Unit]
+Description=Extreme IPTV daily full-guide worker
+After=network.target iptv-activation-worker.service
+
+[Service]
+Type=simple
+User=epgworker
+Group=epgworker
+WorkingDirectory=/opt/iptv-epg-worker
+EnvironmentFile=/opt/iptv-activation-worker/.env
+Environment=EPG_DATA_DIR=/var/lib/iptv-epg-worker
+Environment=EPG_XMLTV_HOST=https://tv.extremeiptv.net
+ExecStart=/opt/iptv-epg-worker/venv/bin/uvicorn main:app --host 127.0.0.1 --port 9093 --workers 1
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/iptv-epg-worker
+
+[Install]
+WantedBy=multi-user.target

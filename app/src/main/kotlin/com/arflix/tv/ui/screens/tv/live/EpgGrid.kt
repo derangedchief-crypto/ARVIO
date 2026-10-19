@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -135,13 +136,6 @@ fun TvGuideViewport(
             channels.forEachIndexed { index, channel -> put(channel.id, index) }
         }
     }
-    val channelWindowIdentity = remember(channels) {
-        listOf(
-            channels.size.toString(),
-            channels.firstOrNull()?.id.orEmpty(),
-            channels.lastOrNull()?.id.orEmpty(),
-        ).joinToString("|")
-    }
     val selectedChannel = selectedChannelId?.let { id -> channelIndexById[id]?.let { index -> channels.getOrNull(index) } }
     val safeTotalChannelCount = totalChannelCount.coerceAtLeast(channels.size)
     fun requestMoreRowsIfNeeded(rowIdx: Int) {
@@ -170,6 +164,11 @@ fun TvGuideViewport(
         (((windowEndMillis - windowStartMillis) / 60_000L) / 30L).toInt().coerceAtLeast(1)
     }
     val slots = remember(windowStartMillis, slotCount) { buildHalfHourSlots(windowStartMillis, slotCount) }
+    val hScroll = rememberScrollState()
+    val channelListState = rememberLazyListState()
+    // The LazyColumn handles visual row virtualization. Its backing model must
+    // remain complete because program focus/navigation can request a row before
+    // it has entered the visible-layout window.
     val viewportModel = remember(channels, indexedPrograms, fallbackNowNext, windowStartMillis, windowEndMillis) {
         buildTvGuideViewportModel(
             channelIds = channels.map { it.id },
@@ -180,15 +179,13 @@ fun TvGuideViewport(
         )
     }
 
-    // Shared horizontal scroll state between header and body rows.
-    val hScroll = rememberScrollState()
-    // A single LazyListState handles vertical scrolling for both channels and EPG.
-    val channelListState = rememberLazyListState()
     var didPositionInitialSelection by remember(channels) { mutableStateOf(false) }
     var activeChannelFocusId by remember(channels) { mutableStateOf(selectedChannelId) }
     var pendingChannelFocusId by remember(channels) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(scrollResetKey, channelWindowIdentity) {
+    // Appending/prepending a page of backing channels must not reset the visible
+    // LazyColumn; crossing the viewport edge is not a full guide reset.
+    LaunchedEffect(scrollResetKey) {
         if (channels.isEmpty()) return@LaunchedEffect
         channelListState.scrollToItem(0)
         activeChannelFocusId = selectedChannelId
@@ -199,13 +196,42 @@ fun TvGuideViewport(
     }
 
     val scope = rememberCoroutineScope()
+    suspend fun scrollTargetIntoViewport(rowIdx: Int) {
+        val visibleItems = channelListState.layoutInfo.visibleItemsInfo
+        val firstVisible = visibleItems.firstOrNull()?.index
+        val lastVisible = visibleItems.lastOrNull()?.index
+        if (firstVisible == null || lastVisible == null) {
+            channelListState.scrollToItem(rowIdx)
+            return
+        }
+        // scrollToItem(rowIdx) pins the target at the top and replaces the
+        // entire six-row TV viewport. Move only the distance needed to reveal
+        // the target so one Down/Up press produces one new channel row.
+        val rowDelta = when {
+            rowIdx > lastVisible -> rowIdx - lastVisible
+            rowIdx < firstVisible -> rowIdx - firstVisible
+            else -> 0
+        }
+        if (rowDelta != 0) {
+            val pixels = with(density) { rowHeight.toPx() }
+            channelListState.scrollBy(rowDelta * pixels)
+        }
+    }
+
+    fun isRowVisible(rowIdx: Int): Boolean {
+        val visibleItems = channelListState.layoutInfo.visibleItemsInfo
+        val first = visibleItems.firstOrNull()?.index ?: return false
+        val last = visibleItems.lastOrNull()?.index ?: return false
+        return rowIdx in first..last
+    }
+
     fun requestProgramFocus(rowIdx: Int, targetIdx: Int): Boolean {
         val channel = channels.getOrNull(rowIdx) ?: return false
         val requesters = programFocusRequesters[channel.id].orEmpty()
         if (requesters.isEmpty()) return false
         val safeTargetIdx = targetIdx.coerceIn(0, requesters.lastIndex)
         scope.launch {
-            channelListState.scrollToItem(rowIdx)
+            scrollTargetIntoViewport(rowIdx)
             runCatching { requesters[safeTargetIdx].requestFocus() }
         }
         return true
@@ -232,13 +258,30 @@ fun TvGuideViewport(
         activeChannelFocusId = channel.id
         pendingChannelFocusId = channel.id
         onChannelFocused(channel)
+        // LazyColumn precomposes one row outside the visible bounds. Its
+        // FocusRequester can succeed while that row is still hidden, causing
+        // a second Down press before the list catches up. Reveal the target
+        // first, then give it focus.
+        if (!isRowVisible(rowIdx)) {
+            scope.launch {
+                scrollTargetIntoViewport(rowIdx)
+                repeat(4) { attempt ->
+                    val requester = channelFocusRequesters[channel.id]
+                    if (requester != null && runCatching { requester.requestFocus() }.isSuccess) {
+                        return@launch
+                    }
+                    if (attempt < 3) delay(16L)
+                }
+            }
+            return true
+        }
         channelFocusRequesters[channel.id]?.let { requester ->
             if (runCatching { requester.requestFocus() }.isSuccess) {
                 return true
             }
         }
         scope.launch {
-            channelListState.scrollToItem(rowIdx)
+            scrollTargetIntoViewport(rowIdx)
             delay(16L)
             repeat(4) { attempt ->
                 val requester = channelFocusRequesters[channel.id] ?: when {
@@ -278,7 +321,7 @@ fun TvGuideViewport(
     // from outside (e.g. search result picked). Uses a keyed LaunchedEffect
     // on both selection and channel list identity so a late-arriving list
     // still lands on the right row.
-    LaunchedEffect(selectedChannelId, channelWindowIdentity) {
+    LaunchedEffect(selectedChannelId, scrollResetKey) {
         if (didPositionInitialSelection) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channelIndexById[id] ?: return@LaunchedEffect
@@ -287,7 +330,7 @@ fun TvGuideViewport(
     }
 
     var handledSelectedFocusSignal by remember { mutableIntStateOf(0) }
-    LaunchedEffect(focusSelectedChannelSignal, selectedChannelId, channelWindowIdentity) {
+    LaunchedEffect(focusSelectedChannelSignal, selectedChannelId, scrollResetKey) {
         if (focusSelectedChannelSignal == 0) return@LaunchedEffect
         if (handledSelectedFocusSignal == focusSelectedChannelSignal) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect
@@ -319,7 +362,7 @@ fun TvGuideViewport(
     }
 
     var handledEpgFocusSignal by remember { mutableIntStateOf(0) }
-    LaunchedEffect(focusEpgSignal, selectedChannelId, channelWindowIdentity, windowStartMillis) {
+    LaunchedEffect(focusEpgSignal, selectedChannelId, scrollResetKey, windowStartMillis) {
         if (focusEpgSignal == 0) return@LaunchedEffect
         if (handledEpgFocusSignal == focusEpgSignal) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect

@@ -1,6 +1,7 @@
 package com.arflix.tv.data.repository
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.os.Process
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -2235,6 +2236,15 @@ class IptvRepository @Inject constructor(
             val xmltvJob = if (allowNetworkEpgFetch && epgCandidates.isNotEmpty() && !shouldUseCachedEpg) {
                 runCatching { epgIndex.beginRefresh(currentEpgIndexKey(config)) }
                 async {
+                    try {
+                    // The worker writes the complete guide into the on-device index,
+                    // but this load also needs a compact now/next slice to keep the
+                    // currently rendered guide populated until its normal indexed
+                    // window reads take over. Returning an empty map here replaced
+                    // a working guide with blank cells after refresh.
+                    importDailyWorkerGuide(config, channels)
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { return@async it }
                     val phaseB = ConcurrentHashMap(phaseANowNext)
                     var bestCoverage = epgCoverageRatio(channels, phaseB)
                     var resolved = false
@@ -2323,6 +2333,12 @@ class IptvRepository @Inject constructor(
                         runCatching { epgIndex.markRefreshFailed(currentEpgIndexKey(config)) }
                     }
                     phaseB
+                    } catch (error: kotlinx.coroutines.CancellationException) {
+                        // Keep the prior generation queryable, but make this incomplete
+                        // attempt visible to the next launch so it is automatically retried.
+                        runCatching { epgIndex.markRefreshFailed(currentEpgIndexKey(config)) }
+                        throw error
+                    }
                 }
             } else {
                 null
@@ -2661,6 +2677,18 @@ class IptvRepository @Inject constructor(
     fun indexedGuideChannelCount(): Int = countIndexedGuideChannels()
 
     fun indexedGuideProgramCount(): Int = countIndexedGuidePrograms()
+
+    /** Records scheduled guide work durably, so an interrupted refresh is retried. */
+    fun markGuideRefreshPending(config: IptvConfig) {
+        runCatching { epgIndex.beginRefresh(currentEpgIndexKey(config)) }
+    }
+
+    fun hasIncompleteGuideRefresh(config: IptvConfig): Boolean = runCatching {
+        epgIndex.sourceState(currentEpgIndexKey(config))
+            ?.status
+            ?.let { it != "ready" }
+            ?: false
+    }.getOrDefault(false)
 
     // ── Paged channel access (Stage 2) ─────────────────────────────────────────
     // Backed by the SQLite channel store so the Live TV UI can page the channel
@@ -3083,6 +3111,47 @@ class IptvRepository @Inject constructor(
         }.onFailure { error ->
             System.err.println("[EPG-Index] Failed to replace guide index: ${error.message}")
         }
+    }
+
+    private suspend fun importDailyWorkerGuide(
+        config: IptvConfig,
+        channels: List<IptvChannel>
+    ): Map<String, IptvNowNext> = withContext(Dispatchers.IO) {
+        if (channels.isEmpty()) return@withContext emptyMap()
+        val file = File.createTempFile("daily_epg_", ".sqlite", context.cacheDir)
+        try {
+            iptvHttpClient.newCall(Request.Builder().url(DAILY_GUIDE_URL).build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyMap()
+                GZIPInputStream(response.body?.byteStream() ?: return@withContext emptyMap()).use { input -> file.outputStream().use(input::copyTo) }
+            }
+            SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+                val names = LinkedHashMap<String, MutableSet<String>>()
+                db.rawQuery("SELECT channel_id, display_name FROM channels", null).use { c -> while (c.moveToNext()) names.getOrPut(c.getString(0)) { linkedSetOf() }.add(c.getString(1).orEmpty()) }
+                val lookup = buildChannelKeyLookup(channels)
+                val imported = LinkedHashMap<String, MutableList<IptvProgram>>()
+                names.forEach { (xmlId, _) ->
+                    val matched = resolveXmlTvChannels(xmlId, names, lookup)
+                    if (matched.isEmpty()) return@forEach
+                    db.rawQuery("SELECT start_ms,end_ms,title,description FROM programmes WHERE channel_id=? ORDER BY start_ms", arrayOf(xmlId)).use { c ->
+                        val rows = generateSequence { if (c.moveToNext()) IptvProgram(c.getString(2), c.getString(3), c.getLong(0), c.getLong(1)) else null }.toList()
+                        matched.forEach { channel -> imported.getOrPut(channel.id) { mutableListOf() }.addAll(rows) }
+                    }
+                }
+                val guide = imported.mapValues { (_, rows) -> IptvNowNext(upcoming = rows.distinctBy { "${it.startUtcMillis}|${it.endUtcMillis}|${it.title}" }) }
+                if (guide.isEmpty()) return@withContext emptyMap()
+                persistEpgIndexAll(config, guide)
+                // Return the compact 48-hour index view, not the entire imported
+                // XMLTV payload. The full guide remains in SQLite and is queried by
+                // visible guide windows as the user browses.
+                epgIndex.loadNowNext(
+                    sourceKey = currentEpgIndexKey(config),
+                    channelIds = channels.mapTo(LinkedHashSet()) { it.id },
+                )
+            }
+        } catch (error: Exception) {
+            System.err.println("[EPG-Worker] Daily guide import failed: ${error.message}")
+            emptyMap()
+        } finally { file.delete() }
     }
 
     private fun persistEpgIndexChannels(
@@ -9596,6 +9665,7 @@ class IptvRepository @Inject constructor(
         const val IncrementalEpgCommitProgramCount = 1_024
         val PARTIAL_PAGED_CACHE_REPAIR_COUNTS = setOf(144, 240)
         const val IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
+        const val DAILY_GUIDE_URL = "https://activationworker.extremeiptv.net/epg/full.sqlite.gz"
         const val BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
         val BRACKET_CONTENT_REGEX = Regex("""\[[^\]]*]""")

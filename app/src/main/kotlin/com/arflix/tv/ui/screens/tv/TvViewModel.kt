@@ -947,14 +947,20 @@ class TvViewModel @Inject constructor(
         // streams in bounded batches — see fetchXtreamFullEpg — so it can't OOM.)
         if (active) {
             if (pauseEpgBackfillDuringPlayback) {
-                deferredCompleteEpgBackfillJob?.cancel()
-                deferredCompleteEpgBackfillJob = null
-                if (completeEpgBackfillJob?.isActive == true) {
-                    deferredCompleteEpgBackfill = true
-                    lastCompleteEpgBackfillKey = null
-                    System.err.println("[EPG-Complete] Pausing full guide backfill because live playback started")
-                    completeEpgBackfillJob?.cancel()
-                    setEpgBackfillInProgress(false)
+                val hasDurableGuide = hasAnyEpgData(_uiState.value.snapshot) ||
+                    runCatching { iptvRepository.indexedGuideProgramCount() > 0 }.getOrDefault(false)
+                if (hasDurableGuide) {
+                    deferredCompleteEpgBackfillJob?.cancel()
+                    deferredCompleteEpgBackfillJob = null
+                    if (completeEpgBackfillJob?.isActive == true) {
+                        deferredCompleteEpgBackfill = true
+                        lastCompleteEpgBackfillKey = null
+                        System.err.println("[EPG-Complete] Pausing full guide backfill because live playback started")
+                        completeEpgBackfillJob?.cancel()
+                        setEpgBackfillInProgress(false)
+                    }
+                } else {
+                    System.err.println("[EPG-Complete] Keeping initial guide bootstrap alive during playback")
                 }
             }
         } else {
@@ -1240,8 +1246,17 @@ class TvViewModel @Inject constructor(
             return
         }
         if (pauseEpgBackfillDuringPlayback && liveTvPlaybackActive) {
-            deferCompleteEpgBackfill(priorityChannelIds)
-            return
+            // Once a durable index exists, playback wins and the refresh can
+            // resume on idle. On a first install/failed import there is no
+            // fallback guide at all, so do not repeatedly defer into a blank
+            // TV page just because playback starts quickly after launch.
+            val hasDurableGuide = hasAnyEpgData(state.snapshot) ||
+                runCatching { iptvRepository.indexedGuideProgramCount() > 0 }.getOrDefault(false)
+            if (hasDurableGuide) {
+                deferCompleteEpgBackfill(priorityChannelIds)
+                return
+            }
+            System.err.println("[EPG-Complete] No durable guide exists; continuing bootstrap during playback")
         }
         // XMLTV may be declared in the M3U's #EXTM3U header rather than in the
         // saved settings. That source is discovered only while loadSnapshot()
@@ -1272,8 +1287,13 @@ class TvViewModel @Inject constructor(
         }
         val hasGuideData = hasAnyEpgData(state.snapshot)
         val ageMs = iptvRepository.cachedEpgAgeMs()
+        // A process kill/navigation cancellation is persisted by the index as
+        // stale/refreshing. Never let an old cache age or partial coverage hide
+        // that state: the next ViewModel automatically resumes the daily import.
+        val interruptedGuideRefresh = iptvRepository.hasIncompleteGuideRefresh(state.config)
         if (
             !force &&
+            !interruptedGuideRefresh &&
             hasGuideData &&
             ageMs < 24 * 60 * 60_000L &&
             (!largeList || indexedCoverage >= LargeListCompleteGuideCoverageTarget)
@@ -1285,7 +1305,7 @@ class TvViewModel @Inject constructor(
             )
             return
         }
-        if (!force && largeList && hasGuideData && indexedCoverage >= LargeListCompleteGuideCoverageTarget) {
+        if (!force && !interruptedGuideRefresh && largeList && hasGuideData && indexedCoverage >= LargeListCompleteGuideCoverageTarget) {
             completeEpgBackfillJob?.cancel()
             completeEpgBackfillJob = null
             setEpgBackfillInProgress(false)
@@ -1293,7 +1313,7 @@ class TvViewModel @Inject constructor(
         }
 
         val coverage = epgCoverageRatio(state.snapshot)
-        val cacheLooksComplete = if (largeList) {
+        val cacheLooksComplete = !interruptedGuideRefresh && if (largeList) {
             indexedCoverage >= LargeListCompleteGuideCoverageTarget && ageMs < 24 * 60 * 60_000L
         } else {
             coverage >= 0.98f && ageMs < 6 * 60 * 60_000L
@@ -1317,6 +1337,11 @@ class TvViewModel @Inject constructor(
         }
         if (!force && backfillKey == lastCompleteEpgBackfillKey) return
         lastCompleteEpgBackfillKey = backfillKey
+
+        // Mark before the idle delay, not once parsing starts. If the app is
+        // closed during that delay, the next launch knows that guide bootstrap
+        // did not finish and will restart it without requiring Settings > Refresh.
+        iptvRepository.markGuideRefreshPending(state.config)
 
         if (largeList) {
             System.err.println(
