@@ -40,8 +40,8 @@ android {
         // longer receive this distribution.
         minSdk = 26
         targetSdk = 36
-        versionCode = 392
-        versionName = "2.0.076"
+        versionCode = 393
+        versionName = "2.0.077"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("String", "UPDATE_RELEASE_TAG", "\"\"")
@@ -432,12 +432,17 @@ dependencies {
     // Supabase (optional - for cloud sync)
     implementation("io.github.jan-tennert.supabase:postgrest-kt:2.0.4")
     implementation("io.github.jan-tennert.supabase:gotrue-kt:2.0.4")
-    implementation("io.ktor:ktor-client-android:2.3.7")
+    // 2.3.12 fixes Events.subscribe calling the coroutines-internal
+    // LockFreeLinkedListHead.addLast method removed in coroutines 1.9+.
+    // Keep the client/server family aligned on the latest 2.3 patch so the
+    // Telegram proxy and Supabase can coexist with OwnTV's 1.11 runtime.
+    implementation(platform("io.ktor:ktor-bom:2.3.13"))
+    implementation("io.ktor:ktor-client-android:2.3.13")
     // Ktor server modules used by Telegram streaming proxy
-    implementation("io.ktor:ktor-server-core:2.3.7")
-    implementation("io.ktor:ktor-server-cio:2.3.7")
-    implementation("io.ktor:ktor-server-call-logging:2.3.7")
-    implementation("io.ktor:ktor-server-host-common:2.3.7")
+    implementation("io.ktor:ktor-server-core:2.3.13")
+    implementation("io.ktor:ktor-server-cio:2.3.13")
+    implementation("io.ktor:ktor-server-call-logging:2.3.13")
+    implementation("io.ktor:ktor-server-host-common:2.3.13")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")

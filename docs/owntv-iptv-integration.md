@@ -65,8 +65,40 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Version code remains `391`. Version name is `2.0.075`, following the actual
+Recovery version code is `393`. Version name is `2.0.077`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
 See `THIRD_PARTY_NOTICES.md` for upstream attribution and GPL requirements.
+
+## Startup regression in 2.0.076 / 392
+
+The published build crashed before the UI opened. A new Robolectric regression
+test using ARVIO's actual `ArflixApplication` reproduced this dependency failure:
+
+```
+NoSuchMethodError: kotlinx.coroutines.internal.LockFreeLinkedListHead.addLast
+  at io.ktor.events.Events.subscribe
+  at io.ktor.server.engine.BaseApplicationEngine.<init>
+  at TelegramStreamingProxy.start
+  at TelegramRepository.<init>
+  at Hilt_ArflixApplication.onCreate
+```
+
+The old Ktor 2.3.7 events implementation calls a coroutines-internal method
+removed in coroutines 1.9+. OwnTV's runtime alignment to coroutines 1.11 exposed
+that incompatibility in ARVIO's eagerly initialized Telegram streaming proxy.
+The previous isolated OwnTV graph test did not exercise this startup path.
+
+Ktor fixed this exact failure in 2.3.12 (KTOR-7054). The recovery aligns Ktor's
+client/server modules with the 2.3.13 BOM, preserving the 2.x API used by ARVIO
+and Supabase while keeping the coroutines version required by OwnTV. The real
+application test fails on 2.3.7 and passes on 2.3.13. Recovery validation includes
+internal-test Kotlin compilation and 28 targeted tests: zero failures/errors/skips.
+
+Reference: https://ktor.io/changelog/2.3/
+
+The headless emulator could not complete a boot without accessible KVM in this
+environment and was stopped. No successful Android 16 device launch is claimed.
+The reproduced failure and fix above are from the real-application Robolectric
+startup test, not an emulator crash log or a crash report from the user's phone.
