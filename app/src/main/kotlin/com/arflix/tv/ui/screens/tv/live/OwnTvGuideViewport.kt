@@ -159,7 +159,7 @@ fun TvGuideViewport(
                     tick += 1_800_000L
                 }
                 val nowX = (clockTickMillis - viewStart) / 60_000f * pixelsPerMinute
-                if (nowX in 0f..size.width) drawLine(Color.Cyan, Offset(nowX, 0f), Offset(nowX, size.height), 2f)
+                if (nowX in 0f..size.width) drawLine(TvStageStyle.Accent, Offset(nowX, 0f), Offset(nowX, size.height), 2f)
             }
         }
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
@@ -193,7 +193,7 @@ fun TvGuideViewport(
                 }
                 Row(Modifier.fillMaxWidth().height(rowHeight)) {
                     Box(Modifier.width(columnWidth)) {
-                        ChannelRow(channel = channel, clockTickMillis = clockTickMillis,
+                        OwnTvChannelLabel(channel = channel, clockTickMillis = clockTickMillis,
                             nowNext = channelNowNext[channel.id], isActive = channel.id == selectedChannelId,
                             isFavorite = channel.id in favorites, onClick = { onChannelSelect(channel) },
                             onFavoriteToggle = { onChannelFavoriteToggle(channel.id) },
@@ -263,7 +263,7 @@ private fun OwnTvProgrammeStrip(
             val gapEnd = programmes.firstOrNull { it.startMs > focusTime }?.startMs ?: (viewStart + 8 * 3_600_000L)
             val left = ((gapStart - viewStart) / 60_000f * pixelsPerMinute).coerceIn(0f, size.width)
             val right = ((gapEnd - viewStart) / 60_000f * pixelsPerMinute).coerceIn(0f, size.width)
-            if (right > left) drawRoundRect(Color(0xFF007F8F), Offset(left, 2f),
+            if (right > left) drawRoundRect(Color(0xFF51428F), Offset(left, 2f),
                 Size(right - left, size.height - 4), CornerRadius(8f))
         }
         programmes.forEach { programme ->
@@ -279,7 +279,7 @@ private fun OwnTvProgrammeStrip(
             val live = now >= programme.startMs && now < until
             val left = maxOf(x, 0f)
             val right = minOf(x + width, size.width)
-            drawRoundRect(when { selected -> Color(0xFF007F8F); live -> Color(0xFF253846); else -> Color(0xFF17212B) },
+            drawRoundRect(when { selected -> Color(0xFF51428F); live -> Color(0xFF30314B); else -> TvStageStyle.Surface },
                 Offset(left, 2f), Size(right - left, size.height - 4), CornerRadius(8f))
             val textWidth = (right - left - 16).toInt()
             if (textWidth > 0) {
@@ -293,6 +293,6 @@ private fun OwnTvProgrammeStrip(
         }
         if (!drawn) drawText(measurer.measure(emptyLabel, timeStyle), topLeft = Offset(12f, 12f))
         val nowX = (now - viewStart) / 60_000f * pixelsPerMinute
-        if (nowX in 0f..size.width) drawLine(Color.Cyan, Offset(nowX, 0f), Offset(nowX, size.height), 2f)
+        if (nowX in 0f..size.width) drawLine(TvStageStyle.Accent, Offset(nowX, 0f), Offset(nowX, size.height), 2f)
     }
 }

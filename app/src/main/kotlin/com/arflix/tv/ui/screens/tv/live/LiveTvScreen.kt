@@ -2817,7 +2817,7 @@ fun LiveTvScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(LiveColors.Bg)
+            .background(TvStageStyle.Background)
             .then(
                 if (!isTouchDevice) {
                     Modifier.onPreviewKeyEvent { event ->
@@ -2918,7 +2918,7 @@ fun LiveTvScreen(
                         .padding(top = contentTopPadding),
                 ) {
                     if (playlistCategorySections.isEmpty()) {
-                        ProviderSelector(
+                        OwnTvProviderBar(
                             providers = providerFilters,
                             selectedId = selectedProviderId,
                             onSelect = { id ->
@@ -2932,7 +2932,7 @@ fun LiveTvScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    MiniPlayerRow(
+                    OwnTvPreviewStage(
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
                         nowNext = currentNowNext,
@@ -2947,7 +2947,7 @@ fun LiveTvScreen(
                         onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    TouchCategoryRail(
+                    OwnTvCategorySheetBar(
                         tree = visibleEnrichedState.value.tree,
                         selectedId = selectedCategoryId,
                         playlistSections = playlistCategorySections,
@@ -2963,6 +2963,7 @@ fun LiveTvScreen(
                         percent = state.epgBackfillProgress,
                         message = visibleGuideLoadMessage,
                     )
+                    OwnTvGuideHeading(selectedCategoryTotalCount)
                     TvGuideViewport(
                         channels = guideChannels,
                         channelWindowOffset = normalizedGuideStart,
@@ -3010,7 +3011,7 @@ fun LiveTvScreen(
             } else Row(
                 modifier = Modifier.fillMaxSize(),
             ) {
-                CategorySidebar(
+                OwnTvCategoryPanel(
                     tree = visibleEnrichedState.value.tree,
                     selectedId = selectedCategoryId,
                     playlistSections = playlistCategorySections,
@@ -3074,7 +3075,7 @@ fun LiveTvScreen(
                         .padding(top = contentTopPadding),
                 ) {
                     if (playlistCategorySections.isEmpty()) {
-                        ProviderSelector(
+                        OwnTvProviderBar(
                             providers = providerFilters,
                             selectedId = selectedProviderId,
                             onSelect = { id ->
@@ -3094,7 +3095,7 @@ fun LiveTvScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    MiniPlayerRow(
+                    OwnTvPreviewStage(
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
                         nowNext = currentNowNext,
@@ -3113,6 +3114,7 @@ fun LiveTvScreen(
                         percent = state.epgBackfillProgress,
                         message = visibleGuideLoadMessage,
                     )
+                    OwnTvGuideHeading(selectedCategoryTotalCount)
                     TvGuideViewport(
                         channels = guideChannels,
                         channelWindowOffset = normalizedGuideStart,
@@ -3319,7 +3321,7 @@ fun LiveTvScreen(
                         ?: visibleEnrichedState.value.tree.byId(selectedCategoryId)?.label
                         ?: selectedCategoryId
 
-                    FullscreenHud(
+                    OwnTvPlayerHud(
                         channel = playingChannel,
                         nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
@@ -3506,12 +3508,23 @@ fun LiveTvScreen(
         // natural next to the grow animation below.
         if (showTopBar && fsProgress < 1f) {
             Box(modifier = Modifier.graphicsLayer { alpha = 1f - fsProgress }) {
-                AppTopBar(
-                    selectedItem = SidebarItem.TV,
-                    isFocused = focusZone == LiveTvFocusZone.TOPBAR,
+                OwnTvScreenHeader(
                     focusedIndex = if (focusZone == LiveTvFocusZone.TOPBAR) topBarFocusIndex else -1,
                     profile = currentProfile,
-                    profileCount = 1,
+                    onFocusIndex = { index ->
+                        focusZone = LiveTvFocusZone.TOPBAR
+                        topBarFocusIndex = index
+                    },
+                    onNavigate = { destination ->
+                        when (destination) {
+                            SidebarItem.HOME -> onNavigateToHome()
+                            SidebarItem.SEARCH -> onNavigateToSearch()
+                            SidebarItem.WATCHLIST -> onNavigateToWatchlist()
+                            SidebarItem.SETTINGS -> onNavigateToSettings()
+                            SidebarItem.TV -> Unit
+                        }
+                    },
+                    onSwitchProfile = onSwitchProfile,
                 )
             }
         }

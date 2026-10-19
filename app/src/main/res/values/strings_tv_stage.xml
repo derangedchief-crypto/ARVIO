@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tv_stage_title">Live television</string>
+    <string name="tv_stage_live_tv">Live TV</string>
+    <string name="tv_stage_header_caption">Your channels. Your programme guide.</string>
+    <string name="tv_stage_profile">Profile</string>
+    <string name="tv_stage_guide">Programme guide</string>
+    <string name="tv_stage_channel_count">%1$d channels</string>
+    <string name="tv_stage_back">Back</string>
+    <string name="tv_stage_archive">CATCH-UP</string>
+    <string name="tv_stage_previous">Previous</string>
+    <string name="tv_stage_next_programme">Next</string>
+    <string name="tv_stage_pause">Pause</string>
+    <string name="tv_stage_play">Play</string>
+    <string name="tv_stage_channels">Channels</string>
+    <string name="tv_stage_replay">Replay</string>
+    <string name="tv_stage_go_live">Go live</string>
+    <string name="tv_stage_live">LIVE</string>
+    <string name="tv_stage_on_now">ON NOW</string>
+    <string name="tv_stage_intro">Explore your channels and programme guide. Select a channel to start watching.</string>
+    <string name="tv_stage_select_channel">Select a channel to preview</string>
+    <string name="tv_stage_next">Up next · %1$s</string>
+    <string name="tv_stage_watch">Watch fullscreen</string>
+    <string name="tv_stage_library">YOUR CHANNELS</string>
+    <string name="tv_stage_search">Search channels</string>
+    <string name="tv_stage_categories">Categories</string>
+    <string name="tv_stage_hide">Hide category</string>
+    <string name="tv_stage_unhide">Restore category</string>
+    <string name="tv_stage_move_up">Move up</string>
+    <string name="tv_stage_move_top">Move to top</string>
+    <string name="tv_stage_move_down">Move down</string>
+</resources>

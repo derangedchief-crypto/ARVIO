@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Recovery version code is `394`. Version name is `2.0.078`, following the actual
+TV UI replacement version code is `395`. Version name is `2.0.079`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -122,3 +122,30 @@ between compile/runtime configurations and runs from the variant's pre-build
 task. A negative test forcing Foundation 1.6.8 onto only the compile classpath
 fails with the exact `compiled=1.6.8, packaged=1.12.0` mismatch, before compiling
 or packaging another incompatible APK. The publishing workflow is unchanged.
+
+## Visible TV interface replacement in 2.0.079 / 395
+
+The TV route no longer calls the old `MiniPlayerRow`, `CategorySidebar`,
+`TouchCategoryRail`, `ProviderSelector`, `AppTopBar` or `FullscreenHud` components.
+The new TV-only Stage chrome provides:
+
+- A new desktop/TV header and provider/folder navigation panel.
+- A floating preview plate and programme detail stage, adapting to phone width.
+- A category-picker dialog on phones instead of the old scrolling country chips.
+- New channel-label rows coordinated with the OwnTV-derived canvas programme strips.
+- A new fullscreen player overlay, with existing live/catch-up command callbacks,
+  scrubbing, guide/zap actions, focus and automatic-hide behaviour retained.
+
+This is an ARVIO-adapted Stage interface, not a verbatim copy of OwnTV's entire
+application shell. Non-TV routes and login are unchanged by this UI revision.
+Filtering, favorites, hidden groups, ordering and playback retain their existing
+source/profile adapters.
+
+Validation: 39 targeted tests pass, including actual application startup, populated
+phone home, TV widget compatibility, new phone category selection, category
+management callbacks, preview fullscreen action, fullscreen controls/visibility,
+desktop and phone rendering, and the previous guide/player tests. The renderer
+tests save actual native-rendered screenshots using fixture programme data to
+`/tmp/opencode/tv-stage-desktop.png` and `/tmp/opencode/tv-stage-phone.png`.
+These screenshots do not demonstrate native video playback: the preview plate
+has no active test stream. No physical-device playback validation is claimed.
