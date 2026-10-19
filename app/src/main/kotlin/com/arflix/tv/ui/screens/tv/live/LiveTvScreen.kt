@@ -2225,14 +2225,23 @@ fun LiveTvScreen(
         if (usingOwnTvMpvFallback) {
             playerIsPlaying = mpvPlaying
             playerIsBuffering = mpvBuffering
-            if (mpvPlaying) playbackDiagnostic = null
+        }
+    }
+    LaunchedEffect(usingOwnTvMpvFallback, mpvError) {
+        if (usingOwnTvMpvFallback) {
             mpvError?.let {
                 playbackDiagnostic = PlaybackDiagnostic(
                     title = context.getString(R.string.live_diag_playback_failed),
-                    detail = it, severity = PlaybackDiagnosticSeverity.Error)
+                    detail = playingChannel?.name ?: context.getString(R.string.live_diag_no_playable_stream),
+                    severity = PlaybackDiagnosticSeverity.Error)
             }
         }
     }
+    PlaybackDiagnosticLifecycle(
+        diagnostic = playbackDiagnostic,
+        isPlaying = if (usingOwnTvMpvFallback) mpvPlaying else playerIsPlaying,
+        onDismiss = { playbackDiagnostic = null },
+    )
 
     fun prepareStream(
         stream: String,
@@ -2268,7 +2277,8 @@ fun LiveTvScreen(
             playerIsBuffering = true
             playbackDiagnostic = PlaybackDiagnostic(
                 title = context.getString(R.string.live_diag_starting_stream),
-                detail = "OwnTV Player Core", severity = PlaybackDiagnosticSeverity.Info)
+                detail = playingChannel?.name ?: context.getString(R.string.live_diag_preparing_source),
+                severity = PlaybackDiagnosticSeverity.Info)
             val ownTvSourceChannel = playingChannel?.source
             val ownTvSourceProgram = playingCatchupProgram?.shiftedForCatchup(catchupUrlAnchorOffsetMs)
             ownTvMpvFallback.play(stream, mergedHeaders, archive = playingCatchupProgram != null,
@@ -2622,7 +2632,7 @@ fun LiveTvScreen(
                         ownTvMpvFallback.play(prepared, retryChannel?.requestHeaders ?: lastPreparedHeaders)
                         playbackDiagnostic = PlaybackDiagnostic(
                             title = context.getString(R.string.live_diag_retrying_source),
-                            detail = "Switching to OwnTV compatibility player",
+                            detail = context.getString(R.string.live_diag_preparing_source),
                             severity = PlaybackDiagnosticSeverity.Warning,
                         )
                         return

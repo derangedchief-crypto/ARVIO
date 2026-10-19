@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `398`. Version name is `2.0.082`, following the actual
+Current testing version code is `399`. Version name is `2.0.083`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -239,3 +239,22 @@ order, fallback contents, no whole-guide memory-cache growth and temporary-file
 cleanup. A read-only download of the live server cache on 2026-10-19 confirmed
 4,075 channel records, 283,638 programme rows and current listings. No on-device
 2–5 minute timing claim has been validated here.
+
+## Playback popup lifecycle in 2.0.083 / 399
+
+The startup notification previously cleared only when the engine's playing,
+buffering or error StateFlow changed. Channel changes can keep `isPlaying=true`,
+leaving a newly posted startup message stuck over working video. A shared
+diagnostic lifecycle now checks every new message against the active player's
+playing state, covering both playback paths. Startup/retry messages dismiss on
+playback; terminal errors remain visible for three seconds then dismiss. Timer
+cancellation prevents an old failure from clearing a newer channel's message.
+Engine-error notifications are observed separately from buffering changes so a
+dismissed failure is not repeatedly re-posted when buffering toggles.
+
+The startup popup uses the channel name rather than OwnTV branding, and the
+compatibility retry popup is also engine-neutral. Required third-party notices
+and the underlying playback integration remain intact. Compose regressions cover
+startup dismissal, unchanged-playing-state channel switches, failure expiry,
+failure while the previous channel still reports playing, timer cancellation and
+retry dismissal. The server-cache-first fix from 2.0.082 remains included.
