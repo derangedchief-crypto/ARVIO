@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `403`. Version name is `2.0.087`, following the actual
+Current testing version code is `404`. Version name is `2.0.088`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -417,3 +417,30 @@ identity/URL matching and spoofed/disabled sources. Compose phone/TV tests exerc
 the requested label, explicit confirmation, cancellation, remote focus without a
 request, VOD-row retention, hidden unauthorized UI and revocation while a dialog
 is open. Device playback and remote timing still require user confirmation.
+
+## Simple authorized automatic Cloud fallback in 2.0.088 / 404
+
+This supersedes 2.0.087's manual-search UI. There is no search action or permission
+confirmation. The single flow is now: check movie/exact-episode VOD; return VOD
+when found; after a verified absence, automatically query Extreme Cloud only if
+the existing Cloud Stream entitlement permits it. Unavailable/unfinished VOD
+checks are still errors, not proof of absence. Unauthorized users make no Cloud
+requests and receive no Cloud popup. The authorization check now covers automatic
+fallback and cached-result reuse, not just a manual override. Details plugin
+discovery is gated by the same check. Personal media-server lookups remain
+independent of Cloud entitlement.
+
+Cloud results display as **Extreme Cloud** instead of Torrentio PM. This applies
+to fresh and cached links, the source picker and source-info display. A separate
+nullable presentation label preserves raw addon names/IDs, links, debrid handling,
+cache keys and source identity. Multiple underlying Cloud sources share a single
+display group without deduplicating their actual provider identities. VOD and
+personal-server labels are unchanged. The former manual mode, callbacks, action,
+permission popup and warning strings were removed.
+
+Regressions cover automatic authorized fallback after a verified movie/episode
+miss, VOD hits without Cloud requests, unauthorized automatic requests (both
+progressive and non-progressive), cancelled/failed verification, cached branding,
+revoked authorization preventing cached-link reuse and touch/TV direct selection
+without a permission dialog. Existing Masterplan matching, EPG retention,
+background loading, startup and channel-scroll tests remain in validation.

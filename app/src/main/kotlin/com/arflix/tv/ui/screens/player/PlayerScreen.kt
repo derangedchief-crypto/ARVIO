@@ -264,7 +264,6 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val canSearchExtremeCloud by viewModel.canSearchExtremeCloud.collectAsStateWithLifecycle()
     val latestUiState by rememberUpdatedState(uiState)
     val clockFormat = rememberPlayerClockFormat()
     val focusManager = LocalFocusManager.current
@@ -3969,7 +3968,6 @@ fun PlayerScreen(
 
         StreamSelector(
             isVisible = showSourceMenu,
-            onRequestScrapers = if (canSearchExtremeCloud && mediaId > 0) ({ viewModel.searchScraperSources() }) else null,
             streams = uiState.streams,
             selectedStream = uiState.selectedStream,
             isLoading = uiState.isLoadingStreams,

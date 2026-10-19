@@ -96,7 +96,6 @@ import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.platform.testTag
 import coil.compose.AsyncImage
 import com.arflix.tv.R
 import java.util.Locale
@@ -127,12 +126,13 @@ internal fun buildSourceAddonTabs(
 ): List<SourceAddonTab> {
     val baseNameById = LinkedHashMap<String, String>()
     streams.forEach { stream ->
-        val baseName = stream.addonName
+        val visibleName = stream.displayAddonName?.takeIf { it.isNotBlank() } ?: stream.addonName
+        val baseName = visibleName
             .split(" - ")
             .firstOrNull()
             ?.trim()
             .orEmpty()
-            .ifBlank { stream.addonName.ifBlank { "Addon" } }
+            .ifBlank { visibleName.ifBlank { "Addon" } }
         baseNameById.putIfAbsent(sourceTabId(stream), baseName)
     }
 
@@ -228,38 +228,7 @@ fun StreamSelector(
     onFocusedStream: (StreamSource) -> Unit = {},
     onSelect: (StreamSource) -> Unit = {},
     onClose: () -> Unit = {},
-    onRequestScrapers: (() -> Unit)? = null,
 ) {
-    var confirmScraperSearch by remember { mutableStateOf(false) }
-    val cancelScraperFocus = remember { FocusRequester() }
-    LaunchedEffect(isVisible) { if (!isVisible) confirmScraperSearch = false }
-    LaunchedEffect(onRequestScrapers == null) { if (onRequestScrapers == null) confirmScraperSearch = false }
-    LaunchedEffect(confirmScraperSearch) {
-        if (confirmScraperSearch) {
-            androidx.compose.runtime.withFrameNanos { }
-            runCatching { cancelScraperFocus.requestFocus() }
-        }
-    }
-    if (confirmScraperSearch && isVisible && onRequestScrapers != null) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { confirmScraperSearch = false },
-            containerColor = Color(0xFF171717),
-            title = { Text(stringResource(R.string.scraper_fallback_title), color = TextPrimary) },
-            text = { Text(stringResource(R.string.scraper_fallback_warning), color = TextSecondary) },
-            confirmButton = {
-                androidx.compose.material3.TextButton(modifier = Modifier.testTag("confirm-extreme-cloud-search"), onClick = {
-                    confirmScraperSearch = false
-                    onRequestScrapers()
-                }) { Text(stringResource(R.string.scraper_fallback_confirm), color = Pink) }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(modifier = Modifier.focusRequester(cancelScraperFocus),
-                    onClick = { confirmScraperSearch = false }) {
-                    Text(stringResource(R.string.cancel), color = TextPrimary)
-                }
-            },
-        )
-    }
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val backMotion = rememberArvioPredictiveBack(enabled = isVisible, onCommit = onClose)
 
@@ -309,14 +278,11 @@ fun StreamSelector(
 
     // Tab labels: "All sources" + addon labels
     val allSourcesLabel = stringResource(R.string.stream_tab_all_sources)
-    val scraperSearchLabel = stringResource(R.string.scraper_fallback_title)
-    val scraperActionIndex = if (onRequestScrapers != null) addonTabs.size + 1 else -1
-    val tabLabels = remember(addonTabs, allSourcesLabel, scraperActionIndex, scraperSearchLabel) {
-        listOf(allSourcesLabel) + addonTabs.map { it.label } +
-            if (scraperActionIndex >= 0) listOf(scraperSearchLabel) else emptyList()
+    val tabLabels = remember(addonTabs, allSourcesLabel) {
+        listOf(allSourcesLabel) + addonTabs.map { it.label }
     }
-    val tabKeys = remember(addonTabs, scraperActionIndex) {
-        sourceAddonTabKeys(addonTabs) + if (scraperActionIndex >= 0) listOf("action:search_scrapers") else emptyList()
+    val tabKeys = remember(addonTabs) {
+        sourceAddonTabKeys(addonTabs)
     }
 
     val presentations = remember(streams) { streams.map(::presentSource) }
@@ -464,7 +430,7 @@ fun StreamSelector(
                                 if (focusZone == "addons") {
                                     if (focusedTabIndex > 0) {
                                         focusedTabIndex--
-                                        if (focusedTabIndex != scraperActionIndex) selectedTabIndex = focusedTabIndex
+                                        selectedTabIndex = focusedTabIndex
                                         focusedIndex = 0  // Reset stream selection
                                     }
                                 } else {
@@ -478,7 +444,7 @@ fun StreamSelector(
                                 if (focusZone == "addons") {
                                     if (focusedTabIndex < tabLabels.size - 1) {
                                         focusedTabIndex++
-                                        if (focusedTabIndex != scraperActionIndex) selectedTabIndex = focusedTabIndex
+                                        selectedTabIndex = focusedTabIndex
                                         focusedIndex = 0  // Reset stream selection
                                     }
                                 } else {
@@ -506,10 +472,6 @@ fun StreamSelector(
                             }
                             Key.Enter, Key.DirectionCenter -> {
                                 if (focusZone == "addons") {
-                                    if (focusedTabIndex == scraperActionIndex) {
-                                        confirmScraperSearch = true
-                                        return@onKeyEvent true
-                                    }
                                     // Tab already selected on focus, just move to streams
                                     focusZone = "streams"
                                     focusedIndex = 0
@@ -560,12 +522,9 @@ fun StreamSelector(
                         focusedIndex = 0
                     },
                     onAddonSelected = { index ->
-                        if (index == scraperActionIndex) confirmScraperSearch = true
-                        else {
-                            selectedTabIndex = index
-                            focusedTabIndex = index
-                            focusedIndex = 0
-                        }
+                        selectedTabIndex = index
+                        focusedTabIndex = index
+                        focusedIndex = 0
                     },
                     onSelect = onSelect
                 )
@@ -642,11 +601,8 @@ fun StreamSelector(
                                             else Modifier.border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
                                         )
                                          .clickable {
-                                            if (index == scraperActionIndex) confirmScraperSearch = true
-                                            else {
-                                                selectedTabIndex = index
-                                                focusedIndex = 0
-                                            }
+                                            selectedTabIndex = index
+                                            focusedIndex = 0
                                         }
                                         .padding(horizontal = 14.dp, vertical = 6.dp)
                                 ) {
@@ -1123,6 +1079,7 @@ private fun keepsOwnStreamOrder(stream: StreamSource): Boolean =
         stream.addonId.contains("aiostream", ignoreCase = true)
 
 internal fun sourceTabId(stream: StreamSource): String {
+    if (stream.displayAddonName == "Extreme Cloud") return "extreme_cloud"
     val baseName = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
     return if (stream.addonId == "home_server" && baseName.isNotBlank()) {
         "${stream.addonId}:$baseName"
@@ -1259,8 +1216,9 @@ private fun cleanSourceDisplayTitle(raw: String): String {
 private fun presentSource(stream: StreamSource): SourcePresentation {
     val rawTitle = stream.behaviorHints?.filename?.takeIf { it.isNotBlank() } ?: stream.source
     val title = cleanSourceDisplayTitle(rawTitle)
-    val addonLabel = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
-    val attributionLabels = sourceAttributionLabels(stream, addonLabel)
+    val visibleName = stream.displayAddonName?.takeIf { it.isNotBlank() } ?: stream.addonName
+    val addonLabel = visibleName.split(" - ").firstOrNull()?.trim() ?: visibleName
+    val attributionLabels = if (stream.displayAddonName == "Extreme Cloud") listOf("Extreme Cloud") else sourceAttributionLabels(stream, addonLabel)
     val searchBlob = buildString {
         append(stream.quality)
         append(' ')

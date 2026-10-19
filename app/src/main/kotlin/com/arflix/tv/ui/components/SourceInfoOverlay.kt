@@ -107,7 +107,7 @@ fun SourceInfoOverlay(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = source.addonName,
+                            text = source.displayAddonName ?: source.addonName,
                             style = ArflixTypography.caption,
                             color = TextSecondary
                         )

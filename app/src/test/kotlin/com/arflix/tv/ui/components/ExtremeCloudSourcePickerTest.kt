@@ -27,81 +27,56 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [28], application = Application::class, qualifiers = "w1280dp-h720dp-land-mdpi")
 class ExtremeCloudSourcePickerTest {
     @get:Rule val compose = createComposeRule()
-    private val vod = StreamSource("Masterplan (2026)", "IPTV VOD", "iptv_xtream_vod", "1080p", "",
-        url = "https://provider.example.test/movie/55.mp4")
-
-    private fun mount(device: DeviceType, streams: List<StreamSource> = listOf(vod), request: (() -> Unit)?,
-        allowed: androidx.compose.runtime.State<Boolean>? = null) {
+    private val cloud = StreamSource("Masterplan (2026)", "Torrentio PM", "torrentio-instance", "1080p", "4 GB",
+        url = "https://cloud.example.test/movie.mp4", displayAddonName = "Extreme Cloud")
+    private fun mount(device: DeviceType, streams: List<StreamSource>, onSelect: (StreamSource) -> Unit = {}) {
         compose.setContent {
             CompositionLocalProvider(LocalDeviceType provides device) {
                 Box(Modifier.requiredSize(if (device == DeviceType.TV) 1200.dp else 420.dp, 650.dp)) {
-                    StreamSelector(true, streams, null, onRequestScrapers = if (allowed?.value != false) request else null)
+                    StreamSelector(true, streams, null, onSelect = onSelect)
                 }
             }
         }
         compose.waitForIdle()
     }
-
-    @Test fun phoneShowsExtremeCloudAndRequiresConfirmationWithoutRemovingVod() {
-        var calls = 0
-        mount(DeviceType.PHONE, request = { calls++ })
-        compose.onNodeWithText("Search scraper sources").assertDoesNotExist()
-        compose.onNodeWithText("Search Extreme Cloud").performScrollTo().performClick()
-        compose.runOnIdle { assertEquals(0, calls) }
-        compose.onNodeWithText("Cancel").performClick()
-        compose.runOnIdle { assertEquals(0, calls) }
-        assertTrue(compose.onAllNodesWithText("Masterplan", substring = true).fetchSemanticsNodes().isNotEmpty())
-        compose.onNodeWithText("Search Extreme Cloud").performScrollTo().performClick()
-        compose.onNodeWithTag("confirm-extreme-cloud-search").performClick()
-        compose.runOnIdle { assertEquals(1, calls) }
-        assertTrue(compose.onAllNodesWithText("Masterplan", substring = true).fetchSemanticsNodes().isNotEmpty())
-    }
-
-    @Test fun tvFocusDoesNotStartCloudSearchUntilUserConfirms() {
-        var calls = 0
-        mount(DeviceType.TV, request = { calls++ })
-        compose.onRoot().performKeyInput {
-            pressKey(Key.DirectionRight)
-            pressKey(Key.DirectionDown)
-            pressKey(Key.DirectionDown)
-        }
-        compose.runOnIdle { assertEquals(0, calls) }
-        compose.onRoot().performKeyInput { pressKey(Key.Enter) }
-        compose.onNodeWithTag("confirm-extreme-cloud-search").assertExists()
-        compose.runOnIdle { assertEquals(0, calls) }
-        compose.onNodeWithTag("confirm-extreme-cloud-search").performClick()
-        compose.runOnIdle { assertEquals(1, calls) }
-    }
-
-    @Test fun cloudBackupRemainsAvailableWhenVodVerificationReturnedNoSources() {
-        var calls = 0
-        mount(DeviceType.PHONE, streams = emptyList(), request = { calls++ })
-        compose.onNodeWithText("Search Extreme Cloud").performScrollTo().performClick()
-        compose.onNodeWithTag("confirm-extreme-cloud-search").performClick()
-        compose.runOnIdle { assertEquals(1, calls) }
-    }
-
-    @Test fun noManualCallbackMeansNoCloudAction() {
-        mount(DeviceType.PHONE, request = null)
+    private fun assertNoPermissionUi() {
         compose.onNodeWithText("Search Extreme Cloud").assertDoesNotExist()
+        compose.onNodeWithTag("confirm-extreme-cloud-search").assertDoesNotExist()
+        compose.onNodeWithText("may use points", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("Torrentio PM", substring = true).assertDoesNotExist()
     }
-    @Test fun tvWithoutAccessDoesNotShowCloudMessageOrAction() {
-        mount(DeviceType.TV, request = null)
-        compose.onNodeWithText("Extreme Cloud", substring = true).assertDoesNotExist()
-        compose.onNodeWithTag("confirm-extreme-cloud-search").assertDoesNotExist()
+    @Test fun phoneShowsExtremeCloudLinksDirectlyWithoutPrompt() {
+        var selected: StreamSource? = null
+        mount(DeviceType.PHONE, listOf(cloud)) { selected = it }
+        assertNoPermissionUi()
+        assertTrue(compose.onAllNodesWithText("Extreme Cloud", substring = true).fetchSemanticsNodes().isNotEmpty())
+        compose.onNodeWithText("Masterplan", substring = true).performClick()
+        compose.runOnIdle { assertEquals(cloud, selected) }
     }
-    @Test fun revokedAccessClosesConfirmationWithoutRunningSearch() {
-        var calls = 0
-        val allowed = androidx.compose.runtime.mutableStateOf(true)
-        mount(DeviceType.PHONE, request = { calls++ }, allowed = allowed)
-        compose.onNodeWithText("Search Extreme Cloud").performScrollTo().performClick()
-        compose.onNodeWithTag("confirm-extreme-cloud-search").assertExists()
-        compose.runOnIdle { allowed.value = false }
-        compose.waitForIdle()
+    @Test fun tvSelectsExtremeCloudLinkWithoutPermissionPopup() {
+        var selected: StreamSource? = null
+        mount(DeviceType.TV, listOf(cloud)) { selected = it }
+        assertNoPermissionUi()
+        compose.onRoot().performKeyInput { pressKey(Key.Enter) }
+        compose.runOnIdle { assertEquals(cloud, selected) }
+        assertNoPermissionUi()
+    }
+    @Test fun emptyUnauthorizedResultHasNoCloudActionOrPrompt() {
+        mount(DeviceType.PHONE, emptyList())
+        assertNoPermissionUi()
         compose.onNodeWithText("Extreme Cloud", substring = true).assertDoesNotExist()
-        compose.onNodeWithTag("confirm-extreme-cloud-search").assertDoesNotExist()
-        compose.runOnIdle { assertEquals(0, calls); allowed.value = true }
-        compose.waitForIdle()
-        compose.onNodeWithTag("confirm-extreme-cloud-search").assertDoesNotExist()
+    }
+    @Test fun vodOnlyResultDoesNotShowCloudOptions() {
+        mount(DeviceType.PHONE, listOf(cloud.copy(addonName = "IPTV VOD", addonId = "iptv_xtream_vod", displayAddonName = null)))
+        assertNoPermissionUi()
+        compose.onNodeWithText("Extreme Cloud", substring = true).assertDoesNotExist()
+    }
+    @Test fun cloudGroupDoesNotChangeBackendIdentity() {
+        val other = cloud.copy(addonId = "another-provider", addonName = "Other scraper")
+        val tabs = buildSourceAddonTabs(listOf(cloud, other), emptyList())
+        assertEquals(listOf("Extreme Cloud"), tabs.map { it.label })
+        assertEquals("torrentio-instance", cloud.addonId)
+        assertEquals("Torrentio PM", cloud.addonName)
+        assertNotEquals(sourceStreamRowKey(cloud, 0), sourceStreamRowKey(other, 1))
     }
 }

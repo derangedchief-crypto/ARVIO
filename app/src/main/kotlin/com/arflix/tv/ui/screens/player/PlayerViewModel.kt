@@ -24,7 +24,6 @@ import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.data.repository.SkipIntroRepository
 import com.arflix.tv.data.repository.StreamRepository
-import com.arflix.tv.data.repository.SourceSearchMode
 import com.arflix.tv.data.repository.isHubCloudPageUrl
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.CloudSyncRepository
@@ -536,9 +535,7 @@ class PlayerViewModel @Inject constructor(
         // (its stream cache key resolves to the new stream). Same-VM path only, e.g. play-next.
         cancelFindBestMatch()
         vodAppendJob?.cancel()
-        manualScraperSearchJob?.cancel()
         automaticSourceSearchJob?.cancel()
-        manualCloudSearchRequested = false
         homeServerAppendJob?.cancel()
         streamPrewarmJob?.cancel()
         focusedStreamPrewarmJob?.cancel()
@@ -664,7 +661,10 @@ class PlayerViewModel @Inject constructor(
                         addonId = currentPreferredAddonId.orEmpty(),
                         quality = "",
                         size = "",
-                        url = url
+                        url = url,
+                        displayAddonName = if (!currentPreferredAddonId.isNullOrBlank() &&
+                            currentPreferredAddonId != "iptv_xtream_vod" && currentPreferredAddonId != HomeServerRepository.ADDON_ID &&
+                            streamRepository.hasExtremeCloudAccess()) "Extreme Cloud" else null,
                     )
                 }
             val providedIsHubPage = providedStreamCandidate?.url
@@ -4499,32 +4499,18 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private var manualScraperSearchJob: Job? = null
     private var automaticSourceSearchJob: Job? = null
-    private var manualCloudSearchRequested = false
     val canSearchExtremeCloud = streamRepository.extremeCloudAccess.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     init {
         viewModelScope.launch {
             canSearchExtremeCloud.collect { allowed ->
-                if (!allowed && manualCloudSearchRequested) {
-                    manualScraperSearchJob?.cancel()
-                    _uiState.value = _uiState.value.copy(streams = _uiState.value.streams.filter(::isSupplementalStream),
+                if (!allowed && _uiState.value.streams.any { it.displayAddonName == "Extreme Cloud" }) {
+                    automaticSourceSearchJob?.cancel()
+                    _uiState.value = _uiState.value.copy(streams = _uiState.value.streams.filterNot { it.displayAddonName == "Extreme Cloud" },
                         isLoadingStreams = false, sourceSearchActive = false)
                 }
             }
-        }
-    }
-
-    fun searchScraperSources() {
-        if (!canSearchExtremeCloud.value || currentMediaId <= 0 || currentIsLiveStreamPlayback || manualScraperSearchJob?.isActive == true) return
-        manualCloudSearchRequested = true
-        automaticSourceSearchJob?.cancel()
-        _uiState.value = _uiState.value.copy(isLoadingStreams = true, sourceSearchActive = true)
-        manualScraperSearchJob = viewModelScope.launch {
-            populateStreamsForProvidedUrl(currentMediaType, currentMediaId, currentSeason, currentEpisode,
-                currentImdbId, _uiState.value.selectedStreamUrl.orEmpty(),
-                SourceSearchMode.ManualScraperFallback)
         }
     }
 
@@ -4535,7 +4521,6 @@ class PlayerViewModel @Inject constructor(
         episodeNumber: Int?,
         providedImdbId: String?,
         playbackUrl: String,
-        searchMode: SourceSearchMode = SourceSearchMode.VodFirst,
     ) {
         try {
             val cachedImdbId = currentImdbId ?: mediaRepository.getCachedImdbId(mediaType, mediaId)
@@ -4569,7 +4554,6 @@ class PlayerViewModel @Inject constructor(
                     title = currentItemTitle,
                     year = null,
                     tmdbId = mediaId,
-                    searchMode = searchMode,
                 )
             } else {
                 streamRepository.resolveEpisodeStreams(
@@ -4582,7 +4566,6 @@ class PlayerViewModel @Inject constructor(
                     originalLanguage = currentOriginalLanguage,
                     title = currentItemTitle,
                     animeQueryOverride = currentAnimeQueryOverride,
-                    searchMode = searchMode,
                 )
             }
 
@@ -4602,8 +4585,7 @@ class PlayerViewModel @Inject constructor(
             val sortedStreams = sortStreamsByQualityAndSize(mergedStreams, preferredLanguage)
             val selectedMatch = findProvidedSelectedStreamMatch(sortedStreams, playbackUrl)
 
-            val shouldAutoplay = searchMode == SourceSearchMode.VodFirst &&
-                _uiState.value.selectedStreamUrl.isNullOrBlank()
+            val shouldAutoplay = _uiState.value.selectedStreamUrl.isNullOrBlank()
             val prevSource = _uiState.value.selectedStream?.source.orEmpty()
             val selectedForState = if (shouldAutoplay) {
                 _uiState.value.selectedStream

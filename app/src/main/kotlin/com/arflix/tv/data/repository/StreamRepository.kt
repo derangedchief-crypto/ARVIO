@@ -2201,11 +2201,10 @@ class StreamRepository @Inject constructor(
         year: Int? = null,
         forceRefresh: Boolean = false,
         tmdbId: Int? = null,
-        searchMode: SourceSearchMode = SourceSearchMode.VodFirst,
     ): StreamResult = withContext(Dispatchers.IO) {
-        if (searchMode == SourceSearchMode.ManualScraperFallback && !hasExtremeCloudAccess()) return@withContext StreamResult(emptyList(), emptyList())
-        val vod = if (searchMode == SourceSearchMode.VodFirst) verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId) else emptyList()
+        val vod = verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId)
         if (vod.isNotEmpty()) return@withContext StreamResult(vod, emptyList())
+        if (!hasExtremeCloudAccess()) return@withContext StreamResult(emptyList(), emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
@@ -2252,7 +2251,7 @@ class StreamRepository @Inject constructor(
             cached = CachedStreamResult(result = result, createdAtMs = createdAtMs)
         )
         result
-    }
+    }.let { it.copy(streams = presentExtremeCloudSources(it.streams)) }
 
     fun resolveMovieStreamsProgressive(
         imdbId: String,
@@ -2260,22 +2259,21 @@ class StreamRepository @Inject constructor(
         year: Int? = null,
         forceRefresh: Boolean = false,
         tmdbId: Int? = null,
-        searchMode: SourceSearchMode = SourceSearchMode.VodFirst,
     ): Flow<ProgressiveStreamResult> = callbackFlow {
         launch {
-            if (searchMode == SourceSearchMode.ManualScraperFallback && !hasExtremeCloudAccess()) {
-                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
-                close()
-                return@launch
-            }
             val vod = try {
-                if (searchMode == SourceSearchMode.VodFirst) verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId) else emptyList()
+                verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId)
             } catch (error: Exception) {
                 close(error)
                 return@launch
             }
             if (vod.isNotEmpty()) {
                 trySend(ProgressiveStreamResult(vod, emptyList(), 0, 0, true))
+                close()
+                return@launch
+            }
+            if (!hasExtremeCloudAccess()) {
+                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
                 close()
                 return@launch
             }
@@ -2458,6 +2456,14 @@ class StreamRepository @Inject constructor(
             }
         }
         awaitClose { }
+    }.map { it.copy(streams = presentExtremeCloudSources(it.streams)) }
+
+    /** Brand fresh and cached fallback results without changing provider identity or debrid handling. */
+    private suspend fun presentExtremeCloudSources(sources: List<StreamSource>): List<StreamSource> {
+        fun local(source: StreamSource) = source.addonId == "iptv_xtream_vod" || source.addonId == HomeServerRepository.ADDON_ID
+        if (sources.all(::local)) return sources
+        if (!hasExtremeCloudAccess()) return sources.filter(::local)
+        return sources.map { if (local(it)) it else it.copy(displayAddonName = "Extreme Cloud") }
     }
 
     suspend fun verifyEpisodeVodBeforeFallback(
@@ -2673,11 +2679,10 @@ class StreamRepository @Inject constructor(
         forceRefresh: Boolean = false,
         animeQueryOverride: String? = null,
         airDate: String? = null,
-        searchMode: SourceSearchMode = SourceSearchMode.VodFirst,
     ): StreamResult = withContext(Dispatchers.IO) {
-        if (searchMode == SourceSearchMode.ManualScraperFallback && !hasExtremeCloudAccess()) return@withContext StreamResult(emptyList(), emptyList())
-        val vod = if (searchMode == SourceSearchMode.VodFirst) verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId) else emptyList()
+        val vod = verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId)
         if (vod.isNotEmpty()) return@withContext StreamResult(vod, emptyList())
+        if (!hasExtremeCloudAccess()) return@withContext StreamResult(emptyList(), emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
@@ -2735,7 +2740,7 @@ class StreamRepository @Inject constructor(
             streamResultCache[cacheKey] = CachedStreamResult(result = result, createdAtMs = System.currentTimeMillis())
         }
         result
-    }
+    }.let { it.copy(streams = presentExtremeCloudSources(it.streams)) }
 
     fun resolveEpisodeStreamsProgressive(
         imdbId: String,
@@ -2749,22 +2754,21 @@ class StreamRepository @Inject constructor(
         forceRefresh: Boolean = false,
         animeQueryOverride: String? = null,
         airDate: String? = null,
-        searchMode: SourceSearchMode = SourceSearchMode.VodFirst,
     ): Flow<ProgressiveStreamResult> = callbackFlow {
         launch {
-            if (searchMode == SourceSearchMode.ManualScraperFallback && !hasExtremeCloudAccess()) {
-                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
-                close()
-                return@launch
-            }
             val vod = try {
-                if (searchMode == SourceSearchMode.VodFirst) verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId) else emptyList()
+                verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId)
             } catch (error: Exception) {
                 close(error)
                 return@launch
             }
             if (vod.isNotEmpty()) {
                 trySend(ProgressiveStreamResult(vod, emptyList(), 0, 0, true))
+                close()
+                return@launch
+            }
+            if (!hasExtremeCloudAccess()) {
+                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
                 close()
                 return@launch
             }
@@ -2953,7 +2957,7 @@ class StreamRepository @Inject constructor(
             }
         }
         awaitClose { }
-    }
+    }.map { it.copy(streams = presentExtremeCloudSources(it.streams)) }
 
     suspend fun resolveEpisodeVodOnly(
         imdbId: String?,
@@ -3677,7 +3681,7 @@ class StreamRepository @Inject constructor(
      * Resolve a single stream for playback - with timeout to prevent hanging forever
      */
     suspend fun resolveStreamForPlayback(stream: StreamSource): StreamSource? = withContext(Dispatchers.IO) {
-        cachedResolvedStream(stream)?.let { return@withContext it }
+        cachedResolvedStream(stream)?.let { return@withContext it.copy(displayAddonName = stream.displayAddonName ?: it.displayAddonName) }
         try {
             withTimeout(STREAM_RESOLUTION_TIMEOUT_MS) {
                 resolveStreamInternal(stream)?.also { resolved ->

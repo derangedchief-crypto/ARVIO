@@ -217,7 +217,9 @@ data class StreamSource(
     val rawLabel: String? = null,
     // Original Stremio title. Some addons use it for source/indexer details
     // that are intentionally separate from behaviorHints.filename.
-    val addonTitle: String? = null
+    val addonTitle: String? = null,
+    // Presentation only; retain original addonName/id for resolver, debrid and cache logic.
+    val displayAddonName: String? = null,
 ) : Serializable
 
 /**

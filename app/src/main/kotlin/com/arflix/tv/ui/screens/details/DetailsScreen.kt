@@ -235,7 +235,6 @@ fun DetailsScreen(
 ) {
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val canSearchExtremeCloud by viewModel.canSearchExtremeCloud.collectAsStateWithLifecycle()
     val usePosterCards = rememberCatalogueRowLayoutMode("details:similar") == CardLayoutMode.POSTER
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1135,11 +1134,6 @@ fun DetailsScreen(
                 )
             },
             onClose = { showStreamSelector = false },
-            onRequestScrapers = if (canSearchExtremeCloud) ({
-                pendingAutoPlayRequest = null
-                viewModel.loadStreams(uiState.imdbId, uiState.episodes.getOrNull(episodeIndex)?.identity,
-                    com.arflix.tv.data.repository.SourceSearchMode.ManualScraperFallback)
-            }) else null
         )
 
         // Episode Context Menu
