@@ -11,12 +11,21 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.ConscryptMode
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.util.Collections
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 
+// Guide normalization uses android.util.Base64; plain JVM Android stubs return
+// null rather than decoding the provider fixture, hiding the real title path.
+@RunWith(RobolectricTestRunner::class)
+@ConscryptMode(ConscryptMode.Mode.OFF)
+@Config(sdk = [28], application = android.app.Application::class, manifest = Config.NONE)
 class IptvRepositoryOptimizationTest {
 
     // Helper to instantiate private class BackslashEscapeSanitizingInputStream using reflection

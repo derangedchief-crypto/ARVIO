@@ -272,6 +272,10 @@ class IptvRepository @Inject constructor(
     val guideIndexRevision: StateFlow<Long> = _guideIndexRevision.asStateFlow()
     private val completeGuideIndexMutex = Mutex()
     private val guideRefreshCoordinator = GuideRefreshCoordinator()
+    private val launchContentCoordinator = GuideRefreshCoordinator()
+    private val launchContentCheckedAt = ConcurrentHashMap<String, Long>()
+    private val _playlistRevision = MutableStateFlow(0L)
+    val playlistRevision: StateFlow<Long> = _playlistRevision.asStateFlow()
     private val _guideRefreshState = MutableStateFlow(GuideRefreshState())
     val guideRefreshState: StateFlow<GuideRefreshState> = _guideRefreshState.asStateFlow()
     private val guideIndexRevisionLock = Any()
@@ -402,7 +406,6 @@ class IptvRepository @Inject constructor(
     private var xtreamVodCacheKey: String? = null
     @Volatile
     private var xtreamVodLoadedAtMs: Long = 0L
-    private val startupPrefetchInFlight = AtomicBoolean(false)
 
     private fun buildGroupedChannels(channels: List<IptvChannel>): Map<String, List<IptvChannel>> =
         channels.groupBy { it.group.ifBlank { "Uncategorized" } }
@@ -535,6 +538,10 @@ class IptvRepository @Inject constructor(
             .writeTimeout(6, TimeUnit.SECONDS)
             .callTimeout(12, TimeUnit.SECONDS)
             .build()
+    }
+    private val launchCatalogHttpClient: OkHttpClient by lazy {
+        okHttpClient.newBuilder().connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS).callTimeout(45, TimeUnit.SECONDS).build()
     }
     private val xtreamGuideHttpClient: OkHttpClient by lazy {
         okHttpClient.newBuilder()
@@ -3566,9 +3573,13 @@ class IptvRepository @Inject constructor(
     private suspend fun storeStartupChannels(
         config: IptvConfig,
         channels: List<IptvChannel>,
-        stalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi>
-    ) {
-        loadMutex.withLock {
+        stalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi>,
+        expectedProfile: String? = null,
+        expectedSignature: String? = null,
+    ): Boolean {
+        return loadMutex.withLock {
+            if (expectedProfile != null && (profileManager.getProfileIdSync() != expectedProfile ||
+                    buildConfigSignature(observeConfig().first()) != expectedSignature)) return@withLock false
             cachedChannels = channels
             cachedGroupedChannels = buildGroupedChannels(channels)
             cachedPlaylistAt = System.currentTimeMillis()
@@ -3580,29 +3591,125 @@ class IptvRepository @Inject constructor(
                 cachedNowNext.keys.retainAll(validIds)
             }
             persistCurrentCacheSnapshot(config, cachedPlaylistAt)
+            true
         }
     }
 
     suspend fun prefetchFreshStartupData() {
-        if (!startupPrefetchInFlight.compareAndSet(false, true)) return
+        requestLaunchContentRefresh().join()
+        // A profile/config switch may have happened while joining the previous
+        // profile's job. The second request is a no-op for an already checked key.
+        requestLaunchContentRefresh().join()
+    }
+
+    /** Non-blocking launch check; ordinary tab requests do not re-download catalogues. */
+    fun requestLaunchContentRefresh(recheckOnLaunch: Boolean = false): kotlinx.coroutines.Job = launchContentCoordinator.request {
         try {
             warmupFromCacheOnly()
             val config = observeConfig().first()
-            if (!hasAnyConfiguredSource(config)) return
-
-            val cached = getMemoryCachedSnapshot() ?: getCachedSnapshotOrNull()
-            if (cached == null || cached.channels.isEmpty()) {
-                val fresh = withTimeoutOrNull(25_000L) {
-                    fetchFreshChannelsForStartup(config)
+            if (!hasAnyConfiguredSource(config)) return@request
+            val profile = profileManager.getProfileIdSync()
+            val signature = buildConfigSignature(config)
+            val checkKey = "$profile|$signature"
+            val now = System.currentTimeMillis()
+            val checkedAt = launchContentCheckedAt[checkKey]
+            if (checkedAt != null && (!recheckOnLaunch || now - checkedAt < 15 * 60_000L)) return@request
+            launchContentCheckedAt[checkKey] = now
+            suspend fun stillCurrent() = profileManager.getProfileIdSync() == profile &&
+                buildConfigSignature(observeConfig().first()) == signature
+            val key = currentEpgIndexKey(config)
+            val previous = if (pagedChannelStoreCount() > cachedChannels.size)
+                channelStore.window(key, 0, pagedChannelStoreCount()) else cachedChannels
+            val replacements = linkedMapOf<String, List<IptvChannel>>()
+            // A complete source list is necessary to detect removals. Empty or
+            // failed live responses are ambiguous, so preserve that source.
+            for (playlist in activePlaylists(config)) {
+                val rows = withTimeoutOrNull(30_000L) {
+                    try { fetchChannelsForPlaylistWithRetries(playlist) {} }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { null }
                 }
-                if (fresh != null) {
-                    storeStartupChannels(config, fresh.first, fresh.second)
-                }
-                return
+                if (!rows.isNullOrEmpty()) replacements["${playlist.id}:"] = rows.map { it.copy(id = "${playlist.id}:${it.id}") }
             }
-        } finally {
-            startupPrefetchInFlight.set(false)
+            val stalkerApis = cachedStalkerApis.toMutableMap()
+            for (portal in activeStalkerPortals(config)) {
+                val rows = withTimeoutOrNull(30_000L) {
+                    try {
+                        val api = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
+                        if (!api.handshake()) null else {
+                            api.getProfile()
+                            api.getChannels().also { if (it.isNotEmpty()) stalkerApis[portal.id] = api }
+                        }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { null }
+                }
+                if (!rows.isNullOrEmpty()) replacements["stalker:${portal.id}:"] = rows.map { it.copy(id = "stalker:${portal.id}:${it.id}") }
+            }
+            if (!stillCurrent()) return@request
+            val refreshed = mergePlaylistSnapshots(previous, replacements)
+            if (refreshed != previous) {
+                if (storeStartupChannels(config, refreshed, stalkerApis, profile, signature)) {
+                    if (previous.mapTo(hashSetOf()) { it.id } != refreshed.mapTo(hashSetOf()) { it.id }) {
+                        // New/removed channel identities invalidate guide coverage,
+                        // not every metadata-only launch check. Run once on the new list.
+                        context.getSharedPreferences("arvio_guide_refresh", Context.MODE_PRIVATE).edit()
+                            .remove("completed_$key|${buildEpgSourceSignature(config)}").apply()
+                    }
+                    _playlistRevision.value += 1L
+                }
+            }
+            // Guide work can run while the smaller catalogue-list requests finish.
             requestGuideRefresh()
+            val credentials = activePlaylists(config).mapNotNull(::resolveXtreamCredentials).distinctBy(::xtreamCacheKey)
+            for (creds in credentials) {
+                if (!stillCurrent()) return@request
+                refreshLaunchVodCatalogs(creds, profile, ::stillCurrent)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            System.err.println("[Playlist-Refresh] Launch check kept cached content: ${error.javaClass.simpleName}")
+        } finally {
+            requestGuideRefresh()
+        }
+    }
+
+    private suspend fun refreshLaunchVodCatalogs(
+        creds: XtreamCredentials,
+        profile: String,
+        stillCurrent: suspend () -> Boolean,
+    ) {
+        // Catalogue endpoints return IDs/metadata, not per-series episode trees.
+        // Null means failure; a valid empty array is a confirmed removal of all items.
+        val root = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action="
+        val vod: List<XtreamVodStream>? = requestJson(root + "get_vod_streams",
+            TypeToken.getParameterized(List::class.java, XtreamVodStream::class.java).type,
+            client = launchCatalogHttpClient)
+        if (!stillCurrent()) return
+        if (vod != null && vod.all { it.streamId != null && !it.name.isNullOrBlank() }) {
+            val now = System.currentTimeMillis()
+            writeDiskCache(vodDiskCacheFile(creds), now, vod)
+            if (xtreamVodCacheKey == xtreamCacheKey(creds)) {
+                cachedXtreamVodStreams = vod
+                xtreamVodLoadedAtMs = now
+                cachedVodIdIndex = buildVodIdIndex(vod)
+                cachedVodIndex = null
+            }
+            clearIptvMovieSourceCache()
+        }
+        val series: List<XtreamSeriesItem>? = requestJson(root + "get_series",
+            TypeToken.getParameterized(List::class.java, XtreamSeriesItem::class.java).type,
+            client = launchCatalogHttpClient)
+        if (!stillCurrent()) return
+        if (series != null && series.all { it.seriesId != null && !it.name.isNullOrBlank() }) {
+            val now = System.currentTimeMillis()
+            writeDiskCache(seriesDiskCacheFile(creds), now, series)
+            if (xtreamVodCacheKey == xtreamCacheKey(creds)) {
+                cachedXtreamSeries = series
+                xtreamSeriesLoadedAtMs = now
+                cachedXtreamSeriesEpisodes = emptyMap()
+            }
+            seriesResolver.invalidateProviderCatalog("$profile|${xtreamCacheKey(creds)}", series.mapNotNull { it.seriesId })
         }
     }
 
@@ -4300,6 +4407,32 @@ class IptvRepository @Inject constructor(
             creds: XtreamCredentials
         ) {
             loadCatalog(providerKey, creds, allowNetwork = true, forceRefresh = true)
+        }
+
+        fun invalidateProviderCatalog(providerKey: String, seriesIds: List<Int>) {
+            catalogMemory.remove(providerKey)
+            prefs.edit().remove(catalogPrefKey(providerKey)).apply()
+            // Episodes are not fetched at launch. Expire only this provider's
+            // cached episode info so opening a show can discover new episodes.
+            synchronized(seriesInfoLock) { seriesInfoMemory.keys.removeAll { it.startsWith("$providerKey|") } }
+            val episodeEditor = prefs.edit()
+            seriesIds.forEach { id ->
+                val key = seriesInfoPrefKey(providerKey, id)
+                if (prefs.contains(key)) episodeEditor.remove(key)
+            }
+            episodeEditor.apply()
+            synchronized(resolvedLock) {
+                resolvedMemory.keys.removeAll { it.startsWith("$providerKey|") }
+                val existing = runCatching { gson.fromJson(prefs.getString(resolvedPrefKey, null), ResolverPersistedResolved::class.java) }.getOrNull()
+                if (existing != null) prefs.edit().putString(resolvedPrefKey,
+                    gson.toJson(ResolverPersistedResolved(existing.items.filterKeys { !it.startsWith("$providerKey|") }))).apply()
+            }
+            synchronized(seriesBindingLock) {
+                seriesBindingMemory.keys.removeAll { it.startsWith("$providerKey|") }
+                val existing = runCatching { gson.fromJson(prefs.getString(seriesBindingPrefKey, null), ResolverPersistedSeriesBindings::class.java) }.getOrNull()
+                if (existing != null) prefs.edit().putString(seriesBindingPrefKey,
+                    gson.toJson(ResolverPersistedSeriesBindings(existing.items.filterKeys { !it.startsWith("$providerKey|") }))).apply()
+            }
         }
 
         suspend fun prefetchSeriesInfo(
@@ -5614,7 +5747,7 @@ class IptvRepository @Inject constructor(
             // 1. Fast check: in-memory cache (no lock needed, fields are @Volatile)
             ensureXtreamVodCacheOwnership(creds)
             val now = System.currentTimeMillis()
-            if (cachedXtreamVodStreams.isNotEmpty() && now - xtreamVodLoadedAtMs < xtreamVodCacheMs) {
+            if (xtreamVodLoadedAtMs > 0 && now - xtreamVodLoadedAtMs < xtreamVodCacheMs) {
                 if (cachedVodIdIndex?.items !== cachedXtreamVodStreams) {
                     cachedVodIdIndex = buildVodIdIndex(cachedXtreamVodStreams)
                 }
@@ -5624,7 +5757,7 @@ class IptvRepository @Inject constructor(
             // 2. Check disk cache (fast — reading a file, not a network call)
             val diskFile = vodDiskCacheFile(creds)
             val diskCache: XtreamDiskCache<XtreamVodStream>? = readDiskCache(diskFile, vodDiskCacheType)
-            if (diskCache != null && diskCache.items.isNotEmpty() && now - diskCache.savedAtMs < xtreamVodCacheMs) {
+            if (diskCache != null && now - diskCache.savedAtMs < xtreamVodCacheMs) {
                 System.err.println("[VOD-Cache] Loaded ${diskCache.items.size} VOD streams from disk cache (age ${(now - diskCache.savedAtMs) / 1000}s)")
                 cachedXtreamVodStreams = diskCache.items
                 xtreamVodLoadedAtMs = diskCache.savedAtMs
@@ -5675,11 +5808,11 @@ class IptvRepository @Inject constructor(
         if (allowNetwork) return loadXtreamVodStreams(creds, fast = fast)
         // If no network allowed, try memory first, then disk
         ensureXtreamVodCacheOwnership(creds)
-        if (cachedXtreamVodStreams.isNotEmpty()) return cachedXtreamVodStreams
+        if (xtreamVodLoadedAtMs > 0) return cachedXtreamVodStreams
         // Try disk cache even when network not allowed
         return withContext(Dispatchers.IO) {
             val diskCache: XtreamDiskCache<XtreamVodStream>? = readDiskCache(vodDiskCacheFile(creds), vodDiskCacheType)
-            if (diskCache != null && diskCache.items.isNotEmpty()) {
+            if (diskCache != null) {
                 cachedXtreamVodStreams = diskCache.items
                 xtreamVodLoadedAtMs = diskCache.savedAtMs
                 cachedVodIdIndex = buildVodIdIndex(diskCache.items)
@@ -5698,14 +5831,14 @@ class IptvRepository @Inject constructor(
             // 1. Fast check: in-memory cache
             ensureXtreamVodCacheOwnership(creds)
             val now = System.currentTimeMillis()
-            if (cachedXtreamSeries.isNotEmpty() && now - xtreamSeriesLoadedAtMs < xtreamVodCacheMs) {
+            if (xtreamSeriesLoadedAtMs > 0 && now - xtreamSeriesLoadedAtMs < xtreamVodCacheMs) {
                 return@withContext cachedXtreamSeries
             }
 
             // 2. Check disk cache
             val diskFile = seriesDiskCacheFile(creds)
             val diskCache: XtreamDiskCache<XtreamSeriesItem>? = readDiskCache(diskFile, seriesDiskCacheType)
-            if (diskCache != null && diskCache.items.isNotEmpty() && now - diskCache.savedAtMs < xtreamVodCacheMs) {
+            if (diskCache != null && now - diskCache.savedAtMs < xtreamVodCacheMs) {
                 System.err.println("[VOD-Cache] Loaded ${diskCache.items.size} series from disk cache (age ${(now - diskCache.savedAtMs) / 1000}s)")
                 cachedXtreamSeries = diskCache.items
                 xtreamSeriesLoadedAtMs = diskCache.savedAtMs
@@ -5752,10 +5885,10 @@ class IptvRepository @Inject constructor(
         if (allowNetwork) return loadXtreamSeriesList(creds, fast = fast)
         // If no network allowed, try memory first, then disk
         ensureXtreamVodCacheOwnership(creds)
-        if (cachedXtreamSeries.isNotEmpty()) return cachedXtreamSeries
+        if (xtreamSeriesLoadedAtMs > 0) return cachedXtreamSeries
         return withContext(Dispatchers.IO) {
             val diskCache: XtreamDiskCache<XtreamSeriesItem>? = readDiskCache(seriesDiskCacheFile(creds), seriesDiskCacheType)
-            if (diskCache != null && diskCache.items.isNotEmpty()) {
+            if (diskCache != null) {
                 cachedXtreamSeries = diskCache.items
                 xtreamSeriesLoadedAtMs = diskCache.savedAtMs
                 diskCache.items

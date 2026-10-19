@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `400`. Version name is `2.0.084`, following the actual
+Current testing version code is `401`. Version name is `2.0.085`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -282,3 +282,43 @@ cancellation leaving work alive, subsequent scheduled requests, real-repository
 completion freshness (including a channel without provider listings), and scrolling
 a 350-row category across former window boundaries and back up. Physical-device
 navigation and timing still require confirmation.
+
+## Launch-time provider catalogue refresh in 2.0.085 / 401
+
+Activity/Home startup now requests an application-owned content check per
+profile/configuration. Returning to a retained activity can recheck after a
+15-minute debounce; tab navigation does not repeat it. Existing cached content renders immediately;
+the check survives tab changes and is independent of the six-hour EPG freshness
+window. Previously startup prefetch only fetched a playlist when no cached channels
+existed, so a warm launch could skip new/removed provider content entirely.
+
+Live playlists are refreshed source by source. Successful nonempty snapshots
+replace that provider's rows (additions, removals and metadata/category updates),
+while failed, timed-out or ambiguous empty live responses retain the prior source.
+Unchanged snapshots retain ordering; stable channel IDs preserve favourites and
+session references. Commits check the active profile/config under the load mutex,
+then notify TV to read the refreshed in-memory snapshot without an empty-list phase.
+
+Enabled Xtream providers also refresh `get_vod_streams` and `get_series` lists,
+bypassing the normal catalogue TTL for this one launch check. These are metadata
+requests, not episode-tree/media downloads. Valid snapshots replace credential-
+scoped disk caches; the currently owned in-memory catalogue and derived source
+indices are updated/invalidated as appropriate. Valid empty movie/series arrays
+remove old entries; failed/malformed responses retain the previous cache. Related
+provider resolver bindings are invalidated so removed series do not survive solely
+through a stale lookup. Other profiles' bindings are retained. Providers without a
+delta/version endpoint still require downloading their full metadata lists; no
+fixed wall-clock speedup is claimed. Stalker live lists remain supported; this
+change does not introduce a new Stalker VOD catalogue adapter.
+
+The live-list check precedes automatic EPG startup, avoiding an import against an
+outdated channel list followed by an immediate second import. Channel identity
+changes invalidate the six-hour guide completion marker once; metadata-only and
+unchanged checks do not. Cached episode information for the refreshed provider
+expires so opening a show can discover new episodes without a launch-time crawl.
+
+Regression tests exercise real-repository channel/movie/series updates, repeated
+launch requests, HTTP failures, malformed and empty catalogue responses, profile
+switch rejection, absence of per-episode requests, source-safe channel merging,
+ordering and separate Stalker portal ownership. Existing guide/popup/scroll/startup
+regressions remain in the release validation set.

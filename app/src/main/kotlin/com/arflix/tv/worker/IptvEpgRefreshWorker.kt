@@ -26,6 +26,7 @@ class IptvEpgRefreshWorker @AssistedInject constructor(
     override suspend fun doWork(): Result = try {
         // Join the same application-owned job used by Home and TV. A tab change
         // cannot cancel it, and overlapping worker/UI requests cannot duplicate it.
+        iptvRepository.prefetchFreshStartupData()
         iptvRepository.requestGuideRefresh().join()
         if (iptvRepository.guideRefreshState.value.failed) Result.retry() else Result.success()
     } catch (error: Throwable) {

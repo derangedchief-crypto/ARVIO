@@ -213,6 +213,14 @@ class TvViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            iptvRepository.playlistRevision.collect { revision ->
+                if (revision > 0L) {
+                    val snapshot = iptvRepository.getMemoryCachedSnapshot()
+                    if (snapshot != null) setUiState(_uiState.value.copy(snapshot = snapshot))
+                }
+            }
+        }
+        viewModelScope.launch {
             iptvRepository.guideRefreshState.collect { progress ->
                 if (_uiState.value.epgBackfillInProgress && !progress.loading && !progress.failed) {
                     lastCompleteEpgBackfillCompletedAt = System.currentTimeMillis()
@@ -1087,7 +1095,7 @@ class TvViewModel @Inject constructor(
      * prepared batch from the SQLite guide index as soon as it is selected.
      */
     private fun startPlaylistBackgroundEpgIndex(state: TvUiState) {
-        if (state.isConfigured) iptvRepository.requestGuideRefresh()
+        if (state.isConfigured) iptvRepository.requestLaunchContentRefresh()
     }
 
     private fun startCompleteEpgBackfill(
@@ -1095,7 +1103,10 @@ class TvViewModel @Inject constructor(
         priorityChannelIds: Collection<String> = emptyList()
     ) {
         val state = _uiState.value
-        if (state.isConfigured) iptvRepository.requestGuideRefresh(force)
+        if (state.isConfigured) {
+            if (force) iptvRepository.requestGuideRefresh(force = true)
+            else iptvRepository.requestLaunchContentRefresh()
+        }
     }
 
     private fun requestVisibleCompleteEpgBackfill(priorityChannelIds: Collection<String> = emptyList()) {
