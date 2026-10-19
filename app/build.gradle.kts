@@ -40,8 +40,8 @@ android {
         // longer receive this distribution.
         minSdk = 26
         targetSdk = 36
-        versionCode = 393
-        versionName = "2.0.077"
+        versionCode = 394
+        versionName = "2.0.078"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("String", "UPDATE_RELEASE_TAG", "\"\"")
@@ -356,10 +356,10 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.0")
     implementation("androidx.activity:activity-compose:1.10.0")
 
-    // Compose BOM — bumped alongside Kotlin 2.1. Staying on the 2024.06
-    // line keeps tv-foundation 1.0.0-alpha11 happy; newer BOMs drift the
-    // runtime off alpha11 and cause invalid-slot-table crashes on D-pad.
-    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    // Match OwnTV's Compose runtime on the compile classpath as well. Library
+    // implementation dependencies arrive only at runtime; an older compile BOM
+    // emits calls to pager signatures removed from the packaged Foundation.
+    implementation(platform("androidx.compose:compose-bom:2026.08.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -370,7 +370,7 @@ dependencies {
     // Compose for TV - Core TV components
     // tv-foundation stays alpha (no beta/stable releases exist); tv-material bumped to stable
     implementation("androidx.tv:tv-foundation:1.0.0-alpha11")
-    implementation("androidx.tv:tv-material:1.0.0")
+    implementation("androidx.tv:tv-material:1.1.0")
 
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.6")
@@ -498,6 +498,7 @@ dependencies {
 
     // Unit Testing
     testImplementation("junit:junit:4.13.2")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     testImplementation("io.mockk:mockk:1.13.8")
     testImplementation("app.cash.turbine:turbine:1.0.0") // Flow testing
@@ -505,7 +506,7 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.11.1") // Android mocking
 
     // Android Instrumented Testing
-    androidTestImplementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    androidTestImplementation(platform("androidx.compose:compose-bom:2026.08.00"))
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test:core-ktx:1.5.0")
     androidTestImplementation("androidx.test:runner:1.5.2")
@@ -640,4 +641,38 @@ dependencies {
     // Runtime helpers used by the sideload plugin extractor stack.
     add("sideloadImplementation", "org.mozilla:rhino:1.8.1")
     add("sideloadImplementation", "com.google.re2j:re2j:1.8")
+}
+
+// A library's implementation dependencies may upgrade the packaged Compose
+// libraries without upgrading ARVIO's compile classpath. That builds cleanly but
+// crashes at calls such as HorizontalPager. Gate every variant before compilation.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val suffix = variant.name.replaceFirstChar { it.uppercaseChar() }
+        val verifyCompose = tasks.register("verify${suffix}ComposeAlignment") {
+            group = "verification"
+            description = "Check Compose compile/runtime ABI versions match for ${variant.name}"
+            doLast {
+                fun composeVersions(configurationName: String): Map<String, String> =
+                    configurations.getByName(configurationName).incoming.resolutionResult.allComponents
+                        .mapNotNull { component ->
+                            val id = component.id as? org.gradle.api.artifacts.component.ModuleComponentIdentifier
+                            id?.takeIf { it.group.startsWith("androidx.compose.") }
+                                ?.let { "${it.group}:${it.module}" to it.version }
+                        }.toMap()
+                val compiled = composeVersions("${variant.name}CompileClasspath")
+                val packaged = composeVersions("${variant.name}RuntimeClasspath")
+                val mismatches = compiled.mapNotNull { (module, version) ->
+                    packaged[module]?.takeIf { it != version }
+                        ?.let { "$module: compiled=$version, packaged=$it" }
+                }
+                check(mismatches.isEmpty()) {
+                    "Compose compile/runtime mismatch:\n${mismatches.joinToString("\n")}"
+                }
+            }
+        }
+        tasks.matching { it.name == "pre${suffix}Build" }.configureEach {
+            dependsOn(verifyCompose)
+        }
+    }
 }

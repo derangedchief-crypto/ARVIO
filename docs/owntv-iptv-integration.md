@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Recovery version code is `393`. Version name is `2.0.077`, following the actual
+Recovery version code is `394`. Version name is `2.0.078`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -102,3 +102,23 @@ The headless emulator could not complete a boot without accessible KVM in this
 environment and was stopped. No successful Android 16 device launch is claimed.
 The reproduced failure and fix above are from the real-application Robolectric
 startup test, not an emulator crash log or a crash report from the user's phone.
+
+## Phone carousel linkage failure in 2.0.077 / 393
+
+The phone crash report then identified a missing `HorizontalPager` method. Gradle
+dependency inspection confirmed Foundation 1.6.8 on the app's compile classpath
+but 1.12.0 on its runtime classpath: OwnTV's implementation dependencies upgraded
+the packaged libraries without upgrading ARVIO's compile-time BOM.
+
+The recovery uses OwnTV's Compose BOM 2026.08.00 for app compilation and UI tests,
+updates TV Material to 1.1.0 and uses the pager's renamed
+`beyondViewportPageCount` argument. The real populated `MobileHeroCarousel` is
+rendered by a new Robolectric Compose UI test; the existing TV lazy row and grid
+also have rendering smoke tests. These tests supplement the application-startup
+test, which cannot detect a failure that occurs only when UI content is rendered.
+
+`verify<Variant>ComposeAlignment` compares all shared Compose module versions
+between compile/runtime configurations and runs from the variant's pre-build
+task. A negative test forcing Foundation 1.6.8 onto only the compile classpath
+fails with the exact `compiled=1.6.8, packaged=1.12.0` mismatch, before compiling
+or packaging another incompatible APK. The publishing workflow is unchanged.

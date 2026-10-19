@@ -2078,7 +2078,7 @@ private fun MobileHeroOverlay(
 /** Netflix-style mobile hero carousel: card-based banner pager with profile/search overlay. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MobileHeroCarousel(
+internal fun MobileHeroCarousel(
     categories: List<Category>,
     cardLogoUrls: Map<String, String> = emptyMap(),
     cardImdbRatings: Map<String, String> = emptyMap(),
@@ -2227,7 +2227,7 @@ private fun MobileHeroCarousel(
             state = pagerState,
             contentPadding = PaddingValues(horizontal = 64.dp),
             pageSpacing = 18.dp,
-            beyondBoundsPageCount = 1,
+            beyondViewportPageCount = 1,
             modifier = Modifier.fillMaxWidth()
         ) { page ->
             val item = heroItems[page % heroItems.size]
