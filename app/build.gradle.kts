@@ -26,7 +26,7 @@ val includeX86Abis = providers.gradleProperty("includeX86Abis")
 
 android {
     namespace = "com.arflix.tv"
-    compileSdk = 36
+    compileSdk = 37
     ndkVersion = "28.2.13676358"
 
     flavorDimensions += "distribution"
@@ -34,8 +34,11 @@ android {
     defaultConfig {
         applicationId = "com.arvio.tv"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
-        minSdk = 23
+        // The replacement IPTV stack is OwnTV Core, whose streaming, EPG and
+        // dual-engine playback implementation supports Android 8/API 26+.
+        // Non-IPTV ARVIO features remain unchanged; API 23–25 devices no
+        // longer receive this distribution.
+        minSdk = 26
         targetSdk = 36
         versionCode = 376
         versionName = "2.0.060"
@@ -307,11 +310,8 @@ ksp {
     arg("dagger.hilt.android.internal.disableAndroidSuperclassValidation", "true")
 }
 
-// Kotlin 2.3.0 emits class metadata v2.3.0, which Hilt 2.57's bundled
-// kotlin-metadata-jvm (max v2.2.0) cannot read — hiltJavaCompile fails with
-// "Provided Metadata instance has version 2.3.0". Force the reader library to
-// 2.3.0 on every configuration (incl. Hilt's annotation-processor classpath) so
-// Hilt 2.57 can process Kotlin 2.3.0 metadata without moving to Hilt 2.59 (AGP 9).
+// Keep Kotlin metadata aligned across annotation processors during the AGP 9
+// toolchain migration.
 configurations.all {
     resolutionStrategy {
         force("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
@@ -372,11 +372,9 @@ dependencies {
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.6")
 
-    // Hilt for DI — 2.57 (last stable for AGP 8.x). 2.59's Gradle plugin demands
-    // AGP 9 + Gradle 9.1 and is broken there (dagger#5099). androidx.hilt is held at
-    // stable 1.2.0 below so hilt-work doesn't drag dagger back up to 2.59.
-    implementation("com.google.dagger:hilt-android:2.57")
-    ksp("com.google.dagger:hilt-compiler:2.57")
+    // Hilt 2.59 is required by AGP 9.
+    implementation("com.google.dagger:hilt-android:2.59")
+    ksp("com.google.dagger:hilt-compiler:2.59")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
 
     // Leanback (TV compliance, browse fragments if needed)
@@ -392,6 +390,13 @@ dependencies {
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
+
+    // OwnTV's GPL-3.0 IPTV foundation: persistent source/EPG ingestion plus
+    // the Media3 ↔ mpv live-stream fallback engine. Both artifacts must stay
+    // on the same release. The integration is introduced behind the ARVIO TV
+    // adapter so Movies, Shows, login, profiles and scrapers remain ARVIO.
+    implementation("tv.own.owntv:core:1.0.68")
+    implementation("tv.own.owntv:player-core:1.0.68")
     // FFmpeg extension for software decoding of DTS/TrueHD/Atmos/HEVC/DV.
     // Keep this only in the sideload build. The Play Store build must comply
     // with 16 KB memory page support, and the current prebuilt native library

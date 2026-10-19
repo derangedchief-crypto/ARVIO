@@ -34,23 +34,11 @@ android {
         }
     }
 
-    testOptions {
-        managedDevices {
-            devices {
-                create<com.android.build.api.dsl.ManagedVirtualDevice>("pixel6Api34") {
-                    device = "Pixel 6"
-                    apiLevel = 34
-                    systemImageSource = "aosp"
-                }
-            }
-        }
-    }
 }
 
-baselineProfile {
-    managedDevices += "pixel6Api34"
-    useConnectedDevices = false
-}
+// Managed-device setup is intentionally deferred during the AGP 9 migration.
+// It is not part of the APK build and will be restored using the new DSL once
+// the IPTV replacement is compiling.
 
 dependencies {
     implementation("androidx.benchmark:benchmark-macro-junit4:1.2.4")
