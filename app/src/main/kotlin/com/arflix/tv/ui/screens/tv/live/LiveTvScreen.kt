@@ -2144,7 +2144,17 @@ fun LiveTvScreen(
     var playerIsPlaying by remember { mutableStateOf(false) }
     var playerPlayWhenReady by remember { mutableStateOf(true) }
     var playerIsBuffering by remember { mutableStateOf(false) }
-    LaunchedEffect(exoPlayer, playingCatchupProgram, catchupUrlAnchorOffsetMs, isFullScreen, isHudVisible) {
+    LaunchedEffect(exoPlayer, playingCatchupProgram, catchupUrlAnchorOffsetMs, isFullScreen, isHudVisible, usingOwnTvMpvFallback) {
+        if (usingOwnTvMpvFallback) {
+            if (playingCatchupProgram == null) return@LaunchedEffect
+            while (true) {
+                playerPositionMs = catchupUrlAnchorOffsetMs + ownTvMpvFallback.positionMs
+                playerDurationMs = maxOf(ownTvMpvFallback.durationMs,
+                    playingCatchupProgram?.let { it.endUtcMillis - it.startUtcMillis } ?: 0L)
+                playerPlayWhenReady = ownTvMpvFallback.playing.value
+                delay(500L)
+            }
+        }
         while (true) {
             // The guide composition is intentionally large. Updating its root
             // state every 1.5 seconds just to advance a hidden live HUD steals
@@ -2180,12 +2190,16 @@ fun LiveTvScreen(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, usingOwnTvMpvFallback) {
         val obs = LifecycleEventObserver { _, ev ->
             when (ev) {
-                Lifecycle.Event.ON_PAUSE -> exoPlayer.pause()
+                Lifecycle.Event.ON_PAUSE -> {
+                    exoPlayer.pause()
+                    ownTvMpvFallback.pause()
+                }
                 Lifecycle.Event.ON_RESUME -> {
-                    if (playingChannelId != null) exoPlayer.play()
+                    if (usingOwnTvMpvFallback) ownTvMpvFallback.resume()
+                    else if (playingChannelId != null) exoPlayer.play()
                     if (currentUiState.isConfigured &&
                         currentUiState.snapshot.channels.isNotEmpty() &&
                         viewModel.iptvRepository.cachedEpgAgeMs() > 6 * 60 * 60_000L
@@ -2208,6 +2222,21 @@ fun LiveTvScreen(
     var retryInFlight by remember { mutableStateOf(false) }
     var lastPlaybackReadyAtMs by remember { mutableLongStateOf(0L) }
     var playbackDiagnostic by remember { mutableStateOf<PlaybackDiagnostic?>(null) }
+    val mpvPlaying by ownTvMpvFallback.playing.collectAsStateWithLifecycle()
+    val mpvBuffering by ownTvMpvFallback.buffering.collectAsStateWithLifecycle()
+    val mpvError by ownTvMpvFallback.error.collectAsStateWithLifecycle()
+    LaunchedEffect(usingOwnTvMpvFallback, mpvPlaying, mpvBuffering, mpvError) {
+        if (usingOwnTvMpvFallback) {
+            playerIsPlaying = mpvPlaying
+            playerIsBuffering = mpvBuffering
+            if (mpvPlaying) playbackDiagnostic = null
+            mpvError?.let {
+                playbackDiagnostic = PlaybackDiagnostic(
+                    title = context.getString(R.string.live_diag_playback_failed),
+                    detail = it, severity = PlaybackDiagnosticSeverity.Error)
+            }
+        }
+    }
 
     fun prepareStream(
         stream: String,
@@ -2218,10 +2247,6 @@ fun LiveTvScreen(
         drmInfo: com.arflix.tv.data.model.DrmInfo? = null,
         forcePrepare: Boolean = false,
     ) {
-        if (usingOwnTvMpvFallback) {
-            ownTvMpvFallback.stop()
-            usingOwnTvMpvFallback = false
-        }
         val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
         iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
 
@@ -2232,6 +2257,36 @@ fun LiveTvScreen(
             (playingCatchupProgram == null || catchupUrlAnchorOffsetMs == lastPreparedCatchupOffsetMs)
         ) {
             return
+        }
+
+        // OwnTV Player Core owns live and archive channels, including its own
+        // codec/reconnection ladder. Keep ARVIO's DRM adapter for schemes such
+        // as PlayReady that OwnTV does not support.
+        if (drmInfo == null) {
+            exoPlayer.stop()
+            usingOwnTvMpvFallback = true
+            lastPreparedStreamUrl = stream
+            lastPreparedIsHls = isHls
+            lastPreparedHeaders = headers
+            lastPreparedCatchupOffsetMs = if (playingCatchupProgram != null) catchupUrlAnchorOffsetMs else -1L
+            playerIsBuffering = true
+            playbackDiagnostic = PlaybackDiagnostic(
+                title = context.getString(R.string.live_diag_starting_stream),
+                detail = "OwnTV Player Core", severity = PlaybackDiagnosticSeverity.Info)
+            val ownTvSourceChannel = playingChannel?.source
+            val ownTvSourceProgram = playingCatchupProgram?.shiftedForCatchup(catchupUrlAnchorOffsetMs)
+            ownTvMpvFallback.play(stream, mergedHeaders, archive = playingCatchupProgram != null,
+                startPositionMs = initialPositionMs,
+                refreshUrl = ownTvSourceChannel?.let { channel ->
+                    {
+                        viewModel.resolvePlayableStreamUrl(channel, ownTvSourceProgram, forceRefresh = true).url
+                    }
+                })
+            return
+        }
+        if (usingOwnTvMpvFallback) {
+            ownTvMpvFallback.stop()
+            usingOwnTvMpvFallback = false
         }
 
         playerIsBuffering = true
@@ -2301,6 +2356,11 @@ fun LiveTvScreen(
 
     fun toggleCatchupPlayback() {
         if (playingCatchupProgram == null) return
+        if (usingOwnTvMpvFallback) {
+            ownTvMpvFallback.togglePlayPause()
+            hudPokeSignal++
+            return
+        }
         if (exoPlayer.isPlaying) {
             exoPlayer.pause()
             playerPlayWhenReady = false
@@ -2321,7 +2381,8 @@ fun LiveTvScreen(
             ?: playerDurationMs
         val wasPlayRequested = exoPlayer.playWhenReady
         val maxPosition = if (duration > 1_000L) duration - 1_000L else duration
-        val current = (catchupUrlAnchorOffsetMs + exoPlayer.currentPosition.coerceAtLeast(0L))
+        val current = (catchupUrlAnchorOffsetMs +
+            (if (usingOwnTvMpvFallback) ownTvMpvFallback.positionMs else exoPlayer.currentPosition).coerceAtLeast(0L))
             .let { if (maxPosition > 0L) it.coerceAtMost(maxPosition) else it }
         val target = (current + deltaMs)
             .coerceAtLeast(0L)
@@ -2336,6 +2397,13 @@ fun LiveTvScreen(
         val sameAnchor = targetAnchor == catchupUrlAnchorOffsetMs
         catchupPlaybackOffsetMs = target
         playerPositionMs = target
+        if (usingOwnTvMpvFallback) {
+            if (sameAnchor) ownTvMpvFallback.seekTo(targetInSegment)
+            ownTvMpvFallback.setPlaying(true)
+            playerPlayWhenReady = true
+            hudPokeSignal++
+            return
+        }
         exoPlayer.playWhenReady = true
         if (sameAnchor) {
             exoPlayer.seekTo(targetInSegment)
@@ -2484,10 +2552,12 @@ fun LiveTvScreen(
         lastPreparedHeaders,
         playingChannel?.id,
         playingCatchupProgram,
-        catchupPlaybackOffsetMs
+        catchupPlaybackOffsetMs,
+        usingOwnTvMpvFallback
     ) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                if (usingOwnTvMpvFallback) return
                 playerIsBuffering = (playbackState == Player.STATE_BUFFERING)
                 if (playbackState == Player.STATE_READY) {
                     playbackDiagnostic = null
@@ -2497,6 +2567,7 @@ fun LiveTvScreen(
             }
 
             override fun onIsLoadingChanged(isLoading: Boolean) {
+                if (usingOwnTvMpvFallback) return
                 if (exoPlayer.playbackState == Player.STATE_BUFFERING || (isLoading && !exoPlayer.isPlaying)) {
                     playerIsBuffering = true
                 } else if (exoPlayer.playbackState == Player.STATE_READY) {
@@ -2505,6 +2576,7 @@ fun LiveTvScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                if (usingOwnTvMpvFallback) return
                 playerIsBuffering = false
                 val prepared = lastPreparedStreamUrl ?: return
                 val preparedIsHls = lastPreparedIsHls
@@ -2542,7 +2614,8 @@ fun LiveTvScreen(
                     1
                 }
                 if (nextAttempt > maxRetryCount) {
-                    if (!usingOwnTvMpvFallback && ownTvMpvFallback.available) {
+                    if (!usingOwnTvMpvFallback && retryProgram == null &&
+                        retryChannel?.drmInfo == null && ownTvMpvFallback.available) {
                         // OwnTV's FFmpeg/mpv engine accepts a number of raw TS,
                         // codec and provider-header combinations that Media3
                         // cannot. Only hand over after the bounded Media3 retry
@@ -2721,14 +2794,14 @@ fun LiveTvScreen(
         if (targetView == null) return@LaunchedEffect
         val previousView = attachedPlayerView
         if (usingOwnTvMpvFallback) {
-            if (previousView !== targetView) {
-                PlayerView.switchTargetView(exoPlayer, previousView, targetView)
-                attachedPlayerView = targetView
-            }
+            previousView?.player = null
+            targetView.player = null
+            attachedPlayerView = targetView
             ownTvMpvFallback.attach(targetView)
             return@LaunchedEffect
         }
         ownTvMpvFallback.detach(previousView)
+        if (targetView.player !== exoPlayer) targetView.player = exoPlayer
         if (previousView === targetView) return@LaunchedEffect
 
         // Media3 explicitly recommends attaching the new target before
@@ -3155,12 +3228,12 @@ fun LiveTvScreen(
                                         return@onPreviewKeyEvent true
                                     }
                                     AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
-                                        exoPlayer.play()
+                                        if (usingOwnTvMpvFallback) ownTvMpvFallback.setPlaying(true) else exoPlayer.play()
                                         hudPokeSignal++
                                         return@onPreviewKeyEvent true
                                     }
                                     AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                                        exoPlayer.pause()
+                                        if (usingOwnTvMpvFallback) ownTvMpvFallback.setPlaying(false) else exoPlayer.pause()
                                         hudPokeSignal++
                                         return@onPreviewKeyEvent true
                                     }
@@ -3269,7 +3342,10 @@ fun LiveTvScreen(
                         },
                         onGuideClick = { openFullscreenGuide() },
                         onPlayPauseClick = {
-                            if (playingCatchupProgram != null) {
+                            if (usingOwnTvMpvFallback) {
+                                ownTvMpvFallback.togglePlayPause()
+                                hudPokeSignal++
+                            } else if (playingCatchupProgram != null) {
                                 toggleCatchupPlayback()
                             } else {
                                 if (exoPlayer.isPlaying) {

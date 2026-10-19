@@ -1,130 +1,126 @@
 package com.arflix.tv.ui.screens.tv.live
 
 import android.content.Context
-import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.media3.ui.PlayerView
-import dev.jdtech.mpv.MPVLib
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import org.koin.android.ext.koin.androidContext
+import org.koin.dsl.koinApplication
+import org.koin.dsl.module
+import tv.own.owntv.core.di.coreModule
+import tv.own.owntv.core.di.databaseModule
+import tv.own.owntv.core.di.dataModule
 import tv.own.owntv.core.network.StreamHeaders
+import tv.own.owntv.core.stalker.ReconnectUrlProvider
+import tv.own.owntv.player.OwnTVPlayer
+import tv.own.owntv.player.PlayerDiagnostics
+import tv.own.owntv.player.ownTVPlayer
 
 /**
- * Small ARVIO host for OwnTV's libmpv engine.
+ * Process-local OwnTV dependency graph. It is intentionally NOT installed in the
+ * global Koin context and does not replace ARVIO's Hilt application graph.
  *
- * OwnTV's full player is deliberately coupled to its own database and settings graph.  This host
- * keeps that graph out of ARVIO while retaining the important recovery path: when Media3 cannot
- * open a live stream, hand the same source and per-channel HTTP headers to FFmpeg/mpv on the
- * already-visible PlayerView surface.
+ * Settings/database instances are process-long so revisiting TV never creates
+ * a second DataStore for the same file. Only requested bindings are instantiated;
+ * OwnTV catalog, updater, accounts and background sync are not started here.
+ */
+internal object OwnTvIptvRuntime {
+    @Volatile private var instance: OwnTVPlayer? = null
+
+    fun player(context: Context): OwnTVPlayer = instance ?: synchronized(this) {
+        instance ?: koinApplication {
+            androidContext(context.applicationContext)
+            modules(coreModule, databaseModule, dataModule, module {
+                single { PlayerDiagnostics() }
+                single { ownTVPlayer() }
+            })
+        }.koin.get<OwnTVPlayer>().also { instance = it }
+    }
+}
+
+/**
+ * Surface/lifecycle adapter for the actual OwnTV Player Core, not a reimplemented
+ * libmpv wrapper. Upstream owns decoding, asynchronous mpv commands, retry ladders,
+ * buffering budgets, diagnostics and network recovery. ARVIO owns route lifetime.
  */
 internal class OwnTvMpvFallback(context: Context) {
-    private val appContext = context.applicationContext
-    private var mpv: MPVLib? = null
+    private val engine = OwnTvIptvRuntime.player(context)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val playing = engine.isPlaying
+    val buffering = engine.buffering
+    val positionMs: Long get() = engine.position.value
+    val durationMs: Long get() = engine.duration.value
+    val error = engine.error.map { it?.toString() }
+        .stateIn(scope, SharingStarted.Eagerly, null)
     private var attachedHolder: SurfaceHolder? = null
-    private var pendingUrl: String? = null
-    private var pendingHeaders: Map<String, String> = emptyMap()
-
     private val surfaceCallback = object : SurfaceHolder.Callback {
-        override fun surfaceCreated(holder: SurfaceHolder) = attachSurface(holder.surface)
-
-        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-            attachSurface(holder.surface)
+        override fun surfaceCreated(holder: SurfaceHolder) {
+            engine.attachSurface(holder.surface)
         }
-
+        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+            engine.setSurfaceSize(width, height)
+        }
         override fun surfaceDestroyed(holder: SurfaceHolder) {
-            if (attachedHolder === holder) {
-                runCatching { mpv?.detachSurface() }
-            }
+            // OwnTV's identity-aware detach cannot detach a newer fullscreen surface.
+            engine.detachSurface(holder.surface)
         }
     }
 
-    val available: Boolean get() = ensurePlayer() != null
+    val available: Boolean get() = true
 
     fun attach(playerView: PlayerView?) {
         val holder = (playerView?.videoSurfaceView as? SurfaceView)?.holder ?: return
-        if (attachedHolder === holder) {
-            if (holder.surface.isValid) attachSurface(holder.surface)
-            return
-        }
+        if (attachedHolder === holder) return
         attachedHolder?.removeCallback(surfaceCallback)
         attachedHolder = holder
         holder.addCallback(surfaceCallback)
-        if (holder.surface.isValid) attachSurface(holder.surface)
+        if (holder.surface.isValid) {
+            engine.attachSurface(holder.surface)
+            engine.setSurfaceSize(holder.surfaceFrame.width(), holder.surfaceFrame.height())
+        }
     }
 
     fun detach(playerView: PlayerView?) {
         val holder = (playerView?.videoSurfaceView as? SurfaceView)?.holder ?: return
         if (attachedHolder === holder) {
             holder.removeCallback(surfaceCallback)
+            engine.detachSurface(holder.surface)
             attachedHolder = null
-            runCatching { mpv?.detachSurface() }
         }
     }
 
-    fun play(url: String, headers: Map<String, String>) {
-        pendingUrl = url
-        pendingHeaders = headers
-        val player = ensurePlayer() ?: return
-        applyAndLoad(player)
+    fun play(url: String, headers: Map<String, String>, archive: Boolean = false, startPositionMs: Long = 0,
+        refreshUrl: (suspend () -> String?)? = null) {
+        engine.play(url = url, isLive = !archive, isArchive = archive,
+            startPositionMs = startPositionMs, muted = false,
+            userAgent = StreamHeaders.userAgentOf(headers), httpHeaders = StreamHeaders.encode(headers),
+            // Always replace the provider: upstream deliberately retains a live
+            // provider when passed null, which would reuse the previous channel.
+            reconnectProvider = ReconnectUrlProvider { refreshUrl?.invoke() })
     }
 
-    fun stop() {
-        pendingUrl = null
-        runCatching { mpv?.command(arrayOf("stop")) }
-    }
+    fun stop() = engine.stop()
+    fun togglePlayPause() = engine.togglePlayPause()
+    fun setPlaying(play: Boolean) { if (engine.isPlaying.value != play) engine.togglePlayPause() }
+    fun seekTo(position: Long) = engine.seekBy(position - engine.position.value)
+    fun pause() = engine.onAppBackgrounded()
+    fun resume() = engine.onAppForegrounded()
 
     fun release() {
-        pendingUrl = null
-        attachedHolder?.removeCallback(surfaceCallback)
+        attachedHolder?.let {
+            it.removeCallback(surfaceCallback)
+            engine.detachSurface(it.surface)
+        }
         attachedHolder = null
-        mpv?.let { player ->
-            runCatching { player.detachSurface() }
-            runCatching { player.destroy() }
-        }
-        mpv = null
-    }
-
-    private fun ensurePlayer(): MPVLib? {
-        mpv?.let { return it }
-        return runCatching {
-            MPVLib.create(appContext)?.apply {
-                setOptionString("vo", "mediacodec_embed")
-                setOptionString("hwdec", "mediacodec")
-                setOptionString("ao", "audiotrack")
-                setOptionString("force-window", "no")
-                setOptionString("idle", "yes")
-                setOptionString("ytdl", "no")
-                setOptionString("tls-verify", "no")
-                setOptionString("curl-enabled", "no")
-                setOptionString("cache", "yes")
-                setOptionString("demuxer-max-bytes", "100MiB")
-                setOptionString("demuxer-max-back-bytes", "12MiB")
-                setOptionString("demuxer-readahead-secs", "12")
-                setOptionString("network-timeout", "30")
-                setOptionString("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=4")
-                init()
-            }
-        }.getOrNull()?.also { created ->
-            mpv = created
-            attachedHolder?.surface?.takeIf { it.isValid }?.let(::attachSurface)
-        }
-    }
-
-    private fun attachSurface(surface: Surface) {
-        val player = ensurePlayer() ?: return
-        runCatching {
-            player.attachSurface(surface)
-            applyAndLoad(player)
-        }
-    }
-
-    private fun applyAndLoad(player: MPVLib) {
-        val url = pendingUrl ?: return
-        runCatching {
-            val userAgent = StreamHeaders.userAgentOf(pendingHeaders)
-            player.setPropertyString("user-agent", userAgent ?: "VLC/3.0.20 LibVLC/3.0.20")
-            player.setPropertyString("http-header-fields", StreamHeaders.toMpvHeaderFields(pendingHeaders))
-            player.command(arrayOf("loadfile", url, "replace"))
-            player.setPropertyBoolean("pause", false)
-        }
+        engine.stop()
+        engine.discardBackgroundRestore()
+        scope.cancel()
     }
 }

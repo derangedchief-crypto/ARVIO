@@ -87,7 +87,7 @@ enum class EpgGridFocusMode {
  */
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun TvGuideViewport(
+fun LegacyTvGuideViewport(
     channels: List<EnrichedChannel>,
     channelWindowOffset: Int = 0,
     totalChannelCount: Int = channels.size,

@@ -41,7 +41,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 391
-        versionName = "2.0.0.75"
+        versionName = "2.0.075"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("String", "UPDATE_RELEASE_TAG", "\"\"")
@@ -315,8 +315,11 @@ ksp {
 configurations.all {
     resolutionStrategy {
         force("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
-        force("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-        force("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+        // OwnTV Core is built against 1.11. Do not downgrade its runtime to
+        // ARVIO's previous 1.7 pin: native playback paths can otherwise fail
+        // later with NoSuchMethodError despite a successful Kotlin compile.
+        force("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+        force("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     }
 }
 
@@ -397,6 +400,8 @@ dependencies {
     // adapter so Movies, Shows, login, profiles and scrapers remain ARVIO.
     implementation("tv.own.owntv:core:1.0.68")
     implementation("tv.own.owntv:player-core:1.0.68")
+    // OwnTV's private IPTV runtime graph; ARVIO continues to use Hilt.
+    implementation("io.insert-koin:koin-android:4.2.2")
     // FFmpeg extension for software decoding of DTS/TrueHD/Atmos/HEVC/DV.
     // Keep this only in the sideload build. The Play Store build must comply
     // with 16 KB memory page support, and the current prebuilt native library
@@ -416,7 +421,7 @@ dependencies {
     implementation("org.jsoup:jsoup:1.17.2")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     // Image loading - Coil
     implementation("io.coil-kt:coil-compose:2.5.0")
@@ -488,7 +493,7 @@ dependencies {
 
     // Unit Testing
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     testImplementation("io.mockk:mockk:1.13.8")
     testImplementation("app.cash.turbine:turbine:1.0.0") // Flow testing
     testImplementation("com.google.truth:truth:1.1.5") // Better assertions
