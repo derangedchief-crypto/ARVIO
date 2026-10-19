@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `397`. Version name is `2.0.081`, following the actual
+Current testing version code is `398`. Version name is `2.0.082`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -212,3 +212,30 @@ selection, 1,000 durable guide rows and no whole-guide memory-cache growth. Furt
 tests exercise the upstream parser's 256-row bound, all 10,025 channels in a paged
 fallback pass, cache skips, empty responses, errors, cancellation and source
 changes, alongside the previous startup/UI/retention/aspect checks.
+
+## Server-cache-first restoration in 2.0.082 / 398
+
+The 2.0.081 disk-first loader bypassed `importDailyWorkerGuide`, unintentionally
+skipping the existing shared cache at
+`https://activationworker.extremeiptv.net/epg/full.sqlite.gz`. The complete-guide
+path now tries that cache before provider XMLTV, even without an explicit XMLTV
+candidate. Gzip download/decompression streams to a temporary SQLite database;
+matched programmes are copied in batches of at most 256 rows into the local
+index, not a playlist-wide in-memory map. The legacy loader uses the same bounded
+importer. Temporary database files and sidecars are removed afterwards.
+
+Current/near-future cache coverage determines which channels need fallback.
+Complete cache coverage skips XMLTV downloads; partial coverage keeps the server
+listings and imports XMLTV only for uncovered channels. The existing paged
+provider sweep then skips populated local rows. Expired, malformed and unavailable
+cache responses fall back to provider loading. Cancellation still propagates and
+previously committed guide rows remain queryable. The all-channel loading and
+playback-independent indexing from 2.0.081 are retained.
+
+Regression fixtures cover complete and partial gzipped SQLite caches, expired
+listings, corrupt gzip, HTTP 503, and display-name matching with different XMLTV
+IDs, using the actual repository while playback is active. Tests verify request
+order, fallback contents, no whole-guide memory-cache growth and temporary-file
+cleanup. A read-only download of the live server cache on 2026-10-19 confirmed
+4,075 channel records, 283,638 programme rows and current listings. No on-device
+2–5 minute timing claim has been validated here.

@@ -2775,6 +2775,12 @@ class IptvRepository @Inject constructor(
                     channelStore.window(sourceKey, 0, total)
                 } else cachedChannels
                 if (channels.isEmpty()) return@withLock
+                onProgress(IptvLoadProgress("Loading guide from server cache", 0))
+                val serverChannelIds = importDailyWorkerGuideToIndex(config, channels)
+                if (channels.all { it.id in serverChannelIds }) {
+                    onProgress(IptvLoadProgress("Server-cached guide ready", 100))
+                    return@withLock
+                }
                 val candidates = resolveScopedEpgCandidates(config)
                 if (candidates.isEmpty()) {
                     // Xtream-only playlists are covered by the bounded provider
@@ -2805,6 +2811,7 @@ class IptvRepository @Inject constructor(
                         // feeds but do not download the same guide five times.
                         if (candidate.playlistId in successfulPlaylists && candidate.url !in explicitUrls) return@forEachIndexed
                         val scoped = channelsForScopedEpgCandidate(candidate, channels)
+                            .filterNot { it.id in serverChannelIds }
                         if (scoped.isEmpty()) return@forEachIndexed
                         val lookup = buildChannelKeyLookup(scoped)
                         val names = mutableMapOf<String, MutableSet<String>>()
@@ -3254,40 +3261,93 @@ class IptvRepository @Inject constructor(
         channels: List<IptvChannel>
     ): Map<String, IptvNowNext> = withContext(Dispatchers.IO) {
         if (channels.isEmpty()) return@withContext emptyMap()
+        if (importDailyWorkerGuideToIndex(config, channels).isEmpty()) return@withContext emptyMap()
+        epgIndex.loadNowNext(currentEpgIndexKey(config), channels.mapTo(LinkedHashSet()) { it.id })
+    }
+
+    /** Import the shared server cache without constructing a whole-guide programme map. */
+    private suspend fun importDailyWorkerGuideToIndex(
+        config: IptvConfig,
+        channels: List<IptvChannel>
+    ): Set<String> = withContext(Dispatchers.IO) {
+        if (channels.isEmpty()) return@withContext emptySet()
         val file = File.createTempFile("daily_epg_", ".sqlite", context.cacheDir)
+        val sourceKey = currentEpgIndexKey(config)
+        val now = System.currentTimeMillis()
+        val populated = linkedSetOf<String>()
+        val writer = StreamingGuideIndexWriter { batch ->
+            epgIndex.mergeChannels(sourceKey, batch, now, pruneHistory = false)
+            clearIndexedGuideWindowCache()
+            signalGuideIndexChanged()
+        }
         try {
             iptvHttpClient.newCall(Request.Builder().url(DAILY_GUIDE_URL).build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptyMap()
-                GZIPInputStream(response.body?.byteStream() ?: return@withContext emptyMap()).use { input -> file.outputStream().use(input::copyTo) }
+                if (!response.isSuccessful) return@withContext emptySet()
+                GZIPInputStream(response.body?.byteStream() ?: return@withContext emptySet()).use { input ->
+                    file.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                }
             }
             SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
                 val names = LinkedHashMap<String, MutableSet<String>>()
-                db.rawQuery("SELECT channel_id, display_name FROM channels", null).use { c -> while (c.moveToNext()) names.getOrPut(c.getString(0)) { linkedSetOf() }.add(c.getString(1).orEmpty()) }
-                val lookup = buildChannelKeyLookup(channels)
-                val imported = LinkedHashMap<String, MutableList<IptvProgram>>()
-                names.forEach { (xmlId, _) ->
-                    val matched = resolveXmlTvChannels(xmlId, names, lookup)
-                    if (matched.isEmpty()) return@forEach
-                    db.rawQuery("SELECT start_ms,end_ms,title,description FROM programmes WHERE channel_id=? ORDER BY start_ms", arrayOf(xmlId)).use { c ->
-                        val rows = generateSequence { if (c.moveToNext()) IptvProgram(c.getString(2), c.getString(3), c.getLong(0), c.getLong(1)) else null }.toList()
-                        matched.forEach { channel -> imported.getOrPut(channel.id) { mutableListOf() }.addAll(rows) }
+                val xmlIds = linkedSetOf<String>()
+                db.rawQuery("SELECT channel_id, display_name FROM channels", null).use { c ->
+                    while (c.moveToNext()) {
+                        val id = c.getString(0)
+                        xmlIds.add(id)
+                        names.getOrPut(normalizeChannelKey(id)) { linkedSetOf() }.add(c.getString(1).orEmpty())
                     }
                 }
-                val guide = imported.mapValues { (_, rows) -> IptvNowNext(upcoming = rows.distinctBy { "${it.startUtcMillis}|${it.endUtcMillis}|${it.title}" }) }
-                if (guide.isEmpty()) return@withContext emptyMap()
-                persistEpgIndexAll(config, guide)
-                // Return the compact 48-hour index view, not the entire imported
-                // XMLTV payload. The full guide remains in SQLite and is queried by
-                // visible guide windows as the user browses.
-                epgIndex.loadNowNext(
-                    sourceKey = currentEpgIndexKey(config),
-                    channelIds = channels.mapTo(LinkedHashSet()) { it.id },
-                )
+                val lookup = buildChannelKeyLookup(channels)
+                epgIndex.beginRefresh(sourceKey)
+                xmlIds.forEach { xmlId ->
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    val matched = resolveXmlTvChannels(xmlId, names, lookup)
+                    if (matched.isEmpty()) return@forEach
+                    db.rawQuery("SELECT start_ms,end_ms,title,description FROM programmes WHERE channel_id=? AND end_ms>? AND start_ms<? ORDER BY start_ms",
+                        arrayOf(xmlId, (now - xmlTvPastWindowMs).toString(), (now + xmlTvFutureWindowMs).toString())).use { c ->
+                        while (c.moveToNext()) {
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            val programme = IptvProgram(c.getString(2), c.getString(3), c.getLong(0), c.getLong(1))
+                            if (programme.endUtcMillis <= programme.startUtcMillis) continue
+                            matched.forEach { channel ->
+                                if (writer.add(channel.id, programme)) kotlinx.coroutines.delay(10L)
+                                if (programme.endUtcMillis > now && programme.startUtcMillis < now + 6 * 60 * 60_000L) {
+                                    populated.add(channel.id)
+                                }
+                            }
+                        }
+                    }
+                }
+                writer.flush()
+                epgIndex.pruneExpiredHistory(sourceKey, now)
+                if (populated.isNotEmpty()) {
+                    epgIndex.markRefreshReady(sourceKey)
+                    cachedEpgAt = now
+                } else epgIndex.markRefreshFailed(sourceKey)
+                System.err.println("[EPG-Worker] Server cache populated ${populated.size}/${channels.size} channels")
+                populated
             }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            epgIndex.markRefreshFailed(sourceKey)
+            throw cancelled
         } catch (error: Exception) {
-            System.err.println("[EPG-Worker] Daily guide import failed: ${error.message}")
-            emptyMap()
-        } finally { file.delete() }
+            epgIndex.markRefreshFailed(sourceKey)
+            System.err.println("[EPG-Worker] Server cache unavailable; using provider fallback: ${error.javaClass.simpleName}")
+            emptySet()
+        } finally {
+            writer.flush()
+            clearIndexedGuideWindowCache()
+            signalGuideIndexChanged(force = true)
+            SQLiteDatabase.deleteDatabase(file)
+        }
     }
 
     private fun persistEpgIndexChannels(
