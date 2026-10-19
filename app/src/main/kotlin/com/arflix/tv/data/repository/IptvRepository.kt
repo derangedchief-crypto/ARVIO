@@ -1,5 +1,7 @@
 package com.arflix.tv.data.repository
 
+import tv.own.owntv.core.parser.EpgText
+
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.os.Process
@@ -7587,12 +7589,16 @@ class IptvRepository @Inject constructor(
                         }
                         "title" -> {
                             if (currentChannelKey != null) {
-                                currentTitle = parser.nextText().trim().ifBlank { null }
+                                // OwnTV's guide normalizer repairs providers which send literal
+                                // escaped line breaks and tab sequences in XMLTV metadata.  Clean
+                                // at ingestion so every ARVIO guide surface, search result and
+                                // catch-up dialog receives the same canonical programme text.
+                                currentTitle = EpgText.clean(parser.nextText())
                             }
                         }
                         "desc" -> {
                             if (currentChannelKey != null) {
-                                currentDesc = parser.nextText().trim().ifBlank { null }
+                                currentDesc = EpgText.clean(parser.nextText())
                             }
                         }
                     }
@@ -7778,14 +7784,14 @@ class IptvRepository @Inject constructor(
                     }
                     "title" -> {
                         if (readingTitle) {
-                            currentTitle = textBuffer.toString().trim().ifBlank { null }
+                            currentTitle = EpgText.clean(textBuffer.toString())
                             readingTitle = false
                             textBuffer.setLength(0)
                         }
                     }
                     "desc" -> {
                         if (readingDesc) {
-                            currentDesc = textBuffer.toString().trim().ifBlank { null }
+                            currentDesc = EpgText.clean(textBuffer.toString())
                             readingDesc = false
                             textBuffer.setLength(0)
                         }
