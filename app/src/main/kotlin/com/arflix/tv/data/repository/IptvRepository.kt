@@ -7862,8 +7862,8 @@ class IptvRepository @Inject constructor(
         recentCandidates: Map<String, List<IptvProgram>>,
     ): Map<String, IptvNowNext> = buildMap {
         channelIds.asSequence().filter { it.isNotBlank() }.forEach { channelId ->
-            val future = upcomingCandidates[channelId].orEmpty()
-            val recent = recentCandidates[channelId].orEmpty().sortedBy { it.startUtcMillis }
+            val future = collapseOverlappingGuideDuplicates(upcomingCandidates[channelId].orEmpty())
+            val recent = collapseOverlappingGuideDuplicates(recentCandidates[channelId].orEmpty())
             val nowNext = IptvNowNext(
                 now = nowCandidates[channelId],
                 next = future.getOrNull(0),
@@ -7883,8 +7883,8 @@ class IptvRepository @Inject constructor(
     ): ConcurrentHashMap<String, IptvNowNext> {
         val result = ConcurrentHashMap<String, IptvNowNext>(channels.size)
         channels.forEach { channel ->
-            val future = upcomingCandidates[channel.id].orEmpty()
-            val recent = recentCandidates[channel.id].orEmpty().sortedBy { it.startUtcMillis }
+            val future = collapseOverlappingGuideDuplicates(upcomingCandidates[channel.id].orEmpty())
+            val recent = collapseOverlappingGuideDuplicates(recentCandidates[channel.id].orEmpty())
             val nowNext = IptvNowNext(
                 now = nowCandidates[channel.id],
                 next = future.getOrNull(0),
@@ -7903,6 +7903,36 @@ class IptvRepository @Inject constructor(
                 if (total > 0) " (${(matched * 100) / total}%)" else ""
         )
         return result
+    }
+
+    /**
+     * OwnTV's EPG uses title + overlapping time rather than an exact timestamp
+     * to identify duplicate listings. Providers often expose the same schedule
+     * through two feeds with a one- to several-minute disagreement, which made
+     * adjacent guide cells show the same programme twice. Keep the wider span:
+     * it is the least likely to leave an artificial hole in the guide.
+     */
+    private fun collapseOverlappingGuideDuplicates(programs: List<IptvProgram>): List<IptvProgram> {
+        if (programs.size < 2) return programs
+        val sorted = programs.sortedWith(compareBy<IptvProgram> { it.startUtcMillis }.thenBy { it.endUtcMillis })
+        val kept = ArrayList<IptvProgram>(sorted.size)
+        sorted.forEach { candidate ->
+            val previous = kept.lastOrNull()
+            val sameTitle = previous != null &&
+                previous.title.trim().lowercase(Locale.US).replace(Regex("\\s+"), " ") ==
+                    candidate.title.trim().lowercase(Locale.US).replace(Regex("\\s+"), " ")
+            val overlaps = previous != null &&
+                previous.startUtcMillis < candidate.endUtcMillis &&
+                candidate.startUtcMillis < previous.endUtcMillis
+            if (sameTitle && overlaps) {
+                val previousDuration = previous.endUtcMillis - previous.startUtcMillis
+                val candidateDuration = candidate.endUtcMillis - candidate.startUtcMillis
+                if (candidateDuration > previousDuration) kept[kept.lastIndex] = candidate
+            } else {
+                kept += candidate
+            }
+        }
+        return kept
     }
 
     private fun pickNow(existing: IptvProgram?, candidate: IptvProgram, nowUtcMillis: Long): IptvProgram? {

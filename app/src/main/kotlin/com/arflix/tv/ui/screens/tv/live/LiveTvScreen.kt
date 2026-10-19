@@ -2126,7 +2126,18 @@ fun LiveTvScreen(
             }
     }
 
-    DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
+    // OwnTV's libmpv engine is a compatibility rung, not a second permanent
+    // decoder. It is only activated after Media3 exhausts its controlled
+    // recovery, then reuses the same visible PlayerView surface.
+    val ownTvMpvFallback = remember(context) { OwnTvMpvFallback(context) }
+    var usingOwnTvMpvFallback by remember { mutableStateOf(false) }
+
+    DisposableEffect(exoPlayer, ownTvMpvFallback) {
+        onDispose {
+            ownTvMpvFallback.release()
+            exoPlayer.release()
+        }
+    }
 
     var playerPositionMs by remember { mutableLongStateOf(0L) }
     var playerDurationMs by remember { mutableLongStateOf(0L) }
@@ -2207,6 +2218,10 @@ fun LiveTvScreen(
         drmInfo: com.arflix.tv.data.model.DrmInfo? = null,
         forcePrepare: Boolean = false,
     ) {
+        if (usingOwnTvMpvFallback) {
+            ownTvMpvFallback.stop()
+            usingOwnTvMpvFallback = false
+        }
         val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
         iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
 
@@ -2527,6 +2542,22 @@ fun LiveTvScreen(
                     1
                 }
                 if (nextAttempt > maxRetryCount) {
+                    if (!usingOwnTvMpvFallback && ownTvMpvFallback.available) {
+                        // OwnTV's FFmpeg/mpv engine accepts a number of raw TS,
+                        // codec and provider-header combinations that Media3
+                        // cannot. Only hand over after the bounded Media3 retry
+                        // has failed, avoiding duplicate provider sessions for
+                        // healthy channels.
+                        usingOwnTvMpvFallback = true
+                        exoPlayer.stop()
+                        ownTvMpvFallback.play(prepared, retryChannel?.requestHeaders ?: lastPreparedHeaders)
+                        playbackDiagnostic = PlaybackDiagnostic(
+                            title = context.getString(R.string.live_diag_retrying_source),
+                            detail = "Switching to OwnTV compatibility player",
+                            severity = PlaybackDiagnosticSeverity.Warning,
+                        )
+                        return
+                    }
                     playbackDiagnostic = PlaybackDiagnostic(
                         title = context.getString(R.string.live_diag_playback_failed),
                         detail = "${error.errorCodeName}: ${classifyPlaybackError(error)}",
@@ -2663,6 +2694,7 @@ fun LiveTvScreen(
     var attachedPlayerView by remember { mutableStateOf<PlayerView?>(null) }
 
     fun releasePlayerView(view: PlayerView, isMini: Boolean) {
+        ownTvMpvFallback.detach(view)
         if (isMini) {
             if (miniPlayerView === view) miniPlayerView = null
         } else if (fullPlayerView === view) {
@@ -2675,13 +2707,28 @@ fun LiveTvScreen(
         if (attachedPlayerView === view) attachedPlayerView = null
     }
 
-    LaunchedEffect(exoPlayer, isFullScreen, miniPlayerView, fullPlayerView) {
+    LaunchedEffect(
+        exoPlayer,
+        isFullScreen,
+        miniPlayerView,
+        fullPlayerView,
+        usingOwnTvMpvFallback,
+    ) {
         val targetView = if (isFullScreen) fullPlayerView else miniPlayerView
         // The destination AndroidView is composed in the same frame as the
         // state transition. Do not detach the current surface during that
         // short window; wait until there is a real replacement target.
         if (targetView == null) return@LaunchedEffect
         val previousView = attachedPlayerView
+        if (usingOwnTvMpvFallback) {
+            if (previousView !== targetView) {
+                PlayerView.switchTargetView(exoPlayer, previousView, targetView)
+                attachedPlayerView = targetView
+            }
+            ownTvMpvFallback.attach(targetView)
+            return@LaunchedEffect
+        }
+        ownTvMpvFallback.detach(previousView)
         if (previousView === targetView) return@LaunchedEffect
 
         // Media3 explicitly recommends attaching the new target before
