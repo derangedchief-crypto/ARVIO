@@ -948,6 +948,7 @@
     <string name="live_cd_pause">Pause</string>
     <string name="live_diag_seeking_catchup">Seeking catch-up</string>
     <string name="live_diag_starting_stream">Starting live stream</string>
+    <string name="vod_verification_failed">Couldn’t finish checking your VOD catalogue. Please retry; scraper sources were not requested.</string>
     <string name="live_diag_preparing_source">Preparing source</string>
     <string name="live_diag_catchup_unavailable">Catch-up unavailable</string>
     <string name="live_diag_playback_failed">Playback failed</string>

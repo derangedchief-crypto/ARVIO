@@ -2174,8 +2174,11 @@ class StreamRepository @Inject constructor(
         imdbId: String,
         title: String = "",
         year: Int? = null,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        tmdbId: Int? = null,
     ): StreamResult = withContext(Dispatchers.IO) {
+        val vod = verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId)
+        if (vod.isNotEmpty()) return@withContext StreamResult(vod, emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
@@ -2228,9 +2231,21 @@ class StreamRepository @Inject constructor(
         imdbId: String,
         title: String = "",
         year: Int? = null,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        tmdbId: Int? = null,
     ): Flow<ProgressiveStreamResult> = callbackFlow {
-        repositoryScope.launch {
+        launch {
+            val vod = try {
+                verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId)
+            } catch (error: Exception) {
+                close(error)
+                return@launch
+            }
+            if (vod.isNotEmpty()) {
+                trySend(ProgressiveStreamResult(vod, emptyList(), 0, 0, true))
+                close()
+                return@launch
+            }
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
             val streamAddons = getStreamAddons(allAddons, "movie", imdbId)
@@ -2410,6 +2425,27 @@ class StreamRepository @Inject constructor(
             }
         }
         awaitClose { }
+    }
+
+    suspend fun verifyEpisodeVodBeforeFallback(
+        imdbId: String?, title: String, season: Int, episode: Int, tmdbId: Int? = null,
+    ): List<StreamSource> = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(90_000L) {
+            iptvRepository.verifyEpisodeVodBeforeFallback(title, season, episode, imdbId, tmdbId)
+        } ?: throw VodVerificationException()
+    }
+
+    /** No addon/plugin work may start until this returns a confirmed miss. */
+    suspend fun verifyMovieVodBeforeFallback(
+        imdbId: String?,
+        title: String,
+        year: Int?,
+        tmdbId: Int? = null,
+    ): List<StreamSource> = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(90_000L) {
+            iptvRepository.findMovieVodSources(title, year, imdbId, tmdbId,
+                allowNetwork = true, verifyBeforeFallback = true)
+        } ?: throw VodVerificationException()
     }
 
     suspend fun resolveMovieVodOnly(
@@ -2605,6 +2641,8 @@ class StreamRepository @Inject constructor(
         animeQueryOverride: String? = null,
         airDate: String? = null
     ): StreamResult = withContext(Dispatchers.IO) {
+        val vod = verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId)
+        if (vod.isNotEmpty()) return@withContext StreamResult(vod, emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
@@ -2677,7 +2715,18 @@ class StreamRepository @Inject constructor(
         animeQueryOverride: String? = null,
         airDate: String? = null
     ): Flow<ProgressiveStreamResult> = callbackFlow {
-        repositoryScope.launch {
+        launch {
+            val vod = try {
+                verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId)
+            } catch (error: Exception) {
+                close(error)
+                return@launch
+            }
+            if (vod.isNotEmpty()) {
+                trySend(ProgressiveStreamResult(vod, emptyList(), 0, 0, true))
+                close()
+                return@launch
+            }
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
             val isAnime = animeMapper.isAnimeContent(tmdbId, genreIds, originalLanguage)

@@ -1687,7 +1687,8 @@ class DetailsViewModel @Inject constructor(
                     streamRepository.resolveMovieStreamsProgressive(
                         imdbId = imdbId,
                         title = _uiState.value.item?.title.orEmpty(),
-                        year = _uiState.value.item?.year?.toIntOrNull()
+                        year = _uiState.value.item?.year?.toIntOrNull(),
+                        tmdbId = requestMediaId,
                     ).collect { progressive ->
                         prewarmVisibleStreams(
                             sortPlayableStreamsFirst(
@@ -1865,6 +1866,28 @@ class DetailsViewModel @Inject constructor(
                 val canonicalSeason = identity?.tmdbSeason
                 val canonicalEpisode = identity?.tmdbEpisode
                 val animeQueryOverride = identity?.kitsuQuery
+                val vod = try {
+                    if (requestMediaType == MediaType.MOVIE) streamRepository.verifyMovieVodBeforeFallback(resolvedImdbId,
+                        item?.title.orEmpty(), item?.year?.toIntOrNull(), requestMediaId)
+                    else streamRepository.verifyEpisodeVodBeforeFallback(resolvedImdbId, item?.title.orEmpty(),
+                        canonicalSeason ?: 1, canonicalEpisode ?: 1, requestMediaId)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    if (isCurrentRequest()) _uiState.value = _uiState.value.copy(
+                        isLoadingStreams = false, pluginScrapersLoading = false,
+                        toastMessage = context.getString(R.string.vod_verification_failed),
+                        toastType = ToastType.ERROR)
+                    return@launch
+                }
+                if (!isCurrentRequest()) return@launch
+                if (vod.isNotEmpty()) {
+                    val sources = sortPlayableStreamsFirst(vod)
+                    _uiState.value = _uiState.value.copy(streams = sources,
+                        isLoadingStreams = false, pluginScrapersLoading = false, hasStreamingAddons = true)
+                    prewarmVisibleStreams(sources)
+                    return@launch
+                }
                 val hasHomeServerConnections = streamRepository.hasHomeServerConnections()
                 // Start VOD append in background - runs parallel to addon stream fetch
                 homeServerAppendJob = viewModelScope.launch {
@@ -1879,20 +1902,7 @@ class DetailsViewModel @Inject constructor(
                     )
                 }
                 vodAppendJob?.cancel()
-                vodAppendJob = viewModelScope.launch {
-                    // VOD lookups use disk-cached catalogs (near-instant on warm starts).
-                    // On rare true cold starts, catalog download can take 15-30s for large providers.
-                    val vodTimeout = if (currentMediaType == MediaType.MOVIE) 30_000L else 45_000L
-                    appendVodSourceInBackground(
-                        imdbId = resolvedImdbId,
-                        season = canonicalSeason,
-                        episode = canonicalEpisode,
-                        timeoutMs = vodTimeout,
-                        requestId = requestId,
-                        requestMediaType = requestMediaType,
-                        requestMediaId = requestMediaId
-                    )
-                }
+                vodAppendJob = null
 
                 var pluginScraperJob: kotlinx.coroutines.Job? = null
                 pluginScraperJob = viewModelScope.launch {
@@ -1993,7 +2003,8 @@ class DetailsViewModel @Inject constructor(
                     streamRepository.resolveMovieStreamsProgressive(
                         imdbId = effectiveStreamId,
                         title = item?.title.orEmpty(),
-                        year = item?.year?.toIntOrNull()
+                        year = item?.year?.toIntOrNull(),
+                        tmdbId = requestMediaId,
                     ).collect { progressive ->
                         if (!isCurrentRequest()) return@collect
                         val existingVod = _uiState.value.streams.filter(::isSupplementalStream)

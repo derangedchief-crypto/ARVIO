@@ -872,7 +872,7 @@ class PlayerViewModel @Inject constructor(
             try {
                 // INSTANT MODE: Fetch streams in parallel with metadata
                 // Start metadata fetch in background (non-blocking)
-                launch { fetchMediaMetadata(mediaType, mediaId) }
+                val metadataJob = launch { fetchMediaMetadata(mediaType, mediaId) }
 
                 // Fetch saved position from watch history (for resume playback)
                 val resumeDataDeferred = async {
@@ -928,6 +928,7 @@ class PlayerViewModel @Inject constructor(
                     mediaRepository.cacheImdbId(mediaType, mediaId, imdbId)
                 }
                 currentImdbId = imdbId
+                if (currentItemTitle.isBlank()) metadataJob.join()
                 // Never block source loading on title hydration from TMDB.
                 // Fetch skip intervals in background. This should never block playback.
                 launch {
@@ -947,17 +948,7 @@ class PlayerViewModel @Inject constructor(
                     )
                 }
                 vodAppendJob?.cancel()
-                vodAppendJob = launch {
-                    // VOD runs in parallel with addon streams — catalog is disk-cached
-                    // so lookups are usually fast. Give enough time for series info calls.
-                    appendVodSourceInBackground(
-                        mediaType = mediaType,
-                        imdbId = imdbId,
-                        seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber,
-                        timeoutMs = 15_000L
-                    )
-                }
+                vodAppendJob = null
 
                 // Get saved position for resume playback
                 val resumeData = resumeDataDeferred.await()
@@ -979,7 +970,8 @@ class PlayerViewModel @Inject constructor(
                     streamRepository.resolveMovieStreamsProgressive(
                         imdbId = effectiveStreamId,
                         title = currentItemTitle,
-                        year = null
+                        year = null,
+                        tmdbId = mediaId,
                     )
                 } else {
                     streamRepository.resolveEpisodeStreamsProgressive(
@@ -4537,7 +4529,8 @@ class PlayerViewModel @Inject constructor(
                 streamRepository.resolveMovieStreams(
                     imdbId = imdbId,
                     title = currentItemTitle,
-                    year = null
+                    year = null,
+                    tmdbId = mediaId,
                 )
             } else {
                 streamRepository.resolveEpisodeStreams(

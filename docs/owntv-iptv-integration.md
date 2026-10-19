@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `401`. Version name is `2.0.085`, following the actual
+Current testing version code is `402`. Version name is `2.0.086`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -322,3 +322,62 @@ launch requests, HTTP failures, malformed and empty catalogue responses, profile
 switch rejection, absence of per-episode requests, source-safe channel merging,
 ordering and separate Stalker portal ownership. Existing guide/popup/scroll/startup
 regressions remain in the release validation set.
+
+## Movie/episode VOD verification before scraper fallback in 2.0.086 / 402
+
+Movie source discovery previously appended VOD in parallel with addons/plugins;
+scraper links could win autoplay and spend points before the VOD lookup finished.
+VOD matching also resolved credentials only from the legacy single-provider URLs,
+ignoring enabled multi-playlist providers, and its cold lookup used the short
+playback-lookup timeout rather than a catalogue budget.
+
+All enabled Xtream playlists are now checked for movie VOD. Every local catalogue
+is searched before waiting on any provider network request, allowing a cached hit
+on a secondary provider to win even if the first provider is unavailable. On a
+miss, strict fallback verification refreshes each required catalogue with a
+45-second per-provider network budget inside a 90-second overall check. Only
+complete, valid responses can establish absence; failures, malformed responses,
+profile/config changes and timeout remain verification errors, not empty results.
+A hit from another provider still wins despite one failed provider. Confirmed
+misses are coalesced for 60 seconds, scoped to profile/config/movie identity, and
+invalidated by catalogue updates.
+
+Both progressive and non-progressive movie source resolution check VOD before
+addon caches or external requests. Details checks the same gate before launching
+plugin scrapers and returns VOD sources directly when found. Failed verification
+stops automatic scraper fallback and asks the user to retry. Player metadata is
+hydrated before title-dependent movie discovery, and progressive movie requests
+are structured children so cancellation cannot leave a paid fallback running
+after a cancelled VOD check. Explicitly selected playback URLs remain playable.
+
+The same gate covers progressive/non-progressive episode discovery and the
+Details plugin path. Native series lists and exact season/episode records are
+checked across enabled providers, including matching variants and individual
+episode files in movie catalogues. A missing episode in an existing show permits
+fallback only after all necessary requests complete successfully. Failed series
+info, ambiguous numbering/season data and malformed payloads remain verification
+errors. Strict checks never use legacy closest-season/episode-only guesses.
+Verified episode hits are cached per profile/provider/series; launch catalogue
+refresh invalidates them. Automatic parallel supplemental probes were removed
+from normal movie and episode discovery so they cannot bypass the gate.
+
+Title normalization now folds diacritics. Exact short-title fallback covers names
+discarded by the token index (e.g. Up/It), including a trailing release year.
+Explicitly conflicting remake years are rejected in title-based matches; strong
+TMDB/IMDb matches retain priority. Complete compact canonical keys cover fused
+versus spaced spellings (Masterplan / Master Plan), with numeric sequel checks.
+No broad lowering of fuzzy-match thresholds was introduced.
+
+Regression fixtures verify multi-provider and stale-cache matching, short and
+accented titles, remake rejection, valid empty catalogues, failure versus absence,
+and the actual StreamRepository paths with a mocked points-consuming source:
+zero scraper calls on VOD hits/errors/cancellation, and no scraper call before
+verification completes. The user's reported Masterplan (2026) is covered by
+exact-title and spaced-title fixtures, plus rejection of Master Plan 2. This is
+not a claim of direct access to their authenticated live provider catalogue.
+Episode fixtures cover exact availability, wrong-season rejection, a missing
+episode in an existing show, absent shows, provider failures, malformed numbering,
+secondary providers and episodes stored in movie lists. Autoplay planner tests
+were aligned with the existing local-library grace window (no planner timing code
+was changed), and verified VOD sources are explicitly tested not to wait for
+remote scraper results.

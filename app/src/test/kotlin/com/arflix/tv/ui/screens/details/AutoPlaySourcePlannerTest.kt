@@ -39,7 +39,7 @@ class AutoPlaySourcePlannerTest {
     }
 
     @Test
-    fun `top-tier 4k source plays after a brief settle without waiting on slow addons`() {
+    fun `remote 4k source preserves the local-library grace window`() {
         val top = stream(source = "Movie 2160p REMUX", quality = "4K", size = "52 GB")
 
         // Still settling: hold briefly so a bigger 4K can arrive, even while addons load.
@@ -50,18 +50,20 @@ class AutoPlaySourcePlannerTest {
                 elapsedMs = AUTOPLAY_TOP_TIER_SETTLE_MS - 1
             )
         )
-        // Past the settle window: play the 4K now; do not wait on slow addons.
-        assertFalse(
+        // Remote sources must not bypass the existing local-library grace.
+        assertTrue(
             shouldWaitForAutoPlaySources(
                 isLoadingStreams = true,
                 selectedStream = top,
                 elapsedMs = AUTOPLAY_TOP_TIER_SETTLE_MS
             )
         )
+        assertFalse(shouldWaitForAutoPlaySources(true, top,
+            AUTOPLAY_MAX_WAIT_MS + AUTOPLAY_LOCAL_PROBE_EXTRA_MS))
     }
 
     @Test
-    fun `sub-4k candidate waits for all addons then plays the best`() {
+    fun `finished addons do not bypass the local-library grace window`() {
         val weak = stream(source = "Movie 720p WEB-DL", quality = "720p", size = "780 MB")
 
         // Addons still loading → keep collecting in case a better source arrives.
@@ -72,27 +74,38 @@ class AutoPlaySourcePlannerTest {
                 elapsedMs = 100
             )
         )
-        // All addons reported → play the best found now, don't dawdle.
-        assertFalse(
+        // Home-server/library probes are independent of addon completion.
+        assertTrue(
             shouldWaitForAutoPlaySources(
                 isLoadingStreams = false,
                 selectedStream = weak,
                 elapsedMs = 100
             )
         )
+        assertFalse(shouldWaitForAutoPlaySources(false, weak,
+            AUTOPLAY_MAX_WAIT_MS + AUTOPLAY_LOCAL_PROBE_EXTRA_MS))
     }
 
     @Test
-    fun `autoplay never waits past the 2s ceiling`() {
+    fun `remote autoplay stops waiting at the combined local-probe ceiling`() {
         val weak = stream(source = "Movie 720p WEB-DL", quality = "720p", size = "780 MB")
 
-        assertFalse(
+        assertTrue(
             shouldWaitForAutoPlaySources(
                 isLoadingStreams = true,
                 selectedStream = weak,
                 elapsedMs = AUTOPLAY_MAX_WAIT_MS
             )
         )
+        assertFalse(shouldWaitForAutoPlaySources(true, weak,
+            AUTOPLAY_MAX_WAIT_MS + AUTOPLAY_LOCAL_PROBE_EXTRA_MS))
+    }
+
+    @Test
+    fun `verified vod sources do not wait for remote scraper results`() {
+        val local = stream("Movie 1080p", "1080p", "4 GB")
+            .copy(addonId = "iptv_xtream_vod", addonName = "IPTV VOD")
+        assertFalse(shouldWaitForAutoPlaySources(false, local, 0L))
     }
 
     @Test

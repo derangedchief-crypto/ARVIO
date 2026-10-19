@@ -273,6 +273,9 @@ class IptvRepository @Inject constructor(
     private val completeGuideIndexMutex = Mutex()
     private val guideRefreshCoordinator = GuideRefreshCoordinator()
     private val launchContentCoordinator = GuideRefreshCoordinator()
+    private val movieVodLookupMutex = Mutex()
+    private val verifiedMovieMisses = ConcurrentHashMap<String, Long>()
+    private val verifiedEpisodeInfo = ConcurrentHashMap<String, Pair<Long, List<XtreamSeriesEpisode>>>()
     private val launchContentCheckedAt = ConcurrentHashMap<String, Long>()
     private val _playlistRevision = MutableStateFlow(0L)
     val playlistRevision: StateFlow<Long> = _playlistRevision.asStateFlow()
@@ -4410,6 +4413,8 @@ class IptvRepository @Inject constructor(
         }
 
         fun invalidateProviderCatalog(providerKey: String, seriesIds: List<Int>) {
+            verifiedMovieMisses.clear()
+            verifiedEpisodeInfo.keys.removeAll { it.startsWith("$providerKey|") }
             catalogMemory.remove(providerKey)
             prefs.edit().remove(catalogPrefKey(providerKey)).apply()
             // Episodes are not fetched at launch. Expire only this provider's
@@ -5232,13 +5237,76 @@ class IptvRepository @Inject constructor(
         year: Int?,
         imdbId: String? = null,
         tmdbId: Int? = null,
-        allowNetwork: Boolean = true
+        allowNetwork: Boolean = true,
+        verifyBeforeFallback: Boolean = false,
     ): List<StreamSource> {
-        return withContext(Dispatchers.IO) {
+        return withContext(Dispatchers.IO) { movieVodLookupMutex.withLock {
             val config = observeConfig().first()
-            val creds = resolveXtreamCredentials(config.epgUrl)
-                ?: resolveXtreamCredentials(config.m3uUrl)
-                ?: return@withContext emptyList()
+            val providers = activePlaylists(config).mapNotNull(::resolveXtreamCredentials).distinctBy(::xtreamCacheKey)
+            if (providers.isEmpty()) return@withLock emptyList()
+            val profile = profileManager.getProfileIdSync()
+            val signature = buildConfigSignature(config)
+            val missKey = "$profile|$signature|$imdbId|$tmdbId|${normalizeLookupText(title)}|$year"
+            suspend fun ensureCurrent() {
+                if (profileManager.getProfileIdSync() != profile || buildConfigSignature(observeConfig().first()) != signature) {
+                    throw VodVerificationException()
+                }
+            }
+            // Search every local catalogue first. A slow/unavailable provider
+            // must not hide a hit already cached for another enabled provider.
+            val cached = providers.flatMap { creds ->
+                findMovieVodSourcesForProvider(creds, title, year, imdbId, tmdbId, allowNetwork = false)
+            }
+            ensureCurrent()
+            if (cached.isNotEmpty() || !allowNetwork) return@withLock sortVodSources(cached)
+            if (verifyBeforeFallback && verifiedMovieMisses[missKey]?.let { System.currentTimeMillis() - it < 60_000L } == true) {
+                return@withLock emptyList()
+            }
+            if (verifyBeforeFallback && title.isBlank()) throw VodVerificationException()
+            var incomplete = false
+            for (creds in providers) {
+                ensureCurrent()
+                if (verifyBeforeFallback) {
+                    // A cached title miss may be stale. Bypass the six-hour TTL
+                    // once before permitting any paid external source request.
+                    val root = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action=get_vod_streams"
+                    val fresh: List<XtreamVodStream>? = requestJson(root,
+                        TypeToken.getParameterized(List::class.java, XtreamVodStream::class.java).type,
+                        client = launchCatalogHttpClient)
+                    ensureCurrent()
+                    if (fresh == null || fresh.any { it.streamId == null || it.name.isNullOrBlank() }) {
+                        incomplete = true
+                        continue
+                    }
+                    ensureXtreamVodCacheOwnership(creds)
+                    cachedXtreamVodStreams = fresh
+                    xtreamVodLoadedAtMs = System.currentTimeMillis()
+                    cachedVodIdIndex = buildVodIdIndex(fresh)
+                    cachedVodIndex = null
+                    writeDiskCache(vodDiskCacheFile(creds), xtreamVodLoadedAtMs, fresh)
+                }
+                val matches = findMovieVodSourcesForProvider(creds, title, year, imdbId, tmdbId,
+                    allowNetwork = !verifyBeforeFallback)
+                ensureCurrent()
+                if (matches.isNotEmpty()) return@withLock matches
+            }
+            if (incomplete) throw VodVerificationException()
+            if (verifyBeforeFallback) {
+                if (verifiedMovieMisses.size >= 256) verifiedMovieMisses.clear()
+                verifiedMovieMisses[missKey] = System.currentTimeMillis()
+            }
+            emptyList()
+        } }
+    }
+
+    private suspend fun findMovieVodSourcesForProvider(
+        creds: XtreamCredentials,
+        title: String,
+        year: Int?,
+        imdbId: String?,
+        tmdbId: Int?,
+        allowNetwork: Boolean,
+    ): List<StreamSource> = withContext(Dispatchers.IO) {
 
             val credsFingerprint = xtreamDiskCacheHash(creds)
             val cacheKey = iptvMovieSourceCacheKey(
@@ -5325,7 +5393,6 @@ class IptvRepository @Inject constructor(
                 storeCachedMovieSources(cacheKey, sources, credsFingerprint)
             }
             sources
-        }
     }
 
     suspend fun findEpisodeVodSource(
@@ -5343,6 +5410,140 @@ class IptvRepository @Inject constructor(
         tmdbId = tmdbId,
         allowNetwork = allowNetwork
     ).firstOrNull()
+
+    /** Verify the exact episode across every enabled provider before paid fallback. */
+    suspend fun verifyEpisodeVodBeforeFallback(
+        title: String, season: Int, episode: Int, imdbId: String? = null, tmdbId: Int? = null,
+    ): List<StreamSource> = withContext(Dispatchers.IO) { movieVodLookupMutex.withLock {
+        val config = observeConfig().first()
+        val providers = activePlaylists(config).mapNotNull(::resolveXtreamCredentials).distinctBy(::xtreamCacheKey)
+        if (providers.isEmpty()) return@withLock emptyList()
+        val profile = profileManager.getProfileIdSync()
+        val signature = buildConfigSignature(config)
+        val missKey = "episode|$profile|$signature|$imdbId|$tmdbId|${normalizeLookupText(title)}|$season|$episode"
+        val normalizedImdb = normalizeImdbId(imdbId)
+        val normalizedTmdb = normalizeTmdbId(tmdbId)
+        suspend fun ensureCurrent() {
+            if (profileManager.getProfileIdSync() != profile || buildConfigSignature(observeConfig().first()) != signature) throw VodVerificationException()
+        }
+        fun candidates(rows: List<XtreamSeriesItem>): List<XtreamSeriesItem> {
+            val ids = rows.filter { (!normalizedTmdb.isNullOrBlank() && normalizeTmdbId(it.tmdb) == normalizedTmdb) ||
+                (!normalizedImdb.isNullOrBlank() && normalizeImdbId(it.imdb) == normalizedImdb) }
+            if (ids.isNotEmpty()) return ids
+            val query = normalizeLookupText(title)
+            val canonical = toCanonicalTitleKey(title)
+            return rows.filter { item ->
+                val providerTmdb = normalizeTmdbId(item.tmdb)?.takeUnless { it == "0" }
+                val providerImdb = normalizeImdbId(item.imdb)
+                if (!normalizedTmdb.isNullOrBlank() && providerTmdb != null && providerTmdb != normalizedTmdb) false
+                else if (!normalizedImdb.isNullOrBlank() && providerImdb != null && providerImdb != normalizedImdb) false
+                else normalizeLookupText(item.name.orEmpty()) == query ||
+                    (canonical.isNotBlank() && toCanonicalTitleKey(item.name.orEmpty()).replace(" ", "") == canonical.replace(" ", ""))
+            }
+        }
+        fun sources(creds: XtreamCredentials, rows: List<XtreamSeriesEpisode>): List<StreamSource> = rows
+            .filter { it.season == season && it.episode == episode }
+            .map { row -> StreamSource(source = row.title, addonName = "IPTV Series VOD", addonId = "iptv_xtream_vod",
+                quality = inferQuality(row.title), size = "",
+                url = "${creds.baseUrl}/series/${creds.username}/${creds.password}/${row.id}.${row.containerExtension ?: "mp4"}") }
+        // Cached exact matches across all providers win before a slow network check.
+        for (creds in providers) {
+            val cachedRows = getXtreamSeriesList(creds, allowNetwork = false)
+            for (candidate in candidates(cachedRows)) {
+                val cached = verifiedEpisodeInfo["$profile|${xtreamCacheKey(creds)}|${candidate.seriesId}"]
+                if (cached != null && System.currentTimeMillis() - cached.first < 6 * 60 * 60_000L) {
+                    val hit = sources(creds, cached.second)
+                    if (hit.isNotEmpty()) { ensureCurrent(); return@withLock sortVodSources(hit) }
+                }
+            }
+            val files = findEpisodeVodFromVodCatalogFallbackSources(creds, title, season, episode,
+                normalizedImdb, normalizedTmdb, allowNetwork = false, requireExactEpisode = true)
+            if (files.isNotEmpty()) { ensureCurrent(); return@withLock files }
+        }
+        if (verifiedMovieMisses[missKey]?.let { System.currentTimeMillis() - it < 60_000L } == true) return@withLock emptyList()
+        if (title.isBlank() || season < 0 || episode <= 0) throw VodVerificationException()
+        var incomplete = false
+        for (creds in providers) {
+            ensureCurrent()
+            val root = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action="
+            val series: List<XtreamSeriesItem>? = requestJson(root + "get_series",
+                TypeToken.getParameterized(List::class.java, XtreamSeriesItem::class.java).type, launchCatalogHttpClient)
+            ensureCurrent()
+            if (series == null || series.any { it.seriesId == null || it.name.isNullOrBlank() }) incomplete = true
+            else {
+                ensureXtreamVodCacheOwnership(creds)
+                cachedXtreamSeries = series
+                xtreamSeriesLoadedAtMs = System.currentTimeMillis()
+                writeDiskCache(seriesDiskCacheFile(creds), xtreamSeriesLoadedAtMs, series)
+                for (candidate in candidates(series)) {
+                    val info: JsonObject? = requestJson(root + "get_series_info&series_id=${candidate.seriesId}", JsonObject::class.java, launchCatalogHttpClient)
+                    ensureCurrent()
+                    val rows = info?.let { runCatching { parseVerifiedEpisodeInfo(it) }.getOrNull() }
+                    if (rows == null) { incomplete = true; continue }
+                    if (verifiedEpisodeInfo.size >= 64) verifiedEpisodeInfo.clear()
+                    verifiedEpisodeInfo["$profile|${xtreamCacheKey(creds)}|${candidate.seriesId}"] = System.currentTimeMillis() to rows
+                    val hit = sources(creds, rows)
+                    if (hit.isNotEmpty()) return@withLock sortVodSources(hit)
+                }
+            }
+            // Some providers store individual episodes in their movie/VOD list.
+            val vod: List<XtreamVodStream>? = requestJson(root + "get_vod_streams",
+                TypeToken.getParameterized(List::class.java, XtreamVodStream::class.java).type, launchCatalogHttpClient)
+            ensureCurrent()
+            if (vod == null || vod.any { it.streamId == null || it.name.isNullOrBlank() }) incomplete = true
+            else {
+                ensureXtreamVodCacheOwnership(creds)
+                cachedXtreamVodStreams = vod
+                xtreamVodLoadedAtMs = System.currentTimeMillis()
+                cachedVodIdIndex = buildVodIdIndex(vod)
+                cachedVodIndex = null
+                writeDiskCache(vodDiskCacheFile(creds), xtreamVodLoadedAtMs, vod)
+                val hit = findEpisodeVodFromVodCatalogFallbackSources(creds, title, season, episode,
+                    normalizedImdb, normalizedTmdb, allowNetwork = false, requireExactEpisode = true)
+                if (hit.isNotEmpty()) return@withLock hit
+                if (vod.any { item ->
+                    val name = item.name.orEmpty()
+                    extractSeasonEpisodeFromName(name) == null && extractEpisodeOnlyFromName(name) == episode &&
+                        ((!normalizedTmdb.isNullOrBlank() && normalizeTmdbId(item.tmdb) == normalizedTmdb) ||
+                            (!normalizedImdb.isNullOrBlank() && normalizeImdbId(item.imdb) == normalizedImdb) ||
+                            scoreNameMatch(name, normalizeLookupText(title)) >= 85)
+                }) incomplete = true
+            }
+        }
+        if (incomplete) throw VodVerificationException()
+        if (verifiedMovieMisses.size >= 256) verifiedMovieMisses.clear()
+        verifiedMovieMisses[missKey] = System.currentTimeMillis()
+        emptyList()
+    } }
+
+    /** Reject ambiguous episode numbering instead of guessing S1E1 on a paid-fallback gate. */
+    private fun parseVerifiedEpisodeInfo(info: JsonObject): List<XtreamSeriesEpisode>? {
+        val episodes = info.get("episodes") ?: return null
+        if (!episodes.isJsonArray && !episodes.isJsonObject) return null
+        val objects = mutableListOf<Pair<JsonObject, Int?>>()
+        collectXtreamEpisodeObjects(episodes, null, objects)
+        if (objects.isEmpty()) return if ((episodes.isJsonArray && episodes.asJsonArray.size() == 0) ||
+            (episodes.isJsonObject && episodes.asJsonObject.size() == 0)) emptyList() else null
+        val result = mutableListOf<XtreamSeriesEpisode>()
+        for ((item, seasonHint) in objects) {
+            val nested = item.get("info")?.takeIf { it.isJsonObject }?.asJsonObject
+            val title = item.get("title")?.asString ?: nested?.get("title")?.asString.orEmpty()
+            val named = extractSeasonEpisodeFromName(title)
+            val declaredSeason = parseFlexibleInt(item.get("season")) ?: parseFlexibleInt(item.get("season_number"))
+                ?: parseFlexibleInt(item.get("season_num")) ?: parseFlexibleInt(nested?.get("season"))
+            if (seasonHint != null && declaredSeason != null && seasonHint != declaredSeason) return null
+            if (named != null && declaredSeason != null && named.first != declaredSeason) return null
+            val season = seasonHint ?: parseFlexibleInt(item.get("season")) ?: parseFlexibleInt(item.get("season_number"))
+                ?: parseFlexibleInt(item.get("season_num")) ?: parseFlexibleInt(nested?.get("season")) ?: named?.first ?: return null
+            val number = parseFlexibleInt(item.get("episode_num")) ?: parseFlexibleInt(item.get("episode"))
+                ?: parseFlexibleInt(item.get("episode_number")) ?: parseFlexibleInt(nested?.get("episode_num"))
+                ?: parseFlexibleInt(nested?.get("episode_number")) ?: named?.second ?: extractEpisodeOnlyFromName(title) ?: return null
+            if (named != null && named.second != number) return null
+            val parsed = parseEpisodeObject(item, season, null) ?: return null
+            result.add(parsed.copy(season = season, episode = number))
+        }
+        return result
+    }
 
     suspend fun findEpisodeVodSources(
         title: String,
@@ -5495,7 +5696,8 @@ class IptvRepository @Inject constructor(
         episode: Int,
         normalizedImdb: String?,
         normalizedTmdb: String?,
-        allowNetwork: Boolean
+        allowNetwork: Boolean,
+        requireExactEpisode: Boolean = false,
     ): List<StreamSource> {
         val normalizedTitle = normalizeLookupText(title)
         val vod = getXtreamVodStreams(creds, allowNetwork = allowNetwork, fast = true)
@@ -5510,6 +5712,7 @@ class IptvRepository @Inject constructor(
                 val episodeOnly = if (parsedEpisode == null) extractEpisodeOnlyFromName(name) else null
                 val hasExactSeasonEpisode = parsedEpisode?.let { it.first == season && it.second == episode } == true
                 val hasEpisodeOnlyMatch = episodeOnly == episode
+                if (requireExactEpisode && !hasExactSeasonEpisode) return@mapNotNull null
                 if (!hasExactSeasonEpisode && !hasEpisodeOnlyMatch) return@mapNotNull null
 
                 val imdbScore = if (!normalizedImdb.isNullOrBlank() && normalizeImdbId(item.imdb) == normalizedImdb) 10_000 else 0
@@ -5520,6 +5723,7 @@ class IptvRepository @Inject constructor(
                     0
                 }
                 // For episode-only patterns (no season marker), require stronger identity if season > 1.
+                if (requireExactEpisode && imdbScore == 0 && tmdbScore == 0 && titleScore < 85) return@mapNotNull null
                 if (!hasExactSeasonEpisode && season > 1 && imdbScore == 0 && tmdbScore == 0) return@mapNotNull null
                 if (imdbScore == 0 && tmdbScore == 0 && titleScore <= 0) return@mapNotNull null
                 Triple(item, streamId, imdbScore + tmdbScore + titleScore)
@@ -6124,7 +6328,8 @@ class IptvRepository @Inject constructor(
 
     private fun normalizeLookupText(value: String): String {
         if (value.isBlank()) return ""
-        return value
+        return java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
+            .replace(COMBINING_MARK_REGEX, "")
             .replace(BRACKET_CONTENT_REGEX, " ")
             .replace(PAREN_CONTENT_REGEX, " ")
             .replace(YEAR_PAREN_REGEX, " ")
@@ -9916,6 +10121,24 @@ class IptvRepository @Inject constructor(
         queryTokens.forEach { token ->
             index.tokenMap[token]?.forEach { idx -> candidatePoolIdx.add(idx) }
         }
+        fun compactKey(canonicalKey: String) = canonicalKey.split(' ').filterNot { YEAR_REGEX.matches(it) }.joinToString("")
+        val compactQuery = compactKey(canonical)
+        if (candidatePoolIdx.isEmpty() && canonicalHits.isEmpty() && compactQuery.isNotBlank()) {
+            // Providers may spell a fused title as separate words (Masterplan /
+            // Master Plan). Compare complete canonical keys, not loose substrings.
+            index.canonicalTitleMap.forEach { (key, ids) ->
+                if (compactKey(key) == compactQuery) candidatePoolIdx.addAll(ids)
+            }
+        }
+        if (candidatePoolIdx.isEmpty() && canonicalHits.isEmpty() && queryTokens.isEmpty()) {
+            // Token indexing intentionally drops words shorter than 3 letters.
+            // Titles such as Up and It still require an exact title check.
+            index.items.forEachIndexed { idx, item ->
+                val normalized = normalizeLookupText(item.name.orEmpty())
+                val providerYear = parseYear(item.year ?: item.name.orEmpty())
+                if (normalized.removeSuffix(" $providerYear").trim() == normalizedTitle) candidatePoolIdx.add(idx)
+            }
+        }
         if (candidatePoolIdx.isEmpty() && canonicalHits.isEmpty()) return emptyList()
 
         // Score on the candidate set (typically < 100 items even on big catalogs).
@@ -9925,8 +10148,16 @@ class IptvRepository @Inject constructor(
             .mapNotNull { item ->
                 val name = item.name?.trim().orEmpty()
                 if (name.isBlank()) return@mapNotNull null
-                val score = scoreNameMatch(name, normalizedTitle)
+                val compactMatch = compactQuery.isNotBlank() && compactKey(toCanonicalTitleKey(name)) == compactQuery
+                if (compactMatch && MOVIE_NUMBER_REGEX.findAll(normalizeLookupText(name)).map { it.value }.toSet() !=
+                    MOVIE_NUMBER_REGEX.findAll(normalizedTitle).map { it.value }.toSet()) return@mapNotNull null
+                val score = maxOf(scoreNameMatch(name, normalizedTitle), if (compactMatch) 110 else 0)
                 if (score <= 0) return@mapNotNull null
+                val explicitYear = parseYear(item.year.orEmpty())
+                    ?: YEAR_PAREN_REGEX.find(name)?.value?.let(::parseYear)
+                if (inputYear != null && explicitYear != null && kotlin.math.abs(inputYear - explicitYear) > 1) {
+                    return@mapNotNull null
+                }
                 val providerYear = parseYear(item.year ?: name)
                 val yearDelta = if (inputYear != null && providerYear != null) {
                     kotlin.math.abs(providerYear - inputYear)
@@ -10086,6 +10317,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun clearIptvMovieSourceCache() {
+        verifiedMovieMisses.clear()
         synchronized(iptvMovieSourceLock) {
             iptvMovieSourceMemory.clear()
         }
@@ -10125,6 +10357,8 @@ class IptvRepository @Inject constructor(
             RegexOption.IGNORE_CASE
         )
         val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
+        val COMBINING_MARK_REGEX = Regex("\\p{M}+")
+        val MOVIE_NUMBER_REGEX = Regex("\\b\\d{1,3}\\b")
         val MULTI_SPACE_REGEX = Regex("\\s+")
         val HTTP_URL_REGEX = Regex("""https?://[^\s,;|"]+""", RegexOption.IGNORE_CASE)
         val SEASON_KEY_REGEX = Regex("""\d{1,2}""")
