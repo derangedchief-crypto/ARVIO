@@ -45,14 +45,13 @@ OwnTV's DRM model does not support). Movies and shows keep their existing player
   and the update-version comparison against the activation-login build.
 - `git diff --check` succeeds.
 
-Those results cover the guide/player port before the final reconnect callback
-and coroutines-runtime alignment. The same validation suite and optimized APK
-build are being rerun for that last change; do not interpret a previous green
-result as validation of a newer unbuilt revision.
+The final validation for implementation revision `5fae955`, including the
+reconnect callback and coroutines-runtime alignment, completed successfully:
+optimized `assembleSideloadInternalTest` plus the targeted 27-test suite, zero
+failures/errors/skips. Build log: `/tmp/opencode/owntv-5fae955-validation.log`.
 
 ## Still required before publishing
 
-- Assemble the optimized internal-test APK after these changes.
 - Device checks for native playback, SurfaceView mini/fullscreen transitions,
   channel zapping, background/resume and error recovery.
 - Authorized provider checks for M3U/Xtream/Stalker sources, guide population,
