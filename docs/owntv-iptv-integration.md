@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `396`. Version name is `2.0.080`, following the actual
+Current testing version code is `397`. Version name is `2.0.081`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -176,3 +176,39 @@ New regressions cover short refresh preservation, corrected listings, interrupte
 refresh/reopen, source isolation, expired-history pruning, viewport eviction and
 empty-read retention, native-view aspect geometry and Fold preview dimensions.
 Native stream playback still requires confirmation on the user's device.
+
+## All-channel loading in 2.0.081 / 397
+
+Previous loading policies deferred complete-guide work during playback, accepted
+75% coverage for large lists (or merely some fresh data for smaller lists), and
+limited large-list network requests to selected/favourite channels and tiny
+visible subsets. Changing focus also cancelled the visible queue. A paged
+background sweep existed but was not called.
+
+The complete-guide path now uses OwnTV's actual streaming XMLTV parser, commits
+at most 256 programme rows per batch directly to SQLite, and continues during
+playback on the low-priority background dispatcher. It retains only channel
+metadata and a bounded write batch, not the full programme map in memory.
+Working Xtream feed aliases are not redundantly downloaded; explicitly
+configured supplemental sources still run. Cancelled/failed imports preserve
+committed rows and mark an incomplete import for retry.
+
+After bulk indexing, a background pass walks every playlist channel in pages of
+12, skipping listings already on disk and fetching missing short provider EPG
+without expanding the in-memory UI cache or downloading XMLTV again per page.
+Network pages are paced during playback; cache-only pages yield without a
+750ms-per-page sleep. Progress is shown in the guide and is rate-limited to avoid
+driving UI recomposition for every cached channel. The pass repeats periodically
+and never requires selecting a channel. Visible rows remain prioritized but
+their requests are no longer discarded when focus moves.
+
+Coverage requirements use 98% rather than treating a partial cache as complete.
+Providers can still publish no listings or fail requests: this change attempts
+the entire playlist; it cannot create programme data the source does not supply.
+
+Regression coverage includes an integration test importing 1,000 channels through
+the real repository with playback marked active, one HTTP fixture feed, no channel
+selection, 1,000 durable guide rows and no whole-guide memory-cache growth. Further
+tests exercise the upstream parser's 256-row bound, all 10,025 channels in a paged
+fallback pass, cache skips, empty responses, errors, cancellation and source
+changes, alongside the previous startup/UI/retention/aspect checks.

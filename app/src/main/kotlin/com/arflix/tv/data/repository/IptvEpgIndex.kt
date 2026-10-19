@@ -160,7 +160,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
      * only listings with matching start times. A refresh must not erase a
      * previously loaded category or the rest of a channel's day.
      */
-    fun mergeChannels(sourceKey: String, nowNext: Map<String, IptvNowNext>, updatedAtMs: Long) {
+    fun mergeChannels(sourceKey: String, nowNext: Map<String, IptvNowNext>, updatedAtMs: Long, pruneHistory: Boolean = true) {
         if (sourceKey.isBlank() || nowNext.isEmpty()) return
         writableDatabase.runInTransaction {
             ensureSource(sourceKey, updatedAtMs)
@@ -168,10 +168,16 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             insertNowNextRows(sourceKey, generation, nowNext, replaceMatchingStarts = true)
             // Same bounded history as ordinary index reads; expired broadcasts
             // are not retained indefinitely as successive feeds are merged.
-            delete("epg_programs", "source_key = ? AND end_ms < ?",
+            if (pruneHistory) delete("epg_programs", "source_key = ? AND end_ms < ?",
                 arrayOf(sourceKey, (updatedAtMs - DEFAULT_PAST_WINDOW_MS).toString()))
             touchSourceForPartialUpdate(sourceKey, updatedAtMs)
         }
+    }
+
+    fun pruneExpiredHistory(sourceKey: String, updatedAtMs: Long) {
+        if (sourceKey.isBlank()) return
+        writableDatabase.delete("epg_programs", "source_key = ? AND end_ms < ?",
+            arrayOf(sourceKey, (updatedAtMs - DEFAULT_PAST_WINDOW_MS).toString()))
     }
 
     fun loadNowNext(

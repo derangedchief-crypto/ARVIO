@@ -1230,11 +1230,15 @@ fun LiveTvScreen(
     // A full backfill can be intentionally deferred, while the currently
     // displayed rows are already fetching their own guide. Mobile must expose
     // both states; otherwise it looks as though tapping a category did nothing.
-    val visibleGuideLoadInProgress = state.epgBackfillInProgress || guideChannels.any { channel ->
+    val visibleGuideLoadInProgress = state.epgBackfillInProgress || state.playlistGuideLoading || guideChannels.any { channel ->
         channel.id in state.epgLoadingChannelIds
     }
     val visibleGuideLoadMessage = state.epgBackfillMessage
+        ?: if (state.playlistGuideLoading) "Preparing channel guide ${state.playlistGuideVisited}/${state.playlistGuideTotal}" else null
         ?: if (visibleGuideLoadInProgress) "Loading visible guide" else null
+    val visibleGuideLoadPercent = if (state.epgBackfillInProgress) state.epgBackfillProgress
+        else if (state.playlistGuideLoading && state.playlistGuideTotal > 0)
+            (state.playlistGuideVisited.toLong() * 100 / state.playlistGuideTotal).toInt() else null
     var retainedIndexedGuidePrograms by remember(selectedProviderId) {
         mutableStateOf<Map<String, List<IptvProgram>>>(emptyMap())
     }
@@ -2952,7 +2956,7 @@ fun LiveTvScreen(
                     )
                     GuideBackfillStatus(
                         inProgress = visibleGuideLoadInProgress,
-                        percent = state.epgBackfillProgress,
+                        percent = visibleGuideLoadPercent,
                         message = visibleGuideLoadMessage,
                     )
                     OwnTvGuideHeading(selectedCategoryTotalCount)
@@ -3103,7 +3107,7 @@ fun LiveTvScreen(
                     )
                     GuideBackfillStatus(
                         inProgress = visibleGuideLoadInProgress,
-                        percent = state.epgBackfillProgress,
+                        percent = visibleGuideLoadPercent,
                         message = visibleGuideLoadMessage,
                     )
                     OwnTvGuideHeading(selectedCategoryTotalCount)
