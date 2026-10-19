@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-TV UI replacement version code is `395`. Version name is `2.0.079`, following the actual
+Current testing version code is `396`. Version name is `2.0.080`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -149,3 +149,30 @@ tests save actual native-rendered screenshots using fixture programme data to
 `/tmp/opencode/tv-stage-desktop.png` and `/tmp/opencode/tv-stage-phone.png`.
 These screenshots do not demonstrate native video playback: the preview plate
 has no active test stream. No physical-device playback validation is claimed.
+
+## Guide retention and mobile aspect recovery in 2.0.080 / 396
+
+Partial/short guide responses previously replaced whole channel rows, and final
+provider imports could replace the whole source generation. They now merge
+programme timestamps transactionally, preserving unreturned channels and future
+listings, replacing corrected entries with matching start times, and pruning
+history outside the existing 48-hour retention window.
+
+The viewport now distinguishes "requested before" from "still resident" so an
+evicted row is hydrated when scrolling back. Empty/unavailable reads do not erase
+valid retained cells or enter the repository's window cache. A cache generation
+guard prevents an in-flight old read from repopulating a freshly invalidated
+cache. Local reads refresh each minute as well as on index revision; this does
+not initiate network downloads. The current playing channel remains hydrated for
+the preview's now/next panel even when browsing another category.
+
+Preview plates now measure at 16:9 instead of fixed 154/180dp heights. While mpv
+owns a PlayerView it has no Media3 player to supply automatic video-size events;
+the adapter now forwards OwnTVPlayer.videoAspect to its aspect-ratio frame and
+uses FIT scaling. This preserves 16:9 and 4:3 pictures in wide/Fold, portrait and
+fullscreen containers instead of stretching the SurfaceView to arbitrary bounds.
+
+New regressions cover short refresh preservation, corrected listings, interrupted
+refresh/reopen, source isolation, expired-history pruning, viewport eviction and
+empty-read retention, native-view aspect geometry and Fold preview dimensions.
+Native stream playback still requires confirmation on the user's device.

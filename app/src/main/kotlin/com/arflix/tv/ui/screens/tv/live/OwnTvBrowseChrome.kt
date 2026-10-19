@@ -242,10 +242,10 @@ fun OwnTvPreviewStage(
             }
         }
         if (narrow) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            video(Modifier.fillMaxWidth().height(154.dp))
+            video(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
             information(Modifier.fillMaxWidth())
         } else Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
-            video(Modifier.widthIn(max = 360.dp).weight(0.42f).height(180.dp))
+            video(Modifier.weight(0.42f).widthIn(max = 360.dp).aspectRatio(16f / 9f))
             information(Modifier.weight(0.58f))
         }
     }

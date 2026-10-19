@@ -154,6 +154,26 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    /**
+     * Short now/next responses and incremental XMLTV batches are NOT complete
+     * channel schedules. Keep the programmes they did not return, replacing
+     * only listings with matching start times. A refresh must not erase a
+     * previously loaded category or the rest of a channel's day.
+     */
+    fun mergeChannels(sourceKey: String, nowNext: Map<String, IptvNowNext>, updatedAtMs: Long) {
+        if (sourceKey.isBlank() || nowNext.isEmpty()) return
+        writableDatabase.runInTransaction {
+            ensureSource(sourceKey, updatedAtMs)
+            val generation = ensureActiveGeneration(sourceKey)
+            insertNowNextRows(sourceKey, generation, nowNext, replaceMatchingStarts = true)
+            // Same bounded history as ordinary index reads; expired broadcasts
+            // are not retained indefinitely as successive feeds are merged.
+            delete("epg_programs", "source_key = ? AND end_ms < ?",
+                arrayOf(sourceKey, (updatedAtMs - DEFAULT_PAST_WINDOW_MS).toString()))
+            touchSourceForPartialUpdate(sourceKey, updatedAtMs)
+        }
+    }
+
     fun loadNowNext(
         sourceKey: String,
         channelIds: Set<String>,
@@ -334,6 +354,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         sourceKey: String,
         generation: Long,
         nowNext: Map<String, IptvNowNext>,
+        replaceMatchingStarts: Boolean = false,
     ) {
         val statement = compileStatement(
             """
@@ -342,6 +363,9 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """.trimIndent()
         )
+        val removeSameStart = if (replaceMatchingStarts) compileStatement(
+            "DELETE FROM epg_programs WHERE source_key = ? AND generation = ? AND channel_id = ? AND start_ms = ?"
+        ) else null
         try {
             val seenPrograms = HashSet<ProgramDedupKey>(128)
             nowNext.forEach { (channelId, item) ->
@@ -356,6 +380,14 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     if (!seenPrograms.add(key)) return
 
                     val description = program.description?.trim()?.take(MAX_DESCRIPTION_CHARS)
+                    removeSameStart?.apply {
+                        clearBindings()
+                        bindString(1, sourceKey)
+                        bindLong(2, generation)
+                        bindString(3, normalizedId)
+                        bindLong(4, program.startUtcMillis)
+                        executeUpdateDelete()
+                    }
                     statement.clearBindings()
                     statement.bindString(1, sourceKey)
                     statement.bindLong(2, generation)
@@ -378,6 +410,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                 item.recent.forEach(::insertProgram)
             }
         } finally {
+            removeSameStart?.close()
             statement.close()
         }
     }

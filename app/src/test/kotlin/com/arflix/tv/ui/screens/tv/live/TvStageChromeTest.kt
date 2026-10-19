@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
+import androidx.media3.ui.PlayerView
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -60,6 +61,20 @@ class TvStageChromeTest {
         }
         compose.onNodeWithText("Watch fullscreen").performClick()
         compose.runOnIdle { assertTrue(opened) }
+    }
+
+    @Test fun foldPreviewPlateUsesWidescreenDimensions() {
+        var view: PlayerView? = null
+        compose.setContent {
+            Box(Modifier.width(510.dp)) {
+                OwnTvPreviewStage(channel, now, IptvNowNext(now = programme), emptySet(), {},
+                    onPlayerViewCreated = { view = it })
+            }
+        }
+        compose.runOnIdle {
+            val preview = requireNotNull(view)
+            assertEquals(16f / 9f, preview.width.toFloat() / preview.height, 0.015f)
+        }
     }
 
     @Test fun folderBrowserRetainsCategoryAndManagementCallbacks() {

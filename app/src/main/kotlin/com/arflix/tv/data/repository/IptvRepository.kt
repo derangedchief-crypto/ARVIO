@@ -384,6 +384,7 @@ class IptvRepository @Inject constructor(
         val endMinute: Long,
     )
     private val indexedGuideWindowCacheLock = Any()
+    private var indexedGuideWindowCacheGeneration = 0L
     private val indexedGuideWindowCache = object : LinkedHashMap<
         IndexedGuideWindowCacheKey,
         IndexedGuideViewport
@@ -2781,8 +2782,9 @@ class IptvRepository @Inject constructor(
             startMinute = startMs / 60_000L,
             endMinute = endMs / 60_000L,
         )
-        synchronized(indexedGuideWindowCacheLock) {
+        val readGeneration = synchronized(indexedGuideWindowCacheLock) {
             indexedGuideWindowCache[cacheKey]?.let { return it }
+            indexedGuideWindowCacheGeneration
         }
         val result = runCatching {
             val source = epgIndex.sourceState(indexKey)
@@ -2795,7 +2797,12 @@ class IptvRepository @Inject constructor(
             System.err.println("[EPG-Index] visible window read failed: ${error.message}")
         }.getOrDefault(IndexedGuideViewport.Empty)
         synchronized(indexedGuideWindowCacheLock) {
-            indexedGuideWindowCache[cacheKey] = result
+            // A write may clear the cache while SQLite is answering this read.
+            // Do not put that older answer back, or memoize an unavailable/empty
+            // read as though it proved the channel would never have guide data.
+            if (readGeneration == indexedGuideWindowCacheGeneration && result.programsByChannel.isNotEmpty()) {
+                indexedGuideWindowCache[cacheKey] = result
+            }
         }
         return result
     }
@@ -3107,7 +3114,10 @@ class IptvRepository @Inject constructor(
     ) {
         if (!hasAnyProgramData(nowNext)) return
         runCatching {
-            epgIndex.replaceAll(currentEpgIndexKey(config), nowNext, updatedAtMs)
+            // Even a successful import may cover only one provider/category.
+            // Never swap the entire source generation for a partial schedule.
+            epgIndex.mergeChannels(currentEpgIndexKey(config), nowNext, updatedAtMs)
+            epgIndex.markRefreshReady(currentEpgIndexKey(config), updatedAtMs)
             clearIndexedGuideWindowCache()
             signalGuideIndexChanged(force = true)
         }.onFailure { error ->
@@ -3163,7 +3173,7 @@ class IptvRepository @Inject constructor(
     ) {
         if (!hasAnyProgramData(nowNext)) return
         runCatching {
-            epgIndex.replaceChannels(currentEpgIndexKey(config), nowNext, updatedAtMs)
+            epgIndex.mergeChannels(currentEpgIndexKey(config), nowNext, updatedAtMs)
             clearIndexedGuideWindowCache()
             signalGuideIndexChanged(force = true)
         }.onFailure { error ->
@@ -3182,7 +3192,7 @@ class IptvRepository @Inject constructor(
         val sourceKey = currentEpgIndexKey
         if (sourceKey.isBlank()) return
         runCatching {
-            epgIndex.replaceChannels(sourceKey, nowNext, System.currentTimeMillis())
+            epgIndex.mergeChannels(sourceKey, nowNext, System.currentTimeMillis())
             clearIndexedGuideWindowCache()
             signalGuideIndexChanged()
         }.onFailure { error ->
@@ -3191,7 +3201,10 @@ class IptvRepository @Inject constructor(
     }
 
     private fun clearIndexedGuideWindowCache() {
-        synchronized(indexedGuideWindowCacheLock) { indexedGuideWindowCache.clear() }
+        synchronized(indexedGuideWindowCacheLock) {
+            indexedGuideWindowCacheGeneration++
+            indexedGuideWindowCache.clear()
+        }
     }
 
     private fun signalGuideIndexChanged(force: Boolean = false) {
@@ -6779,7 +6792,7 @@ class IptvRepository @Inject constructor(
             if (batchNowNext.isNotEmpty()) {
                 if (indexKey.isNotBlank()) {
                     runCatching {
-                        epgIndex.replaceChannels(indexKey, batchNowNext, System.currentTimeMillis())
+                        epgIndex.mergeChannels(indexKey, batchNowNext, System.currentTimeMillis())
                         clearIndexedGuideWindowCache()
                         signalGuideIndexChanged()
                     }

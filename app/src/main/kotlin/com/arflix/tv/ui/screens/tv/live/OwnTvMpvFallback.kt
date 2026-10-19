@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -11,6 +12,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.launchIn
 import org.koin.android.ext.koin.androidContext
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
@@ -60,6 +63,15 @@ internal class OwnTvMpvFallback(context: Context) {
     val error = engine.error.map { it?.toString() }
         .stateIn(scope, SharingStarted.Eagerly, null)
     private var attachedHolder: SurfaceHolder? = null
+    private var attachedView: PlayerView? = null
+    init {
+        // PlayerView has no Media3 Player while mpv owns its surface, so it will
+        // never receive Media3's automatic video-size callback. Pass upstream
+        // aspect changes to its content frame ourselves, including fullscreen.
+        engine.videoAspect.onEach { aspect ->
+            attachedView?.let { fitOwnTvVideo(it, aspect) }
+        }.launchIn(scope)
+    }
     private val surfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
             engine.attachSurface(holder.surface)
@@ -79,6 +91,8 @@ internal class OwnTvMpvFallback(context: Context) {
         val holder = (playerView?.videoSurfaceView as? SurfaceView)?.holder ?: return
         if (attachedHolder === holder) return
         attachedHolder?.removeCallback(surfaceCallback)
+        attachedView = playerView
+        fitOwnTvVideo(playerView, engine.videoAspect.value)
         attachedHolder = holder
         holder.addCallback(surfaceCallback)
         if (holder.surface.isValid) {
@@ -93,6 +107,7 @@ internal class OwnTvMpvFallback(context: Context) {
             holder.removeCallback(surfaceCallback)
             engine.detachSurface(holder.surface)
             attachedHolder = null
+            attachedView = null
         }
     }
 
@@ -119,8 +134,16 @@ internal class OwnTvMpvFallback(context: Context) {
             engine.detachSurface(it.surface)
         }
         attachedHolder = null
+        attachedView = null
         engine.stop()
         engine.discardBackgroundRestore()
         scope.cancel()
     }
+}
+
+/** Preserve the source's display aspect rather than stretching it to the host SurfaceView. */
+internal fun fitOwnTvVideo(view: PlayerView, videoAspect: Float?) {
+    view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+    view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
+        ?.setAspectRatio(videoAspect?.takeIf { it.isFinite() && it > 0f } ?: (16f / 9f))
 }

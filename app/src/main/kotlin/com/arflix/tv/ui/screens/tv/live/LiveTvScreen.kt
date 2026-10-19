@@ -1108,7 +1108,7 @@ fun LiveTvScreen(
     val catchupInSegmentSeekMs = remember(playingChannel?.source, catchupPlaybackOffsetMs) {
         playingChannel?.source?.catchupInSegmentSeekOffset(catchupPlaybackOffsetMs) ?: 0L
     }
-    val currentNowNext = remember(playingChannel, playingCatchupProgram, state.snapshot.nowNext) {
+    val snapshotPlayingNowNext = remember(playingChannel, playingCatchupProgram, state.snapshot.nowNext) {
         val live = guideForChannel(playingChannel)
         val catchup = playingCatchupProgram
         if (catchup != null) {
@@ -1252,6 +1252,7 @@ fun LiveTvScreen(
         filteredChannels,
         normalizedGuideStart,
         normalizedGuideEnd,
+        playingChannel?.id,
     ) {
         if (filteredChannels.isEmpty()) {
             emptySet()
@@ -1262,17 +1263,20 @@ fun LiveTvScreen(
             // needs to evict a row, lookahead goes first — never the rows the
             // user is looking at right now.
             buildSet {
+                playingChannel?.id?.let(::add)
                 filteredChannels.subList(beforeStart, normalizedGuideStart).forEach { add(it.id) }
                 filteredChannels.subList(normalizedGuideEnd, afterEnd).forEach { add(it.id) }
                 filteredChannels.subList(normalizedGuideStart, normalizedGuideEnd).forEach { add(it.id) }
             }
         }
     }
-    val guideViewportCacheKey = "$selectedProviderId|$selectedCategoryId|$guideViewportStartMs|$guideIndexRevision"
+    val guideViewportCacheKey = "$selectedProviderId|$selectedCategoryId|$guideViewportStartMs|$guideIndexRevision|${guideClockMillis / 60_000L}"
     var requestedGuideViewportIds by remember(guideViewportCacheKey) { mutableStateOf<Set<String>>(emptySet()) }
     LaunchedEffect(guideViewportChannelIds, guideViewportCacheKey) {
         val requestId = guideViewportRequestGate.beginRequest()
-        val ids = guideViewportChannelIds - requestedGuideViewportIds
+        // A row evicted from the bounded resident map is not hydrated merely
+        // because it was requested earlier while scrolling down a large list.
+        val ids = unhydratedGuideChannelIds(guideViewportChannelIds, requestedGuideViewportIds, retainedIndexedGuidePrograms.keys)
         if (ids.isEmpty()) {
             return@LaunchedEffect
         }
@@ -1281,30 +1285,16 @@ fun LiveTvScreen(
             viewModel.iptvRepository.indexedGuideViewport(ids, guideViewportStartMs, guideViewportEndMs)
         }
         if (!guideViewportRequestGate.isCurrent(requestId)) return@LaunchedEffect
-        requestedGuideViewportIds = requestedGuideViewportIds + ids
         // Do not clear old cells when switching a category, returning from the
         // player, or receiving an incremental parser revision. Replace only
         // the rows SQLite has just authoritatively answered; that preserves a
         // correct last frame until its replacement is ready, without keeping
         // stale programme mappings after the query completes.
-        val retained = LinkedHashMap(retainedIndexedGuidePrograms)
-        ids.forEach(retained::remove)
-        retained.putAll(indexed.programsByChannel)
-        // Re-touch the actual rendered window after each batch. The buffer is
-        // allowed to roll away as navigation advances, but currently displayed
-        // rows must remain resident even while the user holds Down/Up.
-        guideChannels.forEach { channel ->
-            retained.remove(channel.id)?.let { programs -> retained[channel.id] = programs }
-        }
-        while (retained.size > RetainedIndexedGuideRows) {
-            retained.entries.iterator().run {
-                if (hasNext()) {
-                    next()
-                    remove()
-                }
-            }
-        }
+        val retained = mergeRetainedGuideWindow(retainedIndexedGuidePrograms,
+            indexed.programsByChannel, guideViewportStartMs, guideViewportEndMs,
+            (guideChannels.map { it.id } + listOfNotNull(playingChannel?.id)).distinct(), RetainedIndexedGuideRows)
         retainedIndexedGuidePrograms = retained
+        requestedGuideViewportIds = (requestedGuideViewportIds + ids).intersect(retained.keys)
         System.err.println(
             "[TV-Metrics] indexed guide visible=${indexed.programsByChannel.size}/${ids.size} " +
                 "rows=${guideChannels.size} generation=${indexed.sourceGeneration} " +
@@ -1314,6 +1304,8 @@ fun LiveTvScreen(
     val indexedGuideNowNext = remember(retainedIndexedGuidePrograms, guideClockMillis) {
         retainedIndexedGuidePrograms.toNowNextSlices(guideClockMillis)
     }
+    val currentNowNext = if (playingCatchupProgram != null) snapshotPlayingNowNext
+        else mergeGuideSlices(indexedGuideNowNext[playingChannel?.id], snapshotPlayingNowNext)
     val effectiveGuideNowNext = remember(state.snapshot.nowNext, indexedGuideNowNext, guideChannels) {
         HashMap<String, IptvNowNext>(guideChannels.size).apply {
             guideChannels.forEach { channel ->
