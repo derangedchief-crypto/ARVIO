@@ -948,7 +948,10 @@
     <string name="live_cd_pause">Pause</string>
     <string name="live_diag_seeking_catchup">Seeking catch-up</string>
     <string name="live_diag_starting_stream">Starting live stream</string>
-    <string name="vod_verification_failed">Couldn’t finish checking your VOD catalogue. Please retry; scraper sources were not requested.</string>
+    <string name="vod_verification_failed">Couldn’t finish checking your VOD catalogue. Please retry.</string>
+    <string name="scraper_fallback_title">Search Extreme Cloud</string>
+    <string name="scraper_fallback_warning">VOD remains your default. Searching or resolving Extreme Cloud links may use points. Continue searching for backup links?</string>
+    <string name="scraper_fallback_confirm">Search Extreme Cloud</string>
     <string name="live_diag_preparing_source">Preparing source</string>
     <string name="live_diag_catchup_unavailable">Catch-up unavailable</string>
     <string name="live_diag_playback_failed">Playback failed</string>

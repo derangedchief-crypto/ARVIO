@@ -47,6 +47,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1146,6 +1147,30 @@ class StreamRepository @Inject constructor(
             addon.manifest == null
     }
 
+    private fun trackedCloudAddonId(): String? = context.getSharedPreferences("arvio_entitlement_guard", Context.MODE_PRIVATE)
+        .getString("granted_addon_id:cloud_stream", null)
+
+    val extremeCloudAccess: Flow<Boolean>
+        get() = combine(installedAddons, callbackFlow<String?> {
+            val prefs = context.getSharedPreferences("arvio_entitlement_guard", Context.MODE_PRIVATE)
+            val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key == null || key == "granted_addon_id:cloud_stream") trySend(trackedCloudAddonId())
+            }
+            prefs.registerOnSharedPreferenceChangeListener(listener)
+            trySend(trackedCloudAddonId())
+            awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+        }) { addons, trackedId ->
+            hasEntitledExtremeCloudSource(addons, Constants.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL, trackedId)
+        }.catch { emit(false) }
+
+    suspend fun hasExtremeCloudAccess(): Boolean = try {
+        hasEntitledExtremeCloudSource(installedAddons.first(), Constants.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL, trackedCloudAddonId())
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        false
+    }
+
     private suspend fun installedAddonsForSourceResolution(): List<Addon> {
         return installedAddons.first().filterNot(::isIncompleteExternalAddon)
     }
@@ -2176,8 +2201,10 @@ class StreamRepository @Inject constructor(
         year: Int? = null,
         forceRefresh: Boolean = false,
         tmdbId: Int? = null,
+        searchMode: SourceSearchMode = SourceSearchMode.VodFirst,
     ): StreamResult = withContext(Dispatchers.IO) {
-        val vod = verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId)
+        if (searchMode == SourceSearchMode.ManualScraperFallback && !hasExtremeCloudAccess()) return@withContext StreamResult(emptyList(), emptyList())
+        val vod = if (searchMode == SourceSearchMode.VodFirst) verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId) else emptyList()
         if (vod.isNotEmpty()) return@withContext StreamResult(vod, emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
@@ -2233,10 +2260,16 @@ class StreamRepository @Inject constructor(
         year: Int? = null,
         forceRefresh: Boolean = false,
         tmdbId: Int? = null,
+        searchMode: SourceSearchMode = SourceSearchMode.VodFirst,
     ): Flow<ProgressiveStreamResult> = callbackFlow {
         launch {
+            if (searchMode == SourceSearchMode.ManualScraperFallback && !hasExtremeCloudAccess()) {
+                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
+                close()
+                return@launch
+            }
             val vod = try {
-                verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId)
+                if (searchMode == SourceSearchMode.VodFirst) verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId) else emptyList()
             } catch (error: Exception) {
                 close(error)
                 return@launch
@@ -2639,9 +2672,11 @@ class StreamRepository @Inject constructor(
         title: String = "",
         forceRefresh: Boolean = false,
         animeQueryOverride: String? = null,
-        airDate: String? = null
+        airDate: String? = null,
+        searchMode: SourceSearchMode = SourceSearchMode.VodFirst,
     ): StreamResult = withContext(Dispatchers.IO) {
-        val vod = verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId)
+        if (searchMode == SourceSearchMode.ManualScraperFallback && !hasExtremeCloudAccess()) return@withContext StreamResult(emptyList(), emptyList())
+        val vod = if (searchMode == SourceSearchMode.VodFirst) verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId) else emptyList()
         if (vod.isNotEmpty()) return@withContext StreamResult(vod, emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
@@ -2713,11 +2748,17 @@ class StreamRepository @Inject constructor(
         title: String = "",
         forceRefresh: Boolean = false,
         animeQueryOverride: String? = null,
-        airDate: String? = null
+        airDate: String? = null,
+        searchMode: SourceSearchMode = SourceSearchMode.VodFirst,
     ): Flow<ProgressiveStreamResult> = callbackFlow {
         launch {
+            if (searchMode == SourceSearchMode.ManualScraperFallback && !hasExtremeCloudAccess()) {
+                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
+                close()
+                return@launch
+            }
             val vod = try {
-                verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId)
+                if (searchMode == SourceSearchMode.VodFirst) verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId) else emptyList()
             } catch (error: Exception) {
                 close(error)
                 return@launch

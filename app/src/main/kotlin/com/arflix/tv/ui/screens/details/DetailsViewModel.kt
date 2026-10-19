@@ -27,6 +27,7 @@ import com.arflix.tv.data.repository.MdbExternalRating
 import com.arflix.tv.data.repository.MdbListRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.SourceSearchMode
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchHistoryRepository
@@ -47,6 +48,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import java.util.Locale
 import com.arflix.tv.core.plugin.PluginManager
@@ -222,6 +225,7 @@ class DetailsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(DetailsUiState())
     val uiState: StateFlow<DetailsUiState> = _uiState.asStateFlow()
+    val canSearchExtremeCloud = streamRepository.extremeCloudAccess.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private var currentMediaType: MediaType = MediaType.MOVIE
     private var currentMediaId: Int = 0
@@ -239,6 +243,8 @@ class DetailsViewModel @Inject constructor(
     private var vodAppendJob: kotlinx.coroutines.Job? = null
     private var homeServerAppendJob: kotlinx.coroutines.Job? = null
     private var loadStreamsJob: kotlinx.coroutines.Job? = null
+    private var activePluginScraperJob: kotlinx.coroutines.Job? = null
+    private var activeSourceSearchMode = SourceSearchMode.VodFirst
     private var loadStreamsRequestId: Long = 0L
     private var focusedStreamPrewarmJob: kotlinx.coroutines.Job? = null
     private var streamListPrewarmJob: kotlinx.coroutines.Job? = null
@@ -250,6 +256,16 @@ class DetailsViewModel @Inject constructor(
     @Volatile private var initialLoadComplete = false
 
     init {
+        viewModelScope.launch {
+            canSearchExtremeCloud.collect { allowed ->
+                if (!allowed && activeSourceSearchMode == SourceSearchMode.ManualScraperFallback) {
+                    loadStreamsJob?.cancel()
+                    activePluginScraperJob?.cancel()
+                    _uiState.value = _uiState.value.copy(streams = _uiState.value.streams.filter(::isSupplementalStream),
+                        isLoadingStreams = false, pluginScrapersLoading = false, loadingPluginNames = emptySet())
+                }
+            }
+        }
         viewModelScope.launch {
             mediaRepository.episodeRatingsUpdated.collect { (tvId, seasonNumber) ->
                 if (tvId == currentMediaId && currentMediaType == MediaType.TV) {
@@ -1786,8 +1802,14 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
-    fun loadStreams(imdbId: String?, identity: EpisodeIdentity? = null) {
+    fun loadStreams(imdbId: String?, identity: EpisodeIdentity? = null,
+        searchMode: SourceSearchMode = SourceSearchMode.VodFirst) {
+        val retainedSources = if (searchMode == SourceSearchMode.ManualScraperFallback)
+            _uiState.value.streams.filter(::isSupplementalStream) else emptyList()
         loadStreamsJob?.cancel()
+        activePluginScraperJob?.cancel()
+        if (searchMode == SourceSearchMode.ManualScraperFallback) prefetchJob?.cancel()
+        activeSourceSearchMode = searchMode
         focusedStreamPrewarmJob?.cancel()
         streamListPrewarmJob?.cancel()
         homeServerAppendJob?.cancel()
@@ -1797,7 +1819,7 @@ class DetailsViewModel @Inject constructor(
             isLoadingStreams = true,
             completedAddons = 0,
             totalAddons = 0,
-            streams = emptyList(),
+            streams = retainedSources,
             subtitles = emptyList(),
             streamSearchStartTime = System.currentTimeMillis(),
             pluginScrapersLoading = false
@@ -1813,6 +1835,10 @@ class DetailsViewModel @Inject constructor(
                     currentMediaId == requestMediaId
             }
             if (!isCurrentRequest()) return@launch
+            if (searchMode == SourceSearchMode.ManualScraperFallback && !streamRepository.hasExtremeCloudAccess()) {
+                _uiState.value = _uiState.value.copy(isLoadingStreams = false, pluginScrapersLoading = false)
+                return@launch
+            }
 
             // If the user clicked Play/Sources very fast (e.g. from Search), the background
             // resolveExternalIds might still be running. Try to recover it from cache
@@ -1843,7 +1869,7 @@ class DetailsViewModel @Inject constructor(
                 isLoadingStreams = true,
                 completedAddons = 0,
                 totalAddons = 0,
-                streams = emptyList(),
+                streams = retainedSources,
                 subtitles = emptyList(),
                 addonOrderedIds = orderedAddonIds,
                 streamSearchStartTime = System.currentTimeMillis(),
@@ -1867,7 +1893,8 @@ class DetailsViewModel @Inject constructor(
                 val canonicalEpisode = identity?.tmdbEpisode
                 val animeQueryOverride = identity?.kitsuQuery
                 val vod = try {
-                    if (requestMediaType == MediaType.MOVIE) streamRepository.verifyMovieVodBeforeFallback(resolvedImdbId,
+                    if (searchMode == SourceSearchMode.ManualScraperFallback) emptyList()
+                    else if (requestMediaType == MediaType.MOVIE) streamRepository.verifyMovieVodBeforeFallback(resolvedImdbId,
                         item?.title.orEmpty(), item?.year?.toIntOrNull(), requestMediaId)
                     else streamRepository.verifyEpisodeVodBeforeFallback(resolvedImdbId, item?.title.orEmpty(),
                         canonicalSeason ?: 1, canonicalEpisode ?: 1, requestMediaId)
@@ -1948,21 +1975,23 @@ class DetailsViewModel @Inject constructor(
                             }
                         }
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         Log.w(TAG, "[PluginScrapers] streaming execution failed: ${e.message}")
                     } finally {
-                        val current = _uiState.value
-                        val stillLoading = loadStreamsJob?.isActive == true ||
-                                           vodAppendJob?.isActive == true ||
-                                           homeServerAppendJob?.isActive == true
-                        val newLoading = current.isLoadingStreams && current.streams.isEmpty() && stillLoading
-
-                        _uiState.value = current.copy(
-                            pluginScrapersLoading = false,
-                            loadingPluginNames = emptySet(),
-                            isLoadingStreams = newLoading
-                        )
+                        if (isCurrentRequest()) {
+                            val current = _uiState.value
+                            val stillLoading = loadStreamsJob?.isActive == true ||
+                                vodAppendJob?.isActive == true || homeServerAppendJob?.isActive == true
+                            val newLoading = current.isLoadingStreams && current.streams.isEmpty() && stillLoading
+                            _uiState.value = current.copy(
+                                pluginScrapersLoading = false,
+                                loadingPluginNames = emptySet(),
+                                isLoadingStreams = newLoading
+                            )
+                        }
                     }
                 }
+                activePluginScraperJob = pluginScraperJob
 
                 val result = if (currentMediaType == MediaType.MOVIE) {
                     val enabledAddons = streamRepository.installedAddons.first()
@@ -2005,6 +2034,7 @@ class DetailsViewModel @Inject constructor(
                         title = item?.title.orEmpty(),
                         year = item?.year?.toIntOrNull(),
                         tmdbId = requestMediaId,
+                        searchMode = searchMode,
                     ).collect { progressive ->
                         if (!isCurrentRequest()) return@collect
                         val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
@@ -2066,7 +2096,8 @@ class DetailsViewModel @Inject constructor(
                         originalLanguage = originalLanguage,
                         title = item?.title ?: "",
                         animeQueryOverride = animeQueryOverride,
-                        airDate = episodeAirDate
+                        airDate = episodeAirDate,
+                        searchMode = searchMode,
                     ).collect { progressive ->
                         if (!isCurrentRequest()) return@collect
                         val existingVod = _uiState.value.streams.filter(::isSupplementalStream)

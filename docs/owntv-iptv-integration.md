@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `402`. Version name is `2.0.086`, following the actual
+Current testing version code is `403`. Version name is `2.0.087`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -381,3 +381,39 @@ secondary providers and episodes stored in movie lists. Autoplay planner tests
 were aligned with the existing local-library grace window (no planner timing code
 was changed), and verified VOD sources are explicitly tested not to wait for
 remote scraper results.
+
+## Authorized manual Extreme Cloud backup search in 2.0.087 / 403
+
+VOD-first remains the default for movies and exact episodes. A separate,
+request-scoped `ManualScraperFallback` search mode lets a user explicitly request
+backup links even when VOD exists or its verification failed. It is not saved as
+a default and does not silently enable paid fallback on later playback requests.
+
+Both Details and Player source pickers expose **Search Extreme Cloud** only when
+the existing Xtream Cloud Stream entitlement source is installed and enabled.
+Access follows the configured entitlement manifest or the addon identity recorded
+by `XtreamEntitlementsGuard` (`granted_addon_id:cloud_stream`); arbitrary addon names
+or unrelated installed scrapers do not grant it. This reuses the existing package-
+driven addon grant/revocation path rather than adding a separate entitlement rule.
+Access is observed reactively and rechecked at each manual repository entry point.
+Unknown/unreadable state fails closed. Unauthorized calls make no external source
+requests and do not show an upsell or permission message.
+
+The action opens a confirmation explaining that Extreme Cloud lookup/resolution
+may use points. Merely focusing the TV rail action, opening the dialog or cancelling
+it does not start a search. Confirmation keeps VOD/home-server sources available,
+fetches configured backup links and leaves source selection to the user; it does
+not automatically replace a playing VOD stream. Pending automatic discovery is
+cancelled when the user requests backups, preventing late automatic results from
+overwriting that choice. Details also cancels old plugin/prewarm work. Revocation
+hides the action, closes an open confirmation and cancels manual lookups; VOD
+sources and the active playback selection remain intact. Generic VOD verification
+errors do not advertise Extreme Cloud to users without access.
+
+Regression coverage includes authorized and denied movie/episode requests for
+both progressive and non-progressive discovery, return to VOD-first after manual
+search, unreadable access state, live entitlement revocation observation, grant
+identity/URL matching and spoofed/disabled sources. Compose phone/TV tests exercise
+the requested label, explicit confirmation, cancellation, remote focus without a
+request, VOD-row retention, hidden unauthorized UI and revocation while a dialog
+is open. Device playback and remote timing still require user confirmation.
