@@ -1,4 +1,4 @@
-package com.arflix.tv.ui.screens.tv
+package com.arflix.tv.data.repository
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext

@@ -1126,6 +1126,7 @@ fun LiveTvScreen(
 
     var guideWindowStart by rememberSaveable { mutableIntStateOf(0) }
     var guideWindowEnd by rememberSaveable { mutableIntStateOf(GuideInitialWindowRows) }
+    var firstVisibleGuideIndex by remember(selectedProviderId, selectedCategoryId) { mutableIntStateOf(0) }
     val guidePageRequestGate = remember { TvGuidePageRequestGate() }
     fun setGuideWindow(window: Pair<Int, Int>) {
         val total = filteredChannels.size
@@ -1141,7 +1142,7 @@ fun LiveTvScreen(
     fun requestGuideWindowAfter() {
         if (!guidePageRequestGate.shouldRequest(TvGuideDirection.DOWN, System.currentTimeMillis())) return
         val hasMorePagedRows = selectedCategoryTotalCount > filteredChannels.size
-        if (hasMorePagedRows && guideWindowEnd >= (filteredChannels.size - GuidePageRows).coerceAtLeast(0)) {
+        if (hasMorePagedRows) {
             pagedLoadedLimit = (pagedLoadedLimit + GuidePagedLoadStepRows)
                 .coerceAtMost(selectedCategoryTotalCount)
                 .coerceAtLeast(GuideMaxWindowRows)
@@ -1198,12 +1199,11 @@ fun LiveTvScreen(
             setGuideWindow(guideWindowAround(index, filteredChannels.size))
         }
     }
-    val normalizedGuideStart = if (filteredChannels.isNotEmpty() && guideWindowStart >= filteredChannels.size) {
-        0
-    } else {
-        guideWindowStart.coerceIn(0, filteredChannels.size)
-    }
-    val normalizedGuideEnd = guideWindowEnd.coerceIn(normalizedGuideStart, filteredChannels.size)
+    // The lazy list retains stable channel metadata; only programme hydration
+    // slides. Trimming the backing row list during a fling could strand its
+    // scroll position beyond the replacement window and blank the category.
+    val normalizedGuideStart = (firstVisibleGuideIndex - 6).coerceIn(0, filteredChannels.size)
+    val normalizedGuideEnd = (normalizedGuideStart + GuideMaxWindowRows).coerceAtMost(filteredChannels.size)
     val guideChannels = remember(filteredChannels, normalizedGuideStart, normalizedGuideEnd) {
         val total = filteredChannels.size
         val start = normalizedGuideStart.coerceIn(0, total)
@@ -2971,8 +2971,8 @@ fun LiveTvScreen(
                     )
                     OwnTvGuideHeading(selectedCategoryTotalCount)
                     TvGuideViewport(
-                        channels = guideChannels,
-                        channelWindowOffset = normalizedGuideStart,
+                        channels = filteredChannels,
+                        channelWindowOffset = 0,
                         totalChannelCount = selectedCategoryTotalCount,
                         clockTickMillis = guideClockMillis,
                         indexedPrograms = retainedIndexedGuidePrograms,
@@ -3011,6 +3011,7 @@ fun LiveTvScreen(
                         onExitEpg = { channel -> focusChannelList(channel?.id ?: focusedChannelId ?: playingChannelId) },
                         onRequestPreviousChannels = ::requestGuideWindowBefore,
                         onRequestNextChannels = ::requestGuideWindowAfter,
+                        onVisibleChannelsChanged = { first, _ -> firstVisibleGuideIndex = first },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -3122,8 +3123,8 @@ fun LiveTvScreen(
                     )
                     OwnTvGuideHeading(selectedCategoryTotalCount)
                     TvGuideViewport(
-                        channels = guideChannels,
-                        channelWindowOffset = normalizedGuideStart,
+                        channels = filteredChannels,
+                        channelWindowOffset = 0,
                         totalChannelCount = selectedCategoryTotalCount,
                         clockTickMillis = guideClockMillis,
                         indexedPrograms = retainedIndexedGuidePrograms,
@@ -3161,6 +3162,7 @@ fun LiveTvScreen(
                         onExitEpg = { channel -> focusChannelList(channel?.id ?: focusedChannelId ?: playingChannelId) },
                         onRequestPreviousChannels = ::requestGuideWindowBefore,
                         onRequestNextChannels = ::requestGuideWindowAfter,
+                        onVisibleChannelsChanged = { first, _ -> firstVisibleGuideIndex = first },
                         modifier = Modifier
                             .fillMaxSize()
                             .onFocusChanged {

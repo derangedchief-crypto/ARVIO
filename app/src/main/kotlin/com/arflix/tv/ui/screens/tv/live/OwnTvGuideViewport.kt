@@ -81,6 +81,7 @@ fun TvGuideViewport(
     onExitEpg: (EnrichedChannel?) -> Unit = {},
     onRequestPreviousChannels: () -> Unit = {},
     onRequestNextChannels: () -> Unit = {},
+    onVisibleChannelsChanged: (Int, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -136,11 +137,13 @@ fun TvGuideViewport(
     }
     val requestPrevious by rememberUpdatedState(onRequestPreviousChannels)
     val requestNext by rememberUpdatedState(onRequestNextChannels)
+    val visibleChannelsChanged by rememberUpdatedState(onVisibleChannelsChanged)
     LaunchedEffect(listState, channelIds, channelWindowOffset, totalChannelCount) {
         snapshotFlow {
             val visible = listState.layoutInfo.visibleItemsInfo
             (visible.firstOrNull()?.index ?: -1) to (visible.lastOrNull()?.index ?: -1)
         }.distinctUntilChanged().collect { (first, last) ->
+            if (first >= 0) visibleChannelsChanged(first, last)
             if (first >= 0 && first < 6 && channelWindowOffset > 0) requestPrevious()
             if (last >= channels.size - 6 && last >= 0 &&
                 channelWindowOffset + channels.size < totalChannelCount) requestNext()

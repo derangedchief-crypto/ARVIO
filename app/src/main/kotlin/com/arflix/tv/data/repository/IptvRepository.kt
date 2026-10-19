@@ -271,6 +271,9 @@ class IptvRepository @Inject constructor(
     private val _guideIndexRevision = MutableStateFlow(0L)
     val guideIndexRevision: StateFlow<Long> = _guideIndexRevision.asStateFlow()
     private val completeGuideIndexMutex = Mutex()
+    private val guideRefreshCoordinator = GuideRefreshCoordinator()
+    private val _guideRefreshState = MutableStateFlow(GuideRefreshState())
+    val guideRefreshState: StateFlow<GuideRefreshState> = _guideRefreshState.asStateFlow()
     private val guideIndexRevisionLock = Any()
     private var lastGuideIndexRevisionAtMs = 0L
 
@@ -2759,6 +2762,83 @@ class IptvRepository @Inject constructor(
     fun pagedSearchChannels(query: String, limit: Int): List<IptvChannel> =
         runCatching { channelStore.search(currentEpgIndexKey, query, limit) }.getOrDefault(emptyList())
 
+    /** Shared, cache-first, full-playlist job. No screen owns or cancels this work. */
+    fun requestGuideRefresh(force: Boolean = false): kotlinx.coroutines.Job = guideRefreshCoordinator.request {
+        try {
+            warmupFromCacheOnly()
+            val config = observeConfig().first()
+            if (!hasAnyConfiguredSource(config)) return@request
+            val key = currentEpgIndexKey(config)
+            val prefs = context.getSharedPreferences("arvio_guide_refresh", Context.MODE_PRIVATE)
+            val completionKey = "completed_$key|${buildEpgSourceSignature(config)}"
+            val completedAt = prefs.getLong(completionKey, 0L)
+            // Missing provider listings are not evidence that a completed import
+            // should restart. Freshness is scoped to profile + source, not coverage.
+            if (!force && completedAt > 0 && System.currentTimeMillis() - completedAt < 6 * 60 * 60_000L &&
+                epgIndex.countPrograms(key) > 0) return@request
+            _guideRefreshState.value = GuideRefreshState(loading = true, message = "Preparing channel guide", percent = 0)
+            if (cachedChannels.isEmpty() && pagedChannelStoreCount() == 0) {
+                val fresh = fetchFreshChannelsForStartup(config)
+                if (fresh != null) storeStartupChannels(config, fresh.first, fresh.second)
+            }
+            fun sameSource() = currentEpgIndexKey(config) == key &&
+                profileManager.getProfileIdSync().trim().ifBlank { "default" } == key.substringBefore('|')
+            if (!sameSource()) return@request
+            val total = maxOf(pagedChannelStoreCount(), cachedChannels.size)
+            if (total == 0) error("No channels available for guide import")
+            populateCompleteGuideIndex { progress ->
+                _guideRefreshState.value = GuideRefreshState(true, progress.message,
+                    ((progress.percent ?: 0) * 70 / 100).coerceIn(0, 70), total = total)
+            }
+            var offset = 0
+            var lastProgressAt = 0L
+            var usedNetwork = false
+            prefetchPlaylistGuide(total, 12,
+                loadPage = { start, limit ->
+                    usedNetwork = false
+                    (if (pagedChannelStoreCount() > 0) channelStore.window(key, start, limit)
+                        else cachedChannels.slice(start until minOf(start + limit, cachedChannels.size))).map { it.id }
+                },
+                cachedIds = { ids -> readIndexedGuideForPrefetch(ids).filterValues {
+                    it.now != null || it.next != null || it.later != null || it.upcoming.isNotEmpty()
+                }.keys },
+                fetchMissing = { missing ->
+                    usedNetwork = true
+                    refreshEpgForChannels(missing, maxChannels = missing.size,
+                        retainInMemory = false, allowXmlFallback = false).orEmpty().keys
+                },
+                onPage = { visited, _, _ ->
+                    offset = visited
+                    val now = System.currentTimeMillis()
+                    if (visited >= total || now - lastProgressAt >= 1_000L) {
+                        lastProgressAt = now
+                        _guideRefreshState.value = GuideRefreshState(true,
+                            "Checking remaining channel listings $visited/$total", 70 + visited * 30 / total,
+                            visited, total)
+                    }
+                },
+                shouldContinue = ::sameSource,
+                betweenPages = {
+                    if (usedNetwork) delay(if (epgPlaybackGate.shouldYieldToPlayback()) 750L else 250L)
+                    else kotlinx.coroutines.yield()
+                })
+            if (sameSource() && offset >= total) {
+                if (epgIndex.countPrograms(key) == 0) error("No guide listings were returned")
+                prefs.edit().putLong(completionKey, System.currentTimeMillis()).apply()
+                epgIndex.markRefreshReady(key)
+            }
+            _guideRefreshState.value = GuideRefreshState()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            _guideRefreshState.value = GuideRefreshState(failed = true)
+            throw cancelled
+        } catch (error: Exception) {
+            _guideRefreshState.value = GuideRefreshState(failed = true)
+            System.err.println("[EPG-Background] Guide refresh incomplete: ${error.javaClass.simpleName}")
+        } finally {
+            if (_guideRefreshState.value.loading) _guideRefreshState.value = _guideRefreshState.value.copy(loading = false)
+        }
+    }
+
     /**
      * Disk-first full-playlist XMLTV import. OwnTV's streaming parser delivers one
      * programme at a time; only 256 matched rows are held before a SQLite commit.
@@ -3522,6 +3602,7 @@ class IptvRepository @Inject constructor(
             }
         } finally {
             startupPrefetchInFlight.set(false)
+            requestGuideRefresh()
         }
     }
 

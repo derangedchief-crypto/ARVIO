@@ -41,6 +41,26 @@ class TvStageChromeTest {
     private val now = 1_800_000L * 1_000_000
     private val programme = IptvProgram("The world this evening", "A closer look at today's headlines and the stories behind them.", now, now + 3_600_000L)
 
+    @Test fun longCategoryKeepsChannelRowsAcrossProgrammeWindowBoundaries() {
+        val channels = (0 until 350).map { index ->
+            channel.copy(source = channel.source.copy(id = "row-$index", name = "Channel $index"), number = index + 1)
+        }
+        var firstVisible = -1
+        compose.setContent {
+            Box(Modifier.requiredSize(800.dp, 420.dp)) {
+                TvGuideViewport(channels, clockTickMillis = now, indexedPrograms = emptyMap(),
+                    fallbackNowNext = emptyMap(), channelNowNext = emptyMap(), selectedChannelId = null,
+                    focusSelectedChannelSignal = 0, onChannelSelect = {}, onChannelFavoriteToggle = {},
+                    favorites = emptySet(), onVisibleChannelsChanged = { first, _ -> firstVisible = first })
+            }
+        }
+        listOf(48, 96, 180, 280, 12).forEach { index ->
+            compose.onNode(hasScrollAction()).performScrollToIndex(index)
+            compose.onNodeWithText("Channel $index").assertExists()
+            compose.runOnIdle { assertEquals(index, firstVisible) }
+        }
+    }
+
     @Test fun categorySheetSelectsRealCategoryId() {
         var selected: String? = null
         compose.setContent {

@@ -1931,6 +1931,9 @@ class HomeViewModel @Inject constructor(
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
+            // Start the shared import as soon as Home exists. The job belongs
+            // to the repository and outlives this Home/TV navigation instance.
+            iptvRepository.requestGuideRefresh()
             delay(if (isLowRamDevice) 8 * 60_000L else 6 * 60_000L)
             // Warm IPTV channels + EPG in background after startup settles.
             // First load from disk cache (fast), then do targeted network EPG refresh

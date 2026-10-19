@@ -4,6 +4,7 @@ import android.app.Application
 import android.database.sqlite.SQLiteDatabase
 import com.arflix.tv.data.model.IptvChannel
 import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.spyk
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
@@ -37,6 +38,8 @@ class ServerCachedGuideIntegrationTest {
     @Test fun corruptServerCacheFallsBackToProvider() = verifyCache(0, corrupt = true)
     @Test fun unavailableServerCacheFallsBackToProvider() = verifyCache(0, unavailable = true)
     @Test fun serverDisplayNamesMatchWhenXmlIdsDiffer() = verifyCache(1000, matchByName = true)
+    @Test fun completedHomeLoadDoesNotRestartWhenTvOrWorkerRequestsIt() = verifyCache(1000, coordinated = true)
+    @Test fun providerWithoutListingsDoesNotCauseImmediateWholeGuideRestart() = verifyCache(1, coordinated = true, omitLast = true)
 
     private fun verifyCache(
         serverCount: Int,
@@ -44,10 +47,13 @@ class ServerCachedGuideIntegrationTest {
         corrupt: Boolean = false,
         unavailable: Boolean = false,
         matchByName: Boolean = false,
+        coordinated: Boolean = false,
+        omitLast: Boolean = false,
     ) = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         context.deleteDatabase("arvio_iptv_epg_index.db")
         context.deleteDatabase("arvio_iptv_channel_store.db")
+        context.getSharedPreferences("arvio_guide_refresh", android.content.Context.MODE_PRIVATE).edit().clear().commit()
         val now = System.currentTimeMillis()
         val fixture = File.createTempFile("server-guide-fixture", ".sqlite", context.cacheDir)
         val gzipped = try {
@@ -77,7 +83,7 @@ class ServerCachedGuideIntegrationTest {
         val stop = formatter.format(Instant.ofEpochMilli(now + 3_600_000))
         val xml = buildString {
             append("<tv>")
-            repeat(1000) { append("<programme channel=\"c$it\" start=\"$start\" stop=\"$stop\"><title>Provider programme $it</title></programme>") }
+            repeat(if (omitLast) 999 else 1000) { append("<programme channel=\"c$it\" start=\"$start\" stop=\"$stop\"><title>Provider programme $it</title></programme>") }
             append("</tv>")
         }
         val requested = mutableListOf<String>()
@@ -96,17 +102,24 @@ class ServerCachedGuideIntegrationTest {
         every { repository.observeConfig() } returns flowOf(IptvConfig(
             m3uUrl = "https://provider.example.test/list.m3u", epgUrl = "https://guide.example.test/feed.xml"))
         fun field(name: String) = IptvRepository::class.java.getDeclaredField(name).apply { isAccessible = true }
-        field("currentEpgIndexKey").set(repository, "fixture-guide")
+        field("currentEpgIndexKey").set(repository, "fixture|guide")
+        coEvery { repository.warmupFromCacheOnly() } returns Unit
         field("cachedChannels").set(repository, (0 until 1000).map {
             IptvChannel("list_1:channel-$it", "Channel $it", "https://provider.example.test/live/$it", "Group", epgId = "c$it")
         })
         try {
-            repository.populateCompleteGuideIndex()
+            if (coordinated) {
+                repository.requestGuideRefresh().join()
+                repository.requestGuideRefresh().join()
+                repository.requestGuideRefresh().join()
+                assertFalse(repository.guideRefreshState.value.loading)
+                assertFalse(repository.guideRefreshState.value.failed)
+            } else repository.populateCompleteGuideIndex()
             val ids = (0 until 1000).mapTo(linkedSetOf()) { "list_1:channel-$it" }
             val guide = repository.indexedGuideViewport(ids, now, now + 7_200_000)
-            assertEquals(1000, guide.programsByChannel.size)
+            assertEquals(if (omitLast) 999 else 1000, guide.programsByChannel.size)
             val usedServer = !expired && !corrupt && !unavailable && serverCount > 0
-            repeat(1000) { i ->
+            repeat(if (omitLast) 999 else 1000) { i ->
                 val expected = if (usedServer && i < serverCount) "Server programme $i" else "Provider programme $i"
                 assertEquals(expected, guide.programsByChannel.getValue("list_1:channel-$i").single().title)
             }

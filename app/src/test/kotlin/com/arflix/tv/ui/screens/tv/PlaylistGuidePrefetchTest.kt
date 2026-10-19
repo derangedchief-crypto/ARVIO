@@ -1,5 +1,7 @@
 package com.arflix.tv.ui.screens.tv
 
+import com.arflix.tv.data.repository.prefetchPlaylistGuide
+
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*

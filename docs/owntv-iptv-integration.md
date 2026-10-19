@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `399`. Version name is `2.0.083`, following the actual
+Current testing version code is `400`. Version name is `2.0.084`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -258,3 +258,27 @@ and the underlying playback integration remain intact. Compose regressions cover
 startup dismissal, unchanged-playing-state channel switches, failure expiry,
 failure while the previous channel still reports playing, timer cancellation and
 retry dismissal. The server-cache-first fix from 2.0.082 remains included.
+
+## Shared background loading and stable channel rows in 2.0.084 / 400
+
+Full guide work now belongs to an application-scoped repository coordinator.
+Home requests it immediately, without the old 6–8 minute warmup delay; activity
+startup and WorkManager request the same job. TV observes shared progress instead
+of owning the bulk import and provider sweep in its ViewModel. Leaving any tab
+cancels only UI observation, not the import. Cache-first import and missing-channel
+checking are phases of one progress session; completion is reported only after
+both finish. Successful completion is stored per profile/source for six hours,
+so absent provider listings or repeated TV/worker requests do not restart a
+finished import. Explicit guide refresh bypasses that freshness check.
+
+The channel LazyColumn now retains all loaded category metadata with stable IDs,
+appending pages rather than replacing its backing list with a sliding slice.
+Only programme hydration moves with the visible rows and remains bounded. This
+avoids stranding a fling/focus position outside a replacement page and blanking
+the category. Both compact/mobile and TV layouts use the same stable list path.
+
+Tests cover concurrent Home/TV/worker requests sharing one job, screen-waiter
+cancellation leaving work alive, subsequent scheduled requests, real-repository
+completion freshness (including a channel without provider listings), and scrolling
+a 350-row category across former window boundaries and back up. Physical-device
+navigation and timing still require confirmation.
