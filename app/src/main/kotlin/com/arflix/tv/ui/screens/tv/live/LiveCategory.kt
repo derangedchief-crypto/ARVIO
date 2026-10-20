@@ -430,6 +430,8 @@ fun playlistGroupCategoryId(playlistId: String, group: String): String {
 /**
  * Build the category tree from a list of enriched channels. Counts are
  * computed up front so the sidebar can render without filtering again.
+ * Never advertise synthetic g-4k/adult shortcuts: provider groups remain in
+ * PLAYLIST in their configured order, and hidden groups stay under HIDDEN.
  */
 fun buildCategoryTree(
     channels: List<EnrichedChannel>,
@@ -452,8 +454,6 @@ fun buildCategoryTree(
     )
 
     var allCount = 0
-    var adultCount = 0
-    var ultraHdCount = 0
     var sportsCount = 0
     var moviesCount = 0
     var newsCount = 0
@@ -479,15 +479,10 @@ fun buildCategoryTree(
         }
 
         if (channel.isAdult) {
-            adultCount += 1
             return@forEach
         }
 
         allCount += 1
-        when (channel.quality) {
-            Quality.K4 -> ultraHdCount += 1
-            else -> Unit
-        }
         when (channel.genre) {
             Genre.Sports -> sportsCount += 1
             Genre.Movies -> moviesCount += 1
@@ -521,7 +516,6 @@ fun buildCategoryTree(
     }
 
     val autoGlobal = listOf(
-        LiveCategory("g-4k",     "4K | Ultra HD",      ultraHdCount, CategoryIcon.Grid),
         LiveCategory("g-sports", "Sports · Global",    sportsCount, CategoryIcon.Sport),
         LiveCategory("g-movies", "Movies · Global",    moviesCount, CategoryIcon.Movie),
         LiveCategory("g-news",   "News · Global",      newsCount,   CategoryIcon.News),
@@ -566,9 +560,6 @@ fun buildCategoryTree(
             )
         }
 
-    val adultCategories = listOf(
-        LiveCategory("adult", "Adult", adultCount, CategoryIcon.Lock),
-    ).filter { it.count > 0 }
     val top = listOf(
         LiveCategory("fav", "Favorites", favoritesCount, CategoryIcon.Favorite),
         LiveCategory("recent", "Recently Watched", recentCount, CategoryIcon.Recent),
@@ -577,7 +568,7 @@ fun buildCategoryTree(
             label = "All Channels",
             count = allCount,
             iconToken = CategoryIcon.All,
-            children = autoGlobal + countryCategories + adultCategories,
+            children = autoGlobal + countryCategories,
         ),
     )
     val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
@@ -629,8 +620,6 @@ fun buildCategoryTree(
     )
 
     var allCount = 0
-    var adultCount = 0
-    var ultraHdCount = 0
     var sportsCount = 0
     var moviesCount = 0
     var newsCount = 0
@@ -657,12 +646,10 @@ fun buildCategoryTree(
         }
 
         if (traits.isAdult) {
-            adultCount += 1
             return@forEach
         }
 
         allCount += 1
-        if (traits.quality == Quality.K4) ultraHdCount += 1
         when (traits.genre) {
             Genre.Sports -> sportsCount += 1
             Genre.Movies -> moviesCount += 1
@@ -696,7 +683,6 @@ fun buildCategoryTree(
     }
 
     val autoGlobal = listOf(
-        LiveCategory("g-4k", "4K | Ultra HD", ultraHdCount, CategoryIcon.Grid),
         LiveCategory("g-sports", "Sports · Global", sportsCount, CategoryIcon.Sport),
         LiveCategory("g-movies", "Movies · Global", moviesCount, CategoryIcon.Movie),
         LiveCategory("g-news", "News · Global", newsCount, CategoryIcon.News),
@@ -741,7 +727,6 @@ fun buildCategoryTree(
             )
         }
 
-    val adultCategories = listOf(LiveCategory("adult", "Adult", adultCount, CategoryIcon.Lock)).filter { it.count > 0 }
     val channelIds = channels.asSequence()
         .filterNot { channel -> isAdultGroup(channel.group, channel.name) || isHiddenPlaylistGroup(channel, hiddenGroups) }
         .map { it.id }
@@ -754,7 +739,7 @@ fun buildCategoryTree(
             label = "All Channels",
             count = allCount,
             iconToken = CategoryIcon.All,
-            children = autoGlobal + countryCategories + adultCategories,
+            children = autoGlobal + countryCategories,
         ),
     )
     val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
@@ -888,8 +873,6 @@ fun buildFastStartupChannelState(
     var allCount = 0
     var favoriteCount = 0
     var recentCount = 0
-    var adultCount = 0
-    var ultraHdCount = 0
 
     fun add(categoryId: String, channel: EnrichedChannel) {
         buckets.getOrPut(categoryId) { ArrayList() }.add(channel)
@@ -917,7 +900,6 @@ fun buildFastStartupChannelState(
             return@forEachIndexed
         }
         if (channel.isAdult) {
-            adultCount += 1
             add("adult", channel)
             return@forEachIndexed
         }
@@ -927,7 +909,6 @@ fun buildFastStartupChannelState(
         if (channel.id in favoritesSet) favoriteCount += 1
         if (channel.id in recentsSet) recentCount += 1
         if (channel.quality == Quality.K4) {
-            ultraHdCount += 1
             add("g-4k", channel)
         }
         channel.country?.takeIf { it.isNotBlank() }?.let { country ->
@@ -935,12 +916,6 @@ fun buildFastStartupChannelState(
         }
     }
 
-    val autoGlobal = listOf(
-        LiveCategory("g-4k", "4K | Ultra HD", ultraHdCount, CategoryIcon.Grid),
-    ).filter { it.count > 0 }
-    val adultCategories = listOf(
-        LiveCategory("adult", "Adult", adultCount, CategoryIcon.Lock),
-    ).filter { it.count > 0 }
     val top = listOf(
         LiveCategory("fav", "Favorites", favoriteCount, CategoryIcon.Favorite),
         LiveCategory("recent", "Recently Watched", recentCount, CategoryIcon.Recent),
@@ -949,7 +924,6 @@ fun buildFastStartupChannelState(
             label = "All Channels",
             count = allCount,
             iconToken = CategoryIcon.All,
-            children = autoGlobal + adultCategories,
         ),
     )
     val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
@@ -1033,13 +1007,11 @@ fun buildPagedStartupChannelState(
     val visibleGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     var visibleTotal = 0
-    var hiddenTotal = 0
     playlistGroupCounts.forEach { (playlistId, rawGroup, count) ->
         val label = playlistGroupLabel(rawGroup)
         val key = playlistGroupKey(playlistId, label)
         val id = playlistGroupCategoryId(playlistId, label)
         if (key in hiddenPlaylistGroups) {
-            hiddenTotal += count
             hiddenGroupCounts[id] = label to count
         } else {
             visibleTotal += count
@@ -1055,10 +1027,6 @@ fun buildPagedStartupChannelState(
             label = "All Channels",
             count = totalVisible,
             iconToken = CategoryIcon.All,
-            children = listOf(
-                LiveCategory("g-4k", "4K | Ultra HD", 0, CategoryIcon.Grid),
-                LiveCategory("adult", "Adult", hiddenTotal, CategoryIcon.Lock),
-            ).filter { it.count > 0 },
         ),
     )
     val playlistGroups = orderPlaylistGroups(visibleGroupCounts, groupOrder).map { (id, value) ->

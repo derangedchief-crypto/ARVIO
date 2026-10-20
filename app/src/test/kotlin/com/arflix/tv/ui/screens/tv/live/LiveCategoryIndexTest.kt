@@ -222,6 +222,72 @@ class LiveCategoryIndexTest {
             .containsExactly("stalker:stalker2:10")
     }
 
+    @Test
+    fun automaticQualityAndAdultShortcutsNeverReturnAcrossLoadingPaths() {
+        val channels = listOf(
+            channel("list:1", "Sports 4K", "Sports"),
+            channel("list:2", "Adult Channel", "XXX"),
+            channel("list:3", "News HD", "News"),
+        )
+        val enriched = channels.mapIndexed { index, channel -> channel.enrich(index + 1) }
+        val trees = listOf(
+            buildCategoryTree(channels, emptySet(), emptySet()),
+            buildCategoryTree(enriched, 0, 0),
+            buildFastStartupChannelState(channels, emptySet(), emptySet()).tree,
+            buildPagedStartupChannelState(channels, 3,
+                listOf(Triple("list", "Sports", 1), Triple("list", "XXX", 1), Triple("list", "News", 1)),
+                emptySet(), emptySet()).tree,
+        )
+        trees.forEach { tree ->
+            assertThat(tree.byId("g-4k")).isNull()
+            assertThat(tree.byId("adult")).isNull()
+            assertThat(tree.top.map { it.id }).containsExactly("fav", "recent", "all").inOrder()
+            assertThat(tree.top.take(2).map { it.count }).containsExactly(0, 0)
+            assertThat(tree.global.categories.map { it.label }).containsExactly("Sports", "XXX", "News").inOrder()
+        }
+    }
+
+    @Test
+    fun hiddenSportsAndAdultGroupsStayHiddenWithoutCreatingAnAdultShortcut() {
+        val channels = listOf(
+            channel("list:1", "Sports 4K", "Sports"),
+            channel("list:2", "Adult Channel", "XXX"),
+            channel("list:3", "News HD", "News"),
+        )
+        val hidden = setOf("list|Sports", "list|XXX")
+        val states = listOf(
+            buildFastStartupChannelState(channels, emptySet(), emptySet(), hidden),
+            buildPagedStartupChannelState(channels, 3,
+                listOf(Triple("list", "Sports", 1), Triple("list", "XXX", 1), Triple("list", "News", 1)),
+                emptySet(), emptySet(), hidden),
+        )
+        states.forEach { state ->
+            assertThat(state.tree.byId("adult")).isNull()
+            assertThat(state.tree.byId("g-4k")).isNull()
+            assertThat(state.tree.global.categories.map { it.label }).containsExactly("News")
+            assertThat(state.tree.hidden.categories.map { it.label }).containsExactly("Sports", "XXX").inOrder()
+            assertThat(state.index.hiddenIds).containsExactly("list:1", "list:2")
+            assertThat(state.index.channelsFor("all", emptyList(), emptyList()).map { it.id }).containsExactly("list:3")
+        }
+    }
+
+    @Test
+    fun actualProviderGroupsNamedAdultOrUltraHdAreNotDeletedOrPromoted() {
+        val channels = listOf(
+            channel("list:1", "News", "News"),
+            channel("list:2", "Sports 4K", "4K | Ultra HD"),
+            channel("list:3", "Adult Channel", "Adult"),
+        )
+        val state = buildFastStartupChannelState(channels, emptySet(), emptySet())
+        assertThat(state.tree.top.single { it.id == "all" }.children).isEmpty()
+        assertThat(state.tree.global.categories.map { it.label })
+            .containsExactly("News", "4K | Ultra HD", "Adult").inOrder()
+        state.tree.global.categories.forEach { group ->
+            assertThat(group.id).startsWith("grp:list:")
+            assertThat(state.index.channelsFor(group.id, emptyList(), emptyList())).hasSize(1)
+        }
+    }
+
     private fun channel(id: String, name: String, group: String): IptvChannel =
         IptvChannel(
             id = id,

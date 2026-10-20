@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `407`. Version name is `2.0.091`, following the actual
+Current testing version code is `408`. Version name is `2.0.092`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -549,6 +549,23 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Stop automatic IPTV shortcuts in 2.0.092 / 408
+
+Removed the app-generated `g-4k` (4K | Ultra HD) and `adult` shortcuts from
+all four category-tree construction paths: raw, enriched, fast startup and paged
+startup. Neither shortcut is a user favourite or a provider-created group.
+Paged startup also incorrectly used the total count of all hidden groups as its
+Adult shortcut count, including hidden sports groups. That shortcut and incorrect
+count are removed rather than repurposing hidden groups as Adult content.
+
+Actual provider groups, including any genuinely named Adult or 4K | Ultra HD,
+remain under PLAYLIST in provider/configured order. Hidden groups and favourites
+are not rewritten. Existing selection validation resets a removed shortcut to
+All Channels. Channel classification and adult safety filtering remain unchanged.
+Regression tests cover all loading paths, hidden sports/adult groups, empty
+favourites, original group ordering and preservation of identically named provider
+groups. No guide data, VOD, Cloud entitlement or publishing-workflow changes.
 
 ## Authorized Cloud backups alongside VOD in 2.0.091 / 407
 
