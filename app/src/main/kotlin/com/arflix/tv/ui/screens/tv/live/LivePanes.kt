@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import androidx.compose.ui.focus.FocusRequester
@@ -68,9 +69,26 @@ fun GuideBackfillStatus(
     percent: Int?,
     message: String?,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     if (!inProgress) return
     val progress = percent?.coerceIn(0, 100)
+    if (compact) {
+        Row(modifier.fillMaxWidth().background(LiveColors.PanelDeep)
+            .padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CircularProgressIndicator(modifier = Modifier.width(12.dp).height(12.dp), color = LiveColors.Accent, strokeWidth = 2.dp)
+            Text(buildString {
+                append("Loading EPG")
+                progress?.let { append(" · $it%") }
+                if (!message.isNullOrBlank()) append(" — $message")
+            }, style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = 10.sp, lineHeight = 14.sp),
+                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (progress != null) LinearProgressIndicator(progress = { progress / 100f },
+                modifier = Modifier.width(96.dp).height(2.dp), color = LiveColors.Accent, trackColor = LiveColors.Divider)
+        }
+        return
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()

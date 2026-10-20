@@ -102,7 +102,6 @@ import com.arflix.tv.ui.screens.tv.TvViewModel
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.KeepScreenOn
-import com.arflix.tv.ui.components.AppTopBarHeight
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
@@ -455,8 +454,8 @@ fun LiveTvScreen(
     )
     val compactTouchLayout = isTouchDevice && configuration.screenWidthDp < 900
     val landscapeCompactMiniPlayer = miniPlayerLayout == LiveTvMiniPlayerLayout.LANDSCAPE_COMPACT
-    val showTopBar = !isTouchDevice
-    val contentTopPadding = if (showTopBar) AppTopBarHeight else 0.dp
+    val showTvNavigation = !isTouchDevice
+    val contentTopPadding = 0.dp
     val coroutineScope = rememberCoroutineScope()
     val guideClockMillis by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
@@ -853,6 +852,7 @@ fun LiveTvScreen(
     val hasProfile = currentProfile != null
     val maxTopBarIndex = topBarMaxIndex(hasProfile)
     var focusZone by rememberSaveable { mutableStateOf(LiveTvFocusZone.CATEGORY_LIST) }
+    var menuReturnZone by rememberSaveable { mutableStateOf(LiveTvFocusZone.CATEGORY_LIST) }
     var topBarFocusIndex by rememberSaveable {
         mutableIntStateOf(topBarSelectedIndex(SidebarItem.TV, hasProfile).coerceIn(0, maxTopBarIndex))
     }
@@ -1737,6 +1737,29 @@ fun LiveTvScreen(
         }
     }
 
+    fun openNavigationMenu() {
+        if (focusZone != LiveTvFocusZone.TOPBAR) menuReturnZone = focusZone
+        topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile).coerceIn(0, maxTopBarIndex)
+        focusZone = LiveTvFocusZone.TOPBAR
+    }
+
+    fun closeNavigationMenu() {
+        if (!state.isConfigured && state.snapshot.channels.isEmpty()) {
+            focusZone = LiveTvFocusZone.CATEGORY_LIST
+            runCatching { emptyStateButtonFocus.requestFocus() }
+            return
+        }
+        when (menuReturnZone) {
+            LiveTvFocusZone.CHANNEL_LIST -> focusChannelList()
+            LiveTvFocusZone.EPG -> {
+                val id = focusedChannelId ?: playingChannelId ?: filteredChannels.firstOrNull()?.id
+                if (id != null) focusEpg(id) else focusSelectedCategory()
+            }
+            LiveTvFocusZone.PROVIDER_SWITCHER -> focusProviderSwitcher()
+            else -> focusSelectedCategory()
+        }
+    }
+
     fun openVariantPicker(channel: EnrichedChannel) {
         noteGuideUserNavigation()
         if (variantCountFor(channel, variantGroups) > 1) {
@@ -1978,6 +2001,7 @@ fun LiveTvScreen(
         }
     }
     fun playProgramInFullscreen(program: IptvProgram?, targetChannel: EnrichedChannel? = null) {
+        invalidateProgramActionLookup()
         val channel = targetChannel ?: playingChannel
         if (program != playingCatchupProgram) {
             catchupPlaybackOffsetMs = 0L
@@ -2221,10 +2245,15 @@ fun LiveTvScreen(
     val mpvPlaying by ownTvMpvFallback.playing.collectAsStateWithLifecycle()
     val mpvBuffering by ownTvMpvFallback.buffering.collectAsStateWithLifecycle()
     val mpvError by ownTvMpvFallback.error.collectAsStateWithLifecycle()
+    // Do not mirror the engine buffering flow into a mutable prepare flag.
+    // A fast channel start can conflate true->false back to the previous false,
+    // leaving that flag true forever because no new effect key is delivered.
+    val activePlayerIsBuffering = livePlaybackBuffering(usingOwnTvMpvFallback, mpvBuffering,
+        playerIsBuffering, ownTvHasError = mpvError != null)
+    val activePlayerIsPlaying = if (usingOwnTvMpvFallback) mpvPlaying else playerIsPlaying
     LaunchedEffect(usingOwnTvMpvFallback, mpvPlaying, mpvBuffering, mpvError) {
         if (usingOwnTvMpvFallback) {
             playerIsPlaying = mpvPlaying
-            playerIsBuffering = mpvBuffering
         }
     }
     LaunchedEffect(usingOwnTvMpvFallback, mpvError) {
@@ -2486,6 +2515,7 @@ fun LiveTvScreen(
     val openFullScreenPlayer = remember(playingChannelId, currentStreamUrl) {
         {
             if (playingChannelId != null || currentStreamUrl != null) {
+                invalidateProgramActionLookup()
                 isFullScreen = true
                 hudPokeSignal++
             }
@@ -2741,7 +2771,10 @@ fun LiveTvScreen(
             exitFullScreenPlayback()
         }
     }
-    BackHandler(enabled = !searchOpen && variantPickerChannel == null && !isFullScreen) {
+    BackHandler(enabled = !isTouchDevice && !searchOpen && variantPickerChannel == null && !isFullScreen && focusZone == LiveTvFocusZone.TOPBAR) {
+        closeNavigationMenu()
+    }
+    BackHandler(enabled = !searchOpen && variantPickerChannel == null && !isFullScreen && (isTouchDevice || focusZone != LiveTvFocusZone.TOPBAR)) {
         onBack()
     }
 
@@ -2827,44 +2860,42 @@ fun LiveTvScreen(
             .then(
                 if (!isTouchDevice) {
                     Modifier.onPreviewKeyEvent { event ->
-                        if (!searchOpen && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
+                        if (!searchOpen && variantPickerChannel == null && focusZone != LiveTvFocusZone.TOPBAR && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
                             digitForTvKeyCode(event.nativeKeyEvent.keyCode)?.let { digit ->
                                 return@onPreviewKeyEvent handleChannelNumberDigit(digit)
                             }
                         }
-                        if (searchOpen || isFullScreen || event.type != KeyEventType.KeyDown) {
+                        if (searchOpen || variantPickerChannel != null || isFullScreen || event.type != KeyEventType.KeyDown) {
                             return@onPreviewKeyEvent false
+                        }
+                        if (event.key == Key.Menu) {
+                            if (event.nativeKeyEvent.repeatCount == 0) {
+                                if (focusZone == LiveTvFocusZone.TOPBAR) closeNavigationMenu() else openNavigationMenu()
+                            }
+                            return@onPreviewKeyEvent true
                         }
                         noteGuideUserNavigation()
                         when (focusZone) {
                             LiveTvFocusZone.TOPBAR -> {
                                 when (event.key) {
-                                    Key.DirectionLeft -> {
-                                        if (topBarFocusIndex > 0) {
-                                            topBarFocusIndex = (topBarFocusIndex - 1).coerceIn(0, maxTopBarIndex)
-                                        }
-                                        true
-                                    }
-                                    Key.DirectionRight -> {
-                                        if (topBarFocusIndex < maxTopBarIndex) {
-                                            topBarFocusIndex = (topBarFocusIndex + 1).coerceIn(0, maxTopBarIndex)
-                                        }
+                                    Key.DirectionUp -> {
+                                        topBarFocusIndex = (topBarFocusIndex - 1).coerceIn(0, maxTopBarIndex)
                                         true
                                     }
                                     Key.DirectionDown -> {
-                                        if (!state.isConfigured && state.snapshot.channels.isEmpty()) {
-                                            focusZone = LiveTvFocusZone.CATEGORY_LIST
-                                            runCatching { emptyStateButtonFocus.requestFocus() }
-                                        } else {
-                                            focusProviderSwitcher()
-                                        }
+                                        topBarFocusIndex = (topBarFocusIndex + 1).coerceIn(0, maxTopBarIndex)
                                         true
                                     }
+                                    Key.DirectionLeft, Key.Back, Key.Escape -> { closeNavigationMenu(); true }
+                                    Key.DirectionRight -> true
                                     Key.DirectionCenter, Key.Enter -> {
-                                        if (hasProfile && topBarFocusIndex == 0) {
+                                        val selected = topBarFocusedItem(topBarFocusIndex, hasProfile)
+                                        val switchProfile = hasProfile && topBarFocusIndex == 0
+                                        closeNavigationMenu()
+                                        if (switchProfile) {
                                             onSwitchProfile()
                                         } else {
-                                            when (topBarFocusedItem(topBarFocusIndex, hasProfile)) {
+                                            when (selected) {
                                                 SidebarItem.SEARCH -> onNavigateToSearch()
                                                 SidebarItem.HOME -> onNavigateToHome()
                                                 SidebarItem.WATCHLIST -> onNavigateToWatchlist()
@@ -2889,8 +2920,7 @@ fun LiveTvScreen(
                 }
             )
     ) {
-        // Content area starts below the translucent top bar so it doesn't get
-        // overwritten.
+        // Guide content uses the whole screen; navigation overlays from the right.
         if (isFullScreen) {
             // Full-screen playback only — no grid rendered so the single
             // PlayerView owns ExoPlayer.
@@ -2902,21 +2932,11 @@ fun LiveTvScreen(
                 isFocused = focusZone != LiveTvFocusZone.TOPBAR,
                 focusRequester = emptyStateButtonFocus,
                 onMoveUp = {
-                    focusZone = LiveTvFocusZone.TOPBAR
-                    topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile).coerceIn(0, maxTopBarIndex)
+                    openNavigationMenu()
                 }
             )
         } else {
-            // Content starts right under the pill row — 52 dp puts the first
-            // row/search field 4 dp below the pills. The remaining top-bar
-            // gradient tail is transparent enough to vanish over our near-
-            // black Bg so the two regions read as one surface.
-            // Content sits under the top bar (82dp tall with a dark-to-
-            // transparent gradient). Starting at 0dp lets the grid/sidebar
-            // background bleed up into the transparent tail of the gradient
-            // so the two regions read as one surface instead of a hovering
-            // chip row. The content itself gets an internal top padding so
-            // nothing important renders under the opaque chips.
+            // No reserved navigation/header band above the TV guide.
             if (useTouchRail) {
                 Column(
                     modifier = Modifier
@@ -3063,9 +3083,7 @@ fun LiveTvScreen(
                         focusChannelList(target)
                     },
                     onMoveUpFromSearch = {
-                        topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
-                            .coerceIn(0, maxTopBarIndex)
-                        focusZone = LiveTvFocusZone.TOPBAR
+                        openNavigationMenu()
                     },
                     focusSearchSignal = focusSearchCategorySignal,
                     focusCategorySignal = focusCategoryRailSignal,
@@ -3094,12 +3112,10 @@ fun LiveTvScreen(
                             },
                             focusRequester = providerFocus,
                             onMoveUp = {
-                                topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
-                                    .coerceIn(0, maxTopBarIndex)
-                                focusZone = LiveTvFocusZone.TOPBAR
+                                openNavigationMenu()
                             },
                             onMoveDown = { focusPlaylistSearch() },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().padding(end = if (isTouchDevice) 0.dp else 48.dp),
                         )
                     }
                     OwnTvPreviewStage(
@@ -3112,16 +3128,18 @@ fun LiveTvScreen(
                         variantCount = playingChannel?.let { variantCountFor(it, variantGroups) } ?: 1,
                         onOpenVariants = playingChannel?.let { channel -> { openVariantPicker(channel) } },
                         compact = compactTouchLayout,
+                        guideMode = !isTouchDevice,
                         onPlayerViewCreated = { view -> miniPlayerView = view },
                         onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(end = if (isTouchDevice) 0.dp else 48.dp),
                     )
                     GuideBackfillStatus(
                         inProgress = visibleGuideLoadInProgress,
                         percent = visibleGuideLoadPercent,
                         message = visibleGuideLoadMessage,
+                        compact = !isTouchDevice,
                     )
-                    OwnTvGuideHeading(selectedCategoryTotalCount)
+                    OwnTvGuideHeading(selectedCategoryTotalCount, compact = !isTouchDevice)
                     TvGuideViewport(
                         channels = filteredChannels,
                         channelWindowOffset = 0,
@@ -3335,8 +3353,9 @@ fun LiveTvScreen(
                         pokeSignal = hudPokeSignal,
                         categoryName = categoryTitle,
                         isCatchupMode = playingCatchupProgram != null,
-                        isPlaying = if (playingCatchupProgram != null) playerPlayWhenReady else playerIsPlaying,
-                        isBuffering = playerIsBuffering,
+                        isPlaying = if (usingOwnTvMpvFallback) activePlayerIsPlaying
+                            else if (playingCatchupProgram != null) playerPlayWhenReady else activePlayerIsPlaying,
+                        isBuffering = activePlayerIsBuffering,
                         playbackPositionMs = playerPositionMs,
                         playbackDurationMs = playerDurationMs,
                         onBackClick = if (isTouchDevice) {
@@ -3511,19 +3530,22 @@ fun LiveTvScreen(
             }
         }
 
-        // Top bar only shows when NOT in full-screen playback.
-        // Fade with the fullscreen progress so it doesn't pop in/out — looks
-        // natural next to the grow animation below.
-        if (showTopBar && fsProgress < 1f) {
+        // Hidden right-side navigation never reserves guide height. Fullscreen
+        // playback remains free of this overlay.
+        if (showTvNavigation && !isFullScreen) {
             Box(modifier = Modifier.graphicsLayer { alpha = 1f - fsProgress }) {
-                OwnTvScreenHeader(
-                    focusedIndex = if (focusZone == LiveTvFocusZone.TOPBAR) topBarFocusIndex else -1,
+                TvGuideNavigationOverlay(
+                    visible = focusZone == LiveTvFocusZone.TOPBAR,
+                    focusedIndex = topBarFocusIndex,
                     profile = currentProfile,
+                    onOpen = ::openNavigationMenu,
+                    onDismiss = ::closeNavigationMenu,
                     onFocusIndex = { index ->
                         focusZone = LiveTvFocusZone.TOPBAR
                         topBarFocusIndex = index
                     },
                     onNavigate = { destination ->
+                        closeNavigationMenu()
                         when (destination) {
                             SidebarItem.HOME -> onNavigateToHome()
                             SidebarItem.SEARCH -> onNavigateToSearch()
@@ -3532,7 +3554,7 @@ fun LiveTvScreen(
                             SidebarItem.TV -> Unit
                         }
                     },
-                    onSwitchProfile = onSwitchProfile,
+                    onSwitchProfile = { closeNavigationMenu(); onSwitchProfile() },
                 )
             }
         }

@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
 import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvNowNext
 import kotlinx.coroutines.delay
@@ -51,7 +52,8 @@ fun OwnTvPlayerHud(
     }
     DisposableEffect(Unit) { onDispose { visibilityCallback?.invoke(false) } }
     Box(modifier.fillMaxSize()) {
-        if (isBuffering) CircularProgressIndicator(color = TvStageStyle.Accent, modifier = Modifier.align(Alignment.Center))
+        if (isBuffering) CircularProgressIndicator(color = TvStageStyle.Accent,
+            modifier = Modifier.align(Alignment.Center).testTag("live-playback-buffering"))
         if (visible) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                 0f to Color.Black.copy(alpha = 0.45f), 0.3f to Color.Transparent,

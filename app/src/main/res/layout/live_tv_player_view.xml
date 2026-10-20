@@ -7,4 +7,5 @@
     android:layout_height="match_parent"
     app:surface_type="surface_view"
     app:use_controller="false"
+    app:show_buffering="never"
     app:shutter_background_color="@android:color/transparent" />

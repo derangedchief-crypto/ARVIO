@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `404`. Version name is `2.0.088`, following the actual
+Current testing version code is `405`. Version name is `2.0.089`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -444,3 +444,51 @@ progressive and non-progressive), cancelled/failed verification, cached branding
 revoked authorization preventing cached-link reuse and touch/TV direct selection
 without a permission dialog. Existing Masterplan matching, EPG retention,
 background loading, startup and channel-scroll tests remain in validation.
+
+## Guide-first television layout in 2.0.089 / 405
+
+TV guide mode no longer reserves the 82dp top navigation header. Profile, Search,
+Home, Library, Live TV and Settings are in a normally hidden drawer on the far
+right. The small upper-right menu control, the remote Menu key, or Up from the
+category search/provider selector opens it. Up/Down selects an entry; Enter
+activates it. Back/Left closes it and returns focus to the previous guide zone.
+The drawer overlays the guide instead of resizing it, and normal Right-key EPG
+time navigation remains unchanged. Menu-key repeats and active search/variant
+modals are guarded so a held button or another modal cannot steal navigation.
+
+Only the TV preview uses a compact guide-mode layout: the video is capped at
+200dp wide, keeps its 16:9 plate and FIT aspect handling, and sits beside compact
+one-line programme information/actions. The EPG loading indicator is a single
+thin status row, and guide-heading padding is reduced. Channel/programme row
+fonts and heights are unchanged. Mobile/tablet preview layouts, fullscreen
+playback, source resolution and application-owned guide loading are unchanged.
+
+Compose layout checks compare the old and new arrangements at 960×540 and
+1280×720 logical TV sizes, including the loading status. They require at least
+150dp more guide height, at least 60% of the screen for the guide viewport, at
+least 8/12 visible rows respectively, and a 16:9 preview no larger than 200×113dp.
+Opening the drawer must not change the measured guide height. Further tests
+exercise hidden-by-default navigation, all destinations/profile, remote movement
+without activation, direct selection and Back/Left dismissal. Fixture screenshots
+have a black preview surface because no live stream is loaded; they validate
+layout, not physical 65-inch hardware playback.
+
+The same update fixes a live/fullscreen buffering-wheel race. A fast native
+channel start can emit buffering true/false within a frame, leaving a separate
+mutable preparation flag stuck true even though the active engine's collected
+buffering value is false. The HUD now reads the active engine directly, ignores
+inactive Media3 preparation flags and stops loading on native terminal errors.
+Actual cache rebuffering still displays the indicator even when `isPlaying`
+remains true. The live PlayerView's independent native buffering wheel is
+explicitly disabled so the HUD is the single loading-indicator owner. Explicit
+fullscreen playback also cancels pending guide/VOD action lookups rather than
+letting their busy indicator cover the playing channel.
+
+Regression tests exercise unchanged/conflated native values across repeated
+starts, genuine rebuffering after HUD controls hide, recovery, engine switching,
+Media3/DRM buffering, terminal failure and inflated PlayerView configuration.
+
+960×540 logical TV fixture screenshots:
+[before](screenshots/tv-guide-before.png),
+[guide-first layout](screenshots/tv-guide-after.png),
+[right navigation open](screenshots/tv-guide-menu.png).

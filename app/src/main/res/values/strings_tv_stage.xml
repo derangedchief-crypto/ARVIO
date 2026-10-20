@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="tv_stage_title">Live television</string>
+    <string name="tv_guide_open_menu">Open navigation menu</string>
+    <string name="tv_guide_navigation">Navigation</string>
+    <string name="tv_guide_close_menu_hint">Back or Left to return to the guide</string>
     <string name="tv_stage_live_tv">Live TV</string>
     <string name="tv_stage_header_caption">Your channels. Your programme guide.</string>
     <string name="tv_stage_profile">Profile</string>

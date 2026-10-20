@@ -4,6 +4,7 @@ import android.view.LayoutInflater
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
@@ -30,6 +31,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
 import com.arflix.tv.R
@@ -143,11 +148,72 @@ fun OwnTvScreenHeader(
 }
 
 @Composable
-fun OwnTvGuideHeading(channelCount: Int, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+fun OwnTvGuideHeading(channelCount: Int, modifier: Modifier = Modifier, compact: Boolean = false) {
+    Row(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = if (compact) 6.dp else 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(R.string.tv_stage_guide), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text(stringResource(R.string.tv_stage_channel_count, channelCount), color = TvStageStyle.Muted, fontSize = 11.sp)
+        Text(stringResource(R.string.tv_stage_guide), color = Color.White, fontSize = 16.sp,
+            lineHeight = if (compact) 20.sp else TextUnit.Unspecified, fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.tv_stage_channel_count, channelCount), color = TvStageStyle.Muted, fontSize = 11.sp,
+            lineHeight = if (compact) 16.sp else TextUnit.Unspecified)
+    }
+}
+
+/** Navigation overlays the guide from the far right; no persistent header height. */
+@Composable
+fun TvGuideNavigationOverlay(
+    profile: Profile?, visible: Boolean, focusedIndex: Int,
+    onOpen: () -> Unit, onDismiss: () -> Unit, onFocusIndex: (Int) -> Unit,
+    onNavigate: (SidebarItem) -> Unit, onSwitchProfile: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val maxIndex = topBarMaxIndex(profile != null)
+    val drawerFocus = remember { FocusRequester() }
+    LaunchedEffect(visible) {
+        if (visible) {
+            withFrameNanos { }
+            runCatching { drawerFocus.requestFocus() }
+        }
+    }
+    Box(modifier.fillMaxSize()) {
+        if (!visible) {
+            val label = stringResource(R.string.tv_guide_open_menu)
+            TvStageAction("☰", dense = true, modifier = Modifier.align(Alignment.TopEnd)
+                .padding(8.dp).semantics { contentDescription = label }, onClick = onOpen)
+        } else {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).clickable(onClick = onDismiss))
+            Column(Modifier.align(Alignment.CenterEnd).width(256.dp).fillMaxHeight()
+                .background(TvStageStyle.Surface).padding(20.dp)
+                .testTag("tv-navigation-drawer").focusRequester(drawerFocus)
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                        Key.DirectionUp -> { onFocusIndex((focusedIndex - 1).coerceAtLeast(0)); true }
+                        Key.DirectionDown -> { onFocusIndex((focusedIndex + 1).coerceAtMost(maxIndex)); true }
+                        Key.DirectionLeft, Key.Back, Key.Escape, Key.Menu -> { onDismiss(); true }
+                        Key.DirectionRight -> true
+                        Key.Enter, Key.DirectionCenter -> {
+                            val destination = topBarFocusedItem(focusedIndex, profile != null)
+                            if (destination != null) onNavigate(destination) else onSwitchProfile()
+                            true
+                        }
+                        else -> false
+                    }
+                }.focusable(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(stringResource(R.string.tv_guide_navigation), color = Color.White,
+                    fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.tv_guide_close_menu_hint), color = TvStageStyle.Muted, fontSize = 11.sp)
+                Spacer(Modifier.height(8.dp))
+                for (index in 0..maxIndex) {
+                    val destination = topBarFocusedItem(index, profile != null)
+                    val label = if (destination == SidebarItem.TV) stringResource(R.string.tv_stage_live_tv)
+                        else destination?.let { stringResource(it.labelRes) } ?: stringResource(R.string.tv_stage_profile)
+                    TvStageAction(label, selected = focusedIndex == index,
+                        modifier = Modifier.fillMaxWidth()
+                            .onFocusChanged { if (it.isFocused) onFocusIndex(index) }) {
+                        if (destination != null) onNavigate(destination) else onSwitchProfile()
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -173,14 +239,15 @@ internal fun tvStageFolders(tree: LiveCategoryTree, playlists: List<PlaylistCate
 }
 
 @Composable
-internal fun TvStageAction(label: String, selected: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun TvStageAction(label: String, selected: Boolean = false, modifier: Modifier = Modifier, dense: Boolean = false, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Text(label, color = if (selected || focused) Color(0xFF17142B) else Color.White,
-        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+        fontSize = if (dense) 11.sp else 12.sp, lineHeight = if (dense) 14.sp else TextUnit.Unspecified,
+        fontWeight = FontWeight.SemiBold, maxLines = 1,
         modifier = modifier.onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected || focused) TvStageStyle.Accent else Color.White.copy(alpha = 0.07f))
-            .clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp))
+            .clickable(onClick = onClick).padding(horizontal = if (dense) 10.dp else 14.dp, vertical = if (dense) 6.dp else 10.dp))
 }
 
 /** New preview stage: floating video plate + programme editorial panel, responsive on phones. */
@@ -192,9 +259,11 @@ fun OwnTvPreviewStage(
     onPlayerViewCreated: ((PlayerView) -> Unit)? = null,
     onPlayerViewReleased: ((PlayerView) -> Unit)? = null,
     compact: Boolean = false, landscapeCompact: Boolean = false, modifier: Modifier = Modifier,
+    guideMode: Boolean = false,
 ) {
-    BoxWithConstraints(modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+    BoxWithConstraints(modifier.padding(horizontal = 16.dp, vertical = if (guideMode) 8.dp else 12.dp)) {
         val narrow = maxWidth < 520.dp
+        val guideVideoWidth = (maxWidth * 0.32f).coerceIn(144.dp, 200.dp)
         @Composable fun video(modifier: Modifier) {
             Box(modifier.clip(RoundedCornerShape(18.dp)).background(Color.Black)
                 .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
@@ -221,27 +290,35 @@ fun OwnTvPreviewStage(
             }
         }
         @Composable fun information(modifier: Modifier) {
-            Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(modifier, verticalArrangement = Arrangement.spacedBy(if (guideMode) 4.dp else 8.dp)) {
                 Text(stringResource(R.string.tv_stage_on_now), color = TvStageStyle.Accent,
-                    fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                    fontSize = 10.sp, lineHeight = if (guideMode) 12.sp else TextUnit.Unspecified,
+                    fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                 Text(nowNext?.now?.title ?: channel?.name ?: stringResource(R.string.tv_stage_title),
-                    color = Color.White, fontSize = if (narrow) 19.sp else 25.sp,
-                    fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    color = Color.White, fontSize = if (guideMode) 18.sp else if (narrow) 19.sp else 25.sp,
+                    lineHeight = if (guideMode) 22.sp else TextUnit.Unspecified,
+                    fontWeight = FontWeight.Bold, maxLines = if (guideMode) 1 else 2, overflow = TextOverflow.Ellipsis)
                 if (!narrow) Text(nowNext?.now?.description ?: stringResource(R.string.tv_stage_intro),
-                    color = TvStageStyle.Muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    color = TvStageStyle.Muted, fontSize = if (guideMode) 11.sp else 12.sp,
+                    lineHeight = if (guideMode) 14.sp else TextUnit.Unspecified,
+                    maxLines = if (guideMode) 1 else 2, overflow = TextOverflow.Ellipsis)
                 nowNext?.next?.let { next ->
                     Text(stringResource(R.string.tv_stage_next, next.title), color = TvStageStyle.Muted,
-                        fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        fontSize = 11.sp, lineHeight = if (guideMode) 14.sp else TextUnit.Unspecified,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (channel != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TvStageAction(stringResource(R.string.tv_stage_watch), onClick = { onFullscreenClick?.invoke() })
+                    TvStageAction(stringResource(R.string.tv_stage_watch), dense = guideMode, onClick = { onFullscreenClick?.invoke() })
                     TvStageAction(if (channel.id in favoriteSet) "★" else "☆",
-                        selected = channel.id in favoriteSet, onClick = { onFavoriteToggle(channel.id) })
-                    if (variantCount > 1) TvStageAction("${channel.quality.label} ▾", onClick = { onOpenVariants?.invoke() })
+                        selected = channel.id in favoriteSet, dense = guideMode, onClick = { onFavoriteToggle(channel.id) })
+                    if (variantCount > 1) TvStageAction("${channel.quality.label} ▾", dense = guideMode, onClick = { onOpenVariants?.invoke() })
                 }
             }
         }
-        if (narrow) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (guideMode) Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            video(Modifier.width(guideVideoWidth).aspectRatio(16f / 9f))
+            information(Modifier.weight(1f))
+        } else if (narrow) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             video(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
             information(Modifier.fillMaxWidth())
         } else Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -113,14 +113,14 @@ class TvStageChromeTest {
 
     @Test fun desktopStageRendersAndCapturesPreview() {
         compose.setContent {
-            Column(Modifier.requiredSize(1200.dp, 700.dp).background(TvStageStyle.Background)) {
-                OwnTvScreenHeader(null, -1, {}, {}, {})
+            Box(Modifier.requiredSize(1200.dp, 700.dp).background(TvStageStyle.Background)) {
                 Row(Modifier.fillMaxSize()) {
                     OwnTvCategoryPanel(tree, "all", expanded = true, listState = rememberLazyListState(),
                         onSelect = {}, onOpenSearch = {}, modifier = Modifier.fillMaxHeight())
                     Column(Modifier.weight(1f)) {
-                        OwnTvPreviewStage(channel, now, IptvNowNext(now = programme), emptySet(), {})
-                        OwnTvGuideHeading(48)
+                        OwnTvPreviewStage(channel, now, IptvNowNext(now = programme), emptySet(), {}, guideMode = true,
+                            modifier = Modifier.fillMaxWidth().padding(end = 48.dp))
+                        OwnTvGuideHeading(48, compact = true)
                         TvGuideViewport(listOf(channel), clockTickMillis = now,
                             indexedPrograms = mapOf(channel.id to listOf(programme)),
                             fallbackNowNext = emptyMap(), channelNowNext = emptyMap(),
@@ -129,9 +129,11 @@ class TvStageChromeTest {
                             modifier = Modifier.fillMaxSize())
                     }
                 }
+                TvGuideNavigationOverlay(null, false, 0, {}, {}, {}, {}, {})
             }
         }
-        compose.onNodeWithText("Your channels. Your programme guide.").assertExists()
+        compose.onNodeWithText("Your channels. Your programme guide.").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Open navigation menu").assertExists()
         compose.onNodeWithText("Programme guide").assertExists()
         compose.waitForIdle()
         val image = compose.onRoot().captureToImage().asAndroidBitmap()
