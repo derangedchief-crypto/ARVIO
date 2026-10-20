@@ -271,6 +271,8 @@ class IptvRepository @Inject constructor(
     private val _guideIndexRevision = MutableStateFlow(0L)
     val guideIndexRevision: StateFlow<Long> = _guideIndexRevision.asStateFlow()
     private val completeGuideIndexMutex = Mutex()
+    private val serverGuideCache by lazy { ServerGuideSnapshotCache(context, okHttpClient, DAILY_GUIDE_URL) }
+    private val guideRetryAt = ConcurrentHashMap<String, Long>()
     private val guideRefreshCoordinator = GuideRefreshCoordinator()
     private val launchContentCoordinator = GuideRefreshCoordinator()
     private val movieVodLookupMutex = Mutex()
@@ -2774,18 +2776,23 @@ class IptvRepository @Inject constructor(
 
     /** Shared, cache-first, full-playlist job. No screen owns or cancels this work. */
     fun requestGuideRefresh(force: Boolean = false): kotlinx.coroutines.Job = guideRefreshCoordinator.request {
+        var refreshKey = ""
         try {
             warmupFromCacheOnly()
             val config = observeConfig().first()
             if (!hasAnyConfiguredSource(config)) return@request
             val key = currentEpgIndexKey(config)
+            refreshKey = key
             val prefs = context.getSharedPreferences("arvio_guide_refresh", Context.MODE_PRIVATE)
-            val completionKey = "completed_$key|${buildEpgSourceSignature(config)}"
+            // Recheck old pipeline checkpoints once after upgrading, without
+            // deleting any of their cached rows.
+            val completionKey = "completed_v2_$key|${buildEpgSourceSignature(config)}"
             val completedAt = prefs.getLong(completionKey, 0L)
+            if (!force && System.currentTimeMillis() < (guideRetryAt[key] ?: 0L)) return@request
             // Missing provider listings are not evidence that a completed import
             // should restart. Freshness is scoped to profile + source, not coverage.
             if (!force && completedAt > 0 && System.currentTimeMillis() - completedAt < 6 * 60 * 60_000L &&
-                epgIndex.countPrograms(key) > 0) return@request
+                epgIndex.sourceState(key)?.status == "ready" && epgIndex.hasCurrentPrograms(key)) return@request
             _guideRefreshState.value = GuideRefreshState(loading = true, message = "Preparing channel guide", percent = 0)
             if (cachedChannels.isEmpty() && pagedChannelStoreCount() == 0) {
                 val fresh = fetchFreshChannelsForStartup(config)
@@ -2796,26 +2803,31 @@ class IptvRepository @Inject constructor(
             if (!sameSource()) return@request
             val total = maxOf(pagedChannelStoreCount(), cachedChannels.size)
             if (total == 0) error("No channels available for guide import")
-            populateCompleteGuideIndex { progress ->
+            val bulk = populateCompleteGuideIndex { progress ->
                 _guideRefreshState.value = GuideRefreshState(true, progress.message,
-                    ((progress.percent ?: 0) * 70 / 100).coerceIn(0, 70), total = total)
+                    maxOf(_guideRefreshState.value.percent ?: 0, ((progress.percent ?: 0) * 70 / 100).coerceIn(0, 70)), total = total)
             }
+            if (bulk.fromServer && !bulk.refreshed) error("Server update unavailable; saved listings retained")
+            val preparedIds = epgIndex.currentChannelIds(key).toMutableSet()
+            var providerUpdates = 0
             var offset = 0
             var lastProgressAt = 0L
             var usedNetwork = false
-            prefetchPlaylistGuide(total, 12,
+            prefetchPlaylistGuide(total, 48,
                 loadPage = { start, limit ->
                     usedNetwork = false
                     (if (pagedChannelStoreCount() > 0) channelStore.window(key, start, limit)
                         else cachedChannels.slice(start until minOf(start + limit, cachedChannels.size))).map { it.id }
                 },
-                cachedIds = { ids -> readIndexedGuideForPrefetch(ids).filterValues {
-                    it.now != null || it.next != null || it.later != null || it.upcoming.isNotEmpty()
-                }.keys },
+                cachedIds = { ids -> ids.intersect(preparedIds) },
                 fetchMissing = { missing ->
-                    usedNetwork = true
-                    refreshEpgForChannels(missing, maxChannels = missing.size,
+                    val requestable = missing.intersect(bulk.shortApiChannelIds)
+                    usedNetwork = requestable.isNotEmpty()
+                    val updated = if (requestable.isEmpty()) emptySet() else refreshEpgForChannels(requestable, maxChannels = requestable.size,
                         retainInMemory = false, allowXmlFallback = false).orEmpty().keys
+                    preparedIds.addAll(updated)
+                    providerUpdates += updated.size
+                    updated
                 },
                 onPage = { visited, _, _ ->
                     offset = visited
@@ -2833,16 +2845,21 @@ class IptvRepository @Inject constructor(
                     else kotlinx.coroutines.yield()
                 })
             if (sameSource() && offset >= total) {
-                if (epgIndex.countPrograms(key) == 0) error("No guide listings were returned")
+                if ((!bulk.refreshed && providerUpdates == 0) || !epgIndex.hasCurrentPrograms(key)) error("No fresh guide listings were returned")
+                epgIndex.pruneExpiredHistory(key, System.currentTimeMillis())
                 prefs.edit().putLong(completionKey, System.currentTimeMillis()).apply()
                 epgIndex.markRefreshReady(key)
             }
             _guideRefreshState.value = GuideRefreshState()
+            guideRetryAt.remove(key)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            if (refreshKey.isNotBlank()) runCatching { epgIndex.markRefreshFailed(refreshKey) }
             _guideRefreshState.value = GuideRefreshState(failed = true)
             throw cancelled
         } catch (error: Exception) {
-            _guideRefreshState.value = GuideRefreshState(failed = true)
+            if (refreshKey.isNotBlank()) runCatching { epgIndex.markRefreshFailed(refreshKey) }
+            if (refreshKey.isNotBlank()) guideRetryAt[refreshKey] = System.currentTimeMillis() + 120_000L
+            _guideRefreshState.value = GuideRefreshState(failed = true, message = "Guide update unavailable — saved listings retained")
             System.err.println("[EPG-Background] Guide refresh incomplete: ${error.javaClass.simpleName}")
         } finally {
             if (_guideRefreshState.value.loading) _guideRefreshState.value = _guideRefreshState.value.copy(loading = false)
@@ -2855,7 +2872,10 @@ class IptvRepository @Inject constructor(
      * Unlike loadSnapshot(), this does not build a whole playlist's programme map
      * in RAM and is therefore allowed to continue alongside live playback.
      */
-    suspend fun populateCompleteGuideIndex(onProgress: (IptvLoadProgress) -> Unit = {}) =
+    data class GuideBulkRefreshResult(val fromServer: Boolean = false, val refreshed: Boolean = false,
+        val shortApiChannelIds: Set<String> = emptySet())
+
+    suspend fun populateCompleteGuideIndex(onProgress: (IptvLoadProgress) -> Unit = {}): GuideBulkRefreshResult =
         withContext(backgroundEpgDispatcher) {
             completeGuideIndexMutex.withLock {
                 val config = observeConfig().first()
@@ -2864,19 +2884,32 @@ class IptvRepository @Inject constructor(
                 val channels = if (total > cachedChannels.size) {
                     channelStore.window(sourceKey, 0, total)
                 } else cachedChannels
-                if (channels.isEmpty()) return@withLock
+                if (channels.isEmpty()) return@withLock GuideBulkRefreshResult()
                 onProgress(IptvLoadProgress("Loading guide from server cache", 0))
-                val serverChannelIds = importDailyWorkerGuideToIndex(config, channels)
-                if (channels.all { it.id in serverChannelIds }) {
+                val server = importDailyWorkerGuideToIndex(config, channels) { progress ->
+                    onProgress(progress.copy(percent = ((progress.percent ?: 0) * 80 / 100)))
+                }
+                val serverChannelIds = server.channelIds
+                val uncovered = channels.filterNot { it.id in serverChannelIds }
+                val playlistsById = activePlaylists(config).associateBy { it.id }
+                val apiChannelIds = uncovered.filter { channel ->
+                    resolveXtreamStreamId(channel) != null && playlistsById[channel.id.substringBefore(':')]
+                        ?.let(::resolveXtreamCredentials) != null
+                }.mapTo(hashSetOf()) { it.id }
+                if (serverChannelIds.isNotEmpty() && (!server.fresh || uncovered.all { it.id in apiChannelIds })) {
+                    // The shared cache is the bulk source. A few unlisted PPV,
+                    // radio/marker channels must not trigger another huge XMLTV
+                    // download; the bounded missing-channel sweep follows.
                     onProgress(IptvLoadProgress("Server-cached guide ready", 100))
-                    return@withLock
+                    return@withLock GuideBulkRefreshResult(fromServer = true, refreshed = server.fresh, shortApiChannelIds = apiChannelIds)
                 }
                 val candidates = resolveScopedEpgCandidates(config)
                 if (candidates.isEmpty()) {
                     // Xtream-only playlists are covered by the bounded provider
                     // sweep; no XMLTV work is waiting for a channel selection.
                     epgIndex.markRefreshReady(sourceKey)
-                    return@withLock
+                    return@withLock GuideBulkRefreshResult(fromServer = serverChannelIds.isNotEmpty(), refreshed = server.fresh,
+                        shortApiChannelIds = apiChannelIds)
                 }
                 epgIndex.beginRefresh(sourceKey)
                 val explicitUrls = activePlaylists(config).flatMap { it.allEpgUrls() }.toSet() + discoveredM3uEpgUrls
@@ -2907,7 +2940,8 @@ class IptvRepository @Inject constructor(
                         val names = mutableMapOf<String, MutableSet<String>>()
                         val resolved = mutableMapOf<String, List<IptvChannel>>()
                         onProgress(IptvLoadProgress("Loading playlist guide ${index + 1}/${candidates.size}",
-                            ((index * 100) / candidates.size).coerceAtMost(95)))
+                            if (serverChannelIds.isNotEmpty()) 80 + index * 15 / candidates.size
+                            else ((index * 100) / candidates.size).coerceAtMost(95)))
                         try {
                             val beforeWritten = written
                             val request = Request.Builder()
@@ -2966,6 +3000,8 @@ class IptvRepository @Inject constructor(
                     signalGuideIndexChanged(force = true)
                     if (finished) onProgress(IptvLoadProgress("Playlist guide indexed ($written programme rows)", 100))
                 }
+                GuideBulkRefreshResult(fromServer = serverChannelIds.isNotEmpty(),
+                    refreshed = server.fresh || (completed && finished && written > 0), shortApiChannelIds = apiChannelIds)
             }
         }
 
@@ -3180,12 +3216,22 @@ class IptvRepository @Inject constructor(
                     mergedNowNext.putAll(freshNowNext)
                 }
             }
+            val localFallback = if (!preferFullCatchupHistory) epgIndex.loadNowNext(currentEpgIndexKey(config),
+                channels.filterNot { hasProgramData(mergedNowNext[it.id]) }.mapTo(linkedSetOf()) { it.id },
+                pastWindowMs = 0L, futureWindowMs = 6 * 60 * 60_000L) else emptyMap()
+            // A shared-cache batch may have completed while the short request
+            // was in flight. Read it before starting another whole XMLTV feed.
+            mergedNowNext.putAll(localFallback)
             val missingXmlChannels = channels.filter { channel ->
                 !hasProgramData(mergedNowNext[channel.id])
             }
             var xmlFallback: Map<String, IptvNowNext> = emptyMap()
             var isXmlCached = false
-            if (allowXmlFallback && missingXmlChannels.isNotEmpty() && !preferFullCatchupHistory) {
+            val completed = context.getSharedPreferences("arvio_guide_refresh", Context.MODE_PRIVATE)
+                .getLong("completed_v2_${currentEpgIndexKey(config)}|${buildEpgSourceSignature(config)}", 0L)
+            val sharedGuideIsAuthoritative = _guideRefreshState.value.loading ||
+                (completed > 0L && System.currentTimeMillis() - completed in 0L until 6 * 60 * 60_000L && epgIndex.hasCurrentPrograms(currentEpgIndexKey(config)))
+            if (allowXmlFallback && !sharedGuideIsAuthoritative && missingXmlChannels.isNotEmpty() && !preferFullCatchupHistory) {
                 val result = fetchVisibleXmlEpgForChannels(config, missingXmlChannels)
                 xmlFallback = result.first
                 isXmlCached = result.second
@@ -3207,13 +3253,13 @@ class IptvRepository @Inject constructor(
             if (retainInMemory) cachedNowNext.putAll(mergedForCache)
             cachedEpgAt = System.currentTimeMillis()
 
-            val toPersist = if (isXmlCached && xmlFallback.isNotEmpty()) {
+            val toPersist = (if (isXmlCached && xmlFallback.isNotEmpty()) {
                 mergedForCache.filterKeys { it !in xmlFallback.keys }
             } else {
                 mergedForCache
-            }
+            }).filterKeys { it !in localFallback.keys }
             if (toPersist.isNotEmpty()) {
-                persistEpgIndexChannels(config, toPersist, cachedEpgAt)
+                persistEpgIndexChannels(config, toPersist, cachedEpgAt, pruneHistory = retainInMemory)
             }
 
             System.err.println(
@@ -3351,41 +3397,39 @@ class IptvRepository @Inject constructor(
         channels: List<IptvChannel>
     ): Map<String, IptvNowNext> = withContext(Dispatchers.IO) {
         if (channels.isEmpty()) return@withContext emptyMap()
-        if (importDailyWorkerGuideToIndex(config, channels).isEmpty()) return@withContext emptyMap()
+        if (importDailyWorkerGuideToIndex(config, channels).channelIds.isEmpty()) return@withContext emptyMap()
         epgIndex.loadNowNext(currentEpgIndexKey(config), channels.mapTo(LinkedHashSet()) { it.id })
     }
 
-    /** Import the shared server cache without constructing a whole-guide programme map. */
+    private data class ServerGuideImport(val channelIds: Set<String> = emptySet(), val fresh: Boolean = false)
+
+    /** Keep and bulk-merge a verified server SQLite file instead of rebuilding every programme in Kotlin. */
     private suspend fun importDailyWorkerGuideToIndex(
         config: IptvConfig,
-        channels: List<IptvChannel>
-    ): Set<String> = withContext(Dispatchers.IO) {
-        if (channels.isEmpty()) return@withContext emptySet()
-        val file = File.createTempFile("daily_epg_", ".sqlite", context.cacheDir)
+        channels: List<IptvChannel>,
+        onProgress: (IptvLoadProgress) -> Unit = {},
+    ): ServerGuideImport = withContext(Dispatchers.IO) {
+        if (channels.isEmpty()) return@withContext ServerGuideImport()
         val sourceKey = currentEpgIndexKey(config)
         val now = System.currentTimeMillis()
-        val populated = linkedSetOf<String>()
-        val writer = StreamingGuideIndexWriter { batch ->
-            epgIndex.mergeChannels(sourceKey, batch, now, pruneHistory = false)
-            clearIndexedGuideWindowCache()
-            signalGuideIndexChanged()
-        }
-        try {
-            iptvHttpClient.newCall(Request.Builder().url(DAILY_GUIDE_URL).build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptySet()
-                GZIPInputStream(response.body?.byteStream() ?: return@withContext emptySet()).use { input ->
-                    file.outputStream().use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            output.write(buffer, 0, count)
-                        }
-                    }
-                }
+        val digest = MessageDigest.getInstance("SHA-256")
+        channels.sortedBy { it.id }.forEach { channel ->
+            listOf(channel.id, channel.epgId, channel.tvgName, extractAttr(channel.rawTitle, "tvg-id"),
+                extractAttr(channel.rawTitle, "tvg-name"), channel.name, channel.variantKey).forEach { value ->
+                digest.update(value.orEmpty().toByteArray(StandardCharsets.UTF_8)); digest.update(0.toByte())
             }
-            SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+        }
+        val mappingHash = digest.digest().joinToString("") { "%02x".format(it) }
+        val marker = "server_import_$sourceKey|${buildEpgSourceSignature(config)}|$mappingHash"
+        val prefs = context.getSharedPreferences("arvio_guide_refresh", Context.MODE_PRIVATE)
+        try {
+            serverGuideCache.withSnapshot(onProgress) { snapshot ->
+            if (!snapshot.fresh && epgIndex.hasCurrentPrograms(sourceKey)) {
+                // An older fallback artifact must never downgrade a usable local
+                // guide, including provider corrections made after that file.
+                return@withSnapshot ServerGuideImport(epgIndex.currentChannelIds(sourceKey), false)
+            }
+            SQLiteDatabase.openDatabase(snapshot.file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
                 val names = LinkedHashMap<String, MutableSet<String>>()
                 val xmlIds = linkedSetOf<String>()
                 db.rawQuery("SELECT channel_id, display_name FROM channels", null).use { c ->
@@ -3396,58 +3440,69 @@ class IptvRepository @Inject constructor(
                     }
                 }
                 val lookup = buildChannelKeyLookup(channels)
-                epgIndex.beginRefresh(sourceKey)
+                val mappings = mutableListOf<Pair<String, String>>()
+                val currentFeeds = db.rawQuery("SELECT DISTINCT channel_id FROM programmes WHERE end_ms>? AND start_ms<? AND end_ms>start_ms AND trim(title)!=''",
+                    arrayOf(now.toString(), (now + 6 * 60 * 60_000L).toString())).use { c -> buildSet { while (c.moveToNext()) add(c.getString(0)) } }
+                val populated = linkedSetOf<String>()
                 xmlIds.forEach { xmlId ->
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     val matched = resolveXmlTvChannels(xmlId, names, lookup)
-                    if (matched.isEmpty()) return@forEach
-                    db.rawQuery("SELECT start_ms,end_ms,title,description FROM programmes WHERE channel_id=? AND end_ms>? AND start_ms<? ORDER BY start_ms",
-                        arrayOf(xmlId, (now - xmlTvPastWindowMs).toString(), (now + xmlTvFutureWindowMs).toString())).use { c ->
-                        while (c.moveToNext()) {
-                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                            val programme = IptvProgram(c.getString(2), c.getString(3), c.getLong(0), c.getLong(1))
-                            if (programme.endUtcMillis <= programme.startUtcMillis) continue
-                            matched.forEach { channel ->
-                                if (writer.add(channel.id, programme)) kotlinx.coroutines.delay(10L)
-                                if (programme.endUtcMillis > now && programme.startUtcMillis < now + 6 * 60 * 60_000L) {
-                                    populated.add(channel.id)
-                                }
-                            }
-                        }
+                    matched.forEach { channel ->
+                        mappings += xmlId to channel.id
+                        if (xmlId in currentFeeds) populated += channel.id
                     }
                 }
-                writer.flush()
-                epgIndex.pruneExpiredHistory(sourceKey, now)
-                if (populated.isNotEmpty()) {
+                if (populated.isEmpty()) return@use ServerGuideImport()
+                val sameArtifact = prefs.getString(marker, null) == snapshot.hash && epgIndex.hasCurrentPrograms(sourceKey)
+                val previousEnd = prefs.getLong("${marker}_end", 0L)
+                val targetEnd = now + xmlTvFutureWindowMs
+                // Same feed: extend only the newly entering future window.
+                // No need to rewrite all existing programmes on every recheck.
+                val importStart = if (sameArtifact && previousEnd > now) maxOf(now - xmlTvPastWindowMs, previousEnd) else now - xmlTvPastWindowMs
+                if (!sameArtifact || targetEnd > previousEnd + 60_000L) {
+                    epgIndex.beginRefresh(sourceKey)
+                    var lastReport = 0L
+                    epgIndex.mergeServerSnapshot(sourceKey, snapshot.file, mappings, importStart, targetEnd, now) { done, total ->
+                        clearIndexedGuideWindowCache()
+                        signalGuideIndexChanged()
+                        if (done == total || System.currentTimeMillis() - lastReport >= 250) {
+                            lastReport = System.currentTimeMillis()
+                            onProgress(IptvLoadProgress("Indexing cached guide $done/$total channels", 55 + done * 45 / total))
+                        }
+                        kotlinx.coroutines.yield()
+                    }
+                    prefs.edit().putString(marker, snapshot.hash).putLong("${marker}_end", targetEnd).apply()
+                }
+                if (snapshot.fresh) {
                     epgIndex.markRefreshReady(sourceKey)
                     cachedEpgAt = now
                 } else epgIndex.markRefreshFailed(sourceKey)
                 System.err.println("[EPG-Worker] Server cache populated ${populated.size}/${channels.size} channels")
-                populated
+                ServerGuideImport(populated, snapshot.fresh)
             }
+            } ?: ServerGuideImport()
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             epgIndex.markRefreshFailed(sourceKey)
             throw cancelled
         } catch (error: Exception) {
             epgIndex.markRefreshFailed(sourceKey)
             System.err.println("[EPG-Worker] Server cache unavailable; using provider fallback: ${error.javaClass.simpleName}")
-            emptySet()
+            ServerGuideImport()
         } finally {
-            writer.flush()
             clearIndexedGuideWindowCache()
             signalGuideIndexChanged(force = true)
-            SQLiteDatabase.deleteDatabase(file)
         }
     }
 
     private fun persistEpgIndexChannels(
         config: IptvConfig,
         nowNext: Map<String, IptvNowNext>,
-        updatedAtMs: Long = System.currentTimeMillis()
+        updatedAtMs: Long = System.currentTimeMillis(),
+        pruneHistory: Boolean = true,
     ) {
         if (!hasAnyProgramData(nowNext)) return
         runCatching {
-            epgIndex.mergeChannels(currentEpgIndexKey(config), nowNext, updatedAtMs)
+            epgIndex.mergeChannels(currentEpgIndexKey(config), nowNext, updatedAtMs, pruneHistory)
             clearIndexedGuideWindowCache()
             signalGuideIndexChanged(force = true)
         }.onFailure { error ->
@@ -3618,6 +3673,13 @@ class IptvRepository @Inject constructor(
             val checkedAt = launchContentCheckedAt[checkKey]
             if (checkedAt != null && (!recheckOnLaunch || now - checkedAt < 15 * 60_000L)) return@request
             launchContentCheckedAt[checkKey] = now
+            val guideKey = currentEpgIndexKey(config)
+            val completed = context.getSharedPreferences("arvio_guide_refresh", Context.MODE_PRIVATE)
+                .getLong("completed_v2_$guideKey|${buildEpgSourceSignature(config)}", 0L)
+            if (!_guideRefreshState.value.loading && now >= (guideRetryAt[guideKey] ?: 0L) && (now - completed >= 6 * 60 * 60_000L ||
+                    epgIndex.sourceState(guideKey)?.status != "ready" || !epgIndex.hasCurrentPrograms(guideKey))) {
+                _guideRefreshState.value = GuideRefreshState(loading = true, message = "Checking playlists before guide update", percent = 0)
+            }
             suspend fun stillCurrent() = profileManager.getProfileIdSync() == profile &&
                 buildConfigSignature(observeConfig().first()) == signature
             val key = currentEpgIndexKey(config)
@@ -3656,7 +3718,7 @@ class IptvRepository @Inject constructor(
                         // New/removed channel identities invalidate guide coverage,
                         // not every metadata-only launch check. Run once on the new list.
                         context.getSharedPreferences("arvio_guide_refresh", Context.MODE_PRIVATE).edit()
-                            .remove("completed_$key|${buildEpgSourceSignature(config)}").apply()
+                            .remove("completed_v2_$key|${buildEpgSourceSignature(config)}").apply()
                     }
                     _playlistRevision.value += 1L
                 }
@@ -3717,6 +3779,7 @@ class IptvRepository @Inject constructor(
     }
 
     fun invalidateCache() {
+        guideRetryAt.clear()
         cachedChannels = emptyList()
         cachedChannelsLookupSource = null
         cachedChannelsById = emptyMap()
@@ -3771,6 +3834,29 @@ class IptvRepository @Inject constructor(
         }
     }
 
+    /** Settings Refresh expires resolver/catalogue TTLs, not the user's last good guide or channels. */
+    suspend fun expireIptvResolverCachesKeepingGuide() = withContext(Dispatchers.IO) {
+        cachedPlaylistAt = 0L
+        cachedEpgAt = 0L
+        xtreamVodCacheKey = null
+        xtreamVodLoadedAtMs = 0L
+        xtreamSeriesLoadedAtMs = 0L
+        cachedXtreamVodStreams = emptyList()
+        cachedXtreamSeries = emptyList()
+        cachedXtreamSeriesEpisodes = emptyMap()
+        xtreamSeriesEpisodeInFlight = emptyMap()
+        verifiedEpisodeInfo.clear()
+        xtreamVodCategoriesLoadedAtMs = 0L
+        xtreamSeriesCategoriesLoadedAtMs = 0L
+        cachedVodIndex = null
+        cachedVodIdIndex = null
+        clearIptvMovieSourceCache()
+        seriesResolver.clearAll()
+        xtreamDiskCacheDir().listFiles().orEmpty().forEach { it.delete() }
+    }
+
+    fun indexedCurrentGuideChannelCount(): Int = if (currentEpgIndexKey.isBlank()) 0 else epgIndex.currentChannelIds(currentEpgIndexKey).size
+
     private fun deletePersistedSourceCaches(sourceKey: String) {
         runCatching { channelStore.deleteSource(sourceKey) }
         invalidatePagedChannelStoreCount()
@@ -3814,16 +3900,14 @@ class IptvRepository @Inject constructor(
         if (ownerChanged || configChanged) {
             invalidateCache()
         } else if (epgChanged || persistedEpgChanged) {
-            // The playlist/source identity is unchanged, but its guide endpoint
-            // changed. Never let the old guide survive that edit: the channel
-            // store is still valid, while the EPG rows and compact guide cache
-            // are now from a different feed.
-            cachedNowNext = ConcurrentHashMap()
+            guideRetryAt.remove(sourceKey)
+            // Same profile/source/channel identities: keep the last good guide
+            // until replacement rows arrive. A missing signature on an upgrade
+            // is not permission to erase a durable index.
             cachedEpgAt = 0L
             discoveredM3uEpgUrls.clear()
             discoveredM3uEpgUrlPlaylistIds.clear()
-            runCatching { epgIndex.deleteSource(sourceKey) }
-            runCatching { cacheFile().delete() }
+            runCatching { epgIndex.markRefreshFailed(sourceKey) }
         }
         cacheOwnerProfileId = profileId
         cacheOwnerConfigSig = sig

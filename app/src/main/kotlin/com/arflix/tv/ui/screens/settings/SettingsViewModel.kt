@@ -2640,61 +2640,62 @@ class SettingsViewModel @Inject constructor(
 
             iptvLoadJob = launch {
             _uiState.value = _uiState.value.copy(isIptvLoading = true, iptvError = null)
-            // When the user explicitly forces a refresh (Settings → Refresh
-            // IPTV), nuke every IPTV-side cache before reloading so the
-            // snapshot + warm-up below go all the way back to the provider.
-            // Auto-triggered refreshes (force=false) keep their soft TTL
-            // behavior.
+            // Refresh must not erase the only usable guide before network work
+            // succeeds. Only resolver/catalogue caches are expired here.
             if (force) {
-                runCatching { iptvRepository.purgeAllIptvSourceCaches() }
+                runCatching { iptvRepository.expireIptvResolverCachesKeepingGuide() }
             }
             runCatching {
                 val refreshPolicy = settingsIptvRefreshPolicy(force)
                 val snapshot = iptvRepository.loadSnapshot(
                     forcePlaylistReload = refreshPolicy.forcePlaylistReload,
-                    forceEpgReload = refreshPolicy.forceEpgReload,
-                    allowNetworkEpgFetch = refreshPolicy.allowNetworkEpgFetch,
+                    forceEpgReload = false,
+                    allowNetworkEpgFetch = false,
                     onProgress = { progress ->
                         _uiState.value = _uiState.value.copy(
                             isIptvLoading = true,
                             iptvProgressText = progress.message,
-                            iptvProgressPercent = progress.percent ?: _uiState.value.iptvProgressPercent
+                            iptvProgressPercent = progress.percent?.let { it * 30 / 100 } ?: _uiState.value.iptvProgressPercent
                         )
                     }
                 )
-                val epgCovered = snapshot.channels.count { channel ->
-                    val item = snapshot.nowNext[channel.id]
-                    item != null && (
-                        item.now != null ||
-                            item.next != null ||
-                            item.later != null ||
-                            item.upcoming.isNotEmpty() ||
-                            item.recent.isNotEmpty()
-                        )
+                if (refreshPolicy.allowNetworkEpgFetch) {
+                    val progressJob = launch {
+                        iptvRepository.guideRefreshState.collect { progress ->
+                            if (progress.loading) _uiState.value = _uiState.value.copy(isIptvLoading = true,
+                                iptvProgressText = progress.message,
+                                iptvProgressPercent = 30 + (progress.percent ?: 0) * 70 / 100)
+                        }
+                    }
+                    try { iptvRepository.requestGuideRefresh(force = refreshPolicy.forceEpgReload).join() }
+                    finally { progressJob.cancelAndJoin() }
                 }
-                val epgMissing = (snapshot.channels.size - epgCovered).coerceAtLeast(0)
+                val channelCount = withContext(Dispatchers.IO) { maxOf(snapshot.channels.size, iptvRepository.pagedChannelStoreCount()) }
+                val epgCovered = withContext(Dispatchers.IO) { iptvRepository.indexedCurrentGuideChannelCount().coerceAtMost(channelCount) }
+                val guideWarning = if (force && iptvRepository.guideRefreshState.value.failed) iptvRepository.guideRefreshState.value.message else null
+                val epgMissing = (channelCount - epgCovered).coerceAtLeast(0)
                 val epgStatus = when {
-                    snapshot.channels.isEmpty() -> ""
+                    channelCount == 0 -> ""
                     epgCovered > 0 -> " EPG: $epgCovered matched, $epgMissing missing."
                     else -> " EPG: no guide data yet."
                 }
                 val doneMsg = if (configured) {
-                    snapshot.epgWarning ?: "Connected. Loaded ${snapshot.channels.size} channels.$epgStatus"
+                    guideWarning ?: snapshot.epgWarning ?: "Connected. Loaded $channelCount channels.$epgStatus"
                 } else {
-                    snapshot.epgWarning ?: "Refreshed ${snapshot.channels.size} channels.$epgStatus"
+                    guideWarning ?: snapshot.epgWarning ?: "Refreshed $channelCount channels.$epgStatus"
                 }
                 _uiState.value = _uiState.value.copy(
                     isIptvLoading = false,
-                    iptvChannelCount = snapshot.channels.size,
+                    iptvChannelCount = channelCount,
                     iptvError = null,
                     iptvStatusMessage = doneMsg,
-                    iptvStatusType = if (snapshot.epgWarning != null) ToastType.INFO else ToastType.SUCCESS,
+                    iptvStatusType = if (guideWarning != null || snapshot.epgWarning != null) ToastType.INFO else ToastType.SUCCESS,
                     iptvProgressText = context.getString(R.string.done),
                     iptvProgressPercent = 100,
                     toastMessage = if (showToast) {
-                        if (configured) "IPTV configured (${snapshot.channels.size} channels)" else "IPTV refreshed (${snapshot.channels.size} channels)"
+                        guideWarning ?: if (configured) "IPTV configured ($channelCount channels)" else "IPTV refreshed ($channelCount channels)"
                     } else _uiState.value.toastMessage,
-                    toastType = if (showToast) ToastType.SUCCESS else _uiState.value.toastType
+                    toastType = if (showToast) (if (guideWarning != null) ToastType.INFO else ToastType.SUCCESS) else _uiState.value.toastType
                 )
                 launch {
                     runCatching { iptvRepository.warmXtreamVodCachesIfPossible() }

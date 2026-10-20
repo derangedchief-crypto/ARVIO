@@ -25,4 +25,11 @@ class RetainedGuideWindowTest {
     @Test fun residentRowsAreNotRepeatedlyQueriedWithinSameWindow() {
         assertTrue(unhydratedGuideChannelIds(setOf("a"), setOf("a"), setOf("a")).isEmpty())
     }
+    @Test fun partialRefreshCorrectsOneProgrammeWithoutErasingLoadedFutureListings() {
+        val future = programme.copy(title = "Saved future", startUtcMillis = 210, endUtcMillis = 240)
+        val corrected = programme.copy(title = "Updated", endUtcMillis = 205)
+        val result = mergeRetainedGuideWindow(mapOf("a" to listOf(programme, future)),
+            mapOf("a" to listOf(corrected)), 50, 250, listOf("a"), 5)
+        assertEquals(listOf(corrected, future), result["a"])
+    }
 }

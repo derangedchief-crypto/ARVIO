@@ -5,6 +5,11 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
+import java.io.File
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Local guide index used by the Live TV page.
@@ -19,6 +24,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
     null,
     DATABASE_VERSION
 ) {
+    private val snapshotMutex = Mutex()
     data class SourceState(
         val generation: Long,
         val status: String,
@@ -178,6 +184,77 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         if (sourceKey.isBlank()) return
         writableDatabase.delete("epg_programs", "source_key = ? AND end_ms < ?",
             arrayOf(sourceKey, (updatedAtMs - DEFAULT_PAST_WINDOW_MS).toString()))
+    }
+
+    fun hasCurrentPrograms(sourceKey: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val generation = sourceState(sourceKey)?.generation ?: return false
+        return readableDatabase.rawQuery("SELECT 1 FROM epg_programs WHERE source_key=? AND generation=? AND end_ms>? AND start_ms<? LIMIT 1",
+            arrayOf(sourceKey, generation.toString(), nowMs.toString(), (nowMs + 6 * 60 * 60_000L).toString())).use { it.moveToFirst() }
+    }
+
+    fun currentChannelIds(sourceKey: String, nowMs: Long = System.currentTimeMillis()): Set<String> {
+        val generation = sourceState(sourceKey)?.generation ?: return emptySet()
+        return readableDatabase.rawQuery(
+            "SELECT DISTINCT channel_id FROM epg_programs WHERE source_key=? AND generation=? AND end_ms>? AND start_ms<?",
+            arrayOf(sourceKey, generation.toString(), nowMs.toString(), (nowMs + 6 * 60 * 60_000L).toString())
+        ).use { c -> buildSet { while (c.moveToNext()) add(c.getString(0)) } }
+    }
+
+    /** Native SQLite copy: no per-programme Kotlin objects/queries or whole-guide map. */
+    suspend fun mergeServerSnapshot(sourceKey: String, file: File, mappings: List<Pair<String, String>>,
+        startBound: Long, endBound: Long, updatedAtMs: Long,
+        onBatch: suspend (Int, Int) -> Unit = { _, _ -> },
+    ) = snapshotMutex.withLock {
+        if (sourceKey.isBlank() || mappings.isEmpty()) return@withLock
+        val db = writableDatabase
+        db.execSQL("ATTACH DATABASE ? AS shared_guide", arrayOf(file.absolutePath))
+        try {
+            db.execSQL("CREATE TEMP TABLE server_guide_map(feed_id TEXT NOT NULL, channel_id TEXT NOT NULL, PRIMARY KEY(feed_id,channel_id))")
+            db.execSQL("CREATE INDEX server_guide_map_channel ON server_guide_map(channel_id,feed_id)")
+            db.runInTransaction {
+                ensureSource(sourceKey, updatedAtMs)
+                ensureActiveGeneration(sourceKey)
+                compileStatement("INSERT OR IGNORE INTO server_guide_map VALUES (?,?)").use { statement ->
+                    mappings.forEach { (feed, channel) ->
+                        statement.bindString(1, feed)
+                        statement.bindString(2, channel)
+                        statement.executeInsert()
+                    }
+                }
+            }
+            val generation = db.activeGeneration(sourceKey)
+            val feeds = mappings.map { it.first }.distinct()
+            var visited = 0
+            for (chunk in feeds.chunked(64)) {
+                currentCoroutineContext().ensureActive()
+                val placeholders = chunk.joinToString(",") { "?" }
+                val args = buildList<Any> {
+                    add(sourceKey); add(generation); addAll(chunk); add(startBound); add(endBound)
+                }.toTypedArray()
+                db.runInTransaction {
+                    // Correct matching timestamps atomically. Unreturned channels,
+                    // other broadcasts and previous usable listings stay intact.
+                    execSQL("""DELETE FROM epg_programs WHERE source_key=? AND generation=?
+                        AND channel_id IN (SELECT channel_id FROM server_guide_map WHERE feed_id IN ($placeholders))
+                        AND EXISTS (SELECT 1 FROM server_guide_map m JOIN shared_guide.programmes p ON p.channel_id=m.feed_id
+                        WHERE m.channel_id=epg_programs.channel_id AND p.start_ms=epg_programs.start_ms
+                        AND p.end_ms>? AND p.start_ms<? AND p.end_ms>p.start_ms AND trim(p.title)!=''
+                        AND (p.end_ms!=epg_programs.end_ms OR trim(p.title)!=epg_programs.title))""", args)
+                    execSQL("""INSERT OR REPLACE INTO epg_programs
+                        (source_key,generation,channel_id,start_ms,end_ms,title,description)
+                        SELECT ?,?,m.channel_id,p.start_ms,p.end_ms,trim(p.title),substr(p.description,1,$MAX_DESCRIPTION_CHARS)
+                        FROM shared_guide.programmes p JOIN server_guide_map m ON p.channel_id=m.feed_id
+                        WHERE m.feed_id IN ($placeholders) AND p.end_ms>? AND p.start_ms<?
+                        AND p.end_ms>p.start_ms AND trim(p.title)!=''""", args)
+                }
+                visited += chunk.size
+                onBatch(visited, feeds.size)
+            }
+            pruneExpiredHistory(sourceKey, updatedAtMs)
+        } finally {
+            try { db.execSQL("DROP TABLE IF EXISTS temp.server_guide_map") }
+            finally { db.execSQL("DETACH DATABASE shared_guide") }
+        }
     }
 
     fun loadNowNext(

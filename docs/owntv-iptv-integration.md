@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `405`. Version name is `2.0.089`, following the actual
+Current testing version code is `406`. Version name is `2.0.090`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -492,3 +492,60 @@ Media3/DRM buffering, terminal failure and inflated PlayerView configuration.
 [before](screenshots/tv-guide-before.png),
 [guide-first layout](screenshots/tv-guide-after.png),
 [right navigation open](screenshots/tv-guide-menu.png).
+
+## Persistent fast server cache and non-destructive refresh in 2.0.090 / 406
+
+Three client-side problems caused slow refreshes and apparent guide loss: the
+server SQLite file was downloaded to a disposable temp file and copied through
+one Kotlin object/delete/insert per programme; a partial successful cache could
+trigger a second full provider XMLTV download; and both an unknown/changed EPG
+signature and Settings → Refresh IPTV could delete the existing index.
+
+Server snapshots now live in app files storage, verified against the manifest's
+SHA-256, gzip checksum and SQLite integrity/schema. An unchanged manifest reuses
+the verified SQLite file without another payload download. New files are promoted
+only after validation; a previous verified file remains available. Failed or
+corrupt downloads keep the last good file, and an offline fallback never overwrites
+a usable local index with an older artifact. Files are immutable by checksum and
+bounded to the selected snapshot plus one previous snapshot.
+
+Programme copying now uses an attached SQLite source and native INSERT SELECT
+in batches of 64 feed channels. Timestamp corrections commit atomically with
+their replacements; unreturned channels/future listings remain intact. Readers
+can use the active generation between commits and cancelled/failed batches do
+not empty it. No index schema-version bump or destructive migration is required.
+The local regression fixture imports 96,000 programmes in 16 commits (about 1.1s
+in the development test run; not a physical-TV timing claim). Rechecks of the same
+artifact/mapping skip existing rows and extend only the newly entering future
+window. Cosmetic logo/raw-M3U changes do not invalidate guide mappings.
+
+With a usable shared cache, uncovered Xtream channels use their short-guide API
+instead of another whole XMLTV feed. Plain-M3U sources that require XMLTV still
+have that fallback. The missing-channel sweep reads coverage once, uses pages of
+48, avoids network delays for non-requestable channels and prunes history once
+rather than scanning the whole source after every page. Foreground row requests
+re-read SQLite after a short-EPG miss, and cannot restart an authoritative shared
+import or a recently completed whole guide just because one channel has no data.
+
+Missing upgrade signatures and EPG URL changes now mark the same source stale
+without deleting its guide. Settings Refresh preserves channel/guide storage,
+expires only resolver/catalogue caches, and joins the same application-owned guide
+loader instead of its old broad XMLTV path. Settings reports persisted guide
+coverage, not only the small in-memory snapshot. Old completion checkpoints are
+rechecked once using a new checkpoint key; their programmes are not removed.
+
+The TV update indicator is again a visible full-width progress bar, with byte,
+validation and indexing phase information. The route observes shared progress
+directly, so stale UI-state copies cannot hide it; progress is monotonic across
+phases. A failed refresh shows that saved listings are retained, not an endless
+loading wheel. Partial/empty viewport reads retain valid loaded broadcasts rather
+than replacing a whole channel schedule. The compact TV layout remains intact.
+
+Tests cover durable reuse across cache instances, offline/corrupt updates, disk
+corruption fallback, native bulk copying/cancellation/rollback, future-window
+extension, old checkpoint recovery, missing signature/EPG-edit/manual-refresh
+retention, targeted Xtream fallback, prevention of repeated visible-row XMLTV
+downloads, and full-width progress alongside saved programme rows. First-ever
+installs still need source data, and no client can invent listings a provider
+does not publish; the guarantee here is not discarding usable saved guide data
+merely to refresh or retry it.

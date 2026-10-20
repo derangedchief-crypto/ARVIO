@@ -44,7 +44,7 @@ class CompleteGuideIndexIntegrationTest {
         }
         var downloads = 0
         val client = OkHttpClient.Builder().addInterceptor { chain ->
-            if (chain.request().url.encodedPath == "/epg/full.sqlite.gz") {
+            if (chain.request().url.encodedPath in setOf("/epg/full.sqlite.gz", "/epg/manifest")) {
                 return@addInterceptor Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
                     .code(503).message("Unavailable").body("".toResponseBody()).build()
             }

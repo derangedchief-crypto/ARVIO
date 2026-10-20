@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import androidx.compose.ui.focus.FocusRequester
@@ -70,22 +71,33 @@ fun GuideBackfillStatus(
     message: String?,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    failed: Boolean = false,
 ) {
-    if (!inProgress) return
+    if (!inProgress && !failed) return
     val progress = percent?.coerceIn(0, 100)
+    if (failed) {
+        Text(message ?: "Guide update unavailable — saved listings retained",
+            modifier = modifier.fillMaxWidth().background(LiveColors.PanelDeep).padding(horizontal = 16.dp, vertical = 5.dp),
+            style = LiveType.CellTitle.copy(color = androidx.compose.ui.graphics.Color(0xFFFFC04A), fontSize = 11.sp),
+            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        return
+    }
     if (compact) {
-        Row(modifier.fillMaxWidth().background(LiveColors.PanelDeep)
-            .padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CircularProgressIndicator(modifier = Modifier.width(12.dp).height(12.dp), color = LiveColors.Accent, strokeWidth = 2.dp)
-            Text(buildString {
-                append("Loading EPG")
-                progress?.let { append(" · $it%") }
-                if (!message.isNullOrBlank()) append(" — $message")
-            }, style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = 10.sp, lineHeight = 14.sp),
-                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Column(modifier.fillMaxWidth().background(LiveColors.PanelDeep).padding(bottom = 4.dp)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CircularProgressIndicator(modifier = Modifier.width(12.dp).height(12.dp), color = LiveColors.Accent, strokeWidth = 2.dp)
+                Text(buildString {
+                    append("Loading EPG")
+                    progress?.let { append(" · $it%") }
+                    if (!message.isNullOrBlank()) append(" — $message")
+                }, style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = 10.sp, lineHeight = 14.sp),
+                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            }
             if (progress != null) LinearProgressIndicator(progress = { progress / 100f },
-                modifier = Modifier.width(96.dp).height(2.dp), color = LiveColors.Accent, trackColor = LiveColors.Divider)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(3.dp).testTag("guide-update-progress"), color = LiveColors.Accent, trackColor = LiveColors.Divider)
+            else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(3.dp).testTag("guide-update-progress"),
+                color = LiveColors.Accent, trackColor = LiveColors.Divider)
         }
         return
     }
@@ -114,7 +126,7 @@ fun GuideBackfillStatus(
         if (progress != null) {
             LinearProgressIndicator(
                 progress = { progress / 100f },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("guide-update-progress"),
                 color = LiveColors.Accent,
                 trackColor = LiveColors.Divider,
             )

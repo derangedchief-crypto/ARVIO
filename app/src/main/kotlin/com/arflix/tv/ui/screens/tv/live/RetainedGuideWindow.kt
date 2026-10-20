@@ -17,7 +17,11 @@ internal fun mergeRetainedGuideWindow(
     val result = LinkedHashMap<String, List<IptvProgram>>()
     fun valid(rows: List<IptvProgram>) = rows.filter { it.endUtcMillis > windowStart && it.startUtcMillis < windowEnd }
     previous.forEach { (id, rows) -> valid(rows).takeIf { it.isNotEmpty() }?.let { result[id] = it } }
-    incoming.forEach { (id, rows) -> valid(rows).takeIf { it.isNotEmpty() }?.let { result[id] = it } }
+    incoming.forEach { (id, rows) -> valid(rows).takeIf { it.isNotEmpty() }?.let { fresh ->
+        val starts = fresh.mapTo(hashSetOf()) { it.startUtcMillis }
+        result[id] = (result[id].orEmpty().filterNot { it.startUtcMillis in starts } + fresh)
+            .sortedBy { it.startUtcMillis }
+    } }
     visibleIds.forEach { id -> result.remove(id)?.let { result[id] = it } }
     while (result.size > capacity.coerceAtLeast(visibleIds.size)) {
         val iterator = result.entries.iterator()

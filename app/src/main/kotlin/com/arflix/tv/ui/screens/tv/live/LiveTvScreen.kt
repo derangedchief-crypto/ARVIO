@@ -439,6 +439,7 @@ fun LiveTvScreen(
     // is intentionally capped. Refresh just the visible guide viewport rather
     // than waiting for the entire provider guide to finish parsing.
     val guideIndexRevision by viewModel.iptvRepository.guideIndexRevision.collectAsStateWithLifecycle()
+    val guideRefresh by viewModel.iptvRepository.guideRefreshState.collectAsStateWithLifecycle()
     val currentUiState by rememberUpdatedState(state)
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -1230,15 +1231,12 @@ fun LiveTvScreen(
     // A full backfill can be intentionally deferred, while the currently
     // displayed rows are already fetching their own guide. Mobile must expose
     // both states; otherwise it looks as though tapping a category did nothing.
-    val visibleGuideLoadInProgress = state.epgBackfillInProgress || state.playlistGuideLoading || guideChannels.any { channel ->
+    val visibleGuideLoadInProgress = guideRefresh.loading || guideChannels.any { channel ->
         channel.id in state.epgLoadingChannelIds
     }
-    val visibleGuideLoadMessage = state.epgBackfillMessage
-        ?: if (state.playlistGuideLoading) "Preparing channel guide ${state.playlistGuideVisited}/${state.playlistGuideTotal}" else null
+    val visibleGuideLoadMessage = guideRefresh.message
         ?: if (visibleGuideLoadInProgress) "Loading visible guide" else null
-    val visibleGuideLoadPercent = if (state.epgBackfillInProgress) state.epgBackfillProgress
-        else if (state.playlistGuideLoading && state.playlistGuideTotal > 0)
-            (state.playlistGuideVisited.toLong() * 100 / state.playlistGuideTotal).toInt() else null
+    val visibleGuideLoadPercent = if (guideRefresh.loading) guideRefresh.percent else null
     var retainedIndexedGuidePrograms by remember(selectedProviderId) {
         mutableStateOf<Map<String, List<IptvProgram>>>(emptyMap())
     }
@@ -2988,6 +2986,7 @@ fun LiveTvScreen(
                         inProgress = visibleGuideLoadInProgress,
                         percent = visibleGuideLoadPercent,
                         message = visibleGuideLoadMessage,
+                        failed = guideRefresh.failed,
                     )
                     OwnTvGuideHeading(selectedCategoryTotalCount)
                     TvGuideViewport(
@@ -3138,6 +3137,7 @@ fun LiveTvScreen(
                         percent = visibleGuideLoadPercent,
                         message = visibleGuideLoadMessage,
                         compact = !isTouchDevice,
+                        failed = guideRefresh.failed,
                     )
                     OwnTvGuideHeading(selectedCategoryTotalCount, compact = !isTouchDevice)
                     TvGuideViewport(

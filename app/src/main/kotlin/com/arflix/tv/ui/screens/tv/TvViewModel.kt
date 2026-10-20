@@ -1760,7 +1760,10 @@ class TvViewModel @Inject constructor(
         return playable.ifBlank { trimmed }
     }
 
-    private fun setUiState(nextState: TvUiState) {
+    private fun setUiState(requestedState: TvUiState) {
+        val progress = iptvRepository.guideRefreshState.value
+        val nextState = requestedState.copy(epgBackfillInProgress = progress.loading,
+            epgBackfillProgress = progress.percent, epgBackfillMessage = progress.message)
         val previous = _uiState.value
         if (canReusePreparedContent(previous, nextState)) {
             _uiState.value = nextState.copy(
