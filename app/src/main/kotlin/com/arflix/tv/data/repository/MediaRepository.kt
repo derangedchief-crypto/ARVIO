@@ -783,7 +783,7 @@ class MediaRepository @Inject constructor(
         // user has them installed; the TMDB watch-provider source is the
         // out-of-the-box fallback so the rail populates on a fresh profile.
         // ──────────────────────────────────────────────────────────────
-        val mrtxivBase = "https://raw.githubusercontent.com/mrtxiv/networks-video-collection/3486fc9a3d0efe59d1929e75f66021dc4e15bcb7/"
+        val mrtxivBase = ServiceIntroAssets.BASE_URL
         val services = listOf(
             // ── Premium 7 (mrtxiv assets + motion hero) ──
             collection(

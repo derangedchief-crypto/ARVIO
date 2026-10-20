@@ -100,8 +100,8 @@ class PreinstalledServicesTest {
             val video = cfg.collectionHeroVideoUrl
             assertNotNull("${cfg.id} heroVideo", video)
             assertTrue(
-                "${cfg.id} heroVideo must be mrtxiv asset, was $video",
-                video!!.contains("raw.githubusercontent.com/mrtxiv/networks-video-collection") &&
+                "${cfg.id} heroVideo must use the verified pinned service asset copy, was $video",
+                video!!.startsWith(ServiceIntroAssets.BASE_URL) &&
                     video.endsWith(expectedVideos[cfg.id]!!)
             )
         }

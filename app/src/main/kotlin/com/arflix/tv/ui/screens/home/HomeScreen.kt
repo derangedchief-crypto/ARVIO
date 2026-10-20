@@ -917,7 +917,9 @@ fun HomeScreen(
     // re-spawning the player until the user focuses a *different* service.
     // Keyed on the focused collection id so re-entering the card after
     // moving elsewhere replays it.
-    var collectionVideoFinishedId by remember { mutableStateOf<Int?>(null) }
+    var collectionVideoFinishedId by remember(displayHeroItem?.id) { mutableStateOf<Int?>(null) }
+    var failedHeroVideoUrl by remember(displayHeroItem?.id) { mutableStateOf<String?>(null) }
+    var renderedHeroVideoUrl by remember { mutableStateOf<String?>(null) }
     val heroVideoAllowed = true
     val serviceHeroVideoUrl = displayHeroItem
         ?.takeIf { heroVideoAllowed && isHeroCollection && collectionVideoFinishedId != it.id }
@@ -931,7 +933,7 @@ fun HomeScreen(
         suppressHeroVideoPlayback -> null
         isHeroIptv -> displayHeroItem?.let { viewModel.getIptvStreamUrl(it.id) }
         else -> null
-    }
+    }?.takeUnless { it == failedHeroVideoUrl }
 
     var isTrailerPlaying by remember { mutableStateOf(false) }
     var trailerSuppressed by remember { mutableStateOf(false) }
@@ -964,25 +966,26 @@ fun HomeScreen(
     val heroVideoFadeDurationMs = if (isMobile) 420 else 0
     val focusedCollectionId = displayHeroItem?.id?.takeIf { isHeroCollection }
     val latestFocusedCollectionId by rememberUpdatedState(focusedCollectionId)
+    val latestHeroVideoUrl by rememberUpdatedState(heroVideoUrl)
     val heroVideoAlpha by animateFloatAsState(
-        targetValue = if (heroVideoUrl != null) 1f else 0f,
+        targetValue = if (homeHeroVideoHasFrame(heroVideoUrl, renderedHeroVideoUrl)) 1f else 0f,
         animationSpec = tween(durationMillis = heroVideoFadeDurationMs),
         label = "home-hero-video-alpha"
     )
     DisposableEffect(heroExoPlayer) {
         val player = heroExoPlayer ?: return@DisposableEffect onDispose { }
-        val listener = object : androidx.media3.common.Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == androidx.media3.common.Player.STATE_ENDED) {
-                    latestFocusedCollectionId?.let { collectionVideoFinishedId = it }
-                }
-            }
-        }
+        val listener = homeHeroVideoListener(player,
+            requestedUrl = { latestHeroVideoUrl },
+            onFirstFrame = { renderedHeroVideoUrl = it },
+            onEnded = { latestFocusedCollectionId?.let { collectionVideoFinishedId = it } },
+            onFailed = { failedHeroVideoUrl = it; renderedHeroVideoUrl = null },
+        )
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
 
     LaunchedEffect(heroVideoUrl) {
+        renderedHeroVideoUrl = null
         if (heroVideoUrl != null && heroPlaybackHandles == null) {
             heroPlaybackHandles = createHomeHeroPlaybackHandles(context)
         }
@@ -992,13 +995,13 @@ fun HomeScreen(
             if (preparedHeroVideoUrl != heroVideoUrl) {
                 player?.stop()
                 player?.clearMediaItems()
-                val mi = androidx.media3.common.MediaItem.Builder()
-                    .setUri(heroVideoUrl)
-                    .setLiveConfiguration(
+                val itemBuilder = androidx.media3.common.MediaItem.Builder().setUri(heroVideoUrl)
+                if (isHeroIptv) itemBuilder.setLiveConfiguration(
                         androidx.media3.common.MediaItem.LiveConfiguration.Builder()
                             .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
                             .setTargetOffsetMs(4_000).build()
-                    ).build()
+                    )
+                val mi = itemBuilder.build()
                 val lower = heroVideoUrl.lowercase()
                 if (lower.contains(".m3u8") || lower.contains("/hls") || lower.contains("format=hls")) {
                     player?.setMediaSource(handles.hlsFactory.createMediaSource(mi))
@@ -1013,10 +1016,21 @@ fun HomeScreen(
             // for both paths.
             player?.repeatMode = androidx.media3.common.Player.REPEAT_MODE_OFF
             player?.volume = 1f
-            player?.playWhenReady = true
+            player?.playWhenReady = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         } else {
             player?.playWhenReady = false
+            preparedHeroVideoUrl = null
         }
+    }
+
+    DisposableEffect(lifecycleOwner, heroExoPlayer) {
+        val player = heroExoPlayer ?: return@DisposableEffect onDispose { }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) player.pause()
+            if (event == Lifecycle.Event.ON_START && latestHeroVideoUrl != null) player.play()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Box(
@@ -1079,7 +1093,9 @@ fun HomeScreen(
                 if (heroExoPlayer != null && (heroVideoUrl != null || heroVideoAlpha > 0.01f)) {
                     AndroidView(
                         factory = { ctx ->
-                            PlayerView(ctx).apply {
+                            (android.view.LayoutInflater.from(ctx).inflate(
+                                R.layout.trailer_player_view, null, false
+                            ) as PlayerView).apply {
                                 useController = false
                                 setControllerAutoShow(false)
                                 hideController()
