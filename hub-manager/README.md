@@ -1,5 +1,20 @@
 # Extreme Hub Manager — aaPanel deployment
 
+## Upload-and-extract website (no server installer)
+
+For aaPanel's PHP website hosting, use **Extreme-Hub-Manager-aaPanel-Site.zip**,
+not the Python installer archive. Its files go directly into the website document
+root. It requires PHP 8.1+ and HTTPS, but no Python process, systemd service,
+database extension or reverse proxy. Source: `php-site/`; installation directions:
+`php-site/README.txt`. The archive maps `config.example.php` to `config.php`.
+The setup key is generated privately on the destination server, not included in
+the public download. Retrieve it through aaPanel File Manager after opening the
+site, then provision both accounts at `/setup/`. Real PHP HTTP regression tests:
+`PHP_BINARY=/path/to/php python3 -m unittest -v test_php_site.py`.
+
+The rest of this document describes the **alternative Python service**, not the
+upload-and-extract PHP website. Both implement the same app maintenance API.
+
 Standalone admin page and maintenance API for **https://hubmanager.extremeiptv.net**.
 This is separate from Netlify and does not change login, playlists or entitlements.
 

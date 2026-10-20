@@ -1,0 +1,5 @@
+/config.php
+/_private/state.php
+/_private/setup-key.php
+/_private/.state-*.php
+/_private/.key-*.php

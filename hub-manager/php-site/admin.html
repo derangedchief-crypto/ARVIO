@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Extreme Hub Manager</title>
+<style>:root{color-scheme:dark;font:16px system-ui;color:#e6edf7;background:#090d15}body{margin:0}main{max-width:600px;margin:48px auto;padding:24px}section{background:#141d2c;border:1px solid #29364a;border-radius:16px;padding:24px;margin:20px 0}h1{font-size:26px}p{line-height:1.6;color:#afbdd0}label{display:block;margin:16px 0 8px}input,textarea,button{box-sizing:border-box;font:inherit;border-radius:8px;padding:12px}input,textarea{width:100%;background:#090d15;color:#fff;border:1px solid #52627a}button{border:0;background:#9cc4ff;color:#0a1424;cursor:pointer;margin:8px 8px 0 0;font-weight:600}button.danger{background:#f4ad75}button:disabled{opacity:.5;cursor:wait}[hidden]{display:none!important}#status{font-size:23px;font-weight:700;color:#fff}#notice{white-space:pre-wrap;min-height:24px}small{color:#afbdd0}textarea{resize:vertical}a{color:#9cc4ff}</style><script src="/admin.js" defer></script></head><body><main>
+<h1>Extreme Hub Manager</h1><p>Control maintenance for supported Extreme Hub apps. Maintenance stops playback and blocks navigation without signing customers out.</p>
+<section id="login"><h2>Administrator sign in</h2><form id="login-form">
+<label for="username">Username</label><input id="username" autocomplete="username" required maxlength="80">
+<label for="password">Password</label><input id="password" type="password" autocomplete="current-password" required maxlength="256">
+<button type="submit">Sign in</button></form><p><a href="/setup/">First-time setup / owner recovery</a></p></section>
+<section id="controls" hidden><div id="status" role="status"></div><p id="updated"></p>
+<label for="message">Customer maintenance message</label><textarea id="message" maxlength="500" rows="4"></textarea>
+<p>Turning maintenance on interrupts connected updated apps within about 10–15 seconds. Older app versions and offline devices cannot receive a new command. Devices that already received it remain blocked offline until an explicit off status arrives.</p>
+<button id="enable" class="danger">Enable maintenance…</button><button id="disable">End maintenance…</button><button id="reload">Reload status</button><button id="logout">Sign out</button>
+<small><p>Customers stay signed in. Ending maintenance reopens the app automatically. Changes are recorded with your administrator username.</p></small></section>
+<p id="notice" role="alert"></p>
+</main></body></html>
