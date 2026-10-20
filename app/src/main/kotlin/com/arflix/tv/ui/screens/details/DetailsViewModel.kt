@@ -27,6 +27,7 @@ import com.arflix.tv.data.repository.MdbExternalRating
 import com.arflix.tv.data.repository.MdbListRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.automaticPrewarmSources
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchHistoryRepository
@@ -1755,6 +1756,7 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun prewarmStream(stream: StreamSource) {
+        if (_uiState.value.streams.any(::isSupplementalStream) && !isSupplementalStream(stream)) return
         focusedStreamPrewarmJob?.cancel()
         focusedStreamPrewarmJob = viewModelScope.launch {
             runCatching {
@@ -1768,9 +1770,10 @@ class DetailsViewModel @Inject constructor(
         focusedStreamPrewarmJob?.cancel()
         focusedStreamPrewarmJob = viewModelScope.launch {
             val index = streams.indexOf(stream).takeIf { it >= 0 } ?: 0
-            val candidates = listOf(index, index + 1, index + 2)
+            val candidates = automaticPrewarmSources(listOf(index, index + 1, index + 2)
                 .mapNotNull { streams.getOrNull(it) }
-                .distinctBy { "${it.addonId}:${it.source}:${it.url?.substringBefore('|')?.substringBefore('#')}" }
+                .distinctBy { "${it.addonId}:${it.source}:${it.url?.substringBefore('|')?.substringBefore('#')}" })
+                .filter { candidate -> !streams.any(::isSupplementalStream) || isSupplementalStream(candidate) }
             runCatching {
                 streamRepository.prewarmStreamsForPlayback(
                     streams = candidates,
@@ -1783,7 +1786,7 @@ class DetailsViewModel @Inject constructor(
 
     private fun prewarmVisibleStreams(streams: List<StreamSource>) {
         if (streams.isEmpty()) return
-        val topStreams = streams.take(3)
+        val topStreams = automaticPrewarmSources(streams).take(3)
         val prewarmKey = topStreams.joinToString("|") { stream ->
             "${stream.addonId}:${stream.source}:${stream.url?.substringBefore('|')?.substringBefore('#')}"
         }
@@ -1802,6 +1805,7 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun loadStreams(imdbId: String?, identity: EpisodeIdentity? = null) {
+        prefetchJob?.cancel()
         loadStreamsJob?.cancel()
         activePluginScraperJob?.cancel()
         cloudFallbackActive = false
@@ -1891,11 +1895,13 @@ class DetailsViewModel @Inject constructor(
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
-                    if (isCurrentRequest()) _uiState.value = _uiState.value.copy(
-                        isLoadingStreams = false, pluginScrapersLoading = false,
-                        toastMessage = context.getString(R.string.vod_verification_failed),
-                        toastType = ToastType.ERROR)
-                    return@launch
+                    if (!streamRepository.hasExtremeCloudAccess()) {
+                        if (isCurrentRequest()) _uiState.value = _uiState.value.copy(
+                            isLoadingStreams = false, pluginScrapersLoading = false,
+                            toastMessage = context.getString(R.string.vod_verification_failed), toastType = ToastType.ERROR)
+                        return@launch
+                    }
+                    emptyList()
                 }
                 if (!isCurrentRequest()) return@launch
                 if (vod.isNotEmpty()) {
@@ -1903,7 +1909,6 @@ class DetailsViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(streams = sources,
                         isLoadingStreams = false, pluginScrapersLoading = false, hasStreamingAddons = true)
                     prewarmVisibleStreams(sources)
-                    return@launch
                 }
                 val hasHomeServerConnections = streamRepository.hasHomeServerConnections()
                 // Personal media servers remain independent of Cloud entitlement.
@@ -1920,7 +1925,7 @@ class DetailsViewModel @Inject constructor(
                 } else null
                 if (!streamRepository.hasExtremeCloudAccess()) {
                     if (isCurrentRequest()) _uiState.value = _uiState.value.copy(
-                        isLoadingStreams = homeServerAppendJob?.isActive == true,
+                        isLoadingStreams = vod.isEmpty() && homeServerAppendJob?.isActive == true,
                         pluginScrapersLoading = false, hasStreamingAddons = true)
                     return@launch
                 }
@@ -2018,7 +2023,7 @@ class DetailsViewModel @Inject constructor(
                         )
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = false,
-                            streams = emptyList(),
+                            streams = _uiState.value.streams.filter(::isSupplementalStream),
                             subtitles = emptyList(),
                             hasStreamingAddons = streamRepository.installedAddons.first()
                                 .count { it.isVodStreamingAddon() } > 0 ||
@@ -2031,6 +2036,7 @@ class DetailsViewModel @Inject constructor(
                         title = item?.title.orEmpty(),
                         year = item?.year?.toIntOrNull(),
                         tmdbId = requestMediaId,
+                        vodSources = vod,
                     ).collect { progressive ->
                         if (!isCurrentRequest()) return@collect
                         val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
@@ -2069,7 +2075,7 @@ class DetailsViewModel @Inject constructor(
                     if (effectiveStreamId.isNullOrBlank()) {
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = false,
-                            streams = emptyList(),
+                            streams = _uiState.value.streams.filter(::isSupplementalStream),
                             subtitles = emptyList(),
                             hasStreamingAddons = streamRepository.installedAddons.first()
                                 .count { it.isVodStreamingAddon() } > 0 ||
@@ -2093,6 +2099,7 @@ class DetailsViewModel @Inject constructor(
                         title = item?.title ?: "",
                         animeQueryOverride = animeQueryOverride,
                         airDate = episodeAirDate,
+                        vodSources = vod,
                     ).collect { progressive ->
                         if (!isCurrentRequest()) return@collect
                         val existingVod = _uiState.value.streams.filter(::isSupplementalStream)

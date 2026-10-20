@@ -24,6 +24,7 @@ import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.data.repository.SkipIntroRepository
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.automaticPrewarmSources
 import com.arflix.tv.data.repository.isHubCloudPageUrl
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.CloudSyncRepository
@@ -2068,7 +2069,8 @@ class PlayerViewModel @Inject constructor(
         preferredLanguage: String
     ): List<StreamSource> {
         return streams.sortedWith(
-            compareBy<StreamSource> { streamRepository.getPlaybackHostHealthPenalty(it) }
+            compareByDescending<StreamSource> { isSupplementalStream(it) }
+                .thenBy { streamRepository.getPlaybackHostHealthPenalty(it) }
                 .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
                 .thenByDescending { qualityScore(it.quality) }
                 .thenByDescending { parseSize(it.size) }
@@ -2100,7 +2102,8 @@ class PlayerViewModel @Inject constructor(
             .sortedWith(
                 // Streams stay grouped by addon order; within a group, self-ordered addons keep
                 // their original (arrival) order while everything else gets the quality sort.
-                compareBy<IndexedValue<StreamSource>> { addonOrderIndex(it.value) }
+                compareByDescending<IndexedValue<StreamSource>> { isSupplementalStream(it.value) }
+                    .thenBy { addonOrderIndex(it.value) }
                     .then { a, b ->
                         if (keepsOwnStreamOrder(a.value) && keepsOwnStreamOrder(b.value)) {
                             a.index.compareTo(b.index)
@@ -2113,6 +2116,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun prewarmStream(stream: StreamSource) {
+        if (_uiState.value.streams.any(::isSupplementalStream) && !isSupplementalStream(stream)) return
         focusedStreamPrewarmJob?.cancel()
         focusedStreamPrewarmJob = viewModelScope.launch {
             runCatching {
@@ -2129,6 +2133,7 @@ class PlayerViewModel @Inject constructor(
             val candidates = listOf(index, index + 1, index + 2)
                 .mapNotNull { streams.getOrNull(it) }
                 .distinctBy { "${it.addonId}:${it.source}:${it.url?.substringBefore('|')?.substringBefore('#')}" }
+                .filter { candidate -> !streams.any(::isSupplementalStream) || isSupplementalStream(candidate) }
             runCatching {
                 streamRepository.prewarmStreamsForPlayback(
                     streams = candidates,
@@ -2141,7 +2146,7 @@ class PlayerViewModel @Inject constructor(
 
     private fun prewarmTopStreams(streams: List<StreamSource>, preferredLanguage: String) {
         if (streams.isEmpty()) return
-        val topStreams = sortStreamsForAutoplay(streams, preferredLanguage).take(3)
+        val topStreams = sortStreamsForAutoplay(automaticPrewarmSources(streams), preferredLanguage).take(3)
         val prewarmKey = topStreams.joinToString("|") { stream ->
             "${stream.addonId}:${stream.source}:${stream.url?.substringBefore('|')?.substringBefore('#')}"
         }
@@ -4583,7 +4588,8 @@ class PlayerViewModel @Inject constructor(
 
             val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
             val sortedStreams = sortStreamsByQualityAndSize(mergedStreams, preferredLanguage)
-            val selectedMatch = findProvidedSelectedStreamMatch(sortedStreams, playbackUrl)
+            val currentPlaybackUrl = _uiState.value.selectedStreamUrl?.takeIf { it.isNotBlank() } ?: playbackUrl
+            val selectedMatch = findProvidedSelectedStreamMatch(sortedStreams, currentPlaybackUrl)
 
             val shouldAutoplay = _uiState.value.selectedStreamUrl.isNullOrBlank()
             val prevSource = _uiState.value.selectedStream?.source.orEmpty()

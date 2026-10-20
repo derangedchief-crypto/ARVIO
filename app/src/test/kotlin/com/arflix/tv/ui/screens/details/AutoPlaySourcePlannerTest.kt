@@ -107,6 +107,11 @@ class AutoPlaySourcePlannerTest {
             .copy(addonId = "iptv_xtream_vod", addonName = "IPTV VOD")
         assertFalse(shouldWaitForAutoPlaySources(false, local, 0L))
     }
+    @Test fun `vod remains preferred even when higher quality Extreme Cloud backups are available`() {
+        val vod = stream("The Beekeeper (2024)", "1080p", "2 GB").copy(addonId = "iptv_xtream_vod", addonName = "IPTV VOD")
+        val cloud = stream("The.Beekeeper.2024.2160p.REMUX", "4K", "52 GB").copy(displayAddonName = "Extreme Cloud")
+        assertEquals(vod, bestAutoPlayStream(listOf(cloud, vod), minQualityScore = 4))
+    }
 
     @Test
     fun `autoplay waits for the first source while addons load, then gives up at ceiling`() {

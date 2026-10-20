@@ -26,15 +26,15 @@ class MovieVodFirstStreamTest {
     private val cloud = StreamSource("Masterplan.2026.1080p", "Torrentio PM", "paid-fixture", "1080p", "4 GB",
         url = "https://cloud.example.test/movie.mp4", behaviorHints = StreamBehaviorHints(cached = true))
 
-    @Test fun movieVodHitNeverStartsCloud() = fixture(found = true)
+    @Test fun authorizedMovieVodHitKeepsCloudBackupsAvailable() = fixture(found = true)
     @Test fun movieMissAutomaticallySearchesAuthorizedCloudAfterVerification() = fixture()
-    @Test fun movieVerificationFailureDoesNotStartCloud() = fixture(unavailable = true)
+    @Test fun authorizedMovieLookupFailureStillOffersCloudBackups() = fixture(unavailable = true)
     @Test fun movieVerificationCancellationDoesNotStartCloud() = fixture(cancelLookup = true)
     @Test fun nonProgressiveMovieHitUsesVod() = fixture(found = true, nonProgressive = true)
     @Test fun nonProgressiveMovieMissAutomaticallyUsesAuthorizedCloud() = fixture(nonProgressive = true)
-    @Test fun episodeVodHitNeverStartsCloud() = fixture(found = true, isEpisode = true)
+    @Test fun authorizedEpisodeVodHitKeepsCloudBackupsAvailable() = fixture(found = true, isEpisode = true)
     @Test fun episodeMissAutomaticallySearchesAuthorizedCloud() = fixture(isEpisode = true)
-    @Test fun episodeVerificationFailureDoesNotStartCloud() = fixture(unavailable = true, isEpisode = true)
+    @Test fun authorizedEpisodeLookupFailureStillOffersCloudBackups() = fixture(unavailable = true, isEpisode = true)
     @Test fun episodeVerificationCancellationDoesNotStartCloud() = fixture(cancelLookup = true, isEpisode = true)
     @Test fun nonProgressiveEpisodeHitUsesVod() = fixture(found = true, nonProgressive = true, isEpisode = true)
     @Test fun nonProgressiveEpisodeMissAutomaticallyUsesAuthorizedCloud() = fixture(nonProgressive = true, isEpisode = true)
@@ -52,32 +52,56 @@ class MovieVodFirstStreamTest {
     @Test fun revokedMovieAccessCannotReuseCachedCloudLinks() = fixture(revokeAfterFirst = true)
     @Test fun revokedEpisodeAccessCannotReuseCachedCloudLinks() = fixture(isEpisode = true, revokeAfterFirst = true)
     @Test fun cloudVisibilityTracksExistingEntitlementRevocation() = fixture(found = true, observeRevocation = true)
+    @Test fun cachedCloudBackupsDoNotReplaceMovieVod() = fixture(found = true, repeatLookup = true)
+    @Test fun cachedCloudBackupsDoNotReplaceEpisodeVod() = fixture(found = true, isEpisode = true, repeatLookup = true)
+    @Test fun revokedAccessRemovesCloudButKeepsVod() = fixture(found = true, revokeAfterFirst = true)
+    @Test fun unauthorizedMovieFailureMakesNoCloudRequest() = fixture(unavailable = true, cloudAccess = false)
+    @Test fun unauthorizedEpisodeFailureMakesNoCloudRequest() = fixture(unavailable = true, isEpisode = true, cloudAccess = false)
+    @Test fun movieVodIsPublishedBeforeSlowCloudBackupsFinish() = fixture(found = true, holdCloud = true)
+    @Test fun episodeVodIsPublishedBeforeSlowCloudBackupsFinish() = fixture(found = true, isEpisode = true, holdCloud = true)
+    @Test fun cloudFailureDoesNotRemoveVod() = fixture(found = true, cloudFails = true)
+    @Test fun detailsCanShareMovieVodLookupWithSourceDiscovery() = fixture(found = true, prechecked = true)
+    @Test fun detailsCanShareEpisodeVodLookupWithSourceDiscovery() = fixture(found = true, isEpisode = true, prechecked = true)
 
     private fun fixture(found: Boolean = false, unavailable: Boolean = false, cancelLookup: Boolean = false,
         nonProgressive: Boolean = false, isEpisode: Boolean = false, cloudAccess: Boolean = true,
         cloudStateFailure: Boolean = false, repeatLookup: Boolean = false, revokeAfterFirst: Boolean = false,
-        observeRevocation: Boolean = false) = runBlocking { supervisorScope {
+        observeRevocation: Boolean = false, holdCloud: Boolean = false, cloudFails: Boolean = false,
+        prechecked: Boolean = false) = runBlocking { supervisorScope {
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
+        val cloudStarted = CompletableDeferred<Unit>()
+        val cloudRelease = CompletableDeferred<Unit>()
+        val emissions = kotlinx.coroutines.channels.Channel<ProgressiveStreamResult>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val lookups = java.util.concurrent.atomic.AtomicInteger(0)
         var verified = false
         val calls = java.util.concurrent.atomic.AtomicInteger(0)
         val iptv = mockk<IptvRepository>()
         suspend fun lookup(): List<StreamSource> {
+            lookups.incrementAndGet()
             started.complete(Unit)
             release.await()
-            if (unavailable) throw VodVerificationException()
             verified = true
+            if (unavailable) throw VodVerificationException()
             return if (found) listOf(vod) else emptyList()
         }
         coEvery { iptv.findMovieVodSources(any(), any(), any(), any(), true, true) } coAnswers { lookup() }
         coEvery { iptv.verifyEpisodeVodBeforeFallback(any(), any(), any(), any(), any()) } coAnswers { lookup() }
         val runtime = mockk<HttpLocalScraperRuntime>(relaxed = true)
         every { runtime.canHandle(any()) } returns true
+        suspend fun cloudResults(): List<StreamSource> {
+            assertTrue("Cloud started before VOD lookup finished", verified)
+            calls.incrementAndGet()
+            cloudStarted.complete(Unit)
+            if (holdCloud) cloudRelease.await()
+            if (cloudFails) throw java.io.IOException("Cloud temporarily unavailable")
+            return listOf(cloud)
+        }
         coEvery { runtime.resolveMovieStreams(any(), any(), any(), any()) } coAnswers {
-            assertTrue("Cloud started before VOD completed", verified); calls.incrementAndGet(); listOf(cloud)
+            cloudResults()
         }
         coEvery { runtime.resolveEpisodeStreams(any(), any(), any(), any(), any(), any()) } coAnswers {
-            assertTrue("Cloud started before episode verification", verified); calls.incrementAndGet(); listOf(cloud)
+            cloudResults()
         }
         val context = RuntimeEnvironment.getApplication()
         val prefs = context.getSharedPreferences("arvio_entitlement_guard", 0)
@@ -95,11 +119,12 @@ class MovieVodFirstStreamTest {
                 resources = listOf(AddonResource("stream", types = listOf("movie", "series")))))
         StreamRepository::class.java.getDeclaredField("installedAddons").apply { isAccessible = true }.set(repository,
             if (cloudStateFailure) flow<List<Addon>> { throw java.io.IOException("Unreadable auth") } else flowOf(listOf(addon)))
+        val known = if (prechecked) (if (found) listOf(vod) else emptyList()) else null
         suspend fun resolve(): List<StreamSource> = when {
-            isEpisode && nonProgressive -> repository.resolveEpisodeStreams("tt1234567", 1, 2, tmdbId = 12345, title = "Harbour Watch").streams
-            isEpisode -> repository.resolveEpisodeStreamsProgressive("tt1234567", 1, 2, tmdbId = 12345, title = "Harbour Watch").toList().last().streams
-            nonProgressive -> repository.resolveMovieStreams("tt1234567", "Masterplan", 2026, tmdbId = 12345).streams
-            else -> repository.resolveMovieStreamsProgressive("tt1234567", "Masterplan", 2026, tmdbId = 12345).toList().last().streams
+            isEpisode && nonProgressive -> repository.resolveEpisodeStreams("tt1234567", 1, 2, tmdbId = 12345, title = "Harbour Watch", vodSources = known).streams
+            isEpisode -> repository.resolveEpisodeStreamsProgressive("tt1234567", 1, 2, tmdbId = 12345, title = "Harbour Watch", vodSources = known).onEach { emissions.send(it) }.toList().last().streams
+            nonProgressive -> repository.resolveMovieStreams("tt1234567", "Masterplan", 2026, tmdbId = 12345, vodSources = known).streams
+            else -> repository.resolveMovieStreamsProgressive("tt1234567", "Masterplan", 2026, tmdbId = 12345, vodSources = known).onEach { emissions.send(it) }.toList().last().streams
         }
         try {
             if (observeRevocation) {
@@ -112,24 +137,35 @@ class MovieVodFirstStreamTest {
                 observer.join()
                 prefs.edit().putString("granted_addon_id:cloud_stream", "paid-fixture").commit()
             }
+            if (prechecked) { verified = true; release.complete(Unit) }
             val result = async { resolve() }
-            started.await()
-            assertEquals(0, calls.get())
+            if (!prechecked) { started.await(); assertEquals(0, calls.get()) }
             if (cancelLookup) { result.cancelAndJoin(); release.complete(Unit) }
             else {
                 release.complete(Unit)
+                if (holdCloud) {
+                    val first = withTimeout(5_000) { emissions.receive() }
+                    assertEquals(listOf(vod), first.streams)
+                    assertFalse(first.isFinal)
+                    withTimeout(5_000) { cloudStarted.await() }
+                    assertFalse(result.isCompleted)
+                    cloudRelease.complete(Unit)
+                }
                 try {
                     val sources = result.await()
-                    assertFalse(unavailable)
-                    assertEquals(if (found) listOf(vod) else if (cloudAccess) listOf(cloud.copy(displayAddonName = "Extreme Cloud")) else emptyList<StreamSource>(), sources)
+                    assertFalse(unavailable && !cloudAccess)
+                    val expectedVod = if (found && !unavailable) listOf(vod) else emptyList()
+                    val expectedCloud = if (cloudAccess && !cloudFails) listOf(cloud.copy(displayAddonName = "Extreme Cloud")) else emptyList()
+                    assertEquals(expectedVod + expectedCloud, sources)
                     if (repeatLookup) assertEquals(sources, resolve())
                     if (revokeAfterFirst) {
                         prefs.edit().remove("granted_addon_id:cloud_stream").commit()
-                        assertTrue(resolve().isEmpty())
+                        assertEquals(expectedVod, resolve())
                     }
                 } catch (error: VodVerificationException) { if (!unavailable) throw error }
             }
-            assertEquals(if (found || unavailable || cancelLookup || !cloudAccess) 0 else 1, calls.get())
+            assertEquals(if (cancelLookup || !cloudAccess) 0 else 1, calls.get())
+            if (prechecked) assertEquals(0, lookups.get())
         } finally {
             val field = StreamRepository::class.java.getDeclaredField("repositoryScope").apply { isAccessible = true }
             (field.get(repository) as CoroutineScope).cancel()

@@ -2201,10 +2201,11 @@ class StreamRepository @Inject constructor(
         year: Int? = null,
         forceRefresh: Boolean = false,
         tmdbId: Int? = null,
+        vodSources: List<StreamSource>? = null,
     ): StreamResult = withContext(Dispatchers.IO) {
-        val vod = verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId)
-        if (vod.isNotEmpty()) return@withContext StreamResult(vod, emptyList())
-        if (!hasExtremeCloudAccess()) return@withContext StreamResult(emptyList(), emptyList())
+        val vod = vodSources ?: vodForSourceDiscovery { verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId) }
+        fun includeVod(result: StreamResult) = result.copy(streams = mergeVodAndBackupSources(vod, result.streams))
+        if (!hasExtremeCloudAccess()) return@withContext StreamResult(vod, emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
@@ -2220,12 +2221,12 @@ class StreamRepository @Inject constructor(
             synchronized(streamResultCache) {
                 val cached = streamResultCache[cacheKey]
                 if (cached != null && isStreamCacheFresh(cached)) {
-                    return@withContext cached.result
+                    return@withContext includeVod(cached.result)
                 }
             }
             loadPersistedStreamResult(profileId, cacheKey)?.let { persisted ->
                 synchronized(streamResultCache) { streamResultCache[cacheKey] = persisted }
-                return@withContext persisted.result
+                return@withContext includeVod(persisted.result)
             }
         }
 
@@ -2237,8 +2238,8 @@ class StreamRepository @Inject constructor(
         )
         val filteredStreams = applyQualityRegexFilters(streams)
 
-        // Keep core source lookup fully addon-driven and non-blocking.
-        // IPTV VOD enrichment is appended separately in ViewModels.
+        // Cache only Cloud results. Merge this request's VOD links on output,
+        // so cached backups never replace or stale-cache the VOD lookup.
 
         val result = StreamResult(filteredStreams, subtitles)
         val createdAtMs = System.currentTimeMillis()
@@ -2250,7 +2251,7 @@ class StreamRepository @Inject constructor(
             cacheKey = cacheKey,
             cached = CachedStreamResult(result = result, createdAtMs = createdAtMs)
         )
-        result
+        includeVod(result)
     }.let { it.copy(streams = presentExtremeCloudSources(it.streams)) }
 
     fun resolveMovieStreamsProgressive(
@@ -2259,21 +2260,20 @@ class StreamRepository @Inject constructor(
         year: Int? = null,
         forceRefresh: Boolean = false,
         tmdbId: Int? = null,
+        vodSources: List<StreamSource>? = null,
     ): Flow<ProgressiveStreamResult> = callbackFlow {
         launch {
             val vod = try {
-                verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId)
+                vodSources ?: vodForSourceDiscovery { verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId) }
             } catch (error: Exception) {
                 close(error)
                 return@launch
             }
-            if (vod.isNotEmpty()) {
-                trySend(ProgressiveStreamResult(vod, emptyList(), 0, 0, true))
-                close()
-                return@launch
-            }
-            if (!hasExtremeCloudAccess()) {
-                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
+            fun publish(result: ProgressiveStreamResult) = trySend(result.copy(streams = mergeVodAndBackupSources(vod, result.streams)))
+            val cloudAllowed = hasExtremeCloudAccess()
+            if (vod.isNotEmpty()) publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, !cloudAllowed))
+            if (!cloudAllowed) {
+                if (vod.isEmpty()) publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
                 close()
                 return@launch
             }
@@ -2293,7 +2293,7 @@ class StreamRepository @Inject constructor(
                     val cached = streamResultCache[cacheKey]
                     if (cached != null) {
                         if (isStreamCacheFresh(cached)) {
-                            trySend(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
+                            publish(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
                             close()
                             return@launch
                         }
@@ -2309,7 +2309,7 @@ class StreamRepository @Inject constructor(
                 }
                 warmCache?.let { cached ->
                     synchronized(streamResultCache) { streamResultCache[cacheKey] = cached }
-                    trySend(
+                    publish(
                         ProgressiveStreamResult(
                             streams = cached.result.streams,
                             subtitles = cached.result.subtitles,
@@ -2340,19 +2340,19 @@ class StreamRepository @Inject constructor(
                 if (!forceRefresh) {
                     val cached = synchronized(streamResultCache) { streamResultCache[cacheKey] }
                     if (cached != null) {
-                        trySend(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
+                        publish(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
                         close()
                         return@launch
                     }
                     val persisted = loadPersistedStreamResult(profileId = profileId, cacheKey = cacheKey)
                     if (persisted != null) {
                         synchronized(streamResultCache) { streamResultCache[cacheKey] = persisted }
-                        trySend(ProgressiveStreamResult(persisted.result.streams, persisted.result.subtitles, 1, 1, true))
+                        publish(ProgressiveStreamResult(persisted.result.streams, persisted.result.subtitles, 1, 1, true))
                         close()
                         return@launch
                     }
                 }
-                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
+                publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
                 close()
                 return@launch
             }
@@ -2366,6 +2366,7 @@ class StreamRepository @Inject constructor(
             val aggregatedStreams = mutableListOf<StreamSource>()
             var completed = 0
             val totalAddons = prioritizedAddons.size + (if (telegramEnabled) 1 else 0)
+            publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, totalAddons, false))
 
             suspend fun sendProgress() {
                 // Dedup is scoped PER ADDON (addonId in the key, here and at every other stream
@@ -2407,7 +2408,7 @@ class StreamRepository @Inject constructor(
                     totalAddons,
                     completed == totalAddons
                 )
-                trySend(progressiveResult)
+                publish(progressiveResult)
                 if (progressiveResult.isFinal) close()
             }
 
@@ -2458,7 +2459,17 @@ class StreamRepository @Inject constructor(
         awaitClose { }
     }.map { it.copy(streams = presentExtremeCloudSources(it.streams)) }
 
-    /** Brand fresh and cached fallback results without changing provider identity or debrid handling. */
+    /** An authorized customer still needs backup choices during a VOD catalogue outage. */
+    private suspend fun vodForSourceDiscovery(lookup: suspend () -> List<StreamSource>): List<StreamSource> = try {
+        lookup()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        if (!hasExtremeCloudAccess()) throw error
+        emptyList()
+    }
+
+    /** Brand fresh and cached backup results without changing provider identity or debrid handling. */
     private suspend fun presentExtremeCloudSources(sources: List<StreamSource>): List<StreamSource> {
         fun local(source: StreamSource) = source.addonId == "iptv_xtream_vod" || source.addonId == HomeServerRepository.ADDON_ID
         if (sources.all(::local)) return sources
@@ -2474,7 +2485,7 @@ class StreamRepository @Inject constructor(
         } ?: throw VodVerificationException()
     }
 
-    /** No addon/plugin work may start until this returns a confirmed miss. */
+    /** Finish the VOD check first; its hits no longer suppress authorized backup discovery. */
     suspend fun verifyMovieVodBeforeFallback(
         imdbId: String?,
         title: String,
@@ -2679,10 +2690,11 @@ class StreamRepository @Inject constructor(
         forceRefresh: Boolean = false,
         animeQueryOverride: String? = null,
         airDate: String? = null,
+        vodSources: List<StreamSource>? = null,
     ): StreamResult = withContext(Dispatchers.IO) {
-        val vod = verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId)
-        if (vod.isNotEmpty()) return@withContext StreamResult(vod, emptyList())
-        if (!hasExtremeCloudAccess()) return@withContext StreamResult(emptyList(), emptyList())
+        val vod = vodSources ?: vodForSourceDiscovery { verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId) }
+        fun includeVod(result: StreamResult) = result.copy(streams = mergeVodAndBackupSources(vod, result.streams))
+        if (!hasExtremeCloudAccess()) return@withContext StreamResult(vod, emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
@@ -2708,7 +2720,7 @@ class StreamRepository @Inject constructor(
             synchronized(streamResultCache) {
                 val cached = streamResultCache[cacheKey]
                 if (cached != null && isStreamCacheFresh(cached)) {
-                    return@withContext cached.result
+                    return@withContext includeVod(cached.result)
                 }
             }
         }
@@ -2732,14 +2744,13 @@ class StreamRepository @Inject constructor(
         )
         val filteredStreams = applyQualityRegexFilters(streams)
 
-        // Keep core source lookup fully addon-driven and non-blocking.
-        // IPTV VOD enrichment is appended separately in ViewModels.
+        // Store Cloud metadata separately; keep the current VOD result on every output.
 
         val result = StreamResult(filteredStreams, subtitles)
         synchronized(streamResultCache) {
             streamResultCache[cacheKey] = CachedStreamResult(result = result, createdAtMs = System.currentTimeMillis())
         }
-        result
+        includeVod(result)
     }.let { it.copy(streams = presentExtremeCloudSources(it.streams)) }
 
     fun resolveEpisodeStreamsProgressive(
@@ -2754,21 +2765,20 @@ class StreamRepository @Inject constructor(
         forceRefresh: Boolean = false,
         animeQueryOverride: String? = null,
         airDate: String? = null,
+        vodSources: List<StreamSource>? = null,
     ): Flow<ProgressiveStreamResult> = callbackFlow {
         launch {
             val vod = try {
-                verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId)
+                vodSources ?: vodForSourceDiscovery { verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId) }
             } catch (error: Exception) {
                 close(error)
                 return@launch
             }
-            if (vod.isNotEmpty()) {
-                trySend(ProgressiveStreamResult(vod, emptyList(), 0, 0, true))
-                close()
-                return@launch
-            }
-            if (!hasExtremeCloudAccess()) {
-                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
+            fun publish(result: ProgressiveStreamResult) = trySend(result.copy(streams = mergeVodAndBackupSources(vod, result.streams)))
+            val cloudAllowed = hasExtremeCloudAccess()
+            if (vod.isNotEmpty()) publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, !cloudAllowed))
+            if (!cloudAllowed) {
+                if (vod.isEmpty()) publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
                 close()
                 return@launch
             }
@@ -2798,7 +2808,7 @@ class StreamRepository @Inject constructor(
                     val cached = streamResultCache[cacheKey]
                     if (cached != null) {
                         if (isStreamCacheFresh(cached)) {
-                            trySend(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
+                            publish(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
                             close()
                             return@launch
                         }
@@ -2806,7 +2816,7 @@ class StreamRepository @Inject constructor(
                     }
                 }
                 staleCache?.let { cached ->
-                    trySend(
+                    publish(
                         ProgressiveStreamResult(
                             streams = cached.result.streams,
                             subtitles = cached.result.subtitles,
@@ -2833,12 +2843,12 @@ class StreamRepository @Inject constructor(
                 if (!forceRefresh) {
                     val cached = synchronized(streamResultCache) { streamResultCache[cacheKey] }
                     if (cached != null) {
-                        trySend(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
+                        publish(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
                         close()
                         return@launch
                     }
                 }
-                trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
+                publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
                 close()
                 return@launch
             }
@@ -2852,6 +2862,7 @@ class StreamRepository @Inject constructor(
             val aggregatedStreams = mutableListOf<StreamSource>()
             var completed = 0
             val totalAddons = prioritizedAddons.size + (if (telegramEnabled) 1 else 0)
+            publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, totalAddons, false))
 
             suspend fun sendProgress() {
                 // Dedup is scoped PER ADDON (addonId in the key, here and at every other stream
@@ -2887,7 +2898,7 @@ class StreamRepository @Inject constructor(
                     totalAddons,
                     completed == totalAddons
                 )
-                trySend(progressiveResult)
+                publish(progressiveResult)
                 if (progressiveResult.isFinal) close()
             }
 

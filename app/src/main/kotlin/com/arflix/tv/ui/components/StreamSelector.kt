@@ -89,6 +89,7 @@ import androidx.tv.foundation.lazy.list.rememberTvLazyListState
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.data.repository.isLibrarySource
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.util.LocalDeviceType
@@ -156,7 +157,7 @@ internal fun buildSourceAddonTabs(
         SourceAddonTab(id = id, label = label)
     }
 
-    return if (addonOrderedIds.isEmpty()) {
+    val ordered = if (addonOrderedIds.isEmpty()) {
         tabs
     } else {
         tabs.sortedBy { tab ->
@@ -166,6 +167,8 @@ internal fun buildSourceAddonTabs(
             if (position >= 0) position else Int.MAX_VALUE
         }
     }
+    val libraryTabs = streams.filter(::isLibrarySource).mapTo(hashSetOf(), ::sourceTabId)
+    return ordered.sortedBy { if (it.id in libraryTabs) 0 else 1 }
 }
 
 internal fun sourceAddonTabKeys(tabs: List<SourceAddonTab>): List<String> =
@@ -313,7 +316,8 @@ fun StreamSelector(
             .thenBy { it.value.title.lowercase() }
         presentations.withIndex()
             .sortedWith(
-                compareBy<IndexedValue<SourcePresentation>> {
+                compareByDescending<IndexedValue<SourcePresentation>> { isLibrarySource(it.value.stream) }
+                .thenBy {
                     addonOrder[sourceTabId(it.value.stream)] ?: Int.MAX_VALUE
                 }.then { a, b ->
                     if (keepsOwnStreamOrder(a.value.stream) && keepsOwnStreamOrder(b.value.stream)) {

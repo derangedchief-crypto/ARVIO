@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `406`. Version name is `2.0.090`, following the actual
+Current testing version code is `407`. Version name is `2.0.091`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -549,3 +549,38 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Authorized Cloud backups alongside VOD in 2.0.091 / 407
+
+This supersedes the VOD-hit early return in 2.0.088. Authorized customers now get
+both IPTV VOD and Extreme Cloud choices, even when VOD is found. There is no
+permission popup or extra search action. VOD lookup remains first, and progressive
+discovery publishes its playable links immediately while Cloud metadata loads.
+Every subsequent cache/progress/final response retains those VOD links instead of
+replacing them. Non-progressive discovery also returns the merged choices. The
+Cloud result cache stores only Cloud metadata, not a stale VOD lookup result.
+
+Details shares its initial VOD lookup with repository discovery, continues into
+authorized addon/plugin discovery instead of returning, and retains VOD on Cloud
+failure. Authorized users can still receive backup choices during a VOD catalogue
+outage; callers without Cloud access retain the original retry/error behavior.
+Existing entitlement checks still guard every Cloud request and cached result.
+Revocation removes Cloud results without removing VOD. Fresh and cached backup
+links remain branded Extreme Cloud with original provider identities intact.
+
+VOD/library sources are preferred for autoplay and source-list ordering, including
+when Cloud offers a larger 4K file. Automatic list/focus prewarming is restricted
+to local library links whenever such links exist: merely listing or focusing an
+unused Cloud backup must not open/resolve it automatically. Explicit user source
+selection still opens the chosen Cloud link. Background source population respects
+the current playback URL, so it cannot revert a user-selected source to an earlier
+provided link. Source menus show ongoing discovery while retaining playable links.
+
+Tests cover movie and exact-episode coexistence, immediate VOD emission before a
+slow Cloud lookup, fresh/cached merged results, Cloud/VOD lookup outages, shared
+lookups, cancellation, unauthorized callers, revocation, local-source autoplay and
+prewarm policy, and phone/TV selection of both choices. The Beekeeper (2024) picker
+fixture demonstrates the reported case with both tabs/cards present; it is not a
+claim of direct access to the customer's live authenticated catalogue.
+
+[Phone source-picker fixture](screenshots/extreme-cloud-vod-backups-phone.png).

@@ -3970,7 +3970,7 @@ fun PlayerScreen(
             isVisible = showSourceMenu,
             streams = uiState.streams,
             selectedStream = uiState.selectedStream,
-            isLoading = uiState.isLoadingStreams,
+            isLoading = uiState.isLoadingStreams || uiState.sourceSearchActive,
             hasStreamingAddons = !uiState.isSetupError,
             addonOrderedIds = uiState.addonOrderedIds,
             title = uiState.title,
