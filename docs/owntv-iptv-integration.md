@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `408`. Version name is `2.0.092`, following the actual
+Current testing version code is `409`. Version name is `2.0.093`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -549,6 +549,42 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Server-first completion and maintenance integration in 2.0.093 / 409
+
+A successful shared-server guide import now completes the shared refresh
+without probing every unlisted Xtream channel using short-EPG requests. The
+previous "Checking remaining channel
+listings" phase could make hundreds/thousands of network requests for channels
+whose guide is not published; it is no longer run after a successful cache import.
+The same six-hour freshness checkpoint, source guards, last-good retention and
+saved coverage remain in place. Separately configured XMLTV sources not represented
+in the shared cache still import normally. Provider/XMLTV fallback remains available
+when no usable shared cache is available. Unpublished programmes are not fabricated.
+
+`MaintenanceRepository` polls `https://hubmanager.extremeiptv.net/api/maintenance`
+at launch, on activity re-entry and every 10 seconds while STARTED. A separate
+four-second-timeout client keeps this independent of login, provider/guide work
+and playback. `MaintenanceGate` replaces the entire app navigation subtree, not
+just an overlay; existing player disposal releases internal VOD and OwnTV/Media3
+live playback. Back cannot dismiss the gate. Auth/profile data are untouched.
+An explicit off state remounts the app but does not automatically restart video.
+Known-active status persists through process death/outages until the server
+explicitly clears it; a service outage before receiving an active flag does not
+invent a global lockout. Offline devices cannot receive new commands, older APKs
+without this support cannot be blocked, and external third-party players cannot
+be closed by this app. Normal connected propagation is about 10–15 seconds.
+
+The standalone `hub-manager/` service provides a protected admin page with two
+independently provisioned accounts, salted scrypt password hashes, Secure/HttpOnly
+session cookies, login rate limiting, strict-origin admin POSTs, transactional
+revision conflict protection and an administrator audit trail. No admin credentials
+are shipped in the APK. SQLite preserves the flag across server restarts. The
+aaPanel reverse-proxy/systemd setup is documented in `hub-manager/README.md`.
+The installer does not enable maintenance or create default admin passwords.
+The service must be deployed with HTTPS on the new subdomain before this feature
+is live; DNS/site creation alone is not a backend deployment. No live global
+maintenance event was enabled for validation. The APK publishing workflow is unchanged.
 
 ## Stop automatic IPTV shortcuts in 2.0.092 / 408
 

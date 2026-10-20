@@ -2808,6 +2808,18 @@ class IptvRepository @Inject constructor(
                     maxOf(_guideRefreshState.value.percent ?: 0, ((progress.percent ?: 0) * 70 / 100).coerceIn(0, 70)), total = total)
             }
             if (bulk.fromServer && !bulk.refreshed) error("Server update unavailable; saved listings retained")
+            if (bulk.fromServer && bulk.refreshed) {
+                // The server already performs bulk guide collection. Missing listings
+                // are not a reason to serially probe thousands of provider channels.
+                if (!sameSource()) return@request
+                check(epgIndex.hasCurrentPrograms(key)) { "No current server guide listings" }
+                epgIndex.pruneExpiredHistory(key, System.currentTimeMillis())
+                prefs.edit().putLong(completionKey, System.currentTimeMillis()).apply()
+                epgIndex.markRefreshReady(key)
+                guideRetryAt.remove(key)
+                _guideRefreshState.value = GuideRefreshState()
+                return@request
+            }
             val preparedIds = epgIndex.currentChannelIds(key).toMutableSet()
             var providerUpdates = 0
             var offset = 0
@@ -2897,9 +2909,9 @@ class IptvRepository @Inject constructor(
                         ?.let(::resolveXtreamCredentials) != null
                 }.mapTo(hashSetOf()) { it.id }
                 if (serverChannelIds.isNotEmpty() && (!server.fresh || uncovered.all { it.id in apiChannelIds })) {
-                    // The shared cache is the bulk source. A few unlisted PPV,
-                    // radio/marker channels must not trigger another huge XMLTV
-                    // download; the bounded missing-channel sweep follows.
+                    // Do not redownload the provider's full XMLTV just to chase
+                    // unlisted Xtream channels. Separately configured sources not
+                    // represented in the shared cache still get their XMLTV import.
                     onProgress(IptvLoadProgress("Server-cached guide ready", 100))
                     return@withLock GuideBulkRefreshResult(fromServer = true, refreshed = server.fresh, shortApiChannelIds = apiChannelIds)
                 }
