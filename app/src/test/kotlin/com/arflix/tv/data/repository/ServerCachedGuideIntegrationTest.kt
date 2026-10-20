@@ -44,6 +44,8 @@ class ServerCachedGuideIntegrationTest {
     @Test fun serverOutageAfterSuccessfulLoadKeepsGuideAndReportsRetainedCache() = verifyCache(24, total = 24, offlineAfterLoad = true)
     @Test fun usableServerCacheSkipsRemainingXtreamRequestsAndFullXmltv() = verifyCache(23, total = 24, xtream = true, coordinated = true)
     @Test fun evenMostlyUnlistedXtreamPlaylistCompletesWithoutPerChannelSweep() = verifyCache(1, total = 1000, xtream = true, coordinated = true)
+    @Test fun mostlyExpiredServerCacheUsesOneBulkXmltvRecoveryNotThousandsOfChannelProbes() =
+        verifyCache(24, total = 24, xtream = true, coordinated = true, staleAfter = 1)
     @Test fun unchangedSnapshotExtendsFutureWindowWithoutRewritingCurrentGuide() = verifyCache(24, total = 24, futureExtension = true)
     @Test fun oldCompletedCheckpointCannotHidePartialGuideAfterUpgrade() = verifyCache(24, total = 24, coordinated = true, oldCheckpoint = true)
     @Test fun visibleGuideRecheckUsesLocalIndexWithoutAnotherXmltvDownload() = verifyCache(24, total = 24, coordinated = true, visibleRecheck = true)
@@ -67,6 +69,7 @@ class ServerCachedGuideIntegrationTest {
         visibleRecheck: Boolean = false,
         missingVisibleRecheck: Boolean = false,
         recheckStale: Boolean = false,
+        staleAfter: Int? = null,
     ) = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         context.deleteDatabase("arvio_iptv_epg_index.db")
@@ -87,8 +90,8 @@ class ServerCachedGuideIntegrationTest {
                         val id = if (matchByName) "Server.ID.$i" else "c$i"
                         db.execSQL("INSERT INTO channels VALUES(?,?)", arrayOf(id, "Channel $i"))
                         db.execSQL("INSERT INTO programmes VALUES(?,?,?,?,?)", arrayOf<Any>(id,
-                            now - if (expired) 86_400_000L else 60_000L,
-                            now + if (expired) -82_800_000L else 3_600_000L,
+                             now - if (expired || (staleAfter != null && i >= staleAfter)) 86_400_000L else 60_000L,
+                             now + if (expired || (staleAfter != null && i >= staleAfter)) -82_800_000L else 3_600_000L,
                             "Server programme $i", "From shared cache"))
                         if (futureExtension) db.execSQL("INSERT INTO programmes VALUES(?,?,?,?,?)", arrayOf<Any>(id,
                             now + 4 * 3_600_000, now + 5 * 3_600_000, "Future programme $i", "Future cached listing"))
@@ -209,13 +212,13 @@ class ServerCachedGuideIntegrationTest {
             val ids = (0 until total).mapTo(linkedSetOf()) { "list_1:channel-$it" }
             val guide = repository.indexedGuideViewport(ids, now, now + 7_200_000)
             val usedServer = !expired && !corrupt && !unavailable && serverCount > 0
-            val expectedCount = if (usedServer && xtream) serverCount else if (omitLast) total - 1 else total
+            val expectedCount = if (usedServer && xtream && staleAfter == null) serverCount else if (omitLast) total - 1 else total
             assertEquals(expectedCount, guide.programsByChannel.size)
             repeat(expectedCount) { i ->
-                val expected = if ((recheck || futureExtension || offlineAfterLoad) && i == 0) "Local correction" else if (usedServer && i < serverCount) "Server programme $i" else "Provider programme $i"
+                val expected = if ((recheck || futureExtension || offlineAfterLoad) && i == 0) "Local correction" else if (usedServer && i < serverCount && (staleAfter == null || i < staleAfter)) "Server programme $i" else "Provider programme $i"
                 assertEquals(expected, guide.programsByChannel.getValue("list_1:channel-$i").single().title)
             }
-            assertEquals(if (usedServer && (xtream || serverCount == total)) listOf("server") else listOf("server", "provider"), requested)
+            assertEquals(if (usedServer && staleAfter == null && (xtream || serverCount == total)) listOf("server") else listOf("server", "provider"), requested)
             assertTrue((field("cachedNowNext").get(repository) as Map<*, *>).isEmpty())
             val leftovers = context.cacheDir.listFiles().orEmpty().filter { it.name.startsWith("daily_epg_") }
             assertTrue("Temporary guide files remain: $leftovers", leftovers.isEmpty())

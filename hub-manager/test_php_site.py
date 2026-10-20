@@ -2,14 +2,17 @@
 Run: PHP_BINARY=/path/to/php python3 -m unittest -v test_php_site.py
 """
 import http.client
+import http.server
 import json
 import os
 from pathlib import Path
 import shutil
 import socket
+import ssl
 import subprocess
 import tempfile
 import time
+import threading
 import unittest
 
 
@@ -23,9 +26,31 @@ class PhpSiteTest(unittest.TestCase):
             sock.bind(("127.0.0.1", 0))
             cls.port = sock.getsockname()[1]
         cls.origin = f"http://127.0.0.1:{cls.port}"
+        cls.bridge_calls = []
+        class WorkerFixture(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                cls.bridge_calls.append(("GET", self.path, self.headers.get("Authorization")))
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(b'{"phase":"ready","published_coverage":{"current_channels":4000,"expired_channels":20,"programme_channels":4020}}')
+            def do_POST(self):
+                cls.bridge_calls.append(("POST", self.path, self.headers.get("Authorization")))
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(b'{"started":true,"state":{"phase":"queued"}}')
+        cert, key = Path(cls.tmp.name) / "cert.pem", Path(cls.tmp.name) / "key.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key),
+                        "-out", str(cert), "-days", "1", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cls.worker_http = http.server.HTTPServer(("127.0.0.1", 0), WorkerFixture)
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(cert, key)
+        cls.worker_http.socket = tls.wrap_socket(cls.worker_http.socket, server_side=True)
+        cls.worker_thread = threading.Thread(target=cls.worker_http.serve_forever, daemon=True)
+        cls.worker_thread.start()
         (cls.root / "config.php").write_text("<?php return ['origin'=>'" + cls.origin + "','setup_key'=>''];")
         php = os.environ.get("PHP_BINARY", "php")
-        cls.proc = subprocess.Popen([php, "-n", "-S", f"127.0.0.1:{cls.port}", "-t", str(cls.root)],
+        cls.proc = subprocess.Popen([php, "-n", "-d", f"openssl.cafile={cert}", "-S", f"127.0.0.1:{cls.port}", "-t", str(cls.root)],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
@@ -40,9 +65,11 @@ class PhpSiteTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.proc.terminate()
         cls.proc.wait(timeout=5)
+        cls.worker_http.shutdown(); cls.worker_http.server_close(); cls.worker_thread.join(timeout=5)
         cls.tmp.cleanup()
 
     def setUp(self):
+        (self.root / "config.php").write_text("<?php return ['origin'=>'" + self.origin + "','setup_key'=>''];")
         for name in ["state.php", "setup-key.php"]:
             (self.root / "_private" / name).unlink(missing_ok=True)
         self.cookie = ""
@@ -151,6 +178,31 @@ class PhpSiteTest(unittest.TestCase):
         self.assertIn(code, [200, 301, 302])
         if code != 200:
             self.assertTrue(headers["Location"].endswith("/api/maintenance/"))
+
+    def test_epg_controls_require_admin_and_a_configured_worker_bridge(self):
+        self.provision()
+        self.assertEqual(401, self.request("/api/admin/epg/status/")[0])
+        self.assertEqual(401, self.request("/api/admin/epg/refresh/", {})[0])
+        self.login()
+        code, data, _ = self.request("/api/admin/epg/status/")
+        self.assertEqual(503, code)
+        self.assertIn("not configured", data["detail"])
+        self.assertEqual(503, self.request("/api/admin/epg/refresh/", {})[0])
+
+    def test_authenticated_php_bridge_calls_real_https_fixture_without_exposing_secret(self):
+        self.provision(); self.login()
+        secret = "fixture-private-bridge-secret-1234567890"
+        url = f"https://127.0.0.1:{self.worker_http.server_port}"
+        (self.root / "config.php").write_text("<?php return ['origin'=>'" + self.origin + "','setup_key'=>'',"
+            "'epg_worker_url'=>'" + url + "','epg_worker_secret'=>'" + secret + "'];")
+        code, status, _ = self.request("/api/admin/epg/status/")
+        self.assertEqual(200, code, status)
+        self.assertEqual(4000, status["published_coverage"]["current_channels"])
+        code, result, _ = self.request("/api/admin/epg/refresh/", {})
+        self.assertEqual(200, code, result)
+        self.assertTrue(result["started"])
+        self.assertEqual(("POST", "/epg/admin/refresh", "Bearer " + secret), self.bridge_calls[-1])
+        self.assertNotIn(secret, json.dumps(status) + json.dumps(result))
 
 
 if __name__ == "__main__":

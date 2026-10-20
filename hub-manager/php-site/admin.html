@@ -10,6 +10,10 @@
 <label for="message">Customer maintenance message</label><textarea id="message" maxlength="500" rows="4"></textarea>
 <p>Turning maintenance on interrupts connected updated apps within about 10–15 seconds. Older app versions and offline devices cannot receive a new command. Devices that already received it remain blocked offline until an explicit off status arrives.</p>
 <button id="enable" class="danger">Enable maintenance…</button><button id="disable">End maintenance…</button><button id="reload">Reload status</button><button id="logout">Sign out</button>
-<small><p>Customers stay signed in. Ending maintenance reopens the app automatically. Changes are recorded with your administrator username.</p></small></section>
+<small><p>Customers stay signed in. Ending maintenance reopens the app automatically. Changes are recorded with your administrator username.</p></small>
+<hr><h2>Server EPG cache</h2><p id="epg-status">Load worker status to check the published guide.</p>
+<button id="epg-check">Check EPG worker</button><button id="epg-refresh" class="danger">Rebuild server EPG cache…</button>
+<p>Rebuild pulls and indexes the provider’s full guide on the cache server. It does not enable maintenance or sign customers out. The last published cache stays available while rebuilding; failed or mostly expired pulls do not replace it.</p>
+</section>
 <p id="notice" role="alert"></p>
 </main></body></html>

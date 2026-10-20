@@ -114,11 +114,40 @@ function hub_credentials(mixed $name, mixed $password): void {
         || strlen($password) < 16 || strlen($password) > 72) throw new HubError(400, 'Use usernames with letters/numbers and distinct passwords of 16–72 characters.');
 }
 
+function hub_epg_request(array $config, bool $refresh): array {
+    $secret = $config['epg_worker_secret'] ?? '';
+    $base = rtrim($config['epg_worker_url'] ?? '', '/');
+    if (strlen($secret) < 32 || !preg_match('#^https://[a-z0-9.-]+(?::[0-9]+)?$#iD', $base)) throw new HubError(503, 'EPG worker connection is not configured. Install the worker update, then set epg_worker_url and epg_worker_secret in config.php.');
+    $url = $base . '/epg/admin/' . ($refresh ? 'refresh' : 'status');
+    $headers = ['Authorization: Bearer ' . $secret, 'Accept: application/json', 'Content-Type: application/json'];
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT => 3, CURLOPT_TIMEOUT => 10, CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_SSL_VERIFYPEER => true, CURLOPT_SSL_VERIFYHOST => 2]);
+        if ($refresh) curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => '{}']);
+        $raw = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+    } else {
+        $context = stream_context_create(['http' => ['method' => $refresh ? 'POST' : 'GET',
+            'header' => implode("\r\n", $headers), 'content' => $refresh ? '{}' : '',
+            'timeout' => 10, 'ignore_errors' => true, 'follow_location' => 0],
+            'ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
+        $raw = @file_get_contents($url, false, $context, 0, 524289);
+        preg_match('#HTTP/\S+\s+(\d+)#', $http_response_header[0] ?? '', $match);
+        $code = intval($match[1] ?? 0);
+    }
+    if ($raw === false || strlen($raw) > 524288 || $code < 200 || $code >= 300) throw new HubError(502,
+        $code === 401 ? 'EPG worker rejected the connection secret. Check both server configurations.' : 'EPG worker unavailable or not updated (HTTP ' . $code . '). Existing guide cache is unchanged.');
+    $data = json_decode($raw, true);
+    if (!is_array($data)) throw new HubError(502, 'Invalid EPG worker response');
+    return $data;
+}
+
 function hub_run(string $action): void {
     hub_headers();
     try {
         $config = hub_config();
-        $post = in_array($action, ['login', 'logout', 'update', 'setup'], true);
+        $post = in_array($action, ['login', 'logout', 'update', 'setup', 'epg-refresh'], true);
         if (($_SERVER['REQUEST_METHOD'] ?? '') !== ($post ? 'POST' : 'GET')) throw new HubError(405, 'Method not allowed');
         $body = [];
         if ($post) {
@@ -193,6 +222,9 @@ function hub_run(string $action): void {
                 return $s['maintenance'];
             }, true);
             hub_reply(200, $state);
+        } elseif ($action === 'epg-status' || $action === 'epg-refresh') {
+            hub_store(function (array &$s) { return hub_admin($s); });
+            hub_reply(200, hub_epg_request($config, $action === 'epg-refresh'));
         } else throw new HubError(404, 'Not found');
     } catch (HubError $error) {
         hub_reply($error->status, ['detail' => $error->getMessage()]);

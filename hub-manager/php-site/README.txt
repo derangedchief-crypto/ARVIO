@@ -56,3 +56,9 @@ Security: hashed passwords, hashed session tokens, Secure/HttpOnly/SameSite cook
 atomic locked writes, revision conflict checks, latest 1,000 status changes audited.
 With a trusted CDN/proxy, configure aaPanel's real-IP handling so rate limiting
 uses the actual visitor IP, not a shared proxy IP. Do not trust arbitrary XFF.
+
+EPG REBUILD CONTROLS
+The EPG section requires a separate update on the actual EPG worker server plus
+matching epg_worker_url/epg_worker_secret entries in this website's config.php.
+See the EPG Controls Update / Worker Admin Update deployment instructions.
+Merely extracting the website cannot restart a pull on a different machine.

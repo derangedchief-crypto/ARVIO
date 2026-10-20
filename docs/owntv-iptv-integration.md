@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `409`. Version name is `2.0.093`, following the actual
+Current testing version code is `410`. Version name is `2.0.094`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -549,6 +549,36 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Expired-cache recovery and protected EPG controls in 2.0.094 / 410
+
+Inspection of the public cache on 2026-10-20 at about 21:13 UTC found 4,075
+programme channels but only 58 with current/six-hour listings. AAJ TAK SD, ATN
+Aastha SD and CA - APTN had cached programmes ending at 00:00 UTC that day. A
+matching artifact checksum proves download integrity, not current guide coverage.
+
+The client now measures current versus expired **matched** channels. When at least
+eight known channels have expired and outnumber current ones, it retains available
+server listings but performs a bulk provider/XMLTV recovery for uncovered rows.
+A healthy partial cache with unpublished/missing channels still skips the slow
+per-channel sweep. Failed recovery retains saved listings and cannot claim a fresh
+server-only completion. All completion-marker consumers now use v3, forcing one
+non-destructive coverage check after upgrade instead of honoring v2's partial
+completion for another six hours. Tests reproduce one current and 23 expired
+Xtream channels and verify one bulk XMLTV request with zero short-EPG probes.
+
+The PHP admin website adds authenticated EPG status and rebuild controls. Its
+server-to-server bridge calls new protected worker endpoints using a shared secret
+stored only in website config.php and worker environment, never JavaScript/APK.
+The worker reads actual child-process progress, deduplicates active jobs, pulls
+automatically every six hours, honours XMLTV timezone offsets, validates coverage
+before publication and atomically replaces the gzip only after success. A failed
+or mostly expired upstream pull keeps the prior artifact and reports an error.
+No live rebuild was triggered during tests. The new controls require installation
+of the worker update and matching private connection configuration on both servers.
+See `epg-worker/ADMIN-CONTROL-README.txt` for SSH and aaPanel deployment instructions.
+The website update ZIP intentionally omits config.php and private state so accounts,
+maintenance mode, setup keys and existing settings survive extraction.
 
 ## Server-first completion and maintenance integration in 2.0.093 / 409
 

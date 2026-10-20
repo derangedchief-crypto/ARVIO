@@ -4,4 +4,8 @@
 return [
     'origin' => 'https://hubmanager.extremeiptv.net',
     'setup_key' => '',
+    // Set the SAME private random 32+ character secret as EPG_ADMIN_SECRET
+    // on the EPG worker. Never put this secret into browser JavaScript or a URL.
+    'epg_worker_url' => 'https://activationworker.extremeiptv.net',
+    'epg_worker_secret' => '',
 ];

@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let revision = null;
 let busy = false;
+let epgTimer = null;
 async function api(path, body) {
   const response = await fetch(path, {
     method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store",
@@ -50,6 +51,33 @@ $("enable").addEventListener("click", () => change(true));
 $("disable").addEventListener("click", () => change(false));
 $("reload").addEventListener("click", () => action(async () => { show(await api("/api/admin/status/")); $("notice").textContent = ""; }));
 $("logout").addEventListener("click", () => action(async () => {
+  clearTimeout(epgTimer);
   await api("/api/admin/logout/", {}); revision = null; $("controls").hidden = true; $("login").hidden = false; $("notice").textContent = "Signed out.";
 }));
+function showEpg(state) {
+  const published = state.published_coverage;
+  const last = state.updated_at ? new Date(state.updated_at).toLocaleString() : "not recorded";
+  const bytes = state.downloaded_bytes ? ` · downloaded ${(state.downloaded_bytes / 1048576).toFixed(1)} MB` : "";
+  $("epg-status").textContent = `Phase: ${state.phase || "unknown"}${bytes}\nLast successful pull: ${last}` +
+    (published ? `\nPublished guide: ${published.current_channels} current, ${published.expired_channels} expired / ${published.programme_channels} channels` : "") +
+    (state.error ? `\nLast attempt failed: ${state.error}` : "");
+  $("epg-status").style.whiteSpace = "pre-wrap";
+  clearTimeout(epgTimer);
+  if (["queued", "connecting", "downloading", "indexing", "compressing"].includes(state.phase)) {
+    epgTimer = setTimeout(() => action(loadEpg), 5000);
+  }
+}
+async function loadEpg() {
+  try { showEpg(await api("/api/admin/epg/status/")); }
+  catch (e) { $("epg-status").textContent = e.message; }
+}
+$("epg-check").addEventListener("click", () => action(loadEpg));
+$("epg-refresh").addEventListener("click", () => {
+  if (!confirm("Pull and rebuild the full EPG on the cache server now? The current cache will stay available while it runs.")) return;
+  action(async () => {
+    const result = await api("/api/admin/epg/refresh/", {});
+    showEpg(result.state);
+    $("notice").textContent = result.started ? "EPG rebuild requested. Progress will update here." : "A rebuild is already running. Showing its progress.";
+  });
+});
 action(async () => { try { show(await api("/api/admin/status/")); } catch (e) { if (!e.message.includes("Sign in required")) $("notice").textContent = e.message; } });
