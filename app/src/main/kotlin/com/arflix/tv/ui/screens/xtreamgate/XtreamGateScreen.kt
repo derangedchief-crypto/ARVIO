@@ -3,7 +3,6 @@ package com.arflix.tv.ui.screens.xtreamgate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +38,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
@@ -94,11 +94,31 @@ fun XtreamGateScreen(
     onSkip: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    XtreamGateContent(uiState, viewModel::onActivationCodeChange,
+        onSubmit = { viewModel.submit(onSuccess = onLoginSuccess) },
+        onSkip = { viewModel.skip(onSkip = onSkip) })
+}
 
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+internal fun XtreamGateContent(
+    uiState: XtreamGateUiState,
+    onActivationCodeChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onSkip: () -> Unit = {},
+) {
     var focusedField by remember { mutableStateOf("activation") }
     val activationFocusRequester = remember { FocusRequester() }
     val buttonFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val submitActivation = {
+        if (!uiState.isSubmitting) {
+            keyboardController?.hide()
+            focusManager.clearFocus(force = true)
+            onSubmit()
+        }
+    }
 
     LaunchedEffect(Unit) {
         activationFocusRequester.requestFocus()
@@ -209,16 +229,13 @@ fun XtreamGateScreen(
 
                 GateTextField(
                     value = uiState.activationCode,
-                    onValueChange = viewModel::onActivationCodeChange,
+                    onValueChange = onActivationCodeChange,
                     placeholder = "• • • • • •",
                     keyboardType = KeyboardType.Number,
                     isActivationCode = true,
                     imeAction = ImeAction.Done,
                     keyboardActions = KeyboardActions(
-                        onDone = {
-                            keyboardController?.hide()
-                            buttonFocusRequester.requestFocus()
-                        }
+                        onDone = { submitActivation() }
                     ),
                     onRequestKeyboard = { keyboardController?.show() },
                     isFocused = focusedField == "activation",
@@ -231,10 +248,7 @@ fun XtreamGateScreen(
                 Spacer(24.dp)
 
                 GateButton(
-                    onClick = {
-                        keyboardController?.hide()
-                        viewModel.submit(onSuccess = onLoginSuccess)
-                    },
+                    onClick = submitActivation,
                     text = when {
                         !uiState.isSubmitting -> "Activate"
                         !uiState.progressText.isNullOrBlank() -> uiState.progressText!!
@@ -266,7 +280,7 @@ fun XtreamGateScreen(
                             .clip(RoundedCornerShape(8.dp))
                             .clickable(enabled = !uiState.isSubmitting) {
                                 keyboardController?.hide()
-                                viewModel.skip(onSkip = onSkip)
+                                onSkip()
                             }
                             .padding(vertical = 8.dp, horizontal = 12.dp)
                     ) {
@@ -446,7 +460,8 @@ internal fun GateButton(
             )
             // Plain touch-clickable — androidx.tv.material3.Button's tap handling
             // is tuned for D-pad focus and can be unreliable on touch/mobile.
-            .focusable(interactionSource = interactionSource)
+            // clickable owns keyboard focus too. An extra focusable before it
+            // creates an outer target that can take the first activation press.
             .clickable(
                 enabled = enabled,
                 interactionSource = interactionSource,

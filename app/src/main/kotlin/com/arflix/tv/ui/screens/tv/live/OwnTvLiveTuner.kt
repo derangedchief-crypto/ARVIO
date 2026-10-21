@@ -19,12 +19,13 @@ import tv.own.owntv.player.PlayerFailureReason
 internal class OwnTvLiveTuner(
     scope: CoroutineScope,
     engines: LiveEngines,
+    private val onEngineStarted: (Boolean) -> Unit = {},
     private val nowMs: () -> Long = SystemClock::elapsedRealtime,
 ) {
     private var sequence = 0L
     private var source: SourceEntity? = null
     private var refresh: (suspend () -> String?)? = null
-    val controller = LiveTuneController(scope, engines, object : LiveTuneController.Host {
+    val controller: LiveTuneController = LiveTuneController(scope, engines, object : LiveTuneController.Host {
         override suspend fun sourceOf(sourceId: Long) = source?.takeIf { it.id == sourceId }
         override fun needsResolve(source: SourceEntity?) = source != null
         override suspend fun resolve(source: SourceEntity, cmd: String): String? =
@@ -38,6 +39,7 @@ internal class OwnTvLiveTuner(
             android.util.Log.w("ARVIO-Live", "OwnTV live recovery: $reason")
         }
         override fun nowMs() = this@OwnTvLiveTuner.nowMs()
+        override fun onEngineStarted() = this@OwnTvLiveTuner.onEngineStarted(controller.liveOnExo.value)
     })
 
     fun play(url: String, headers: Map<String, String>, name: String,

@@ -6,6 +6,21 @@ import org.junit.Test
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LivePreviewBackPressTest {
+    @Test fun fullscreenBackReleaseCannotNavigateGuideAgainAfterLogicalStateChanges() {
+        val guard = LiveBackReleaseGuard()
+        assertFalse(guard.consumeDown(repeat = false))
+        guard.handledDown()
+        assertTrue(guard.consumeDown(repeat = true))
+        assertTrue(guard.consumeUp())
+        assertFalse(guard.consumeUp())
+        assertFalse(guard.consumeDown(repeat = false))
+    }
+    @Test fun freshBackPressClearsAnAbandonedReleaseGuard() {
+        val guard = LiveBackReleaseGuard()
+        guard.handledDown()
+        assertFalse(guard.consumeDown(repeat = false))
+        assertFalse(guard.consumeUp())
+    }
     @Test fun quickBackKeepsShortActionAndDoesNotPromote() = runTest {
         val press = LivePreviewBackPress(backgroundScope)
         var short = 0; var long = 0

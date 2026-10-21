@@ -70,6 +70,7 @@ class XtreamGateViewModel @Inject constructor(
             return
         }
         _uiState.value = current.copy(isSubmitting = true, errorMessage = null, progressText = "Signing in…")
+        com.arflix.tv.util.AppLogger.breadcrumb("ActivationGate", "submit_started")
         viewModelScope.launch {
             try {
                 val credentials = activationRepository.resolve(activationCode).getOrElse { error ->
@@ -165,7 +166,10 @@ class XtreamGateViewModel @Inject constructor(
                 launch { runCatching { iptvRepository.warmXtreamVodCachesIfPossible() } }
 
                 _uiState.value = _uiState.value.copy(isSubmitting = false, progressText = null)
+                com.arflix.tv.util.AppLogger.breadcrumb("ActivationGate", "submit_completed")
                 onSuccess()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Never fail silently — an unhandled exception here would otherwise
                 // leave the button looking "unresponsive" with no feedback at all.

@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `412`. Version name is `2.0.096`, following the actual
+Current testing version code is `413`. Version name is `2.0.097`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,56 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Single-action activation and surface ownership in 2.0.097 / 413
+
+Activation keyboard Done now invokes the same submit action as Activate rather
+than only hiding the keyboard and focusing the button. Submission hides the IME
+and clears input focus after the gesture completes. GateButton no longer adds a
+second explicit focus target ahead of clickable's own focus/key handling. The
+existing synchronous ViewModel submitting guard remains, so queued IME/click
+actions cannot issue duplicate activation requests. Cancellation is rethrown
+rather than shown as a sign-in error. Pointer, IME and D-pad tests cover the actual
+state-hoisted gate content; ViewModel tests cover a successful one-submit fresh
+profile flow, profile-before-playlist ordering, validation and duplicate actions.
+No activation code or credentials are logged.
+
+The reported fullscreen-to-guide SIGSEGV trace contains only an ART trampoline
+frame, so it does not identify the faulting native library. Code inspection found
+unsafe surface paths in the 2.0.096 adapter: engine choice followed an asynchronous
+initially-false flow, and lifecycle callbacks could reach both engines or a view
+that had already been replaced. Surface ownership now starts at NONE, selects
+fast live synchronously, and switches to mpv only for an actual archive/fallback.
+An inactive mpv core is never attached/resized/detached by fast-live view events.
+The real upstream controller notifies the adapter when it actually starts an
+engine; a flow's default value is no longer a native surface-routing decision.
+
+`OwnTvSurfaceHandoff` distinguishes the requested view from the surface actually
+bound. A ready replacement binds first; old created/changed/destroyed/release
+callbacks cannot reclaim or clear it. While a replacement is not ready, the
+outgoing observer stays registered so its real destroy callback can detach the
+still-bound decoder before the framework frees the surface. Only the active
+engine receives native calls; route release clears ownership before late events.
+Reset tokens/aspect/error/play signals are scoped to the actual engine. Explicit
+new playback and stop discard stale background restores. No fast-playback rollback,
+buffer reduction, guide reset or server-side maintenance change is required.
+
+Fullscreen Back key-down now guards its repeat/release across the logical return
+to the guide, preventing that same physical press from navigating again during
+the view handoff. Hold-Back promotion and normal short-Back behavior remain.
+Privacy-safe breadcrumbs record engine/presentation/surface operations and submit
+start/completion, without URLs, codes, account identifiers or provider credentials.
+
+Tests model repeated preview/fullscreen/preview handoffs, queued old-view callbacks,
+an unready replacement, actual engine changes, resize ownership and disposal, plus
+actual Compose Back down/up with an enabled parent BackHandler. These demonstrate
+the repaired ownership/event invariants, not reproduction or confirmation of the
+user's native decoder crash. Device fullscreen-return testing is still necessary;
+the supplied ART-only report cannot establish a confirmed native root cause.
+Internal-test and Android-instrumentation Kotlin compilation passed, together
+with 416 targeted JVM/Robolectric tests, zero failures/errors/skips, before the
+signed testing build was requested. No live activation credentials or native
+device playback were used in the automated tests.
 
 ## Live boundary, fast live engine and held Back in 2.0.096 / 412
 

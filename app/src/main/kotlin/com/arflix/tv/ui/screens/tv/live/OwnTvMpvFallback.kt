@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.tv.live
 
 import android.content.Context
 import android.view.SurfaceHolder
+import android.view.Surface
 import android.view.SurfaceView
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -30,6 +31,7 @@ import tv.own.owntv.player.LivePreviewEngine
 import tv.own.owntv.player.EnginePair
 import tv.own.owntv.player.livePreviewEngine
 import org.koin.core.KoinApplication
+import com.arflix.tv.util.AppLogger
 
 /**
  * Process-local OwnTV dependency graph. It is intentionally NOT installed in the
@@ -65,52 +67,85 @@ internal class OwnTvMpvFallback(context: Context) {
     private val engine = OwnTvIptvRuntime.player(context)
     private val liveEngine = OwnTvIptvRuntime.livePlayer(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val tuner = OwnTvLiveTuner(scope, EnginePair(liveEngine, engine))
-    private val liveMode = MutableStateFlow(false)
-    private val onExo = combine(liveMode, tuner.controller.liveOnExo) { live, exo -> live && exo }
+    private val surfaceEngine = MutableStateFlow(OwnTvSurfaceEngine.NONE)
+    private val tuner = OwnTvLiveTuner(scope, EnginePair(liveEngine, engine), onEngineStarted = { fast ->
+        selectSurfaceEngine(if (fast) OwnTvSurfaceEngine.FAST_LIVE else OwnTvSurfaceEngine.MPV)
+    })
+    val playing = combine(surfaceEngine, engine.isPlaying, liveEngine.isPlaying) { owner, mpv, fast ->
+        when (owner) { OwnTvSurfaceEngine.FAST_LIVE -> fast; OwnTvSurfaceEngine.MPV -> mpv; else -> false }
+    }
         .stateIn(scope, SharingStarted.Eagerly, false)
-    val playing = combine(onExo, engine.isPlaying, liveEngine.isPlaying) { exo, mpv, fast -> if (exo) fast else mpv }
+    val buffering = combine(surfaceEngine, engine.buffering, liveEngine.buffering) { owner, mpv, fast ->
+        when (owner) { OwnTvSurfaceEngine.FAST_LIVE -> fast; OwnTvSurfaceEngine.MPV -> mpv; else -> false }
+    }
         .stateIn(scope, SharingStarted.Eagerly, false)
-    val buffering = combine(onExo, engine.buffering, liveEngine.buffering) { exo, mpv, fast -> if (exo) fast else mpv }
-        .stateIn(scope, SharingStarted.Eagerly, false)
-    val positionMs: Long get() = if (onExo.value) liveEngine.livePositionMs() else engine.position.value
-    val durationMs: Long get() = if (onExo.value) 0 else engine.duration.value
-    val error = combine(onExo, engine.error, liveEngine.error) { exo, mpv, fast -> (if (exo) fast else mpv)?.toString() }
+    val positionMs: Long get() = when (surfaceEngine.value) {
+        OwnTvSurfaceEngine.FAST_LIVE -> liveEngine.livePositionMs()
+        OwnTvSurfaceEngine.MPV -> engine.position.value
+        else -> 0L
+    }
+    val durationMs: Long get() = if (surfaceEngine.value == OwnTvSurfaceEngine.MPV) engine.duration.value else 0L
+    val error = combine(surfaceEngine, engine.error, liveEngine.error) { owner, mpv, fast ->
+        when (owner) { OwnTvSurfaceEngine.FAST_LIVE -> fast; OwnTvSurfaceEngine.MPV -> mpv; else -> null }?.toString()
+    }
         .stateIn(scope, SharingStarted.Eagerly, null)
-    val surfaceResetToken = combine(engine.surfaceResetToken, liveEngine.surfaceGeneration) { mpv, exo -> mpv to exo }
-        .stateIn(scope, SharingStarted.Eagerly, engine.surfaceResetToken.value to liveEngine.surfaceGeneration.value)
+    val surfaceResetToken = combine(surfaceEngine, engine.surfaceResetToken, liveEngine.surfaceGeneration) { owner, mpv, fast ->
+        when (owner) { OwnTvSurfaceEngine.MPV -> mpv to 0; OwnTvSurfaceEngine.FAST_LIVE -> 0 to fast; else -> 0 to 0 }
+    }.stateIn(scope, SharingStarted.Eagerly, 0 to 0)
     private var attachedHolder: SurfaceHolder? = null
     private var attachedView: PlayerView? = null
+    private val observedHolders = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<SurfaceHolder, Boolean>())
+    private val surfaces = OwnTvSurfaceHandoff<SurfaceHolder, Surface>(
+        valid = { it.isValid },
+        attach = { owner, holder, surface ->
+            val frame = holder.surfaceFrame
+            AppLogger.breadcrumb("LiveSurface", "attach owner=$owner viewSize=${frame.width()}x${frame.height()}")
+            when (owner) {
+                OwnTvSurfaceEngine.FAST_LIVE -> liveEngine.setSurface(surface)
+                OwnTvSurfaceEngine.MPV -> {
+                    engine.attachSurface(surface)
+                    if (frame.width() > 0 && frame.height() > 0) engine.setSurfaceSize(frame.width(), frame.height())
+                }
+                else -> Unit
+            }
+        },
+        detach = { owner, surface ->
+            AppLogger.breadcrumb("LiveSurface", "detach owner=$owner")
+            when (owner) {
+                OwnTvSurfaceEngine.FAST_LIVE -> liveEngine.detachSurface(surface)
+                OwnTvSurfaceEngine.MPV -> engine.detachSurface(surface)
+                else -> Unit
+            }
+        },
+        resize = { owner, width, height -> if (owner == OwnTvSurfaceEngine.MPV) engine.setSurfaceSize(width, height) },
+    )
     init {
         // Both OwnTV engines own the Surface directly, not PlayerView.player.
         // Pass their aspect changes to the content frame, including fullscreen.
-        combine(onExo, engine.videoAspect, liveEngine.videoAspect) { exo, mpv, fast -> if (exo) fast else mpv }.onEach { aspect ->
+        combine(surfaceEngine, engine.videoAspect, liveEngine.videoAspect) { owner, mpv, fast ->
+            when (owner) { OwnTvSurfaceEngine.FAST_LIVE -> fast; OwnTvSurfaceEngine.MPV -> mpv; else -> null }
+        }.onEach { aspect ->
             attachedView?.let { fitOwnTvVideo(it, aspect) }
         }.launchIn(scope)
-        onExo.onEach { attachedHolder?.let(::attachSurface) }.launchIn(scope)
     }
-    private fun attachSurface(holder: SurfaceHolder) {
-        if (!holder.surface.isValid) return
-        if (onExo.value) {
-            engine.detachSurface(holder.surface)
-            liveEngine.setSurface(holder.surface)
-        } else {
-            liveEngine.detachSurface(holder.surface)
-            engine.attachSurface(holder.surface)
-            engine.setSurfaceSize(holder.surfaceFrame.width(), holder.surfaceFrame.height())
+    private fun selectSurfaceEngine(owner: OwnTvSurfaceEngine) {
+        surfaces.selectEngine(owner)
+        if (surfaceEngine.value != owner) {
+            AppLogger.setCrashContext("live_surface_owner", owner.name)
+            AppLogger.breadcrumb("LiveSurface", "engine=$owner")
         }
+        surfaceEngine.value = owner
     }
     private val surfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
-            attachSurface(holder)
+            surfaces.created(holder, holder.surface)
         }
         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-            if (!onExo.value) engine.setSurfaceSize(width, height)
+            surfaces.changed(holder, width, height)
         }
         override fun surfaceDestroyed(holder: SurfaceHolder) {
-            // OwnTV's identity-aware detach cannot detach a newer fullscreen surface.
-            engine.detachSurface(holder.surface)
-            liveEngine.detachSurface(holder.surface)
+            surfaces.destroyed(holder)
         }
     }
 
@@ -119,22 +154,26 @@ internal class OwnTvMpvFallback(context: Context) {
     fun attach(playerView: PlayerView?) {
         val holder = (playerView?.videoSurfaceView as? SurfaceView)?.holder ?: return
         if (attachedHolder === holder) return
-        attachedHolder?.removeCallback(surfaceCallback)
+        // Keep the outgoing observer until that view is released. If the new
+        // surface is not ready yet, the old one is still bound and its destroy
+        // callback must detach the decoder BEFORE the framework frees it.
         attachedView = playerView
-        fitOwnTvVideo(playerView, if (onExo.value) liveEngine.videoAspect.value else engine.videoAspect.value)
+        fitOwnTvVideo(playerView, when (surfaceEngine.value) {
+            OwnTvSurfaceEngine.FAST_LIVE -> liveEngine.videoAspect.value
+            OwnTvSurfaceEngine.MPV -> engine.videoAspect.value
+            else -> null
+        })
         attachedHolder = holder
-        holder.addCallback(surfaceCallback)
-        if (holder.surface.isValid) {
-            attachSurface(holder)
-        }
+        if (observedHolders.add(holder)) holder.addCallback(surfaceCallback)
+        surfaces.request(holder, holder.surface)
     }
 
     fun detach(playerView: PlayerView?) {
         val holder = (playerView?.videoSurfaceView as? SurfaceView)?.holder ?: return
+        surfaces.remove(holder)
+        holder.removeCallback(surfaceCallback)
+        observedHolders.remove(holder)
         if (attachedHolder === holder) {
-            holder.removeCallback(surfaceCallback)
-            engine.detachSurface(holder.surface)
-            liveEngine.detachSurface(holder.surface)
             attachedHolder = null
             attachedView = null
         }
@@ -142,12 +181,18 @@ internal class OwnTvMpvFallback(context: Context) {
 
     fun play(url: String, headers: Map<String, String>, archive: Boolean = false, startPositionMs: Long = 0,
         refreshUrl: (suspend () -> String?)? = null, isHls: Boolean = false, name: String = "Live channel") {
-        liveMode.value = !archive
+        engine.discardBackgroundRestore()
+        liveEngine.discardBackgroundRestore()
         if (!archive) {
+            // Select synchronously, before any view callback or coroutine can
+            // temporarily attach the inactive mpv core during a fast live tune.
+            selectSurfaceEngine(OwnTvSurfaceEngine.FAST_LIVE)
             tuner.play(url, headers, name, isHls, refreshUrl)
             return
         }
-        tuner.playArchive { engine.play(url = url, isLive = false, isArchive = true,
+        tuner.playArchive {
+            selectSurfaceEngine(OwnTvSurfaceEngine.MPV)
+            engine.play(url = url, isLive = false, isArchive = true,
             startPositionMs = startPositionMs, muted = false,
             userAgent = StreamHeaders.userAgentOf(headers), httpHeaders = StreamHeaders.encode(headers),
             // Always replace the provider: upstream deliberately retains a live
@@ -155,19 +200,45 @@ internal class OwnTvMpvFallback(context: Context) {
             reconnectProvider = ReconnectUrlProvider { refreshUrl?.invoke() }) }
     }
 
-    fun stop() { tuner.stop(); liveMode.value = false }
-    fun togglePlayPause() { if (onExo.value) liveEngine.togglePlayPause() else engine.togglePlayPause() }
-    fun setPlaying(play: Boolean) { if (playing.value != play) togglePlayPause() }
-    fun seekTo(position: Long) = engine.seekBy(position - engine.position.value)
-    fun pause() { if (onExo.value) liveEngine.onAppBackgrounded() else engine.onAppBackgrounded() }
-    fun resume() { if (onExo.value) liveEngine.onAppForegrounded() else engine.onAppForegrounded() }
+    fun stop() {
+        tuner.stop(); selectSurfaceEngine(OwnTvSurfaceEngine.NONE)
+        engine.discardBackgroundRestore(); liveEngine.discardBackgroundRestore()
+    }
+    fun togglePlayPause() {
+        when (surfaceEngine.value) {
+            OwnTvSurfaceEngine.FAST_LIVE -> liveEngine.togglePlayPause()
+            OwnTvSurfaceEngine.MPV -> engine.togglePlayPause()
+            else -> Unit
+        }
+    }
+    fun setPlaying(play: Boolean) {
+        val actual = when (surfaceEngine.value) {
+            OwnTvSurfaceEngine.FAST_LIVE -> liveEngine.isPlaying.value
+            OwnTvSurfaceEngine.MPV -> engine.isPlaying.value
+            else -> false
+        }
+        if (actual != play) togglePlayPause()
+    }
+    fun seekTo(position: Long) { if (surfaceEngine.value == OwnTvSurfaceEngine.MPV) engine.seekBy(position - engine.position.value) }
+    fun pause() {
+        when (surfaceEngine.value) {
+            OwnTvSurfaceEngine.FAST_LIVE -> liveEngine.onAppBackgrounded()
+            OwnTvSurfaceEngine.MPV -> engine.onAppBackgrounded()
+            else -> Unit
+        }
+    }
+    fun resume() {
+        when (surfaceEngine.value) {
+            OwnTvSurfaceEngine.FAST_LIVE -> liveEngine.onAppForegrounded()
+            OwnTvSurfaceEngine.MPV -> engine.onAppForegrounded()
+            else -> Unit
+        }
+    }
 
     fun release() {
-        attachedHolder?.let {
-            it.removeCallback(surfaceCallback)
-            engine.detachSurface(it.surface)
-            liveEngine.detachSurface(it.surface)
-        }
+        surfaces.clear()
+        observedHolders.forEach { it.removeCallback(surfaceCallback) }
+        observedHolders.clear()
         attachedHolder = null
         attachedView = null
         tuner.stop()

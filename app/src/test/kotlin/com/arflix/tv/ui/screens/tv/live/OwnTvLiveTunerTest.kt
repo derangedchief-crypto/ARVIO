@@ -71,13 +71,16 @@ class OwnTvLiveTunerTest {
 
     @Test fun incompatibleLiveStreamFallsBackThroughUpstreamControllerWithSameHeaders() = runTest {
         val engines = Engines()
-        val tuner = OwnTvLiveTuner(backgroundScope, engines) { testScheduler.currentTime }
+        val selected = mutableListOf<Boolean>()
+        val tuner = OwnTvLiveTuner(backgroundScope, engines, onEngineStarted = { selected += it }) { testScheduler.currentTime }
         val headers = mapOf("User-Agent" to "FixturePlayer")
         tuner.play("https://provider.test/live.ts", headers, "Channel", false, null)
         runCurrent()
+        assertEquals(listOf(true), selected)
         engines.failed.complete("unsupported decoder")
         runCurrent(); advanceTimeBy(2_000); runCurrent()
         assertNotNull(engines.fallback)
+        assertEquals(listOf(true, false), selected)
         assertEquals("https://provider.test/live.ts", engines.fallback!!.first)
         assertEquals(headers, StreamHeaders.decode(engines.fallback!!.second.httpHeaders))
         assertTrue(engines.order.indexOf("exo-stop") < engines.order.indexOf("mpv-open"))

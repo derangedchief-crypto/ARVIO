@@ -40,8 +40,8 @@ android {
         // longer receive this distribution.
         minSdk = 26
         targetSdk = 36
-        versionCode = 412
-        versionName = "2.0.096"
+        versionCode = 413
+        versionName = "2.0.097"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("String", "UPDATE_RELEASE_TAG", "\"\"")

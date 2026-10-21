@@ -2803,6 +2803,8 @@ fun LiveTvScreen(
     var attachedPlayerView by remember { mutableStateOf<PlayerView?>(null) }
 
     fun releasePlayerView(view: PlayerView, isMini: Boolean) {
+        com.arflix.tv.util.AppLogger.breadcrumb("LiveSurface",
+            "release view=${if (isMini) "preview" else "fullscreen"} requested=${attachedPlayerView === view}")
         ownTvMpvFallback.detach(view)
         if (isMini) {
             if (miniPlayerView === view) miniPlayerView = null
@@ -2823,6 +2825,9 @@ fun LiveTvScreen(
         fullPlayerView,
         usingOwnTvMpvFallback,
     ) {
+        com.arflix.tv.util.AppLogger.setCrashContext("live_fullscreen", isFullScreen)
+        com.arflix.tv.util.AppLogger.breadcrumb("LiveSurface",
+            "presentation=${if (isFullScreen) "fullscreen" else "guide"} ownTv=$usingOwnTvMpvFallback")
         val targetView = if (isFullScreen) fullPlayerView else miniPlayerView
         // The destination AndroidView is composed in the same frame as the
         // state transition. Do not detach the current surface during that
@@ -2850,6 +2855,7 @@ fun LiveTvScreen(
         }
     }
 
+    val backReleaseGuard = remember { LiveBackReleaseGuard() }
     val previewBackShortcut = rememberLivePreviewBackShortcut(
         enabled = !isTouchDevice && !isFullScreen && playingChannel != null && !searchOpen && variantPickerChannel == null,
         onShortBack = {
@@ -2868,6 +2874,14 @@ fun LiveTvScreen(
             .then(
                 if (!isTouchDevice) {
                     Modifier.onPreviewKeyEvent { event ->
+                        if (event.key == Key.Back) {
+                            val consumed = when (event.type) {
+                                KeyEventType.KeyDown -> backReleaseGuard.consumeDown(event.nativeKeyEvent.repeatCount > 0)
+                                KeyEventType.KeyUp -> backReleaseGuard.consumeUp()
+                                else -> false
+                            }
+                            if (consumed) return@onPreviewKeyEvent true
+                        }
                         if (previewBackShortcut(event)) return@onPreviewKeyEvent true
                         if (!searchOpen && variantPickerChannel == null && focusZone != LiveTvFocusZone.TOPBAR && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
                             digitForTvKeyCode(event.nativeKeyEvent.keyCode)?.let { digit ->
@@ -3251,6 +3265,7 @@ fun LiveTvScreen(
                         if (fullscreenGuideOpen) {
                             when (ev.key) {
                                 Key.Back, Key.Escape -> {
+                                    if (ev.key == Key.Back) backReleaseGuard.handledDown()
                                     fullscreenGuideOpen = false
                                     hudPokeSignal++
                                     true
@@ -3303,6 +3318,7 @@ fun LiveTvScreen(
                             when (ev.key) {
                                 Key.Back, Key.Escape -> {
                                     if (firstPress) {
+                                        if (ev.key == Key.Back) backReleaseGuard.handledDown()
                                         if (playingCatchupProgram != null) {
                                             returnCatchupToLive()
                                         } else {

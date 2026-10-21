@@ -28,6 +28,36 @@ import org.robolectric.annotation.ConscryptMode
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class LivePreviewBackShortcutTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun backDownReturningToGuideConsumesItsUpInsteadOfNavigatingTwice() {
+        val fullscreen = mutableStateOf(true)
+        var navigatedAway = 0
+        compose.setContent {
+            val input = LocalInputModeManager.current
+            SideEffect { input.requestInputMode(InputMode.Keyboard) }
+            val guard = remember { LiveBackReleaseGuard() }
+            androidx.activity.compose.BackHandler { navigatedAway++ }
+            Box(Modifier.size(500.dp, 200.dp).testTag("back-return")
+                .onPreviewKeyEvent { event ->
+                    if (event.key != Key.Back) false else when (event.type) {
+                        KeyEventType.KeyUp -> guard.consumeUp()
+                        KeyEventType.KeyDown -> when {
+                            guard.consumeDown(event.nativeKeyEvent.repeatCount > 0) -> true
+                            fullscreen.value -> { guard.handledDown(); fullscreen.value = false; true }
+                            else -> false
+                        }
+                        else -> false
+                    }
+                }.onKeyEvent { event -> if (event.key == Key.Back) { navigatedAway++; true } else false }
+                .focusable()) { Text(if (fullscreen.value) "Fullscreen" else "Guide") }
+        }
+        compose.onNodeWithTag("back-return").performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        compose.onRoot().performKeyInput { keyDown(Key.Back) }
+        compose.waitForIdle()
+        compose.onNodeWithText("Guide").assertExists()
+        compose.onRoot().performKeyInput { keyUp(Key.Back) }
+        compose.runOnIdle { assertEquals(0, navigatedAway) }
+        compose.onNodeWithText("Guide").assertExists()
+    }
     private fun verify(zoneName: String) {
         compose.mainClock.autoAdvance = false
         val fullscreen = mutableStateOf(false)

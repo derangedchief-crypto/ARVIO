@@ -45,6 +45,20 @@ internal class LivePreviewBackPress(private val scope: CoroutineScope, private v
     fun cancel() { job?.cancel(); job = null; held = false; longPress = false }
 }
 
+/** A fullscreen key-down already navigated. Its release must not navigate the
+ * newly revealed guide a second time or race disposal with the surface handoff. */
+internal class LiveBackReleaseGuard {
+    private var pending = false
+    fun handledDown() { pending = true }
+    fun consumeDown(repeat: Boolean): Boolean {
+        if (!pending) return false
+        if (repeat) return true
+        pending = false
+        return false
+    }
+    fun consumeUp(): Boolean = pending.also { pending = false }
+}
+
 @Composable
 internal fun rememberLivePreviewBackShortcut(
     enabled: Boolean, onShortBack: () -> Unit, onLongBack: () -> Unit,
