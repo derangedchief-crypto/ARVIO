@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `419`. Version name is `2.0.103`, following the actual
+Current development version code is `420`. Version name is `2.0.104`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,43 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Post-update relaunch in 2.0.104 / 420
+
+The user confirmed mandatory detection/enforcement works in the 2.0.102 ->
+2.0.103 exercise, but the installed app did not reopen. Existing completion
+callbacks were broadcast PendingIntents; both success and MY_PACKAGE_REPLACED
+then attempted a background activity start with CLEAR_TASK. Modern Android can
+silently block that attempt, even when startActivity does not throw.
+
+New sessions use an explicit, session-scoped mutable activity PendingIntent to
+the non-exported UpdateInstallActivity. The system can fill confirmation/status
+extras and retain the callback across package/process replacement. Android 15+
+creator BAL opt-in (Android 16's ALLOW_ALWAYS mode) is scoped to this updater token.
+The activity handles results after foreground resume, still opens Android's
+required confirmation UI, and opens MainActivity directly on success. Failures
+return to the existing mandatory gate for retry. Main relaunch reuses its task
+with CLEAR_TOP/SINGLE_TOP rather than wiping it with CLEAR_TASK. No generic
+launcher lookup, alarm, overlay permission, forced sign-out or engine change is
+introduced. Old broadcast sessions/package replacement remain best-effort fallbacks
+using an explicit activity token with creator/sender opt-ins where available.
+
+Android/OEM background-start policy can still refuse an automatic foreground
+launch. Opt-ins do not bypass that policy; the system installer's Open button
+(where provided) or the app icon remains the fallback. Installing this build from
+2.0.103 still starts with the old version's broadcast callback; the decisive test
+of the new handoff requires an update initiated from 2.0.104 to a later testing
+version. Automated callback/intent tests do not prove real package-replacement
+or Android 15/16 BAL behavior. Main/customer release remains 2.0.101.
+
+Validation: internal-test and Android-instrumentation Kotlin compilation passed;
+37 targeted JVM/Robolectric tests passed with zero failures/errors/skips. Tests
+cover explicit activity callbacks, per-session tokens, mutable result delivery on
+API 34, foreground/legacy launch intent construction, no CLEAR_TASK, confirmation,
+success/failure handling, mandatory gate retention, activation and persistent live
+output regressions. Final log: `/tmp/opencode/update-relaunch-final-validation.log`.
+Testing uses the existing Publish Testing APK workflow. Install 2.0.104-test first,
+then publish a later version-only testing update to exercise the new callback.
 
 ## Mandatory-update device exercise in 2.0.103 / 419
 

@@ -11,17 +11,8 @@ import com.arflix.tv.R
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
-/**
- * Handles PackageInstaller session callbacks for the in-app APK updater.
- *
- * The Android [PackageInstaller] session API requires user confirmation for non-privileged
- * apps. It delivers the result by firing the supplied PendingIntent with
- * [PackageInstaller.EXTRA_STATUS] == [PackageInstaller.STATUS_PENDING_USER_ACTION] and an
- * [Intent.EXTRA_INTENT] containing the system install-confirmation Activity. Without a
- * receiver to pick that up and start the confirm Activity, the "Installing update..." flow
- * hangs forever and no install ever happens — which is exactly what was reported in
- * issues #116, #99, and #75 for versions 1.9.3 through 1.9.73.
- */
+/** Compatibility for pre-2.0.104 broadcast sessions and package replacement.
+ * New installer sessions deliver results directly to UpdateInstallActivity. */
 @AndroidEntryPoint
 class ApkInstallReceiver : BroadcastReceiver() {
 
@@ -35,10 +26,25 @@ class ApkInstallReceiver : BroadcastReceiver() {
         // This is also the fallback for installers that do not deliver the
         // session STATUS_SUCCESS callback to the replaced process.
         if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            launchUpdatedApp(context)
+            UpdateRelaunch.openApp(context)
             return
         }
 
+        if (intent.action == actionFor(context)) {
+            ApkInstallResultHandler.handle(context, intent, updateStatusManager)
+        }
+    }
+
+    companion object {
+        fun actionFor(context: Context): String = "${context.packageName}.INSTALL_COMPLETE"
+    }
+}
+
+/** Shared by the direct foreground callback and legacy broadcast sessions. */
+internal object ApkInstallResultHandler {
+    private const val TAG = "ApkInstallResult"
+
+    fun handle(context: Context, intent: Intent, updateStatusManager: UpdateStatusManager) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
 
@@ -54,6 +60,7 @@ class ApkInstallReceiver : BroadcastReceiver() {
 
                 if (confirmIntent == null) {
                     Log.e(TAG, "STATUS_PENDING_USER_ACTION without EXTRA_INTENT — cannot prompt user.")
+                    updateStatusManager.updateStatus(UpdateStatus.Failure(context.getString(R.string.update_install_manual_confirm)))
                     return
                 }
 
@@ -73,6 +80,7 @@ class ApkInstallReceiver : BroadcastReceiver() {
                     // Some Android TV forks (particularly Chinese AOSP variants) don't
                     // handle the system confirm intent correctly. Log but don't crash.
                     Log.e(TAG, "Failed to launch install confirmation Activity: ${e.message}", e)
+                    updateStatusManager.updateStatus(UpdateStatus.Failure(context.getString(R.string.update_install_manual_confirm)))
                     showToast(context, context.getString(R.string.update_install_manual_confirm))
                 }
             }
@@ -80,7 +88,7 @@ class ApkInstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_SUCCESS -> {
                 Log.i(TAG, "Update installed successfully.")
                 updateStatusManager.updateStatus(UpdateStatus.Success())
-                launchUpdatedApp(context)
+                UpdateRelaunch.openApp(context)
             }
 
             PackageInstaller.STATUS_FAILURE,
@@ -118,33 +126,4 @@ class ApkInstallReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun launchUpdatedApp(context: Context) {
-        val packageManager = context.packageManager
-        val launchIntent = packageManager.getLeanbackLaunchIntentForPackage(context.packageName)
-            ?: packageManager.getLaunchIntentForPackage(context.packageName)
-        if (launchIntent == null) {
-            Log.w(TAG, "Installed update but could not resolve launch Activity.")
-            return
-        }
-        launchIntent.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_CLEAR_TASK
-        )
-        runCatching { context.startActivity(launchIntent) }
-            .onFailure { error -> Log.e(TAG, "Failed to launch installed update.", error) }
-    }
-
-    companion object {
-        private const val TAG = "ApkInstallReceiver"
-
-        /**
-         * The broadcast action used for PackageInstaller session callbacks. Derived from the
-         * applicationId at runtime so it's unique per build flavor (e.g. `.staging`) and
-         * cannot collide with other installs of ARVIO on the same device.
-         */
-        fun actionFor(context: Context): String {
-            return "${context.packageName}.INSTALL_COMPLETE"
-        }
-    }
 }

@@ -1,6 +1,5 @@
 package com.arflix.tv.updater
 
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
@@ -116,6 +115,7 @@ object ApkInstaller {
                 val installer = pm.packageInstaller
                 val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
                 params.setSize(apkFile.length())
+                params.setAppPackageName(context.packageName)
 
                 val sessionId = installer.createSession(params)
                 val session = installer.openSession(sessionId)
@@ -127,22 +127,10 @@ object ApkInstaller {
                     session.fsync(out)
                 }
 
-                // Use a broadcast PendingIntent instead of activity — works reliably
-                // on Android TV where the Application context isn't an Activity.
-                // The action is per-applicationId so it's unique per flavor / install.
-                // ApkInstallReceiver (registered in the manifest) picks up the callback and
-                // launches the system install-confirmation Activity on STATUS_PENDING_USER_ACTION,
-                // without which the session commit succeeds silently but no install ever happens.
-                val intent = Intent(ApkInstallReceiver.actionFor(context))
-                    .setPackage(context.packageName)
-                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-                } else {
-                    PendingIntent.FLAG_UPDATE_CURRENT
-                }
-                val pendingIntent = PendingIntent.getBroadcast(
-                    context.applicationContext, sessionId, intent, flags
-                )
+                // A receiver -> startActivity trampoline is not a reliable
+                // post-update launch on modern Android. The system retains an
+                // explicit activity callback across replacement/process death.
+                val pendingIntent = UpdateRelaunch.createStatusCallback(context.applicationContext, sessionId)
 
                 session.commit(pendingIntent.intentSender)
                 session.close()
