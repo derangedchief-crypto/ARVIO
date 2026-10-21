@@ -20,7 +20,7 @@ import com.arflix.tv.player.dvmkv.MatroskaExtractor as DvMatroskaExtractor
  * sample interception would only matter for a future RPU-conversion path, which is out of scope.
  *
  * Every non-MKV extractor passes through untouched, and a non-DV MKV pays only a per-sample
- * no-op transformer call — the vendored extractor is otherwise stock media3 1.9.0.
+ * no-op transformer call — the extractor retains its 1.9.0 base with current Media3 API adapters.
  */
 @UnstableApi
 class DolbyVisionStripExtractorsFactory(

@@ -1,5 +1,6 @@
 /**
- * Vendored copy of media3 1.9.0's Matroska extractor with Dolby Vision profile-7 sample hooks.
+ * Based on media3 1.9.0's Matroska extractor with Dolby Vision profile-7 sample hooks,
+ * with API adaptations for the app's aligned media3 1.11.1 compile/runtime (including DTS probing).
  * The DV7 RPU rides in Matroska BlockAdditional, which the stock extractor
  * discards before any TrackOutput sees it — there is no app-level seam, hence the fork. Keep in
  * sync when bumping the media3 version: re-base on the new tag and re-apply the DV diff

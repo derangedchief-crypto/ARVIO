@@ -40,8 +40,8 @@ android {
         // longer receive this distribution.
         minSdk = 26
         targetSdk = 36
-        versionCode = 421
-        versionName = "2.0.105"
+        versionCode = 422
+        versionName = "2.0.106"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("String", "UPDATE_RELEASE_TAG", "\"\"")
@@ -232,7 +232,7 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDir("src/main/tdlib-java")
-            // Vendored media3 1.9.0 Matroska extractor with Dolby Vision P7 sample hooks
+            // Vendored Matroska extractor (1.9.0 base, current Media3 API adapters) with DV P7 hooks
             // (see dvmkv/package-info.java for the re-vendoring procedure on media3 bumps).
             java.srcDir("src/main/dvmkv-java")
         }
@@ -385,7 +385,9 @@ dependencies {
     implementation("androidx.tvprovider:tvprovider:1.1.0")
 
     // ExoPlayer / Media3 for video playback
-    val media3Version = "1.9.0"
+    // OwnTV Player Core already packages 1.11.1 through its implementation
+    // dependencies. Compile host playback against that same ABI, not 1.9.0.
+    val media3Version = "1.11.1"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
@@ -681,6 +683,34 @@ androidComponents {
         }
         tasks.matching { it.name == "pre${suffix}Build" }.configureEach {
             dependsOn(verifyCompose)
+        }
+        val verifyMedia3 = tasks.register("verify${suffix}Media3Alignment") {
+            group = "verification"
+            description = "Reject Media3 compile/runtime ABI mismatches for ${variant.name}"
+            doLast {
+                fun media3Versions(configurationName: String): Map<String, String> =
+                    configurations.getByName(configurationName).incoming.resolutionResult.allComponents
+                        .mapNotNull { component ->
+                            val id = component.id as? org.gradle.api.artifacts.component.ModuleComponentIdentifier
+                            id?.takeIf { it.group == "androidx.media3" }
+                                ?.let { "${it.group}:${it.module}" to it.version }
+                        }.toMap()
+                val compiled = media3Versions("${variant.name}CompileClasspath")
+                val packaged = media3Versions("${variant.name}RuntimeClasspath")
+                val mismatches = compiled.mapNotNull { (module, version) ->
+                    val runtime = packaged[module]
+                    if (runtime != version) "$module: compiled=$version, packaged=$runtime" else null
+                }
+                check(mismatches.isEmpty()) {
+                    "Media3 compile/runtime mismatch:\n${mismatches.joinToString("\n")}"
+                }
+                check((compiled.values + packaged.values).toSet().size <= 1) {
+                    "Media3 modules must share one ABI version: compiled=$compiled, packaged=$packaged"
+                }
+            }
+        }
+        tasks.matching { it.name == "pre${suffix}Build" }.configureEach {
+            dependsOn(verifyMedia3)
         }
     }
 }

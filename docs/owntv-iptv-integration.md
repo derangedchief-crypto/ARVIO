@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `421`. Version name is `2.0.105`, following the actual
+Current development version code is `422`. Version name is `2.0.106`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,49 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## DTS MKV linkage repair in 2.0.106 / 422
+
+The supplied Sentry event `8ad423a7` (trace `5463f8a1b34c48aea566a14899d587ed`)
+reports a fatal `DtsUtil.isSampleDtsHd(ExtractorInput, int)` call from the vendored
+MatroskaExtractor.writeSampleData, first seen in 2.0.100 and reproduced in
+2.0.103-test. No canonical issue URL was supplied. Trakt's earlier handled HTTP
+errors are not on the failing extractor/loader stack.
+
+Dependency inspection confirmed host compile Media3 1.9.0 versus packaged Media3
+1.11.1 (OwnTV's implementation dependencies upgrade runtime only). Inspection of
+the actual cached AAR classes confirmed isSampleDtsHd exists in 1.9.0 but not
+1.11.1, which provides updateFormatWithDtsHdInfo instead. Host declarations now
+match the existing 1.11.1 runtime; this is not a decoder/library downgrade or an
+OwnTV engine change. A per-variant pre-build verification task rejects mismatched
+Media3 compile/runtime modules and mixed Media3 module versions. A negative fixture
+deliberately forcing compile extractor 1.9.0 correctly failed with the new ABI
+mismatch diagnostic (fixture/log stay outside the repository).
+
+The vendored extractor now uses the current format-aware DTS-HD probe and skips
+probing samples shorter than the four-byte sync word. Its unused private legacy
+probe is removed. Dolby Vision P7 hooks, source selection, DRM, the fast live
+engine, normal Back behavior and the update/relaunch implementation are unchanged.
+The fork remains based on 1.9.0 with explicit current-API adapters, not a claimed
+full rebase to 1.11.1. Source/package documentation reflects that distinction.
+
+Regression fixtures exercise the actual private writeSampleData call site against
+the real runtime using synthetic DTS core/HD extension headers, plus factory
+replacement/toggle tests for existing DV hooks. These are extractor/API tests,
+not hardware DTS decoding tests. The affected movie/stream still needs a device
+retest after a fixed testing APK is published. Main/customer remains 2.0.101;
+2.0.105's separate relaunch exercise does not contain this repair.
+
+Validation: 146 targeted JVM/Robolectric tests passed, zero failures/errors/skips,
+including the 10 DTS/DV regressions plus live presentation/tuning, updater/relaunch,
+activation, source preference and actual application startup checks. Internal-test
+Java/Kotlin and Android-instrumentation Kotlin compilation passed. The customer
+staging Media3 alignment guard also passed. Final log:
+`/tmp/opencode/dts-media3-final-validation.log`; negative guard log:
+`/tmp/opencode/dts-media3-negative-guard.log`. No hardware DTS decoding or playback
+of the customer's affected stream was performed locally. The user authorized
+publishing 2.0.106-test through the existing testing workflow. Device checks should
+use the in-app updater, confirm reopening, and replay the affected DTS MKV.
 
 ## Relaunch device exercise in 2.0.105 / 421
 
