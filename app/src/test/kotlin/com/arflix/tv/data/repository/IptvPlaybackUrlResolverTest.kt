@@ -2,6 +2,8 @@ package com.arflix.tv.data.repository
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -11,6 +13,89 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 class IptvPlaybackUrlResolverTest {
+    @Test fun `native OwnTV tunes skip redundant redirect probes but recovery still verifies HLS`() = runBlocking {
+        val calls = AtomicInteger()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            calls.incrementAndGet()
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .header("Content-Type", "application/x-mpegURL").body("".toResponseBody()).build()
+        }.build()
+        try {
+            val resolver = IptvPlaybackUrlResolver(client)
+            val url = "http://provider.test/live/user/pass/channel-slug"
+            assertThat(resolver.resolve(url, emptyMap(), nativeContainerDetection = true).url).isEqualTo(url)
+            assertThat(calls.get()).isEqualTo(0)
+            assertThat(resolver.resolve(url, emptyMap(), forceRefresh = true, nativeContainerDetection = true).isHls).isTrue()
+            assertThat(calls.get()).isEqualTo(1)
+        } finally { client.dispatcher.executorService.shutdown() }
+    }
+
+    @Test fun `changing channels cancels the outstanding provider preflight`() = runBlocking {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val callRef = java.util.concurrent.atomic.AtomicReference<okhttp3.Call>()
+        val client = OkHttpClient.Builder().eventListener(object : okhttp3.EventListener() {
+            override fun callStart(call: okhttp3.Call) { callRef.set(call) }
+        }).addInterceptor { chain ->
+            entered.countDown()
+            release.await(2, java.util.concurrent.TimeUnit.SECONDS)
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .header("Content-Type", "application/x-mpegURL").body("".toResponseBody()).build()
+        }.build()
+        try {
+            val resolver = IptvPlaybackUrlResolver(client)
+            val job = launch(kotlinx.coroutines.Dispatchers.Default) {
+                resolver.resolve("http://provider.test/live/user/pass/channel-slug", emptyMap())
+            }
+            assertThat(entered.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue()
+            job.cancelAndJoin()
+            assertThat(callRef.get().isCanceled()).isTrue()
+        } finally { release.countDown(); client.dispatcher.executorService.shutdown() }
+    }
+
+    @Test fun `slow preflight is cancelled within one budget and does not poison the cache`() = runBlocking {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val calls = java.util.concurrent.ConcurrentLinkedQueue<okhttp3.Call>()
+        val slow = java.util.concurrent.atomic.AtomicBoolean(true)
+        val client = OkHttpClient.Builder().eventListener(object : okhttp3.EventListener() {
+            override fun callStart(call: okhttp3.Call) { calls.add(call) }
+        }).addInterceptor { chain ->
+            if (slow.get()) release.await(2, java.util.concurrent.TimeUnit.SECONDS)
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .header("Content-Type", "application/x-mpegURL").body("".toResponseBody()).build()
+        }.build()
+        try {
+            val resolver = IptvPlaybackUrlResolver(client, probeTimeoutMs = 150L)
+            val url = "http://provider.test/live/user/pass/channel-slug"
+            val started = System.nanoTime()
+            val fallback = resolver.resolve(url, emptyMap())
+            assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(1_500L)
+            assertThat(fallback.url).isEqualTo(url)
+            assertThat(fallback.isHls).isFalse()
+            assertThat(calls.first().isCanceled()).isTrue()
+            slow.set(false); release.countDown()
+            val fresh = resolver.resolve(url, emptyMap())
+            assertThat(fresh.isHls).isTrue()
+            assertThat(calls.size).isEqualTo(2)
+        } finally {
+            release.countDown()
+            client.dispatcher.executorService.shutdown()
+        }
+    }
+
+    @Test fun `explicit recovery retains a longer budget for slow providers`() = runBlocking {
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            Thread.sleep(100)
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .header("Content-Type", "application/x-mpegURL").body("".toResponseBody()).build()
+        }.build()
+        try {
+            val resolver = IptvPlaybackUrlResolver(client, probeTimeoutMs = 20L)
+            val url = "http://provider.test/live/user/pass/channel-slug"
+            assertThat(resolver.resolve(url, emptyMap()).isHls).isFalse()
+            assertThat(resolver.resolve(url, emptyMap(), forceRefresh = true).isHls).isTrue()
+        } finally { client.dispatcher.executorService.shutdown() }
+    }
 
     @Test
     fun `extensionless slug live URL resolves redirect and HLS type`() = runBlocking {

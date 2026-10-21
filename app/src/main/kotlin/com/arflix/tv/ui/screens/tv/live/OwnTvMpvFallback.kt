@@ -115,6 +115,9 @@ internal class OwnTvMpvFallback(context: Context) {
         refreshUrl: (suspend () -> String?)? = null) {
         engine.play(url = url, isLive = !archive, isArchive = archive,
             startPositionMs = startPositionMs, muted = false,
+            // Do not inherit an invisible OwnTV global pre-roll gate for ARVIO
+            // live tunes. Preserve upstream probing, cache depth and retry logic.
+            livePrerollSecsOverride = if (archive) null else 0,
             userAgent = StreamHeaders.userAgentOf(headers), httpHeaders = StreamHeaders.encode(headers),
             // Always replace the provider: upstream deliberately retains a live
             // provider when passed null, which would reuse the previous channel.

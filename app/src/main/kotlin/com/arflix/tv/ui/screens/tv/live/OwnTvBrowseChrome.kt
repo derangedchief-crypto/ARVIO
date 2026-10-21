@@ -115,7 +115,9 @@ fun OwnTvChannelLabel(
         }
         Column(Modifier.weight(1f)) {
             Text(channel.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                modifier = Modifier.fillMaxWidth().liveChannelNameMarquee(focused || isActive),
+                maxLines = 1, softWrap = false,
+                overflow = if (focused || isActive) TextOverflow.Clip else TextOverflow.Ellipsis)
             Text(if (isFavorite) "★  ${channel.number}" else channel.number.toString(),
                 color = TvStageStyle.Muted, fontSize = 10.sp)
         }

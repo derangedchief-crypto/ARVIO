@@ -193,8 +193,9 @@ fun ChannelRow(
                         color = if (isActive) LiveColors.Accent else LiveColors.Fg,
                     ),
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    overflow = if (visuallyFocused || isActive) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    softWrap = false,
+                    modifier = Modifier.weight(1f, fill = false).liveChannelNameMarquee(visuallyFocused || isActive),
                 )
                 if (isFavorite) {
                     Spacer(Modifier.width(4.dp))

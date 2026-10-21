@@ -2519,29 +2519,26 @@ fun LiveTvScreen(
             }
         }
     }
+    var previousTuneRequestMs by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(currentStreamUrl, playingCatchupProgram, catchupUrlAnchorOffsetMs, playingChannel?.id) {
-        // Debounce: rapid channel changes (holding channel-down, fast zapping)
-        // previously rebuilt the native decoder — exoPlayer.stop() -> clearMediaItems()
-        // -> setMediaItem() -> prepare() — on every single intermediate channel with
-        // no throttling at all. Native decoder teardown isn't instant, so quick
-        // repeated changes could leave more than one codec instance alive in native
-        // memory at once, which is a well-known way to exhaust memory and crash
-        // natively on low-RAM TV hardware. LaunchedEffect cancels this coroutine
-        // outright when its keys change again, so this delay is a real, clean
-        // cancellation point — only the channel the user actually settles on for
-        // longer than the debounce window ever reaches the expensive resolve+prepare
-        // work below; every skipped-through channel in between costs nothing.
-        delay(250L)
         val rawStream = currentStreamUrl ?: return@LaunchedEffect
+        val now = android.os.SystemClock.elapsedRealtime()
+        val debounceMs = liveTuneDebounceMs(previousTuneRequestMs, now)
+        previousTuneRequestMs = now
+        // Keep cancellation/coalescing for held channel keys, without delaying
+        // the first tune or an ordinary deliberate selection.
+        if (debounceMs > 0) delay(debounceMs)
         val sourceChannel = playingChannel?.source
         val streamProgram = playingCatchupProgram?.shiftedForCatchup(catchupUrlAnchorOffsetMs)
         val target = runCatching {
             if (sourceChannel != null) {
-                viewModel.resolvePlayableStreamUrl(sourceChannel, streamProgram, catchupAttempt = 0)
+                viewModel.resolvePlayableStreamUrl(sourceChannel, streamProgram, catchupAttempt = 0,
+                    nativeContainerDetection = sourceChannel.drmInfo == null)
             } else {
                 IptvPlaybackTarget(rawStream)
             }
         }.getOrElse { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
             playbackDiagnostic = PlaybackDiagnostic(
                 title = if (playingCatchupProgram != null) context.getString(R.string.live_diag_catchup_unavailable) else context.getString(R.string.live_diag_playback_failed),
                 detail = error.message ?: context.getString(R.string.live_diag_no_playable_stream),
@@ -3770,44 +3767,6 @@ private fun classifyPlaybackError(error: PlaybackException): String {
         "decoder" in name || "audio" in name || "video" in name -> "device codec issue"
         else -> "source did not start"
     }
-}
-
-private data class LiveTvBufferProfile(
-    val minBufferMs: Int,
-    val maxBufferMs: Int,
-    val bufferForPlaybackMs: Int,
-    val bufferForPlaybackAfterRebufferMs: Int,
-    val targetBufferBytes: Int,
-    val backBufferMs: Int,
-)
-
-private fun buildLiveTvBufferProfile(
-    memoryClassMb: Int,
-    isLowRamDevice: Boolean,
-): LiveTvBufferProfile {
-    // Live-TV-appropriate buffering. The previous profile (96-160MB target,
-    // 120-150s max buffer) treated a live stream like a VOD download: ExoPlayer's
-    // buffer chunks are Java-heap byte arrays, so on a 384MB-capped TV box the
-    // player alone could consume most of the heap — measured at 306-341MB with
-    // 0% free, OOM-crashing the Live TV page during navigation. Live playback
-    // only ever needs a ~30s safety window; smaller targets also start channels
-    // faster and stop the initial bandwidth burn that caused early buffering.
-    val heapMb = memoryClassMb.coerceAtLeast(256)
-    val constrained = isLowRamDevice || heapMb <= 384
-    // 32 MiB is too shallow for many 1080p/4K IPTV feeds: a brief Wi-Fi or
-    // provider-rate dip drains it in seconds and presents as choppy playback.
-    // 48 MiB stays far below the former 96–160 MiB OOM-prone allocation while
-    // providing a useful live-stream safety margin on 384 MiB TV heaps.
-    val targetMb = if (constrained) 48 else 64
-
-    return LiveTvBufferProfile(
-        minBufferMs = 20_000,
-        maxBufferMs = 45_000,
-        bufferForPlaybackMs = 1_500,
-        bufferForPlaybackAfterRebufferMs = if (constrained) 3_500 else 4_000,
-        targetBufferBytes = targetMb * 1024 * 1024,
-        backBufferMs = 5_000,
-    )
 }
 
 private fun httpResponseCode(error: PlaybackException): Int? {

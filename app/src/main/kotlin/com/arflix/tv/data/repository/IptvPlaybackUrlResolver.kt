@@ -1,11 +1,16 @@
 package com.arflix.tv.data.repository
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
 import java.net.URI
 import java.util.Locale
+import kotlin.coroutines.resume
 
 internal data class IptvPlaybackTarget(
     val url: String,
@@ -16,6 +21,7 @@ internal class IptvPlaybackUrlResolver(
     private val client: OkHttpClient,
     private val cacheTtlMs: Long = 5 * 60_000L,
     private val maxCacheEntries: Int = 256,
+    private val probeTimeoutMs: Long = 1_500L,
 ) {
     private data class ProbeResult(
         val target: IptvPlaybackTarget,
@@ -33,13 +39,17 @@ internal class IptvPlaybackUrlResolver(
         rawUrl: String,
         headers: Map<String, String>,
         forceRefresh: Boolean = false,
+        nativeContainerDetection: Boolean = false,
     ): IptvPlaybackTarget {
         val url = rawUrl.trim()
         val inferredTarget = IptvPlaybackTarget(
             url = url,
             isHls = looksLikeHlsPlaybackUrl(url),
         )
-        if (!shouldResolveIptvPlaybackRedirect(url)) return inferredTarget
+        // OwnTV detects the actual container and follows redirects itself. Do
+        // not open a second provider connection merely to discover its format.
+        // DRM/Media3 and explicit recovery retain the typed preflight below.
+        if ((nativeContainerDetection && !forceRefresh) || !shouldResolveIptvPlaybackRedirect(url)) return inferredTarget
 
         val now = System.currentTimeMillis()
         if (!forceRefresh) {
@@ -50,26 +60,29 @@ internal class IptvPlaybackUrlResolver(
             }
         }
 
-        val resolved = withContext(Dispatchers.IO) {
+        // Optional preflight must not spend two independent five-second calls
+        // ahead of the real player. Cancellation also closes its provider socket.
+        // Explicit recovery gets the old, more patient budget for slow sources.
+        val resolved = withTimeoutOrNull(if (forceRefresh) maxOf(probeTimeoutMs, 5_000L) else probeTimeoutMs) {
             val headProbe = executeProbe(url, headers, useHead = true)
             if (headProbe?.isConclusive == true) {
-                headProbe.target
+                headProbe
             } else {
-                executeProbe(url, headers, useHead = false)?.target ?: inferredTarget
+                executeProbe(url, headers, useHead = false)
             }
         }
 
-        synchronized(cache) {
-            cache[url] = CachedTarget(resolved, now)
+        if (resolved?.isConclusive == true) synchronized(cache) {
+            cache[url] = CachedTarget(resolved.target, System.currentTimeMillis())
             while (cache.size > maxCacheEntries) {
                 val firstKey = cache.keys.firstOrNull() ?: break
                 cache.remove(firstKey)
             }
         }
-        return resolved
+        return resolved?.target ?: inferredTarget
     }
 
-    private fun executeProbe(
+    private suspend fun executeProbe(
         url: String,
         headers: Map<String, String>,
         useHead: Boolean,
@@ -96,36 +109,36 @@ internal class IptvPlaybackUrlResolver(
                 }
                 .build()
 
-            client.newCall(request).execute().use { response ->
-                val finalUrl = response.request.url.toString().ifBlank { url }
-                val contentType = response.header("Content-Type")
-                val bodyStartsWithM3u = if (!useHead) {
-                    response.peekBody(64).string().trimStart().startsWith("#EXTM3U", ignoreCase = true)
-                } else {
-                    false
-                }
-                val target = IptvPlaybackTarget(
-                    url = finalUrl,
-                    isHls = looksLikeHlsPlaybackUrl(finalUrl) ||
-                        contentType.isHlsContentType() ||
-                        bodyStartsWithM3u,
-                )
-                ProbeResult(
-                    target = target,
-                    isConclusive = finalUrl != url ||
-                        target.isHls ||
-                        contentType.isDirectMediaContentType(),
-                )
+            suspendCancellableCoroutine<ProbeResult?> { continuation ->
+                val call = client.newCall(request)
+                continuation.invokeOnCancellation { call.cancel() }
+                call.enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        if (continuation.isActive) continuation.resume(null)
+                    }
+                    override fun onResponse(call: Call, response: Response) {
+                        val result = try { response.use {
+                            if (!it.isSuccessful) null else probeResponse(it, url, useHead)
+                        } } catch (_: Exception) { null }
+                        if (continuation.isActive) continuation.resume(result)
+                    }
+                })
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
-        } catch (e: java.io.IOException) {
-            null
-        } catch (e: java.lang.IllegalArgumentException) {
-            null
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun probeResponse(response: Response, url: String, useHead: Boolean): ProbeResult {
+        val finalUrl = response.request.url.toString().ifBlank { url }
+        val contentType = response.header("Content-Type")
+        val bodyStartsWithM3u = !useHead && response.peekBody(64).string().trimStart()
+            .startsWith("#EXTM3U", ignoreCase = true)
+        val target = IptvPlaybackTarget(url = finalUrl,
+            isHls = looksLikeHlsPlaybackUrl(finalUrl) || contentType.isHlsContentType() || bodyStartsWithM3u)
+        return ProbeResult(target, isConclusive = finalUrl != url || target.isHls || contentType.isDirectMediaContentType())
     }
 }
 

@@ -1708,7 +1708,8 @@ class TvViewModel @Inject constructor(
         channel: IptvChannel,
         program: IptvProgram? = null,
         forceRefresh: Boolean = false,
-        catchupAttempt: Int = 0
+        catchupAttempt: Int = 0,
+        nativeContainerDetection: Boolean = false,
     ): IptvPlaybackTarget {
         val rawUrl = if (program != null) {
             iptvRepository.resolvePlayableCatchupUrl(channel, program, catchupAttempt)
@@ -1725,6 +1726,7 @@ class TvViewModel @Inject constructor(
             rawUrl = resolvedUrl,
             headers = channel.requestHeaders,
             forceRefresh = forceRefresh,
+            nativeContainerDetection = nativeContainerDetection,
         )
     }
 
