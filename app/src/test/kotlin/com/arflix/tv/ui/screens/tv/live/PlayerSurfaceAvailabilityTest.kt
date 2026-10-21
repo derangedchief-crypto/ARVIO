@@ -24,11 +24,4 @@ class PlayerSurfaceAvailabilityTest {
         assertEquals(3, changes)
     }
 
-    @Test fun outgoingFullscreenLayerLivesUntilPreviewOwnsTheOutput() {
-        assertTrue(keepFullscreenPlayerLayer(true, true, 0f, false))
-        assertTrue(keepFullscreenPlayerLayer(true, false, 0.4f, false))
-        assertTrue(keepFullscreenPlayerLayer(true, false, 0f, true))
-        assertFalse(keepFullscreenPlayerLayer(true, false, 0f, false))
-        assertFalse(keepFullscreenPlayerLayer(false, true, 1f, true))
-    }
 }

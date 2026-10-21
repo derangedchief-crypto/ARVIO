@@ -7,7 +7,8 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.os.SystemClock
-import android.view.LayoutInflater
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import android.content.pm.ActivityInfo
 import com.arflix.tv.util.findActivity
 import android.view.KeyEvent as AndroidKeyEvent
@@ -2798,20 +2799,21 @@ fun LiveTvScreen(
         animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
         label = "tv-fullscreen-progress",
     )
-    var miniPlayerView by remember { mutableStateOf<PlayerView?>(null) }
-    var fullPlayerView by remember { mutableStateOf<PlayerView?>(null) }
+    var videoPlayerView by remember { mutableStateOf<PlayerView?>(null) }
     var attachedPlayerView by remember { mutableStateOf<PlayerView?>(null) }
-    val playerSurfaceRevision = rememberPlayerSurfaceRevision(miniPlayerView, fullPlayerView)
+    val playerSurfaceRevision = rememberPlayerSurfaceRevision(videoPlayerView)
+    var liveRootOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var liveRootSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    var previewBoundsInWindow by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    val hasPlayback = playingChannelId != null || currentStreamUrl != null
+    var videoHostStarted by remember { mutableStateOf(false) }
+    androidx.compose.runtime.SideEffect { if (hasPlayback) videoHostStarted = true }
 
-    fun releasePlayerView(view: PlayerView, isMini: Boolean) {
+    fun releasePlayerView(view: PlayerView) {
         com.arflix.tv.util.AppLogger.breadcrumb("LiveSurface",
-            "release view=${if (isMini) "preview" else "fullscreen"} requested=${attachedPlayerView === view}")
+            "release persistent view current=${attachedPlayerView === view}")
         ownTvMpvFallback.detach(view)
-        if (isMini) {
-            if (miniPlayerView === view) miniPlayerView = null
-        } else if (fullPlayerView === view) {
-            fullPlayerView = null
-        }
+        if (videoPlayerView === view) videoPlayerView = null
         // The view is being removed, so it must not be used as the old target
         // on the next handoff. Leave its stale Player reference alone: calling
         // setPlayer(null) after the replacement view is attached would clear
@@ -2821,16 +2823,11 @@ fun LiveTvScreen(
 
     LaunchedEffect(
         exoPlayer,
-        isFullScreen,
-        miniPlayerView,
-        fullPlayerView,
+        videoPlayerView,
         usingOwnTvMpvFallback,
         playerSurfaceRevision,
     ) {
-        com.arflix.tv.util.AppLogger.setCrashContext("live_fullscreen", isFullScreen)
-        com.arflix.tv.util.AppLogger.breadcrumb("LiveSurface",
-            "presentation=${if (isFullScreen) "fullscreen" else "guide"} ownTv=$usingOwnTvMpvFallback")
-        val targetView = if (isFullScreen) fullPlayerView else miniPlayerView
+        val targetView = videoPlayerView
         // The destination AndroidView is composed in the same frame as the
         // state transition. Do not detach the current surface during that
         // short window; wait until there is a real replacement target.
@@ -2861,10 +2858,19 @@ fun LiveTvScreen(
         }
     }
 
+    LaunchedEffect(isFullScreen) {
+        com.arflix.tv.util.AppLogger.setCrashContext("live_fullscreen", isFullScreen)
+        com.arflix.tv.util.AppLogger.breadcrumb("LiveSurface", "resize presentation=${if (isFullScreen) "fullscreen" else "guide"}")
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(TvStageStyle.Background)
+            .then(Modifier.onGloballyPositioned {
+                liveRootOrigin = it.positionInWindow()
+                liveRootSize = it.size
+            })
             .then(
                 if (!isTouchDevice) {
                     Modifier.onPreviewKeyEvent { event ->
@@ -2976,8 +2982,8 @@ fun LiveTvScreen(
                         compact = true,
                         landscapeCompact = landscapeCompactMiniPlayer,
                         surfaceResetKey = if (usingOwnTvMpvFallback) ownTvSurfaceResetKey else null,
-                        onPlayerViewCreated = { view -> miniPlayerView = view },
-                        onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
+                        externalVideo = true,
+                        onVideoBoundsChanged = { previewBoundsInWindow = it },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OwnTvCategorySheetBar(
@@ -3138,8 +3144,8 @@ fun LiveTvScreen(
                         compact = compactTouchLayout,
                         guideMode = !isTouchDevice,
                         surfaceResetKey = if (usingOwnTvMpvFallback) ownTvSurfaceResetKey else null,
-                        onPlayerViewCreated = { view -> miniPlayerView = view },
-                        onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
+                        externalVideo = true,
+                        onVideoBoundsChanged = { previewBoundsInWindow = it },
                         modifier = Modifier.fillMaxWidth().padding(end = if (isTouchDevice) 0.dp else 48.dp),
                     )
                     GuideBackfillStatus(
@@ -3206,7 +3212,16 @@ fun LiveTvScreen(
 
         }
 
-        // Full-screen playback: same ExoPlayer, covers the entire screen.
+        if (hasPlayback || videoHostStarted) {
+            PersistentLiveVideoLayer(
+                bounds = liveVideoPlacement(liveRootSize, liveRootOrigin, previewBoundsInWindow, isFullScreen),
+                visible = hasPlayback, fullscreen = isFullScreen,
+                resetKey = if (playingChannel?.source?.drmInfo != null) null else ownTvSurfaceResetKey,
+                channel = playingChannel, onOpenFullscreen = openFullScreenPlayer,
+                onCreated = { videoPlayerView = it }, onReleased = ::releasePlayerView)
+        }
+
+        // Full-screen controls are separate from the persistent video output.
         //
         // The overlay animates a scale+alpha transition so it looks like the
         // mini-player is growing into fullscreen. The transform pivot is
@@ -3215,8 +3230,7 @@ fun LiveTvScreen(
         // anchored visually to where the user tapped instead of from screen
         // center. fsProgress stays mounted until it reaches 0, so the
         // reverse animation also plays on Back.
-        val returningSurfaceStillBound = !isFullScreen && fullPlayerView != null && attachedPlayerView === fullPlayerView
-        if (keepFullscreenPlayerLayer(playingChannel != null, isFullScreen, fsProgress, returningSurfaceStillBound)) {
+        if ((isFullScreen || fsProgress > 0f) && playingChannel != null) {
             val scale = 0.35f + 0.65f * fsProgress
     BackHandler(enabled = isFullScreen) {
         if (fullscreenGuideOpen) {
@@ -3243,7 +3257,6 @@ fun LiveTvScreen(
                         scaleY = scale
                         alpha = fsProgress
                     }
-                    .background(Color.Black)
                     .focusRequester(fsFocus)
                     .focusable(enabled = isFullScreen || fsProgress > 0f)
                     .onPreviewKeyEvent { ev ->
@@ -3335,31 +3348,6 @@ fun LiveTvScreen(
                         }
                     ),
             ) {
-                androidx.compose.runtime.key(if (usingOwnTvMpvFallback) ownTvSurfaceResetKey else null) {
-                androidx.compose.ui.viewinterop.AndroidView(
-                    factory = { ctx ->
-                        val view = (LayoutInflater.from(ctx)
-                            .inflate(R.layout.live_tv_player_view, null) as PlayerView).apply {
-                            keepScreenOn = true
-                            useController = false
-                            setKeepContentOnPlayerReset(true)
-                            isFocusable = false
-                            isFocusableInTouchMode = false
-                            descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                        }
-                        fullPlayerView = view
-                        view
-                    },
-                    update = { view ->
-                        view.keepScreenOn = true
-                        fullPlayerView = view
-                    },
-                    onRelease = { view ->
-                        releasePlayerView(view, isMini = false)
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                }
                 if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
                     val categoryTitle = playingChannel?.source?.group?.takeIf { it.isNotBlank() }
                         ?: visibleEnrichedState.value.tree.byId(selectedCategoryId)?.label

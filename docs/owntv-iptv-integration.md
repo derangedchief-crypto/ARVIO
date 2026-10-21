@@ -26,7 +26,7 @@ OwnTV's DRM model does not support). Movies and shows keep their existing player
   instances. Native playback stops when the TV route is disposed.
 - ARVIO's source, favourites, history and SQLite EPG stores remain the data bridge;
   this is **not** a migration of those records into OwnTV's catalog database.
-- Surface ownership follows the mini/fullscreen destination. The player layout
+- A persistent video view resizes between preview/fullscreen. The player layout
   uses SurfaceView, and OwnTV's identity-aware detach protects the newer surface.
 - Native commands, retries, decoder selection and buffer budgets are delegated
   to upstream OwnTVPlayer rather than reimplemented in the ARVIO host.
@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `415`. Version name is `2.0.099`, following the actual
+Current testing version code is `416`. Version name is `2.0.100`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,37 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## One persistent video output in 2.0.100 / 416
+
+The user reports both transition directions still freeze/rebuffer with the prior
+ready-view fix. That fix retained views but still switched the decoder between
+two output surfaces. The Live TV route now creates one `PersistentLiveVideoLayer`
+outside both guide and fullscreen-control subtrees. Guide preview stages report
+their window bounds and render logical slots/editorial controls, not a second
+PlayerView. The persistent view occupies that slot or the full Live TV root by
+changing its bounds; it is not reparented, keyed by fullscreen, or placed inside
+the fullscreen fade/scale layer. Badges and channel-name decorations follow the
+same view. The full control overlay no longer paints an opaque background over it.
+
+The binding effect no longer depends on fullscreen state. Presentation changes
+do not call switchTargetView, change the video target, re-resolve URLs, stop or
+prepare the stream. Only a genuine engine-family change or explicit upstream
+surface-recovery token may require a new binding/view. The initial recovery key
+uses the channel's engine family rather than the later preparation flag, avoiding
+an unnecessary first-tune view replacement. Retained guide/focus/time behavior
+and the existing Back handlers remain; hold-Back fullscreen is not restored.
+
+Tests resize through 20 presentation changes with one PlayerView, one holder,
+one modeled output binding and no view release/detach. The guide slot is tested
+not to create another view. Explicit recovery remains able to replace a view;
+geometry tests cover outer navigation offsets, portrait fullscreen and initially
+unknown bounds. Robolectric has no native decoder surface, so modeled bindings
+use holder identity rather than claiming native frame continuity. Actual device
+transition timing remains to be verified. The fast-engine, activation and backend
+code and the publishing workflow are unchanged.
+Internal-test and Android-instrumentation Kotlin compilation passed, with 420
+targeted JVM/Robolectric tests and zero failures/errors/skips before publication.
 
 ## Ready preview return and retired TV-prefetch removal in 2.0.099 / 415
 

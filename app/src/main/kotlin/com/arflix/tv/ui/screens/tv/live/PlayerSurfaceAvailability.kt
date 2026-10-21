@@ -22,11 +22,10 @@ internal class PlayerSurfaceAvailabilityObserver(private val changed: () -> Unit
 /** Surface creation does not change the PlayerView reference. Wake the binding
  * effect when a target becomes ready instead of clearing a working output early. */
 @Composable
-internal fun rememberPlayerSurfaceRevision(preview: PlayerView?, fullscreen: PlayerView?): Int {
+internal fun rememberPlayerSurfaceRevision(view: PlayerView?): Int {
     var revision by remember { mutableIntStateOf(0) }
-    DisposableEffect(preview, fullscreen) {
-        val holders = listOfNotNull((preview?.videoSurfaceView as? SurfaceView)?.holder,
-            (fullscreen?.videoSurfaceView as? SurfaceView)?.holder).distinct()
+    DisposableEffect(view) {
+        val holders = listOfNotNull((view?.videoSurfaceView as? SurfaceView)?.holder)
         val observer = PlayerSurfaceAvailabilityObserver { revision++ }
         holders.forEach(observer::observe)
         onDispose { observer.close() }
@@ -36,6 +35,3 @@ internal fun rememberPlayerSurfaceRevision(preview: PlayerView?, fullscreen: Pla
 
 internal fun playerSurfaceReady(view: PlayerView): Boolean =
     (view.videoSurfaceView as? SurfaceView)?.holder?.surface?.isValid != false
-
-internal fun keepFullscreenPlayerLayer(hasChannel: Boolean, fullscreen: Boolean, progress: Float,
-    stillBoundToFullscreen: Boolean): Boolean = hasChannel && (fullscreen || progress > 0f || stillBoundToFullscreen)

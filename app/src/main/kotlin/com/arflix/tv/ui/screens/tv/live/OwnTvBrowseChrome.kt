@@ -35,8 +35,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.geometry.Rect
 import androidx.media3.ui.PlayerView
 import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvNowNext
@@ -270,17 +274,22 @@ fun OwnTvPreviewStage(
     compact: Boolean = false, landscapeCompact: Boolean = false, modifier: Modifier = Modifier,
     guideMode: Boolean = false,
     surfaceResetKey: Any? = null,
+    externalVideo: Boolean = false,
+    onVideoBoundsChanged: (Rect) -> Unit = {},
 ) {
     val guideInteractive = LocalLiveGuideInteractive.current
     BoxWithConstraints(modifier.padding(horizontal = 16.dp, vertical = if (guideMode) 8.dp else 12.dp)) {
         val narrow = maxWidth < 520.dp
         val guideVideoWidth = (maxWidth * 0.32f).coerceIn(144.dp, 200.dp)
         @Composable fun video(modifier: Modifier) {
-            Box(modifier.clip(RoundedCornerShape(18.dp)).background(Color.Black)
-                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
+            Box(modifier.onGloballyPositioned { onVideoBoundsChanged(it.boundsInWindow()) }
+                .then(if (externalVideo && channel != null) Modifier.clearAndSetSemantics {} else Modifier)
+                .clip(RoundedCornerShape(18.dp)).background(Color.Black)
+                .then(if (!externalVideo || channel == null)
+                    Modifier.border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp)) else Modifier)
                  .focusProperties { canFocus = guideInteractive }
                  .clickable(enabled = channel != null && guideInteractive) { onFullscreenClick?.invoke() }) {
-                if (channel != null) key(surfaceResetKey) { AndroidView(
+                 if (channel != null && !externalVideo) key(surfaceResetKey) { AndroidView(
                     factory = { context ->
                         (LayoutInflater.from(context).inflate(R.layout.live_tv_player_view, null) as PlayerView)
                              .apply {
@@ -292,17 +301,9 @@ fun OwnTvPreviewStage(
                     },
                     update = { onPlayerViewCreated?.invoke(it) },
                     onRelease = { onPlayerViewReleased?.invoke(it) }, modifier = Modifier.fillMaxSize()) }
-                else Text(stringResource(R.string.tv_stage_select_channel), color = TvStageStyle.Muted,
+                 else if (channel == null) Text(stringResource(R.string.tv_stage_select_channel), color = TvStageStyle.Muted,
                     fontSize = 12.sp, modifier = Modifier.align(Alignment.Center).padding(16.dp))
-                Text(stringResource(R.string.tv_stage_live), color = Color.White, fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopStart)
-                        .padding(12.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFFCF415E))
-                        .padding(horizontal = 8.dp, vertical = 4.dp))
-                if (channel != null) Text("${channel.number} · ${channel.name}", color = Color.White,
-                    fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth()
-                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))))
-                        .padding(12.dp))
+                 if (!externalVideo || channel == null) OwnTvPreviewVideoDecorations(channel)
             }
         }
         @Composable fun information(modifier: Modifier) {
@@ -342,6 +343,19 @@ fun OwnTvPreviewStage(
             information(Modifier.weight(0.58f))
         }
     }
+}
+
+@Composable
+internal fun BoxScope.OwnTvPreviewVideoDecorations(channel: EnrichedChannel?) {
+    Text(stringResource(R.string.tv_stage_live), color = Color.White, fontSize = 10.sp,
+        fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopStart)
+            .padding(12.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFFCF415E))
+            .padding(horizontal = 8.dp, vertical = 4.dp))
+    if (channel != null) Text("${channel.number} · ${channel.name}", color = Color.White,
+        fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))))
+            .padding(12.dp))
 }
 
 /** Replaces the old expanding country sidebar with a provider/folder browser. */
