@@ -43,6 +43,7 @@ class MovieVodVerificationTest {
     @Test fun failedFirstProviderCannotHideSecondProvidersMovie() = fixture(
         listOf("unavailable", movie), expectedHost = "p1.example.test")
     @Test fun validEmptyCatalogueConfirmsMissingAndCoalescesRepeatedChecks() = fixture(listOf("[]"), expectMissing = true)
+    @Test fun differentMovieReusesRecentlyVerifiedCompleteCatalogue() = fixture(listOf("[]"), expectMissing = true, checkOtherMovie = true)
     @Test fun shortTitleWithoutMetadataIdsStillMatches() = fixture(
         listOf("""[{"stream_id":55,"name":"Up 2009","container_extension":"mp4"}]"""), title = "Up", year = 2009, tmdb = null)
     @Test fun accentedProviderTitleMatchesUnaccentedMetadata() = fixture(
@@ -53,7 +54,7 @@ class MovieVodVerificationTest {
     private fun fixture(bodies: List<String>, seed: List<String> = bodies.map { "[]" },
         title: String = "The Quiet Lake", year: Int = 2026, tmdb: Int? = 12345,
         unavailable: Boolean = false, expectMissing: Boolean = false,
-        expectedHost: String = "p0.example.test", expectedRequests: Int = bodies.size) = runBlocking {
+        expectedHost: String = "p0.example.test", expectedRequests: Int = bodies.size, checkOtherMovie: Boolean = false) = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         context.getSharedPreferences("iptv_movie_source_cache_v1", 0).edit().clear().commit()
         val playlists = bodies.indices.map { index -> IptvPlaylistEntry("provider-$index", "Provider $index",
@@ -85,6 +86,8 @@ class MovieVodVerificationTest {
                 if (expectMissing) {
                     assertTrue(result.isEmpty())
                     assertTrue(repository.findMovieVodSources(title, year, tmdbId = tmdb, verifyBeforeFallback = true).isEmpty())
+                    if (checkOtherMovie) assertTrue(repository.findMovieVodSources("Another Film", 2025,
+                        tmdbId = 67890, verifyBeforeFallback = true).isEmpty())
                 } else {
                     assertTrue(result.isNotEmpty())
                     assertTrue(result.first().url.orEmpty().contains("$expectedHost/movie/fixture-user/fixture-pass/55.mp4"))

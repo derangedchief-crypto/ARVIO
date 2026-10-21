@@ -27,6 +27,7 @@ class EpisodeVodVerificationTest {
     private val show = """[{"series_id":41,"name":"Harbour Watch","tmdb":"12345"}]"""
     private val episode = """{"episodes":{"1":[{"id":502,"episode_num":2,"season":1,"title":"Harbour Watch S01E02","container_extension":"mp4"}]}}"""
     @Test fun exactEpisodeFoundInNativeSeriesCatalogue() = fixture()
+    @Test fun cachedShowNeedsOnlyExactEpisodeTreeNotEntireCatalogue() = fixture(seedShow = true)
     @Test fun sameEpisodeNumberInWrongSeasonIsNotAccepted() = fixture(season = 2, missing = true)
     @Test fun existingShowWithoutRequestedEpisodeConfirmsAbsence() = fixture(info = """{"episodes":{"1":[{"id":501,"episode_num":1,"season":1,"title":"First"}]}}""", missing = true)
     @Test fun absentShowAndAbsentVodFilesConfirmMissing() = fixture(series = listOf("[]"), missing = true)
@@ -45,7 +46,8 @@ class EpisodeVodVerificationTest {
 
     private fun fixture(series: List<String> = listOf(show), info: String = episode,
         files: String = "[]", season: Int = 1, missing: Boolean = false, unavailable: Boolean = false,
-        host: String = "p0.example.test", fileEpisode: Boolean = false, alternateVariant: Boolean = false) = runBlocking {
+        host: String = "p0.example.test", fileEpisode: Boolean = false, alternateVariant: Boolean = false,
+        seedShow: Boolean = false) = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         val playlists = series.indices.map { index -> IptvPlaylistEntry("provider-$index", "Provider $index",
             "https://p$index.example.test/get.php?username=fixture-user&password=fixture-pass&type=m3u_plus", "") }
@@ -54,12 +56,14 @@ class EpisodeVodVerificationTest {
             val owner = "https://p$index.example.test|fixture-user|fixture-pass"
             val hash = MessageDigest.getInstance("MD5").digest(owner.toByteArray()).joinToString("") { "%02x".format(it) }
             listOf("vod", "series").forEach { kind ->
-                File(dir, "${kind}_$hash.json").writeText("{\"savedAtMs\":${System.currentTimeMillis()},\"items\":[]}")
+                val items = if (seedShow && kind == "series") show else "[]"
+                File(dir, "${kind}_$hash.json").writeText("{\"savedAtMs\":${System.currentTimeMillis()},\"items\":$items}")
             }
         }
         var requests = 0
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             requests++
+            if (seedShow) assertEquals("get_series_info", chain.request().url.queryParameter("action"))
             val index = chain.request().url.host.substringAfter('p').substringBefore('.').toInt()
             val body = when (chain.request().url.queryParameter("action")) {
                 "get_series" -> series[index]
@@ -82,6 +86,7 @@ class EpisodeVodVerificationTest {
             else assertTrue(result.first().url.orEmpty().contains(
                 if (fileEpisode) "$host/movie/fixture-user/fixture-pass/77.mp4" else "$host/series/fixture-user/fixture-pass/502.mp4"))
             val afterFirst = requests
+            if (seedShow) assertEquals(1, afterFirst)
             assertEquals(result, repository.verifyEpisodeVodBeforeFallback("Harbour Watch", season, 2, tmdbId = 12345))
             assertEquals("Confirmed results must not re-fetch during the same check", afterFirst, requests)
         } catch (error: VodVerificationException) {

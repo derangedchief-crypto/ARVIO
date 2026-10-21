@@ -386,6 +386,11 @@ class StreamRepository @Inject constructor(
     )
     private val playbackHostHealth = ConcurrentHashMap<String, PlaybackHostHealth>()
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val vodLookups = SharedSourceLookup<List<StreamSource>>(repositoryScope)
+    private val addonLookups = SharedSourceLookup<List<StreamSource>>(repositoryScope)
+
+    private fun sourceLookupKey(vararg parts: Any?): String = MessageDigest.getInstance("SHA-256")
+        .digest(gson.toJson(parts.toList()).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     @Volatile private var addonHealthLoadedProfileId: String? = null
 
     // Precompiled quality filters cached in memory to avoid DataStore reads and regex compilation in hot path
@@ -1795,6 +1800,16 @@ class StreamRepository @Inject constructor(
         title: String = "",
         year: Int? = null
     ): List<StreamSource> {
+        if (!hasExtremeCloudAccess()) return emptyList()
+        val profile = profileManager.getProfileIdSync()
+        val key = sourceLookupKey(profile, "movie-addon", streamAddonConfigurationRevision(listOf(addon)), imdbId, title, year)
+        val result = addonLookups.get(key) { fetchMovieStreamsFromAddonUnshared(addon, imdbId, title, year) }
+        return if (profile == profileManager.getProfileIdSync() && hasExtremeCloudAccess()) result else emptyList()
+    }
+
+    private suspend fun fetchMovieStreamsFromAddonUnshared(
+        addon: Addon, imdbId: String, title: String = "", year: Int? = null,
+    ): List<StreamSource> {
         val startedAt = System.currentTimeMillis()
         val addonTimeoutMs = when {
             addonNeedsExtendedStreamTimeout(addon) -> ADDON_EXTENDED_TIMEOUT_MS
@@ -1857,6 +1872,7 @@ class StreamRepository @Inject constructor(
             )
             emptyList()
         } catch (error: Exception) {
+            if (error is CancellationException) throw error
             Log.w(
                 TAG,
                 "[StreamFetch][Movie] failure addon=${addon.name} addonId=${addon.id} elapsedMs=${System.currentTimeMillis() - startedAt} error=${error.toShortLogMessage()}"
@@ -1887,6 +1903,22 @@ class StreamRepository @Inject constructor(
         title: String = "",
         animeQueryOverride: String? = null,
         airDate: String? = null
+    ): List<StreamSource> {
+        if (!hasExtremeCloudAccess()) return emptyList()
+        val profile = profileManager.getProfileIdSync()
+        val key = sourceLookupKey(profile, "episode-addon", streamAddonConfigurationRevision(listOf(addon)), imdbId,
+            season, episode, tmdbId, tvdbId, genreIds, originalLanguage, title, animeQueryOverride, airDate)
+        val result = addonLookups.get(key) {
+            fetchEpisodeStreamsFromAddonUnshared(addon, imdbId, season, episode, tmdbId, tvdbId, genreIds,
+                originalLanguage, title, animeQueryOverride, airDate)
+        }
+        return if (profile == profileManager.getProfileIdSync() && hasExtremeCloudAccess()) result else emptyList()
+    }
+
+    private suspend fun fetchEpisodeStreamsFromAddonUnshared(
+        addon: Addon, imdbId: String, season: Int, episode: Int, tmdbId: Int? = null, tvdbId: Int? = null,
+        genreIds: List<Int> = emptyList(), originalLanguage: String? = null, title: String = "",
+        animeQueryOverride: String? = null, airDate: String? = null,
     ): List<StreamSource> {
         val startedAt = System.currentTimeMillis()
         val nativeAnimeAddonHint = shouldPreferNativeAnimeIds(addon)
@@ -2019,6 +2051,7 @@ class StreamRepository @Inject constructor(
                         } catch (timeout: TimeoutCancellationException) {
                             throw timeout
                         } catch (error: Exception) {
+                            if (error is CancellationException) throw error
                             lastError = error
                             Log.w(
                                 TAG,
@@ -2173,6 +2206,7 @@ class StreamRepository @Inject constructor(
             )
             emptyList()
         } catch (error: Exception) {
+            if (error is CancellationException) throw error
             Log.w(
                 TAG,
                 "[StreamFetch][Episode] failure addon=${addon.name} addonId=${addon.id} elapsedMs=${System.currentTimeMillis() - startedAt} error=${error.toShortLogMessage()}"
@@ -2480,9 +2514,14 @@ class StreamRepository @Inject constructor(
     suspend fun verifyEpisodeVodBeforeFallback(
         imdbId: String?, title: String, season: Int, episode: Int, tmdbId: Int? = null,
     ): List<StreamSource> = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(90_000L) {
-            iptvRepository.verifyEpisodeVodBeforeFallback(title, season, episode, imdbId, tmdbId)
-        } ?: throw VodVerificationException()
+        val source = iptvRepository.vodLookupScopeKey()
+        val result = vodLookups.get(sourceLookupKey(source, "episode-vod", imdbId, title, season, episode, tmdbId)) {
+            withTimeoutOrNull(90_000L) {
+                iptvRepository.verifyEpisodeVodBeforeFallback(title, season, episode, imdbId, tmdbId)
+            } ?: throw VodVerificationException()
+        }
+        if (source != iptvRepository.vodLookupScopeKey()) throw CancellationException("VOD lookup source changed")
+        result
     }
 
     /** Finish the VOD check first; its hits no longer suppress authorized backup discovery. */
@@ -2492,10 +2531,15 @@ class StreamRepository @Inject constructor(
         year: Int?,
         tmdbId: Int? = null,
     ): List<StreamSource> = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(90_000L) {
-            iptvRepository.findMovieVodSources(title, year, imdbId, tmdbId,
-                allowNetwork = true, verifyBeforeFallback = true)
-        } ?: throw VodVerificationException()
+        val source = iptvRepository.vodLookupScopeKey()
+        val result = vodLookups.get(sourceLookupKey(source, "movie-vod", imdbId, title, year, tmdbId)) {
+            withTimeoutOrNull(90_000L) {
+                iptvRepository.findMovieVodSources(title, year, imdbId, tmdbId,
+                    allowNetwork = true, verifyBeforeFallback = true)
+            } ?: throw VodVerificationException()
+        }
+        if (source != iptvRepository.vodLookupScopeKey()) throw CancellationException("VOD lookup source changed")
+        result
     }
 
     suspend fun resolveMovieVodOnly(

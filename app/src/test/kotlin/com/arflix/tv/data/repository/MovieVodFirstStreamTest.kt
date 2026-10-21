@@ -77,6 +77,7 @@ class MovieVodFirstStreamTest {
         var verified = false
         val calls = java.util.concurrent.atomic.AtomicInteger(0)
         val iptv = mockk<IptvRepository>()
+        coEvery { iptv.vodLookupScopeKey() } returns "fixture-vod-account"
         suspend fun lookup(): List<StreamSource> {
             lookups.incrementAndGet()
             started.complete(Unit)
@@ -111,14 +112,18 @@ class MovieVodFirstStreamTest {
         val profile = mockk<ProfileManager>(relaxed = true)
         every { profile.getProfileIdSync() } returns profileId
         every { profile.activeProfileId } returns MutableStateFlow(profileId)
-        val repository = spyk(StreamRepository(context, mockk(relaxed = true), OkHttpClient(), profile,
-            mockk(relaxed = true), iptv, runtime, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true)))
+        val original = StreamRepository(context, mockk(relaxed = true), OkHttpClient(), profile,
+            mockk(relaxed = true), iptv, runtime, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
+        val repository = spyk(original)
         val addon = Addon("paid-fixture", "Torrentio PM", "1", "Fixture", true, type = AddonType.COMMUNITY,
             url = "https://scraper.example.test/manifest.json",
             manifest = AddonManifest("paid-fixture", "Torrentio PM", "1", types = listOf("movie", "series"),
                 resources = listOf(AddonResource("stream", types = listOf("movie", "series")))))
-        StreamRepository::class.java.getDeclaredField("installedAddons").apply { isAccessible = true }.set(repository,
-            if (cloudStateFailure) flow<List<Addon>> { throw java.io.IOException("Unreadable auth") } else flowOf(listOf(addon)))
+        // Runtime adapter lambdas capture the original instance before spyk copies it.
+        val installed = if (cloudStateFailure) flow<List<Addon>> { throw java.io.IOException("Unreadable auth") } else flowOf(listOf(addon))
+        val addonField = StreamRepository::class.java.getDeclaredField("installedAddons").apply { isAccessible = true }
+        addonField.set(repository, installed)
+        addonField.set(original, installed)
         val known = if (prechecked) (if (found) listOf(vod) else emptyList()) else null
         suspend fun resolve(): List<StreamSource> = when {
             isEpisode && nonProgressive -> repository.resolveEpisodeStreams("tt1234567", 1, 2, tmdbId = 12345, title = "Harbour Watch", vodSources = known).streams
@@ -139,7 +144,7 @@ class MovieVodFirstStreamTest {
             }
             if (prechecked) { verified = true; release.complete(Unit) }
             val result = async { resolve() }
-            if (!prechecked) { started.await(); assertEquals(0, calls.get()) }
+            if (!prechecked) { withTimeout(5_000) { started.await() }; assertEquals(0, calls.get()) }
             if (cancelLookup) { result.cancelAndJoin(); release.complete(Unit) }
             else {
                 release.complete(Unit)

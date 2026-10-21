@@ -278,6 +278,16 @@ class IptvRepository @Inject constructor(
     private val movieVodLookupMutex = Mutex()
     private val verifiedMovieMisses = ConcurrentHashMap<String, Long>()
     private val verifiedEpisodeInfo = ConcurrentHashMap<String, Pair<Long, List<XtreamSeriesEpisode>>>()
+    private val verifiedVodCatalogs = VerifiedVodCatalogs()
+
+    internal suspend fun vodLookupScopeKey(): String {
+        val raw = profileManager.getProfileIdSync() + "|" + buildConfigSignature(observeConfig().first())
+        return MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    private fun verifiedCatalogKey(scope: String, creds: XtreamCredentials, kind: String) =
+        "$scope|${xtreamDiskCacheHash(creds)}|$kind"
     private val launchContentCheckedAt = ConcurrentHashMap<String, Long>()
     private val _playlistRevision = MutableStateFlow(0L)
     val playlistRevision: StateFlow<Long> = _playlistRevision.asStateFlow()
@@ -3766,6 +3776,7 @@ class IptvRepository @Inject constructor(
         profile: String,
         stillCurrent: suspend () -> Boolean,
     ) {
+        val verificationScope = vodLookupScopeKey()
         // Catalogue endpoints return IDs/metadata, not per-series episode trees.
         // Null means failure; a valid empty array is a confirmed removal of all items.
         val root = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action="
@@ -3783,6 +3794,9 @@ class IptvRepository @Inject constructor(
                 cachedVodIndex = null
             }
             clearIptvMovieSourceCache()
+            if (vod.none { it.streamId == null || it.name.isNullOrBlank() }) {
+                verifiedVodCatalogs.mark(verifiedCatalogKey(verificationScope, creds, "vod"), now)
+            }
         }
         val series: List<XtreamSeriesItem>? = requestJson(root + "get_series",
             TypeToken.getParameterized(List::class.java, XtreamSeriesItem::class.java).type,
@@ -3797,6 +3811,9 @@ class IptvRepository @Inject constructor(
                 cachedXtreamSeriesEpisodes = emptyMap()
             }
             seriesResolver.invalidateProviderCatalog("$profile|${xtreamCacheKey(creds)}", series.mapNotNull { it.seriesId })
+            if (series.none { it.seriesId == null || it.name.isNullOrBlank() }) {
+                verifiedVodCatalogs.mark(verifiedCatalogKey(verificationScope, creds, "series"), now)
+            }
         }
     }
 
@@ -5353,6 +5370,7 @@ class IptvRepository @Inject constructor(
             val profile = profileManager.getProfileIdSync()
             val signature = buildConfigSignature(config)
             val missKey = "$profile|$signature|$imdbId|$tmdbId|${normalizeLookupText(title)}|$year"
+            val verificationScope = vodLookupScopeKey()
             suspend fun ensureCurrent() {
                 if (profileManager.getProfileIdSync() != profile || buildConfigSignature(observeConfig().first()) != signature) {
                     throw VodVerificationException()
@@ -5372,7 +5390,11 @@ class IptvRepository @Inject constructor(
             var incomplete = false
             for (creds in providers) {
                 ensureCurrent()
-                if (verifyBeforeFallback) {
+                getXtreamVodStreams(creds, allowNetwork = false)
+                val catalogueKey = verifiedCatalogKey(verificationScope, creds, "vod")
+                val recentlyVerified = xtreamVodCacheKey == xtreamCacheKey(creds) &&
+                    verifiedVodCatalogs.isFresh(catalogueKey, xtreamVodLoadedAtMs)
+                if (verifyBeforeFallback && !recentlyVerified) {
                     // A cached title miss may be stale. Bypass the six-hour TTL
                     // once before permitting any paid external source request.
                     val root = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action=get_vod_streams"
@@ -5390,6 +5412,7 @@ class IptvRepository @Inject constructor(
                     cachedVodIdIndex = buildVodIdIndex(fresh)
                     cachedVodIndex = null
                     writeDiskCache(vodDiskCacheFile(creds), xtreamVodLoadedAtMs, fresh)
+                    verifiedVodCatalogs.mark(catalogueKey, xtreamVodLoadedAtMs)
                 }
                 val matches = findMovieVodSourcesForProvider(creds, title, year, imdbId, tmdbId,
                     allowNetwork = !verifyBeforeFallback)
@@ -5527,6 +5550,7 @@ class IptvRepository @Inject constructor(
         val profile = profileManager.getProfileIdSync()
         val signature = buildConfigSignature(config)
         val missKey = "episode|$profile|$signature|$imdbId|$tmdbId|${normalizeLookupText(title)}|$season|$episode"
+        val verificationScope = vodLookupScopeKey()
         val normalizedImdb = normalizeImdbId(imdbId)
         val normalizedTmdb = normalizeTmdbId(tmdbId)
         suspend fun ensureCurrent() {
@@ -5569,41 +5593,79 @@ class IptvRepository @Inject constructor(
         if (verifiedMovieMisses[missKey]?.let { System.currentTimeMillis() - it < 60_000L } == true) return@withLock emptyList()
         if (title.isBlank() || season < 0 || episode <= 0) throw VodVerificationException()
         var incomplete = false
+        val attemptedInfo = mutableSetOf<String>()
+        val freshInfo = mutableMapOf<String, List<XtreamSeriesEpisode>?>()
+        suspend fun episodeInfo(creds: XtreamCredentials, seriesId: Int?): List<XtreamSeriesEpisode>? {
+            if (seriesId == null) return null
+            val key = "$profile|${xtreamCacheKey(creds)}|$seriesId"
+            verifiedEpisodeInfo[key]?.takeIf { System.currentTimeMillis() - it.first in 0 until 60_000L }
+                ?.let { return it.second }
+            if (!attemptedInfo.add(key)) return freshInfo[key]
+            val url = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action=get_series_info&series_id=$seriesId"
+            val info: JsonObject? = requestJson(url, JsonObject::class.java, launchCatalogHttpClient)
+            ensureCurrent()
+            val rows = info?.let { runCatching { parseVerifiedEpisodeInfo(it) }.getOrNull() }
+            freshInfo[key] = rows
+            if (rows == null) incomplete = true else {
+                if (verifiedEpisodeInfo.size >= 64) verifiedEpisodeInfo.clear()
+                verifiedEpisodeInfo[key] = System.currentTimeMillis() to rows
+            }
+            return rows
+        }
+        // A cached, exact show identity needs only its small episode tree, not
+        // another full series catalogue download before the first playable hit.
+        for (creds in providers) {
+            ensureCurrent()
+            for (candidate in candidates(getXtreamSeriesList(creds, allowNetwork = false))) {
+                val hit = episodeInfo(creds, candidate.seriesId)?.let { sources(creds, it) }.orEmpty()
+                if (hit.isNotEmpty()) { ensureCurrent(); return@withLock sortVodSources(hit) }
+            }
+        }
         for (creds in providers) {
             ensureCurrent()
             val root = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action="
-            val series: List<XtreamSeriesItem>? = requestJson(root + "get_series",
-                TypeToken.getParameterized(List::class.java, XtreamSeriesItem::class.java).type, launchCatalogHttpClient)
+            val cachedSeries = getXtreamSeriesList(creds, allowNetwork = false)
+            val seriesKey = verifiedCatalogKey(verificationScope, creds, "series")
+            val series: List<XtreamSeriesItem>? = if (xtreamVodCacheKey == xtreamCacheKey(creds) &&
+                verifiedVodCatalogs.isFresh(seriesKey, xtreamSeriesLoadedAtMs)) cachedSeries
+                else requestJson(root + "get_series",
+                    TypeToken.getParameterized(List::class.java, XtreamSeriesItem::class.java).type, launchCatalogHttpClient)
             ensureCurrent()
             if (series == null || series.any { it.seriesId == null || it.name.isNullOrBlank() }) incomplete = true
             else {
-                ensureXtreamVodCacheOwnership(creds)
-                cachedXtreamSeries = series
-                xtreamSeriesLoadedAtMs = System.currentTimeMillis()
-                writeDiskCache(seriesDiskCacheFile(creds), xtreamSeriesLoadedAtMs, series)
+                if (series !== cachedSeries) {
+                    ensureXtreamVodCacheOwnership(creds)
+                    cachedXtreamSeries = series
+                    xtreamSeriesLoadedAtMs = System.currentTimeMillis()
+                    writeDiskCache(seriesDiskCacheFile(creds), xtreamSeriesLoadedAtMs, series)
+                    verifiedVodCatalogs.mark(seriesKey, xtreamSeriesLoadedAtMs)
+                }
                 for (candidate in candidates(series)) {
-                    val info: JsonObject? = requestJson(root + "get_series_info&series_id=${candidate.seriesId}", JsonObject::class.java, launchCatalogHttpClient)
-                    ensureCurrent()
-                    val rows = info?.let { runCatching { parseVerifiedEpisodeInfo(it) }.getOrNull() }
+                    val rows = episodeInfo(creds, candidate.seriesId)
                     if (rows == null) { incomplete = true; continue }
-                    if (verifiedEpisodeInfo.size >= 64) verifiedEpisodeInfo.clear()
-                    verifiedEpisodeInfo["$profile|${xtreamCacheKey(creds)}|${candidate.seriesId}"] = System.currentTimeMillis() to rows
                     val hit = sources(creds, rows)
                     if (hit.isNotEmpty()) return@withLock sortVodSources(hit)
                 }
             }
             // Some providers store individual episodes in their movie/VOD list.
-            val vod: List<XtreamVodStream>? = requestJson(root + "get_vod_streams",
-                TypeToken.getParameterized(List::class.java, XtreamVodStream::class.java).type, launchCatalogHttpClient)
+            val cachedVod = getXtreamVodStreams(creds, allowNetwork = false)
+            val vodKey = verifiedCatalogKey(verificationScope, creds, "vod")
+            val vod: List<XtreamVodStream>? = if (xtreamVodCacheKey == xtreamCacheKey(creds) &&
+                verifiedVodCatalogs.isFresh(vodKey, xtreamVodLoadedAtMs)) cachedVod
+                else requestJson(root + "get_vod_streams",
+                    TypeToken.getParameterized(List::class.java, XtreamVodStream::class.java).type, launchCatalogHttpClient)
             ensureCurrent()
             if (vod == null || vod.any { it.streamId == null || it.name.isNullOrBlank() }) incomplete = true
             else {
-                ensureXtreamVodCacheOwnership(creds)
-                cachedXtreamVodStreams = vod
-                xtreamVodLoadedAtMs = System.currentTimeMillis()
-                cachedVodIdIndex = buildVodIdIndex(vod)
-                cachedVodIndex = null
-                writeDiskCache(vodDiskCacheFile(creds), xtreamVodLoadedAtMs, vod)
+                if (vod !== cachedVod) {
+                    ensureXtreamVodCacheOwnership(creds)
+                    cachedXtreamVodStreams = vod
+                    xtreamVodLoadedAtMs = System.currentTimeMillis()
+                    cachedVodIdIndex = buildVodIdIndex(vod)
+                    cachedVodIndex = null
+                    writeDiskCache(vodDiskCacheFile(creds), xtreamVodLoadedAtMs, vod)
+                    verifiedVodCatalogs.mark(vodKey, xtreamVodLoadedAtMs)
+                }
                 val hit = findEpisodeVodFromVodCatalogFallbackSources(creds, title, season, episode,
                     normalizedImdb, normalizedTmdb, allowNetwork = false, requireExactEpisode = true)
                 if (hit.isNotEmpty()) return@withLock hit

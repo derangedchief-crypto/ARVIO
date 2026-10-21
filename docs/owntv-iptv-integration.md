@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `416`. Version name is `2.0.100`, following the actual
+Current testing version code is `417`. Version name is `2.0.101`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,44 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Source discovery reuse in 2.0.101 / 417
+
+The user confirmed 2.0.100 fixed preview/fullscreen transitions, then reported
+movie/show Play and Sources taking up to 45 seconds. VOD verification could
+re-download a complete catalogue before Cloud discovery, even after Home had
+just refreshed it. Pressing Play/Sources also cancelled details-page prefetch
+and restarted its outstanding VOD/addon requests.
+
+Complete, structurally valid provider catalogue generations verified in this
+process are reusable for five minutes, scoped by profile/configuration/provider
+and exact generation timestamp. Arbitrary disk-cache timestamps do not count as
+verification. Cached show identities can fetch their small exact episode tree
+before another full catalogue download; missing episodes still require the full
+verification path, including episode files in the VOD catalogue. Failed checks
+remain unverified and do not become confirmed misses.
+
+Shared lookups transfer an outstanding VOD/addon request from prefetch to the
+foreground with a 500 ms cancellation handover grace. Unobserved work is cancelled
+after that grace; failures are not retained. Keys include source identity and
+request metadata. VOD scope and Cloud entitlement/profile checks still protect
+returned results. Cloud discovery remains behind VOD verification, both source
+families remain visible to authorized users, and automatic link prewarm retains
+the existing library-first restriction. No Cloud playback URL resolution is added.
+
+This reduces redundant network work, not provider response times. A genuinely
+cold/expired catalogue or slow Cloud provider can still take longer; request
+timeouts are not shortened to claim a speedup. Actual device lookup timings
+remain to be confirmed. Live playback, original Back handling, activation and
+the signed testing-publication workflow are unchanged.
+
+Validation: internal-test and Android-instrumentation Kotlin compilation passed.
+The final targeted JVM/Robolectric run passed 276 tests, zero failures/errors/skips,
+including Home-refresh catalogue reuse, exact-episode fast lookup, shared-request
+handover/cancellation, Cloud revocation/coexistence, autoplay preference, guide,
+maintenance, live presentation and activation regressions. Logs are
+`/tmp/opencode/source-lookup-final-validation.log` and
+`/tmp/opencode/source-lookup-final-tests.log`.
 
 ## One persistent video output in 2.0.100 / 416
 

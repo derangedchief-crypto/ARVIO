@@ -29,6 +29,7 @@ import java.security.MessageDigest
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class LaunchContentRefreshIntegrationTest {
     @Test fun launchRefreshUpdatesAllThreeCataloguesOnlyOnce() = fixture()
+    @Test fun sourcesReuseCatalogueVerifiedByHomeRefresh() = fixture(checkSourceReuse = true)
     @Test fun failedVodResponsesKeepPreviousCatalogues() = fixture(failVod = true)
     @Test fun validEmptyVodListsRemoveAllPreviousItems() = fixture(emptyVod = true)
     @Test fun malformedVodListsCannotErasePreviousItems() = fixture(malformedVod = true)
@@ -36,7 +37,8 @@ class LaunchContentRefreshIntegrationTest {
     @Test fun reopeningAfterDebounceRechecksButQuickReturnsDoNot() = fixture(recheck = true)
 
     private fun fixture(failVod: Boolean = false, emptyVod: Boolean = false,
-        malformedVod: Boolean = false, switchProfile: Boolean = false, recheck: Boolean = false) = runBlocking {
+        malformedVod: Boolean = false, switchProfile: Boolean = false, recheck: Boolean = false,
+        checkSourceReuse: Boolean = false) = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         context.deleteDatabase("arvio_iptv_channel_store.db")
         val host = "https://provider.example.test"
@@ -82,6 +84,10 @@ class LaunchContentRefreshIntegrationTest {
         field("cachedChannels").set(repository, previous)
         try {
             repository.requestLaunchContentRefresh().join()
+            if (checkSourceReuse) {
+                assertTrue(repository.findMovieVodSources("Not In This Catalogue", 2026,
+                    verifyBeforeFallback = true).isEmpty())
+            }
             if (!switchProfile) {
                 repository.requestLaunchContentRefresh().join()
                 repository.prefetchFreshStartupData()
