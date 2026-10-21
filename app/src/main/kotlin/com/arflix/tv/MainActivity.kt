@@ -172,6 +172,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var maintenanceRepository: com.arflix.tv.data.repository.MaintenanceRepository
 
+    @Inject
+    lateinit var requiredUpdateController: com.arflix.tv.updater.RequiredUpdateController
+
     private var jankStats: JankStats? = null
 
     private var pendingLauncherRequest by mutableStateOf<LauncherContinueWatchingRequest?>(null)
@@ -209,6 +212,15 @@ class MainActivity : ComponentActivity() {
         }
 
         super.onCreate(savedInstanceState)
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                while (true) {
+                    requiredUpdateController.refresh()
+                    delay(com.arflix.tv.updater.RequiredUpdateController.POLL_INTERVAL_MS)
+                }
+            }
+        }
 
         lifecycleScope.launch {
             repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
@@ -378,28 +390,38 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val startupState by startupViewModel.state.collectAsStateWithLifecycle()
                     val maintenance by maintenanceRepository.state.collectAsStateWithLifecycle()
-                    com.arflix.tv.ui.components.MaintenanceGate(maintenance) {
-                        ArflixApp(
-                            authRepository = authRepository.get(),
-                            profileRepository = profileRepository.get(),
-                            traktRepository = traktRepository.get(),
-                            profileManager = profileManager.get(),
-                            watchHistoryRepository = watchHistoryRepository.get(),
-                            watchlistRepository = watchlistRepository.get(),
-                            iptvRepository = iptvRepository.get(),
-                            launcherContinueWatchingRepository = launcherContinueWatchingRepository.get(),
-                            oledBlackBackground = oledBlackBackground,
-                            skipProfileSelection = skipProfileSelection,
-                            pendingLauncherRequest = pendingLauncherRequest,
-                            onConsumeLauncherRequest = { pendingLauncherRequest = null },
-                            pendingInstallPackUrl = pendingInstallPackUrl,
-                            onConsumeInstallPackUrl = { pendingInstallPackUrl = null },
-                            preloadedCategories = startupState.categories,
-                            preloadedHeroItem = startupState.heroItem,
-                            preloadedHeroLogoUrl = startupState.heroLogoUrl,
-                            preloadedLogoCache = startupState.logoCache,
-                            onExitApp = { finish() }
-                        )
+                    val requiredUpdate by requiredUpdateController.state.collectAsStateWithLifecycle()
+                    val updateStatus by requiredUpdateController.status.collectAsStateWithLifecycle()
+                    com.arflix.tv.ui.components.RequiredUpdateGate(
+                        state = requiredUpdate,
+                        status = updateStatus,
+                        onDownload = requiredUpdateController::download,
+                        onInstall = requiredUpdateController::install,
+                        onPermission = requiredUpdateController::openInstallPermission,
+                    ) {
+                        com.arflix.tv.ui.components.MaintenanceGate(maintenance) {
+                            ArflixApp(
+                                authRepository = authRepository.get(),
+                                profileRepository = profileRepository.get(),
+                                traktRepository = traktRepository.get(),
+                                profileManager = profileManager.get(),
+                                watchHistoryRepository = watchHistoryRepository.get(),
+                                watchlistRepository = watchlistRepository.get(),
+                                iptvRepository = iptvRepository.get(),
+                                launcherContinueWatchingRepository = launcherContinueWatchingRepository.get(),
+                                oledBlackBackground = oledBlackBackground,
+                                skipProfileSelection = skipProfileSelection,
+                                pendingLauncherRequest = pendingLauncherRequest,
+                                onConsumeLauncherRequest = { pendingLauncherRequest = null },
+                                pendingInstallPackUrl = pendingInstallPackUrl,
+                                onConsumeInstallPackUrl = { pendingInstallPackUrl = null },
+                                preloadedCategories = startupState.categories,
+                                preloadedHeroItem = startupState.heroItem,
+                                preloadedHeroLogoUrl = startupState.heroLogoUrl,
+                                preloadedLogoCache = startupState.logoCache,
+                                onExitApp = { finish() }
+                            )
+                        }
                     }
                 }
             }

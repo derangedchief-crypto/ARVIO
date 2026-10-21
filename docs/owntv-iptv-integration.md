@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `417`. Version name is `2.0.101`, following the actual
+Current development version code is `418`. Version name is `2.0.102`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,51 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Mandatory update gate in 2.0.102 / 418
+
+Development stays on `iptv-core-replacement`; this change is not a customer
+publication. `main` and the published customer 2.0.101 remain unchanged.
+
+An app-wide RequiredUpdateController checks the existing release channel before
+mounting navigation on launch, on foreground return (30-second debounce), and
+every five minutes while the activity is started. Checks have a dedicated
+12-second network ceiling. The testing package continues to use staging-testing;
+customer sideload builds use the latest non-prerelease customer release. This
+is polling, not a push-notification service; detection while continuously open
+normally occurs within the next poll plus network time. Unauthenticated GitHub
+API throttling/network outages may delay discovery.
+
+Once a valid newer APK release is known, its requirement is persisted independently
+of ignored tags and transient download/installer status. A root gate removes app
+navigation and player compositions, intercepts Back, and offers only update,
+permission and retry actions. It sits outside maintenance so an active maintenance
+gate cannot prevent installing a required update. Android installation approval
+is still required. Cancelling/failing installation or resetting the old update
+status never unlocks navigation; only the actually installed version can satisfy
+the known requirement. Downloaded APKs are checked for valid package metadata,
+package identity, required version and signature conflict before the existing
+installer is invoked. Failed installer launches now report a retryable error.
+
+A failed initial check without a known newer version allows normal use rather
+than treating an outage as an update. Known requirements survive subsequent
+failures, older remote responses and process restarts. Downloads survive navigation
+and configuration changes. They do not change login/profile/guide data. Existing
+live-engine and Back actions outside the gate are untouched.
+
+Important rollout limitation: this behavior only exists after a customer installs
+the first build containing it. Already installed 2.0.101 cannot retroactively be
+made mandatory by this client change. Device verification of permission approval,
+installer cancel/retry, restart retention and an incoming newer release is still
+required; automated tests do not execute Android's real package installer.
+
+Validation: internal-test and Android-instrumentation Kotlin compilation passed,
+with 113 targeted JVM/Robolectric tests and zero failures/errors/skips. Tests cover
+startup/in-session detection, persisted requirements, cancellation/retry policy,
+actual installed-version checks, ignored tags, foreground debounce, playback
+composition disposal, Back interception, activation, maintenance and existing
+live/source-preference regressions. Log:
+`/tmp/opencode/required-update-final-validation.log`.
 
 ## Source discovery reuse in 2.0.101 / 417
 

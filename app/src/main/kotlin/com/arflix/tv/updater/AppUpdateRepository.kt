@@ -12,6 +12,7 @@ import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -32,6 +33,14 @@ class AppUpdateRepository @Inject constructor(
     private val okHttpClient: OkHttpClient
 ) {
     private val gson = Gson()
+    // A launch check must not inherit long playback/catalogue timeouts.
+    private val updateClient by lazy {
+        okHttpClient.newBuilder()
+            .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
 
     fun isPlayStoreInstall(): Boolean {
         val installer = getInstallerPackageName()
@@ -75,7 +84,7 @@ class AppUpdateRepository @Inject constructor(
                     .cacheControl(CacheControl.FORCE_NETWORK)
                     .build()
 
-                okHttpClient.newCall(request).execute().use { response ->
+                updateClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         error(context.getString(R.string.update_error_github_api, response.code))
                     }
@@ -111,7 +120,7 @@ class AppUpdateRepository @Inject constructor(
                         assetSizeBytes = asset.size
                     )
                 }
-            }
+            }.onFailure { if (it is CancellationException) throw it }
         }
     }
 
