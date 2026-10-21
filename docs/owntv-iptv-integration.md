@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `418`. Version name is `2.0.102`, following the actual
+Current development version code is `419`. Version name is `2.0.103`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,16 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Mandatory-update device exercise in 2.0.103 / 419
+
+This testing release changes only the version fields and documentation, keeping
+the 2.0.102 implementation intact. Install and leave 2.0.102-test running before
+2.0.103 is published to staging-testing. Its next foreground poll should require
+the update, dispose playback/navigation, and prevent Back or installer cancellation
+from bypassing the gate. Completing installation should reopen 2.0.103 without
+another requirement for that same version. Cold launch is an alternative check.
+Customer/main remains 2.0.101; no customer publication is part of this exercise.
 
 ## Mandatory update gate in 2.0.102 / 418
 
