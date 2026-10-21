@@ -40,8 +40,8 @@ android {
         // longer receive this distribution.
         minSdk = 26
         targetSdk = 36
-        versionCode = 414
-        versionName = "2.0.098"
+        versionCode = 415
+        versionName = "2.0.099"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("String", "UPDATE_RELEASE_TAG", "\"\"")
@@ -368,8 +368,8 @@ dependencies {
     implementation("androidx.compose.animation:animation")
 
     // Compose for TV - Core TV components
-    // tv-foundation stays alpha (no beta/stable releases exist); tv-material bumped to stable
-    implementation("androidx.tv:tv-foundation:1.0.0-alpha11")
+    // Retired TV lazy widgets call removed Foundation prefetch internals. TV
+    // layouts use aligned Compose lazy lists/grids plus ARVIO's D-pad focus helpers.
     implementation("androidx.tv:tv-material:1.1.0")
 
     // Navigation
@@ -651,7 +651,7 @@ androidComponents {
         val suffix = variant.name.replaceFirstChar { it.uppercaseChar() }
         val verifyCompose = tasks.register("verify${suffix}ComposeAlignment") {
             group = "verification"
-            description = "Check Compose compile/runtime ABI versions match for ${variant.name}"
+            description = "Check Compose ABI alignment and reject retired TV lazy widgets for ${variant.name}"
             doLast {
                 fun composeVersions(configurationName: String): Map<String, String> =
                     configurations.getByName(configurationName).incoming.resolutionResult.allComponents
@@ -668,6 +668,14 @@ androidComponents {
                 }
                 check(mismatches.isEmpty()) {
                     "Compose compile/runtime mismatch:\n${mismatches.joinToString("\n")}"
+                }
+                val retiredTvWidgets = listOf("${variant.name}CompileClasspath", "${variant.name}RuntimeClasspath")
+                    .flatMap { name -> configurations.getByName(name).incoming.resolutionResult.allComponents }
+                    .mapNotNull { it.id as? org.gradle.api.artifacts.component.ModuleComponentIdentifier }
+                    .filter { it.group == "androidx.tv" && it.module.startsWith("tv-foundation") }
+                    .map { "${it.group}:${it.module}:${it.version}" }.distinct()
+                check(retiredTvWidgets.isEmpty()) {
+                    "Retired TV lazy widgets are incompatible with the aligned Compose prefetch ABI: $retiredTvWidgets. Use Compose Foundation lazy lists/grids."
                 }
             }
         }

@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
@@ -60,7 +61,9 @@ fun OwnTvProviderBar(
     modifier: Modifier = Modifier,
 ) {
     if (providers.size <= 1) return
-    Row(modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+    val guideInteractive = LocalLiveGuideInteractive.current
+    Row(modifier.focusProperties { canFocus = guideInteractive }.horizontalScroll(rememberScrollState())
+        .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         providers.forEachIndexed { index, provider ->
             val selected = provider.id == selectedId
@@ -89,6 +92,7 @@ fun OwnTvChannelLabel(
     onFocused: () -> Unit = {}, variantCount: Int = 1, onOpenVariants: () -> Unit = {},
     rowHeight: Dp = 64.dp, modifier: Modifier = Modifier,
 ) {
+    val guideInteractive = LocalLiveGuideInteractive.current
     var focused by remember { mutableStateOf(false) }
     Row(modifier.fillMaxWidth().height(rowHeight)
         .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }
@@ -104,7 +108,8 @@ fun OwnTvChannelLabel(
         .padding(vertical = 3.dp, horizontal = 4.dp).clip(RoundedCornerShape(10.dp))
         .background(if (focused) TvStageStyle.Accent.copy(alpha = 0.24f)
             else if (isActive) Color.White.copy(alpha = 0.08f) else Color.Transparent)
-        .combinedClickable(onClick = onClick, onLongClick = {
+        .focusProperties { canFocus = guideInteractive }
+        .combinedClickable(enabled = guideInteractive, onClick = onClick, onLongClick = {
             if (variantCount > 1) onOpenVariants() else onFavoriteToggle()
         }).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -115,7 +120,7 @@ fun OwnTvChannelLabel(
         }
         Column(Modifier.weight(1f)) {
             Text(channel.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.fillMaxWidth().liveChannelNameMarquee(focused || isActive),
+                modifier = Modifier.fillMaxWidth().liveChannelNameMarquee(guideInteractive && (focused || isActive)),
                 maxLines = 1, softWrap = false,
                 overflow = if (focused || isActive) TextOverflow.Clip else TextOverflow.Ellipsis)
             Text(if (isFavorite) "★  ${channel.number}" else channel.number.toString(),
@@ -242,6 +247,7 @@ internal fun tvStageFolders(tree: LiveCategoryTree, playlists: List<PlaylistCate
 
 @Composable
 internal fun TvStageAction(label: String, selected: Boolean = false, modifier: Modifier = Modifier, dense: Boolean = false, onClick: () -> Unit) {
+    val guideInteractive = LocalLiveGuideInteractive.current
     var focused by remember { mutableStateOf(false) }
     Text(label, color = if (selected || focused) Color(0xFF17142B) else Color.White,
         fontSize = if (dense) 11.sp else 12.sp, lineHeight = if (dense) 14.sp else TextUnit.Unspecified,
@@ -249,7 +255,8 @@ internal fun TvStageAction(label: String, selected: Boolean = false, modifier: M
         modifier = modifier.onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected || focused) TvStageStyle.Accent else Color.White.copy(alpha = 0.07f))
-            .clickable(onClick = onClick).padding(horizontal = if (dense) 10.dp else 14.dp, vertical = if (dense) 6.dp else 10.dp))
+            .focusProperties { canFocus = guideInteractive }
+            .clickable(enabled = guideInteractive, onClick = onClick).padding(horizontal = if (dense) 10.dp else 14.dp, vertical = if (dense) 6.dp else 10.dp))
 }
 
 /** New preview stage: floating video plate + programme editorial panel, responsive on phones. */
@@ -264,17 +271,23 @@ fun OwnTvPreviewStage(
     guideMode: Boolean = false,
     surfaceResetKey: Any? = null,
 ) {
+    val guideInteractive = LocalLiveGuideInteractive.current
     BoxWithConstraints(modifier.padding(horizontal = 16.dp, vertical = if (guideMode) 8.dp else 12.dp)) {
         val narrow = maxWidth < 520.dp
         val guideVideoWidth = (maxWidth * 0.32f).coerceIn(144.dp, 200.dp)
         @Composable fun video(modifier: Modifier) {
             Box(modifier.clip(RoundedCornerShape(18.dp)).background(Color.Black)
                 .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
-                .clickable(enabled = channel != null) { onFullscreenClick?.invoke() }) {
+                 .focusProperties { canFocus = guideInteractive }
+                 .clickable(enabled = channel != null && guideInteractive) { onFullscreenClick?.invoke() }) {
                 if (channel != null) key(surfaceResetKey) { AndroidView(
                     factory = { context ->
                         (LayoutInflater.from(context).inflate(R.layout.live_tv_player_view, null) as PlayerView)
-                            .apply { useController = false; setKeepContentOnPlayerReset(true) }
+                             .apply {
+                                 useController = false; setKeepContentOnPlayerReset(true)
+                                 isFocusable = false; isFocusableInTouchMode = false
+                                 descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                             }
                             .also { onPlayerViewCreated?.invoke(it) }
                     },
                     update = { onPlayerViewCreated?.invoke(it) },
@@ -347,10 +360,12 @@ fun OwnTvCategoryPanel(
     focusSearchSignal: Int = 0, focusCategorySignal: Int = 0, isTouchDevice: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val guideInteractive = LocalLiveGuideInteractive.current
     val folders = remember(tree, playlistSections) { tvStageFolders(tree, playlistSections) }
     val selectedRequest = focusRequester ?: remember { FocusRequester() }
     val searchRequest = remember { FocusRequester() }
     var menu by remember { mutableStateOf<TvStageFolder?>(null) }
+    LaunchedEffect(guideInteractive) { if (!guideInteractive) menu = null }
     val currentFocusEnter by rememberUpdatedState(onFocusEnter)
     LaunchedEffect(focusSearchSignal) {
         if (focusSearchSignal > 0) runCatching { searchRequest.requestFocus() }
@@ -374,7 +389,8 @@ fun OwnTvCategoryPanel(
                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionUp) { onMoveUpFromSearch(); true } else false
             }, onClick = onOpenSearch)
         Spacer(Modifier.height(16.dp))
-        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.focusProperties { canFocus = guideInteractive },
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
             itemsIndexed(folders, key = { _, folder -> "${folder.hidden}:${folder.category.id}" }) { index, folder ->
                 val category = folder.category
                 if (folder.section.isNotEmpty() && (index == 0 || folders[index - 1].section != folder.section)) {
@@ -395,7 +411,8 @@ fun OwnTvCategoryPanel(
                     }
                     .clip(RoundedCornerShape(10.dp))
                     .background(if (active || focused) TvStageStyle.Accent.copy(alpha = if (focused) 0.28f else 0.14f) else Color.Transparent)
-                    .combinedClickable(onClick = { if (folder.hidden) menu = folder else onSelect(category.id) },
+                    .focusProperties { canFocus = guideInteractive }
+                    .combinedClickable(enabled = guideInteractive, onClick = { if (folder.hidden) menu = folder else onSelect(category.id) },
                         onLongClick = { if (category.playlistGroupName != null) menu = folder })
                     .padding(horizontal = 10.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically) {
@@ -433,6 +450,8 @@ fun OwnTvCategorySheetBar(
     onSelect: (String) -> Unit, onOpenSearch: () -> Unit, modifier: Modifier = Modifier,
 ) {
     var open by remember { mutableStateOf(false) }
+    val guideInteractive = LocalLiveGuideInteractive.current
+    LaunchedEffect(guideInteractive) { if (!guideInteractive) open = false }
     val folders = remember(tree, playlistSections) { tvStageFolders(tree, playlistSections).filterNot { it.hidden } }
     val selected = folders.firstOrNull { it.category.id == selectedId }?.category
     Row(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),

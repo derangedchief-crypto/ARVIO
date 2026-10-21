@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -85,6 +86,7 @@ fun TvGuideViewport(
     onVisibleChannelsChanged: (Int, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
+    val guideInteractive = LocalLiveGuideInteractive.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val rowHeight = if (compact) 52.dp else LiveDims.EpgRowHeight
@@ -95,6 +97,16 @@ fun TvGuideViewport(
     val end = start + 8 * 3_600_000L
     var cursor by remember { mutableLongStateOf(clockTickMillis) }
     var viewStart by remember { mutableLongStateOf(clockTickMillis / 1_800_000L * 1_800_000L) }
+    var guideWasHidden by remember { mutableStateOf(!guideInteractive) }
+    LaunchedEffect(guideInteractive) {
+        if (guideInteractive && guideWasHidden) {
+            // Match the old fresh-guide time anchor without destroying its
+            // channel window or video view after a long fullscreen session.
+            cursor = clockTickMillis
+            viewStart = clockTickMillis / 1_800_000L * 1_800_000L
+        }
+        guideWasHidden = !guideInteractive
+    }
     LaunchedEffect(start, end) {
         cursor = cursor.coerceIn(start, end - 1)
         viewStart = viewStart.coerceIn(start, end - 1_800_000L)
@@ -166,7 +178,7 @@ fun TvGuideViewport(
                 if (nowX in 0f..size.width) drawLine(TvStageStyle.Accent, Offset(nowX, 0f), Offset(nowX, size.height), 2f)
             }
         }
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().focusProperties { canFocus = guideInteractive }) {
             itemsIndexed(channels, key = { _, channel -> channel.id }) { index, channel ->
                 val channelFocus = channelRequests.getOrPut(channel.id) { FocusRequester() }
                 val programmeFocus = programmeRequests.getOrPut(channel.id) { FocusRequester() }
@@ -247,9 +259,9 @@ fun TvGuideViewport(
                                     Key.Enter, Key.DirectionCenter -> { onProgramSelect(channel, selected()); true }
                                     else -> false
                                 }
-                            }.focusable()
-                            .pointerInput(programs, viewStart, pixelsPerMinute) {
-                                detectTapGestures { point ->
+                            }.focusable(enabled = guideInteractive)
+                            .pointerInput(programs, viewStart, pixelsPerMinute, guideInteractive) {
+                                if (guideInteractive) detectTapGestures { point ->
                                     cursor = viewStart + (point.x / pixelsPerMinute * 60_000).toLong()
                                     onProgramSelect(channel, selected())
                                 }

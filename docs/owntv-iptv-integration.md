@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `414`. Version name is `2.0.098`, following the actual
+Current testing version code is `415`. Version name is `2.0.099`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,48 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Ready preview return and retired TV-prefetch removal in 2.0.099 / 415
+
+The user confirms 2.0.098 fixed the Back crash and the fast engine works well,
+but reports a long frozen preview after returning from fullscreen. The visited
+guide and mini PlayerView are now retained rather than disposed on fullscreen
+entry and reconstructed on Back. While hidden, guide controls, programme strips,
+scroll containers and preview focus are disabled; menus close, accessibility is
+hidden, pointer/key input is blocked, and channel-name marquees stop. Direct
+fullscreen entry still defers the guide until first shown, avoiding extra initial
+startup work. On return the channel scroll window survives and the time cursor
+returns to current programming, matching the former fresh-guide time anchor.
+
+Player binding waits for a real destination surface. A lifecycle observer wakes
+the binding effect when surface availability changes without changing the
+PlayerView reference. The outgoing fullscreen layer remains mounted until the
+preview owns the output, even if the cosmetic transition has finished; an
+invisible retained layer cannot take focus or touch input. No stop, prepare,
+source-resolution, engine change or watchdog retune is added to presentation.
+These changes remove the identified UI/surface teardown and gap; actual TV
+transition latency is not measured locally and still needs device confirmation.
+
+The separately reported `LazyLayoutPrefetchState.schedulePrefetch-0kLqBqw(IJ)`
+NoSuchMethodError is addressed by removing the retired `tv-foundation` alpha
+widgets. Remaining TV rows/columns/grids in source selection, details, collections,
+person modals and skeletons now use aligned Compose Foundation implementations.
+Import aliases retain existing TV layout call names; there are no legacy widget
+classes or data/catalog/scraper changes. Existing D-pad focus and scroll helpers,
+item keys, spacing and callbacks remain. The unused TV Foundation opt-in is removed.
+The variant Compose ABI gate now also rejects any reintroduced `androidx.tv:
+tv-foundation*` artifact on compile/runtime classpaths instead of checking only
+Compose module version equality. Scrolling gesture tests exercise prefetch, and
+a classpath regression verifies the obsolete TV lazy class is absent.
+
+The fast engine, activation fix, guide Left/Right contract and restored Back
+actions are unchanged; hold-Back fullscreen is not reintroduced. Native runtime
+instrumentation remains compile-only here, not an executed decoder test. Existing
+testing publication workflow is unchanged and both version fields advance.
+Final checks compiled app and Android-instrumentation Kotlin and passed 418
+targeted JVM/Robolectric tests with zero failures/errors/skips. The fast-engine,
+surface-adapter, activation and publishing-workflow files are unchanged from
+2.0.098. No claim of measured zero-pause video output on physical TVs is made.
 
 ## Back-button-only rollback in 2.0.098 / 414
 

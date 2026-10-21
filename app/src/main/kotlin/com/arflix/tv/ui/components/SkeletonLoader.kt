@@ -36,7 +36,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.sp
 import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.LocalDeviceType
-import androidx.tv.foundation.lazy.list.TvLazyRow
+import androidx.compose.foundation.lazy.LazyRow as TvLazyRow
 
 /**
  * Shared shimmer animation state - only one animation for all skeleton loaders
