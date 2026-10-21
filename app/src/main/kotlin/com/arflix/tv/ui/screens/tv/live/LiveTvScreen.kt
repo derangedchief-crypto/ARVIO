@@ -2243,6 +2243,7 @@ fun LiveTvScreen(
     val mpvPlaying by ownTvMpvFallback.playing.collectAsStateWithLifecycle()
     val mpvBuffering by ownTvMpvFallback.buffering.collectAsStateWithLifecycle()
     val mpvError by ownTvMpvFallback.error.collectAsStateWithLifecycle()
+    val ownTvSurfaceResetKey by ownTvMpvFallback.surfaceResetToken.collectAsStateWithLifecycle()
     // Do not mirror the engine buffering flow into a mutable prepare flag.
     // A fast channel start can conflate true->false back to the previous false,
     // leaving that flag true forever because no new effect key is delivered.
@@ -2310,6 +2311,7 @@ fun LiveTvScreen(
             val ownTvSourceProgram = playingCatchupProgram?.shiftedForCatchup(catchupUrlAnchorOffsetMs)
             ownTvMpvFallback.play(stream, mergedHeaders, archive = playingCatchupProgram != null,
                 startPositionMs = initialPositionMs,
+                isHls = isHls, name = playingChannel?.name ?: "Live channel",
                 refreshUrl = ownTvSourceChannel?.let { channel ->
                     {
                         viewModel.resolvePlayableStreamUrl(channel, ownTvSourceProgram, forceRefresh = true).url
@@ -2848,6 +2850,17 @@ fun LiveTvScreen(
         }
     }
 
+    val previewBackShortcut = rememberLivePreviewBackShortcut(
+        enabled = !isTouchDevice && !isFullScreen && playingChannel != null && !searchOpen && variantPickerChannel == null,
+        onShortBack = {
+            when (focusZone) {
+                LiveTvFocusZone.EPG -> focusChannelList(focusedChannelId ?: playingChannelId)
+                LiveTvFocusZone.TOPBAR -> closeNavigationMenu()
+                else -> onBack()
+            }
+        },
+        onLongBack = openFullScreenPlayer,
+    )
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -2855,6 +2868,7 @@ fun LiveTvScreen(
             .then(
                 if (!isTouchDevice) {
                     Modifier.onPreviewKeyEvent { event ->
+                        if (previewBackShortcut(event)) return@onPreviewKeyEvent true
                         if (!searchOpen && variantPickerChannel == null && focusZone != LiveTvFocusZone.TOPBAR && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
                             digitForTvKeyCode(event.nativeKeyEvent.keyCode)?.let { digit ->
                                 return@onPreviewKeyEvent handleChannelNumberDigit(digit)
@@ -2964,6 +2978,7 @@ fun LiveTvScreen(
                         onOpenVariants = playingChannel?.let { channel -> { openVariantPicker(channel) } },
                         compact = true,
                         landscapeCompact = landscapeCompactMiniPlayer,
+                        surfaceResetKey = if (usingOwnTvMpvFallback) ownTvSurfaceResetKey else null,
                         onPlayerViewCreated = { view -> miniPlayerView = view },
                         onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
                         modifier = Modifier.fillMaxWidth(),
@@ -3125,6 +3140,7 @@ fun LiveTvScreen(
                         onOpenVariants = playingChannel?.let { channel -> { openVariantPicker(channel) } },
                         compact = compactTouchLayout,
                         guideMode = !isTouchDevice,
+                        surfaceResetKey = if (usingOwnTvMpvFallback) ownTvSurfaceResetKey else null,
                         onPlayerViewCreated = { view -> miniPlayerView = view },
                         onPlayerViewReleased = { view -> releasePlayerView(view, isMini = true) },
                         modifier = Modifier.fillMaxWidth().padding(end = if (isTouchDevice) 0.dp else 48.dp),
@@ -3319,6 +3335,7 @@ fun LiveTvScreen(
                         }
                     ),
             ) {
+                androidx.compose.runtime.key(if (usingOwnTvMpvFallback) ownTvSurfaceResetKey else null) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
                         val view = (LayoutInflater.from(ctx)
@@ -3339,6 +3356,7 @@ fun LiveTvScreen(
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
+                }
                 if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
                     val categoryTitle = playingChannel?.source?.group?.takeIf { it.isNotBlank() }
                         ?: visibleEnrichedState.value.tree.byId(selectedCategoryId)?.label

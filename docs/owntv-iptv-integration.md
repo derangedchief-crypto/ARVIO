@@ -12,7 +12,9 @@ cursor time. A programme is not a separate Compose focus node. Ruler and row
 geometry share a viewport; offscreen programmes are not measured or drawn.
 
 Live and catch-up URLs resolve through ARVIO's existing authenticated source
-configuration, then play through the actual `OwnTVPlayer` from Player Core.
+configuration. Normal live playback starts on OwnTV's `LivePreviewEngine` under
+`LiveTuneController`, with its automatic `OwnTVPlayer` compatibility fallback;
+catch-up stays on `OwnTVPlayer` from Player Core.
 ARVIO's DRM path remains available for compatibility, including PlayReady (which
 OwnTV's DRM model does not support). Movies and shows keep their existing player.
 
@@ -65,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `411`. Version name is `2.0.095`, following the actual
+Current testing version code is `412`. Version name is `2.0.096`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -549,6 +551,58 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Live boundary, fast live engine and held Back in 2.0.096 / 412
+
+Left within future EPG listings now steps through prior programmes until the
+current programme is selected. Only the next Left returns to channel names; a
+further Left reaches categories. Empty/gapped rows clamp at the current clock
+instead of drifting into history. A cursor later within the currently airing
+programme is still treated as the current programme, including after moving to
+another row. Explicit Rewind history and short Back remain available. Compose
+key-input tests verify the intermediate programme selections, not only focus.
+
+The earlier tuning changes removed host-side waits, but every non-DRM live stream
+still went straight to mpv's full demuxer. OwnTV documents a 3–5 second HLS/unknown
+container startup floor there. Normal live playback now starts on the actual
+OwnTV `LivePreviewEngine` (Media3) using upstream `LiveTuneController` and
+`EnginePair`. Upstream owns opening, response sniffing, retries, failure watches,
+single-session handling, decoder-release waits and automatic mpv fallback. The
+existing mpv probe is not shortened or patched. Catch-up continues through mpv;
+DRM, including PlayReady, continues through ARVIO's existing Media3 configuration.
+
+The adapter supplies already-authorized URLs to the first tune without another
+Stalker resolution, preserves headers/UA/HLS declarations, and scopes reconnect
+callbacks to that request. Per-tune entities are in memory only, not a second
+catalog import. The private Koin graph now retains the process-long repositories
+and mpv player while constructing a route-owned fast live engine. The mini player
+and fullscreen share the active engine; promoting to fullscreen does not retune.
+The active engine controls play/buffer/error/aspect state, and both engines detach
+surfaces by identity. Native surface reset/generation tokens recreate the actual
+PlayerView, including for subsequent UHD tunes. Disposal stops both engines and
+clears their background restores; stale tunes and delayed archives are cancelled.
+
+On TV, holding Back for about 600 ms while a preview channel exists promotes that
+**playing** stream to fullscreen from categories, channel rows, EPG or the hidden
+navigation menu. It does not select the currently browsed row or programme. The
+held press consumes repeat events and its release even after fullscreen changes
+the shortcut's enabled state, preventing an immediate bounce back out. Short Back
+keeps its prior zone-specific action; search/variant modals and touch/system Back
+keep their existing handlers. Pending holds cancel on route disposal or app stop.
+
+Tests cover the real upstream tune controller against fake engine ports (fast
+first, no duplicate resolution, headers, mpv fallback, superseded requests and
+archive handover), actual Compose Back key holds/releases in all browse zones,
+surface recreation and current-programme boundaries. The production Koin runtime
+probe was moved to Android instrumentation because its real native SQLite and
+WorkManager background work cannot run correctly in a plain JVM Application.
+Instrumentation Kotlin is compiled here; device probes and authenticated-stream
+startup timing are not claimed as executed. First-frame speed still depends on
+the provider, segments/keyframes, network and device decoder.
+Final validation compiled internal-test and Android-instrumentation Kotlin, and
+passed 387 targeted JVM/Robolectric tests with zero failures/errors/skips. The
+internal-test runtime dependency check resolves Media3 to 1.11.1, matching OwnTV
+Player Core, rather than loading an older host-declared Media3 runtime.
 
 ## Directional guide columns and pending repairs in 2.0.095 / 411
 

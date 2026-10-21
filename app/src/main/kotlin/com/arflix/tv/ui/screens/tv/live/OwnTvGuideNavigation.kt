@@ -4,6 +4,19 @@ package com.arflix.tv.ui.screens.tv.live
 
 import tv.own.owntv.core.database.entity.EpgProgrammeEntity
 
+/** Left browses future listings back to live; null means return to channel names.
+ * Never enter history implicitly, including gaps and rows with different spans. */
+internal fun ownTvGuideLeftStep(
+    programmes: List<EpgProgrammeEntity>, cursor: Long, now: Long, windowStart: Long, windowEnd: Long,
+): Long? {
+    require(windowEnd > windowStart)
+    val liveCursor = now.coerceIn(windowStart, windowEnd - 1)
+    if (cursor <= liveCursor || programmes.any {
+        cursor >= it.startMs && cursor < it.stopMs && now >= it.startMs && now < it.stopMs
+    }) return null
+    return ownTvGuideCursorStep(programmes, cursor, -1, windowStart, windowEnd).coerceAtLeast(liveCursor)
+}
+
 /** Programme cursor shared by rows: vertical navigation preserves the selected wall-clock time. */
 internal fun ownTvGuideCursorStep(
     programmes: List<EpgProgrammeEntity>,

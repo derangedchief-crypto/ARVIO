@@ -104,12 +104,20 @@ class OwnTvGuideDpadNavigationTest {
         assertNull(selectedProgramme)
     }
 
-    @Test fun leftExitsGuideEvenAfterBrowsingFutureProgrammes() {
+    @Test fun leftWalksFutureProgrammesBackToCurrentBeforeReturningToChannels() {
         mount()
         key(Key.DirectionRight)
         key(Key.DirectionRight)
         key(Key.DirectionRight)
         programmeFocused(1)
+        key(Key.DirectionLeft)
+        programmeFocused(1)
+        key(Key.Enter)
+        assertEquals("Next programme", selectedProgramme?.title)
+        key(Key.DirectionLeft)
+        programmeFocused(1)
+        key(Key.Enter)
+        assertEquals("Current programme", selectedProgramme?.title)
         key(Key.DirectionLeft)
         channelFocused(1)
     }
@@ -125,10 +133,12 @@ class OwnTvGuideDpadNavigationTest {
         assertEquals(0, playedChannels)
     }
 
-    @Test fun emptyGuideRowsAlsoExitLeftWithoutWalkingHistory() {
+    @Test fun emptyGuideRowsReturnToPresentBeforeExitingWithoutWalkingHistory() {
         mount(withListings = false)
         key(Key.DirectionRight)
         key(Key.DirectionRight)
+        key(Key.DirectionLeft)
+        programmeFocused(1)
         key(Key.DirectionLeft)
         channelFocused(1)
     }

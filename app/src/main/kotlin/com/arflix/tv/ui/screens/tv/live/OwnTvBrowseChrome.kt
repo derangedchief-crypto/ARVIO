@@ -262,6 +262,7 @@ fun OwnTvPreviewStage(
     onPlayerViewReleased: ((PlayerView) -> Unit)? = null,
     compact: Boolean = false, landscapeCompact: Boolean = false, modifier: Modifier = Modifier,
     guideMode: Boolean = false,
+    surfaceResetKey: Any? = null,
 ) {
     BoxWithConstraints(modifier.padding(horizontal = 16.dp, vertical = if (guideMode) 8.dp else 12.dp)) {
         val narrow = maxWidth < 520.dp
@@ -270,14 +271,14 @@ fun OwnTvPreviewStage(
             Box(modifier.clip(RoundedCornerShape(18.dp)).background(Color.Black)
                 .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
                 .clickable(enabled = channel != null) { onFullscreenClick?.invoke() }) {
-                if (channel != null) AndroidView(
+                if (channel != null) key(surfaceResetKey) { AndroidView(
                     factory = { context ->
                         (LayoutInflater.from(context).inflate(R.layout.live_tv_player_view, null) as PlayerView)
                             .apply { useController = false; setKeepContentOnPlayerReset(true) }
                             .also { onPlayerViewCreated?.invoke(it) }
                     },
                     update = { onPlayerViewCreated?.invoke(it) },
-                    onRelease = { onPlayerViewReleased?.invoke(it) }, modifier = Modifier.fillMaxSize())
+                    onRelease = { onPlayerViewReleased?.invoke(it) }, modifier = Modifier.fillMaxSize()) }
                 else Text(stringResource(R.string.tv_stage_select_channel), color = TvStageStyle.Muted,
                     fontSize = 12.sp, modifier = Modifier.align(Alignment.Center).padding(16.dp))
                 Text(stringResource(R.string.tv_stage_live), color = Color.White, fontSize = 10.sp,

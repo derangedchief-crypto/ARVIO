@@ -223,9 +223,19 @@ fun TvGuideViewport(
                                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                                     Key.DirectionUp -> moveRow(-1)
                                     Key.DirectionDown -> moveRow(1)
-                                    // Horizontal focus is a column contract, not an
-                                    // implicit request to traverse hours of history.
-                                    Key.Back, Key.DirectionLeft -> { onExitEpg(channel); channelFocus.requestFocus(); true }
+                                    Key.Back -> { onExitEpg(channel); channelFocus.requestFocus(); true }
+                                    Key.DirectionLeft -> {
+                                        val previous = ownTvGuideLeftStep(programs, cursor, clockTickMillis, start, end)
+                                        if (previous == null) {
+                                            onExitEpg(channel); channelFocus.requestFocus()
+                                        } else {
+                                            cursor = previous
+                                            if (cursor < viewStart || cursor >= viewStart + 90 * 60_000L) {
+                                                viewStart = cursor / 1_800_000L * 1_800_000L
+                                            }
+                                        }
+                                        true
+                                    }
                                     Key.DirectionRight, Key.MediaRewind, Key.MediaFastForward -> {
                                         cursor = ownTvGuideCursorStep(programs, cursor,
                                             if (event.key == Key.MediaRewind) -1 else 1, start, end)

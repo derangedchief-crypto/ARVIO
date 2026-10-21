@@ -83,6 +83,20 @@ class TvStageChromeTest {
         compose.runOnIdle { assertTrue(opened) }
     }
 
+    @Test fun nativeSurfaceResetRecreatesOnlyThePlayerViewWithoutSelectingAnotherChannel() {
+        val reset = androidx.compose.runtime.mutableStateOf(0)
+        val created = mutableSetOf<PlayerView>()
+        val released = mutableSetOf<PlayerView>()
+        compose.setContent {
+            OwnTvPreviewStage(channel, now, IptvNowNext(now = programme), emptySet(), {},
+                surfaceResetKey = reset.value, onPlayerViewCreated = { created += it },
+                onPlayerViewReleased = { released += it }, modifier = Modifier.width(800.dp))
+        }
+        compose.runOnIdle { assertEquals(1, created.size); reset.value++ }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(2, created.size); assertEquals(1, released.size) }
+    }
+
     @Test fun foldPreviewPlateUsesWidescreenDimensions() {
         var view: PlayerView? = null
         compose.setContent {

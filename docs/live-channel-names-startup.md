@@ -46,6 +46,11 @@ that shortening it can wedge HLS playback, and that it can impose a 3–5 second
 startup floor. Provider response time, segment/keyframe availability and decoder
 startup still apply. We have not measured the user's authenticated TV streams.
 
+The follow-up 2.0.096 starts normal live streams on OwnTV's fast live engine,
+with the full-probe mpv engine as the compatibility fallback instead of the
+mandatory first step. See `owntv-iptv-integration.md` for routing, handover and
+surface-lifetime details. Catch-up/DRM paths are kept distinct.
+
 Native Compose image tests verify that long selected text moves, inactive long
 names stay still, and short selected names stay still. Policy tests verify debounce
 and preserved recovery/heap budgets. Resolver tests verify deadline cancellation,
