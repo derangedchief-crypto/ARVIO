@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `420`. Version name is `2.0.104`, following the actual
+Current development version code is `421`. Version name is `2.0.105`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,15 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Relaunch device exercise in 2.0.105 / 421
+
+The user confirmed 2.0.104-test is installed and open. This release changes only
+version fields and documentation, preserving the tested relaunch implementation.
+Leave 104 open until its mandatory update prompt detects 105, then install through
+that prompt and confirm whether the app reopens automatically on 105. Do not
+manually sideload 105 for this exercise: it must be initiated by 104's updater.
+Main/customer release remains 2.0.101. Native relaunch results are not yet known.
 
 ## Post-update relaunch in 2.0.104 / 420
 
