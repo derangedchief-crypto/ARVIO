@@ -82,7 +82,8 @@ final class Commands
 
     public function checkIn(string $token, array $input, string $ip): array
     {
-        Input::keys($input, ['model', 'os_version', 'app_version', 'activity_state', 'capabilities', 'storage_total', 'storage_free']);
+        Input::keys($input, ['schema_version', 'model', 'os_version', 'app_version', 'activity_state', 'capabilities', 'storage_total', 'storage_free']);
+        Input::integer($input['schema_version'] ?? 1, 1, 1);
         $device = $this->deviceIdentity($token);
         $this->auth->limit('device-check-in', $device['id'], 20, 60);
         $model = Input::text($input['model'] ?? '', 'model', 120, false);
@@ -119,14 +120,15 @@ final class Commands
                     $deliveries[] = ['id' => $row['id'], 'kind' => $row['kind'], 'payload' => json_decode($row['payload'], false, 16, JSON_THROW_ON_ERROR), 'lease_token' => $lease, 'expires_at' => $row['expires_at']];
                 }
             }
-            return ['policy' => $policy, 'heartbeat_seconds' => $this->config->number('heartbeat_seconds', 60, 15, 300), 'commands' => $deliveries,
+            return ['schema_version' => 1, 'policy' => $policy, 'heartbeat_seconds' => $this->config->number('heartbeat_seconds', 60, 15, 300), 'commands' => $deliveries,
                 'update_policy' => ['managed_by' => 'platform_owner', 'source' => 'existing_central_channel']];
         });
     }
 
     public function acknowledge(string $token, string $commandId, array $input): array
     {
-        Input::keys($input, ['lease_token', 'status', 'summary']);
+        Input::keys($input, ['schema_version', 'lease_token', 'status', 'summary']);
+        Input::integer($input['schema_version'] ?? 1, 1, 1);
         $device = $this->deviceIdentity($token);
         $status = $input['status'] ?? '';
         $this->auth->limit('device-ack', $device['id'], 60, 60);

@@ -31,6 +31,16 @@ function operationalCases(array &$tests, ControlCenter\Application $app, Control
 {
     mkdir($fixture.'/tests',0700);
     copy(__DIR__.'/concurrency-worker.php',$fixture.'/tests/concurrency-worker.php');
+    $tests['device contract rejects unsupported schema before executing or acknowledging commands'] = function () use ($app,$alpha,$tenantA,$enrolled,$snapshot): void {
+        [$device,$token]=$enrolled($alpha,$tenantA['id']);
+        $command=$app->commands->enqueue($alpha,$device['id'],['kind'=>'request_checkin'],ControlCenter\Database::id());
+        problem(422,fn()=> $app->commands->checkIn($token,array_replace($snapshot,['schema_version'=>2]),'127.0.0.1'));
+        same('pending',$app->commands->listing($alpha,$device['id'],[])['items'][0]['status']);
+        $response=$app->commands->checkIn($token,array_replace($snapshot,['schema_version'=>1]),'127.0.0.1'); same(1,$response['schema_version']);
+        $lease=$response['commands'][0]['lease_token'];
+        problem(422,fn()=> $app->commands->acknowledge($token,$command['id'],['schema_version'=>2,'lease_token'=>$lease,'status'=>'succeeded']));
+        same('succeeded',$app->commands->acknowledge($token,$command['id'],['schema_version'=>1,'lease_token'=>$lease,'status'=>'succeeded'])['status']);
+    };
     $tests['reseller pagination does not impose a silent 200-account ceiling'] = function () use ($app,$owner,$alpha): void {
         for($i=0;$i<27;$i++) $app->db->query("INSERT INTO tenants (id,name,kind) VALUES (?,?,'reseller')",[ControlCenter\Database::id(),'Paging fixture '.$i]);
         $first=$app->management->tenantListing($owner,[]); $second=$app->management->tenantListing($owner,['page'=>2]);

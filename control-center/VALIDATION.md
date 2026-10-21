@@ -2,10 +2,10 @@
 
 Validated locally on Linux with PHP 8.3.6 and real MariaDB 10.11.14.
 
-- **66 passing backend/database/HTTP cases**, zero failures: setup locking, typed
+- **67 passing backend/database/HTTP cases**, zero failures: setup locking, typed
   input, authentication/CSRF/origin checks, tenant/resource isolation, private-file
   protection, rate limits, device policy, credential revocation, queue capabilities,
-  leases/retries/expiry, idempotency, redaction/encryption and retention.
+  leases/retries/expiry, schema-version rejection, idempotency, redaction/encryption and retention.
 - Two-process concurrency exercises enforce device allocations and deduplicate
   simultaneous command requests against actual InnoDB transactions.
 - Native MariaDB dump/restore into a separate generated test database verifies

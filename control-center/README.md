@@ -16,6 +16,10 @@ activation/maintenance services, central updater, `main` or publishing workflows
 - Authenticated check-in/ack API contract, encryption/redaction primitives, checked
   SQL migrations and cron retention. No arbitrary commands, APK URLs or remote shell.
 
+The device contract currently accepts `schema_version: 1` (omission is treated as
+version 1 for local tooling). Unsupported versions are rejected before command
+delivery or acknowledgment; check-in responses identify their schema version.
+
 **Not yet connected to customer apps.** There is deliberately no public enrollment
 endpoint before activation identity/reseller ownership is agreed. Existing apps
 must gain the management client in a later testing build; provisioning a record

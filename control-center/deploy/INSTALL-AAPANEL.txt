@@ -28,6 +28,9 @@ commands yet. No branding or APK/update-channel controls are included.
    Remote SQL requires verified TLS: configure database.ssl_ca with your provider's
    CA certificate when it is not signed by the system trust store. The application
    will not silently disable certificate verification or fall back to plaintext.
+   If aaPanel open_basedir blocks /etc/ssl/certs, copy the trusted provider/system
+   CA certificate bundle into private storage/ and set ssl_ca to that path. Do not
+   disable certificate verification or request the database server's private key.
 7. Make storage/ owned/writable by the website PHP user (normally www), mode 700.
    config.local.php should be owned by that user, mode 600. Application/public
    files may be 644, directories 755. Never use 777. Separate PHP pool users are
