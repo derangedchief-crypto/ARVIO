@@ -65,7 +65,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `410`. Version name is `2.0.094`, following the actual
+Current testing version code is `411`. Version name is `2.0.095`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -549,6 +549,32 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Directional guide columns and pending repairs in 2.0.095 / 411
+
+Left from any EPG programme position now returns immediately to that same
+channel's name column, rather than traversing historical programmes until the
+far-left time-window boundary. Another Left reaches categories; Right returns to
+the remembered channel and then the EPG. Horizontal column navigation does not
+start playback, change the selected category or require Back/OK. Up/Down preserve
+the EPG time cursor across rows as before; Right still advances through future
+programmes. Explicit Media Rewind moves to previous/historical programmes, and
+Media Fast Forward advances them. Back remains a supported alternative, not a
+requirement. Touch programme selection and catch-up actions remain unchanged.
+
+Real Compose key-input regressions exercise round-trips through the actual
+category panel, channel labels and programme strips with no Back key; future and
+empty-guide exits; row restoration after vertical movement; and selecting an
+earlier programme using explicit Rewind. Test tags identify the actual focus
+targets. This validates focus behavior in fixtures, not a physical remote session.
+
+This user-requested testing build also includes the previously unpublished
+dashboard service intro repair and long-channel-name/startup improvements:
+`dashboard-service-intros.md` and `live-channel-names-startup.md`. Both version
+fields advance for this testing build, and the existing publishing workflow is
+unchanged. No maintenance event or server EPG rebuild is triggered by publishing.
+Internal-test Kotlin compilation and 373 targeted JVM/Robolectric tests passed,
+with zero failures/errors/skips, before requesting the signed testing publication.
 
 ## Expired-cache recovery and protected EPG controls in 2.0.094 / 410
 

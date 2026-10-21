@@ -1,7 +1,8 @@
-# Live channel names and startup — unreleased
+# Live channel names and startup — included in 2.0.095
 
-These source changes are intentionally unpublished, like the dashboard intro
-repair. APK version 2.0.094 / 410 and publishing workflows remain unchanged.
+Originally saved unpublished, like the dashboard intro repair. The user later
+requested a testing build after fixing guide column navigation. These changes
+are included in 2.0.095 / 411; publishing workflows remain unchanged.
 
 ## Channel names
 
@@ -50,4 +51,4 @@ names stay still, and short selected names stay still. Policy tests verify debou
 and preserved recovery/heap budgets. Resolver tests verify deadline cancellation,
 no cache poisoning, slower explicit recovery, redirect/HLS detection and caller
 cancellation. Compile and broader TV, buffering, guide, startup, maintenance and
-dashboard intro regressions are validated without publishing an APK.
+dashboard intro regressions were validated before requesting the testing build.

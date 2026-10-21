@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -205,7 +206,7 @@ fun TvGuideViewport(
                             onMoveUp = { moveRow(-1) }, onMoveDown = { moveRow(1) },
                             onFocused = { onChannelFocused(channel) }, variantCount = variantCountFor(channel),
                             onOpenVariants = { onOpenVariants(channel) }, rowHeight = rowHeight,
-                            modifier = Modifier.focusRequester(channelFocus))
+                            modifier = Modifier.focusRequester(channelFocus).testTag("guide-channel-${channel.id}"))
                     }
                     val rowEmptyLabel = stringResource(when {
                         channel.id in epgLoadingChannelIds || isGuideBackfillLoading -> R.string.live_placeholder_loading_guide
@@ -216,22 +217,22 @@ fun TvGuideViewport(
                     OwnTvProgrammeStrip(programs, viewStart, clockTickMillis,
                         if (focused) cursor else null, pixelsPerMinute, formatter, rowEmptyLabel,
                         Modifier.weight(1f).fillMaxHeight().focusRequester(programmeFocus)
+                            .testTag("guide-programmes-${channel.id}")
                             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onChannelFocused(channel) }
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                                     Key.DirectionUp -> moveRow(-1)
                                     Key.DirectionDown -> moveRow(1)
-                                    Key.Back -> { onExitEpg(channel); channelFocus.requestFocus(); true }
-                                    Key.DirectionLeft, Key.DirectionRight -> {
-                                        if (event.key == Key.DirectionLeft && cursor <= clockTickMillis && viewStart <= start) {
-                                            onExitEpg(channel); channelFocus.requestFocus()
-                                        } else {
-                                            cursor = ownTvGuideCursorStep(programs, cursor,
-                                                if (event.key == Key.DirectionRight) 1 else -1, start, end)
-                                            if (cursor < viewStart || cursor >= viewStart + 90 * 60_000L) {
-                                                viewStart = cursor / 1_800_000L * 1_800_000L
-                                            }
-                                        }; true
+                                    // Horizontal focus is a column contract, not an
+                                    // implicit request to traverse hours of history.
+                                    Key.Back, Key.DirectionLeft -> { onExitEpg(channel); channelFocus.requestFocus(); true }
+                                    Key.DirectionRight, Key.MediaRewind, Key.MediaFastForward -> {
+                                        cursor = ownTvGuideCursorStep(programs, cursor,
+                                            if (event.key == Key.MediaRewind) -1 else 1, start, end)
+                                        if (cursor < viewStart || cursor >= viewStart + 90 * 60_000L) {
+                                            viewStart = cursor / 1_800_000L * 1_800_000L
+                                        }
+                                        true
                                     }
                                     Key.Enter, Key.DirectionCenter -> { onProgramSelect(channel, selected()); true }
                                     else -> false

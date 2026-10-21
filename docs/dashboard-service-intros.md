@@ -1,7 +1,9 @@
-# Dashboard service intro repair — unreleased
+# Dashboard service intro repair — included in 2.0.095
 
-The user requested this repair without publishing another testing APK. The APK
-version and publishing workflows are unchanged; no release is requested here.
+Initially saved without publishing an APK, as requested. The user subsequently
+requested a testing build with this repair, marquee/startup improvements and guide
+column navigation. These changes are included in 2.0.095 / 411; the publishing
+workflow remains unchanged.
 
 ## Cause
 
