@@ -152,4 +152,15 @@ class OwnTvGuideDpadNavigationTest {
         key(Key.DirectionLeft)
         channelFocused(1)
     }
+
+    @Test fun originalShortBackReturnsFromEpgToChannelsWithoutChangingPlayback() {
+        mount()
+        key(Key.DirectionRight)
+        key(Key.DirectionRight)
+        programmeFocused(1)
+        key(Key.Back)
+        channelFocused(1)
+        assertEquals(0, playedChannels)
+        assertNull(selectedProgramme)
+    }
 }

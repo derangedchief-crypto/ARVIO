@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current testing version code is `413`. Version name is `2.0.097`, following the actual
+Current testing version code is `414`. Version name is `2.0.098`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,25 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Back-button-only rollback in 2.0.098 / 414
+
+The user reports the crash persisted and explicitly requests reverting **only**
+Back behavior while retaining the now-fast playback engine. Removed the held-Back
+preview-to-fullscreen shortcut, its custom short/long key tracking, and the added
+fullscreen Back-release guard. The pre-2.0.096 BackHandler/key branches are restored;
+Back has no custom hold-to-fullscreen action. The existing Watch fullscreen action
+remains available.
+
+Fast OwnTV live-first playback, mpv fallback, surface ownership code, activation
+fix, channel marquee and future-to-current EPG navigation are unchanged from
+2.0.097. No engine rollback, tuning changes or additional crash experiment is
+included. Regression coverage retains the original short Back from EPG to the
+same channel without starting/changing playback. The earlier native crash is not
+claimed as physically confirmed resolved by this behavioral rollback.
+Internal-test/instrumentation Kotlin compilation and 408 targeted unit tests
+passed with zero failures/errors/skips. The fast-engine, surface adapter,
+activation and EPG-navigation source files were checked unchanged against 2.0.097.
 
 ## Single-action activation and surface ownership in 2.0.097 / 413
 

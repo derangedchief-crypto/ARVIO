@@ -2855,18 +2855,6 @@ fun LiveTvScreen(
         }
     }
 
-    val backReleaseGuard = remember { LiveBackReleaseGuard() }
-    val previewBackShortcut = rememberLivePreviewBackShortcut(
-        enabled = !isTouchDevice && !isFullScreen && playingChannel != null && !searchOpen && variantPickerChannel == null,
-        onShortBack = {
-            when (focusZone) {
-                LiveTvFocusZone.EPG -> focusChannelList(focusedChannelId ?: playingChannelId)
-                LiveTvFocusZone.TOPBAR -> closeNavigationMenu()
-                else -> onBack()
-            }
-        },
-        onLongBack = openFullScreenPlayer,
-    )
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -2874,15 +2862,6 @@ fun LiveTvScreen(
             .then(
                 if (!isTouchDevice) {
                     Modifier.onPreviewKeyEvent { event ->
-                        if (event.key == Key.Back) {
-                            val consumed = when (event.type) {
-                                KeyEventType.KeyDown -> backReleaseGuard.consumeDown(event.nativeKeyEvent.repeatCount > 0)
-                                KeyEventType.KeyUp -> backReleaseGuard.consumeUp()
-                                else -> false
-                            }
-                            if (consumed) return@onPreviewKeyEvent true
-                        }
-                        if (previewBackShortcut(event)) return@onPreviewKeyEvent true
                         if (!searchOpen && variantPickerChannel == null && focusZone != LiveTvFocusZone.TOPBAR && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
                             digitForTvKeyCode(event.nativeKeyEvent.keyCode)?.let { digit ->
                                 return@onPreviewKeyEvent handleChannelNumberDigit(digit)
@@ -3265,7 +3244,6 @@ fun LiveTvScreen(
                         if (fullscreenGuideOpen) {
                             when (ev.key) {
                                 Key.Back, Key.Escape -> {
-                                    if (ev.key == Key.Back) backReleaseGuard.handledDown()
                                     fullscreenGuideOpen = false
                                     hudPokeSignal++
                                     true
@@ -3318,7 +3296,6 @@ fun LiveTvScreen(
                             when (ev.key) {
                                 Key.Back, Key.Escape -> {
                                     if (firstPress) {
-                                        if (ev.key == Key.Back) backReleaseGuard.handledDown()
                                         if (playingCatchupProgram != null) {
                                             returnCatchupToLive()
                                         } else {
