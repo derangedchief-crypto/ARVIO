@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Extreme Control</title><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<body>
+  <div id="shell" hidden>
+    <aside><a class="brand" href="#overview"><span class="brand-mark">E</span><span>Extreme<span class="brand-sub">CONTROL CENTER</span></span></a>
+      <div class="nav-label">WORKSPACE</div><nav id="navigation" aria-label="Main navigation"></nav>
+      <div class="sidebar-foot"><span class="live-dot"></span> Centrally managed updates<br><span class="subtle">Backend foundation · 0.1.0</span></div>
+    </aside>
+    <div class="workspace"><header><div><span class="eyebrow">DEVICE &amp; RESELLER OPERATIONS</span><div id="workspace-name">Control center</div></div><div class="account"><span id="account-name"></span><button id="password-button" class="quiet">Password</button><button id="logout-button" class="quiet">Sign out</button></div></header>
+      <main id="main" tabindex="-1"></main>
+    </div>
+  </div>
+  <main id="entry" class="entry"><div class="entry-card"><span class="brand-mark">E</span><h1>Extreme Control</h1><p class="subtle">Loading your control center…</p></div></main>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="modal"><div class="modal-heading"><h2 id="modal-title"></h2><button id="modal-close" class="quiet" aria-label="Close dialog">✕</button></div><form id="modal-form"></form></dialog>
+</body></html>

@@ -1,0 +1,30 @@
+# Add inside the EXISTING aaPanel server block / URL rewrite configuration.
+# FIRST set Site Directory -> Running directory to /public.
+# Keep aaPanel's existing certificate, PHP 8.3 and .well-known/ACME configuration.
+# The resulting document root must be:
+# root /www/wwwroot/control.fecxbrfzku.net/public;
+
+index index.php;
+client_max_body_size 64k;
+
+# Defense in depth if the document root is accidentally changed later.
+location ^~ /storage/ { return 404; }
+location ^~ /src/ { return 404; }
+location ^~ /database/ { return 404; }
+location ^~ /cli/ { return 404; }
+location ^~ /dev/ { return 404; }
+location ^~ /tests/ { return 404; }
+location ^~ /deploy/ { return 404; }
+location ^~ /tools/ { return 404; }
+location = /config.local.php { return 404; }
+location = /config.example.php { return 404; }
+location ~ /\.(?!well-known/) { return 404; }
+location ~* \.(?:zip|sql|log|key|bak|ini|env)$ { return 404; }
+
+location / {
+    try_files $uri /index.php?$query_string;
+}
+
+# Do not enable proxy/page caching for this site. Do not trust arbitrary XFF/XFP.
+# Nginx terminates HTTPS here; PHP must receive HTTPS=on through aaPanel's PHP include.
+# Configure trusted real-IP forwarding in NGINX only if you actually use a trusted proxy.

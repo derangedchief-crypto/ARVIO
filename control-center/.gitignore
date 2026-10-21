@@ -1,0 +1,7 @@
+/config.local.php
+/storage/*
+!/storage/.gitkeep
+/dist/
+/test-results/
+/.env
+/*.zip

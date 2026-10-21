@@ -1,0 +1,89 @@
+EXTREME CONTROL CENTER — FOUNDATION 0.1.0
+Target: https://control.fecxbrfzku.net, aaPanel Nginx + PHP 8.3+
+
+IMPORTANT: This is a working backend/dashboard foundation, not a completed Android
+management agent. Existing activated apps do NOT automatically appear or obey
+commands yet. No branding or APK/update-channel controls are included.
+
+1. BACK UP any existing site/database before deploying. Use a NEW dedicated empty
+   MariaDB 10.6+ / MySQL 8.0.16+ database and a user restricted to that database. Prefer
+   local socket/127.0.0.1 access; don't expose database ports publicly.
+   A hosting-panel port such as 8443 is NOT automatically the MySQL port.
+2. Create the PHP site, point DNS at aaPanel, install a valid certificate and force
+   HTTPS. Enable PDO/MySQL, mbstring, OpenSSL, fileinfo and cURL for PHP 8.3+.
+3. Extract the ZIP INTO /www/wwwroot/control.fecxbrfzku.net (or your chosen app
+   folder). src/, database/, public/, storage/ and VERSION should be siblings.
+   Delete the uploaded ZIP from the website after extraction.
+4. In Website -> Site Directory, set RUNNING DIRECTORY to /public, not the whole
+   application directory. PHP open_basedir must allow the APPLICATION PARENT
+   directory so PHP can read src/ and storage/. Do not serve that parent publicly.
+5. Add deploy/nginx.conf.example to the existing server block/rewrite settings.
+   Don't create a duplicate server block or replace aaPanel's TLS/PHP includes.
+   Remove a placeholder index.html from public/ if one takes precedence.
+6. Copy config.example.php to config.local.php beside public/ (NOT inside public/).
+   Enter your database DSN/user/password PRIVATELY in aaPanel File Manager. Keep
+   environment = production and origin = https://control.fecxbrfzku.net.
+   DSN example: mysql:host=127.0.0.1;port=3306;dbname=YOUR_DB;charset=utf8mb4
+   Set your confirmed MySQL host and port here (custom ports are supported).
+   Remote SQL requires verified TLS: configure database.ssl_ca with your provider's
+   CA certificate when it is not signed by the system trust store. The application
+   will not silently disable certificate verification or fall back to plaintext.
+7. Make storage/ owned/writable by the website PHP user (normally www), mode 700.
+   config.local.php should be owned by that user, mode 600. Application/public
+   files may be 644, directories 755. Never use 777. Separate PHP pool users are
+   preferable: permissions do not isolate other compromised sites using the same UID.
+8. Visit the site. It creates a PRIVATE storage/setup.key. Read that file using
+   aaPanel File Manager and enter its key into the setup screen over HTTPS.
+   Create your owner account with a strong unique password (14+ characters).
+   No default passwords are shipped. Never put the setup key into a URL/chat.
+   Setup runs checked migrations and permanently locks first-owner creation in DB.
+9. Sign in, create reseller workspaces, add customers, and provision pending
+   device records. Pending devices are labelled NOT ENROLLED, not online.
+   Secure activation/app enrollment will be integrated as the next milestone.
+10. Add an aaPanel cron task every minute, using your installed PHP CLI path:
+    /www/server/php/83/bin/php /www/wwwroot/control.fecxbrfzku.net/cli/console.php maintenance
+    CLI PHP must have the same required extensions. Do not run the development
+    web server or the local simulator on the public host.
+
+PREFLIGHT / UPGRADES
+php cli/console.php preflight   (checks PHP, private storage and database access)
+php cli/console.php migrate     (applies pending migrations; back up first)
+php cli/console.php maintenance (expires queues/sessions and applies retention)
+
+On upgrades, back up the DB AND config.local.php AND storage/ first. Extract the
+new files in place. Do not delete private configuration, encryption keys or data.
+Run migrate with the same PHP version before using new API features. Never edit
+an already applied SQL migration; checksum mismatches intentionally stop upgrades.
+If DDL fails partway, stop and review/restore the backup; don't drop/reinitialize
+tables blindly. Initial setup refuses unrelated populated databases.
+
+OWNER PASSWORD RECOVERY (SERVER ACCESS REQUIRED)
+Using aaPanel File Manager, create a temporary PRIVATE file outside public/ with
+only the new strong password, owned by the PHP/CLI user and mode 600. Then run:
+php cli/console.php recover-owner < /private/path/to/password-file
+Delete that temporary file immediately afterward. Never put the password in a
+command argument/history, chat or URL. This resets only the existing owner and
+revokes all owner sessions; it does not erase customer data or regenerate keys.
+The original application.key is still required. There is no public recovery API.
+
+BACKUP / RESTORE
+Use aaPanel's database backup facility for this dedicated database, and a private
+encrypted backup of config.local.php and storage/. application.key is required
+to decrypt data; losing it cannot be repaired by generating a replacement key.
+Restore into a NEW private database on a compatible server version, restore the
+same private keys/configuration, point the restored config at that DB, and verify
+preflight/migrate/login before switching DNS. Do not restore over the live DB as
+a test. Restrict backup access and never store SQL/ZIP/config backups in public/.
+
+SECURITY / TROUBLESHOOTING
+Do not log request bodies, cookies, authorization headers or database passwords.
+App errors return a request ID; private PHP logs use that ID without SQL values.
+Configure CDN rules to bypass caching for the whole control-center hostname.
+Browser cookies are Secure/HttpOnly/SameSite=Strict in production; mutation requests
+must come from the exact configured origin and include a session-bound CSRF token.
+An SSL-terminating proxy must forward verified HTTPS through trusted Nginx config;
+untrusted X-Forwarded-Proto/X-Forwarded-For headers are intentionally ignored.
+
+There is no remote shell, broad device wipe, arbitrary APK URL, public device
+enrollment endpoint, test-token issuance endpoint, or reseller update source.
+Never reuse a database password previously pasted into a chat or screenshot.
