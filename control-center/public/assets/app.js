@@ -183,7 +183,7 @@ window.addEventListener('hashchange', route);
 (async () => {
   try {
     const status = await api('/api/status');
-    if (!status.configured) { const card = entryCard('Website files are ready', 'Private database configuration is not set yet.'); card.append(el('p', 'Copy config.example.php to config.local.php in the parent of public/. Fill it in privately using aaPanel File Manager, then reload this page.', 'notice')); return; }
+    if (!status.configured) { const card = entryCard('Website files are ready', 'Enter your database password to finish configuration.'); card.append(el('p', 'Open config.php beside the public folder, enter your database password, save, and reload this page. No copying or renaming is needed.', 'notice')); return; }
     if (!status.installed) { setupForm(); return; }
     try { const session = await api('/api/me'); state.user = session.user; state.csrf = session.csrf; await enter(); } catch (e) { if (e.status === 401) loginForm(); else throw e; }
   } catch (e) { const card = entryCard('Connection needs attention', e.message); card.append(button('Retry connection', () => location.reload(), 'primary')); }

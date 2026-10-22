@@ -10,13 +10,17 @@ final class Config
     public function __construct(string $root, ?array $override = null)
     {
         $this->root = $root;
-        $file = $root . '/config.local.php';
+        $file = $root . '/config.php';
         $this->values = $override ?? (is_file($file) ? require $file : []);
         if (!is_array($this->values)) throw new Problem(503, 'Invalid private configuration.');
     }
 
     public function get(string $key, mixed $default = null): mixed { return $this->values[$key] ?? $default; }
-    public function configured(): bool { return isset($this->values['database']['dsn'], $this->values['origin']); }
+    public function configured(): bool
+    {
+        return isset($this->values['database']['dsn'], $this->values['origin'])
+            && ($this->local() || ($this->values['database']['password'] ?? '') !== '');
+    }
     public function origin(): string { return rtrim((string) $this->get('origin', 'https://control.fecxbrfzku.net'), '/'); }
     public function local(): bool
     {

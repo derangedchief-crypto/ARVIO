@@ -1,13 +1,13 @@
 <?php
 declare(strict_types=1);
 
-// Copy to config.local.php OUTSIDE public/. Enter real values only on your server.
+// This is packaged as config.php beside public/. Edit only that file on your server.
 return [
     'environment' => 'production',
     'origin' => 'https://control.fecxbrfzku.net',
     'database' => [
-        'dsn' => 'mysql:host=127.0.0.1;dbname=control_center;charset=utf8mb4',
-        'username' => 'control_center',
+        'dsn' => 'mysql:host=inflexaservers.com;port=3306;dbname=sql_control_fecxbrfzku_net;charset=utf8mb4',
+        'username' => 'sql_control_fecxbrfzku_net',
         'password' => '',
         // For remote MySQL, point to the provider's CA certificate when required.
         // Otherwise a readable system CA bundle is used. Certificate verification

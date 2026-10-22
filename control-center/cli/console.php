@@ -16,7 +16,7 @@ try {
                 if (!extension_loaded($extension)) throw new RuntimeException("Enable PHP extension: $extension");
             }
             if (!is_dir($config->root . '/storage') || !is_writable($config->root . '/storage')) throw new RuntimeException('Make storage/ writable by the website user');
-            if (!$config->configured()) throw new RuntimeException('Create private config.local.php first');
+            if (!$config->configured()) throw new RuntimeException('Fill in the private config.php beside public/ first');
             $app = new Application($config);
             $app->db->query('SELECT 1');
             $config->secret('application.key');

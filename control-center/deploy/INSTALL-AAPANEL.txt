@@ -1,4 +1,4 @@
-EXTREME CONTROL CENTER — FOUNDATION 0.1.0
+EXTREME CONTROL CENTER — FOUNDATION 0.1.1
 Target: https://control.fecxbrfzku.net, aaPanel Nginx + PHP 8.3+
 
 IMPORTANT: This is a working backend/dashboard foundation, not a completed Android
@@ -20,9 +20,11 @@ commands yet. No branding or APK/update-channel controls are included.
 5. Add deploy/nginx.conf.example to the existing server block/rewrite settings.
    Don't create a duplicate server block or replace aaPanel's TLS/PHP includes.
    Remove a placeholder index.html from public/ if one takes precedence.
-6. Copy config.example.php to config.local.php beside public/ (NOT inside public/).
-   Enter your database DSN/user/password PRIVATELY in aaPanel File Manager. Keep
-   environment = production and origin = https://control.fecxbrfzku.net.
+6. The install ZIP ALREADY INCLUDES config.php beside public/ (NOT inside public/).
+   Open that ONE file in aaPanel File Manager and enter your database password.
+   Your host, port, database/user and origin are already filled in. Save and reload.
+   No copying, renaming, config.local.php or config.example.php is needed.
+   Keep environment = production and origin = https://control.fecxbrfzku.net.
    DSN example: mysql:host=127.0.0.1;port=3306;dbname=YOUR_DB;charset=utf8mb4
    Set your confirmed MySQL host and port here (custom ports are supported).
    Remote SQL requires verified TLS: configure database.ssl_ca with your provider's
@@ -32,7 +34,7 @@ commands yet. No branding or APK/update-channel controls are included.
    CA certificate bundle into private storage/ and set ssl_ca to that path. Do not
    disable certificate verification or request the database server's private key.
 7. Make storage/ owned/writable by the website PHP user (normally www), mode 700.
-   config.local.php should be owned by that user, mode 600. Application/public
+   config.php should be owned by that user, mode 600. Application/public
    files may be 644, directories 755. Never use 777. Separate PHP pool users are
    preferable: permissions do not isolate other compromised sites using the same UID.
 8. Visit the site. It creates a PRIVATE storage/setup.key. Read that file using
@@ -53,8 +55,12 @@ php cli/console.php preflight   (checks PHP, private storage and database access
 php cli/console.php migrate     (applies pending migrations; back up first)
 php cli/console.php maintenance (expires queues/sessions and applies retention)
 
-On upgrades, back up the DB AND config.local.php AND storage/ first. Extract the
-new files in place. Do not delete private configuration, encryption keys or data.
+On upgrades, use the -Update.zip (it deliberately omits config.php). Back up the DB,
+config.php and storage/ first, then extract the update in place. The full install
+ZIP contains a blank-password config.php and is for new installations only.
+Do not delete private configuration, encryption keys or data. If upgrading an
+already configured 0.1.0 installation, rename its config.local.php to config.php
+once before using the new code; there is only one active config file afterward.
 Run migrate with the same PHP version before using new API features. Never edit
 an already applied SQL migration; checksum mismatches intentionally stop upgrades.
 If DDL fails partway, stop and review/restore the backup; don't drop/reinitialize
@@ -71,7 +77,7 @@ The original application.key is still required. There is no public recovery API.
 
 BACKUP / RESTORE
 Use aaPanel's database backup facility for this dedicated database, and a private
-encrypted backup of config.local.php and storage/. application.key is required
+encrypted backup of config.php and storage/. application.key is required
 to decrypt data; losing it cannot be repaired by generating a replacement key.
 Restore into a NEW private database on a compatible server version, restore the
 same private keys/configuration, point the restored config at that DB, and verify

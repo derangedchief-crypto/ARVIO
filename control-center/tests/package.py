@@ -19,6 +19,11 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         assert 'deploy/INSTALL-AAPANEL.txt' in names and 'cli/console.php' in names
         assert not any(name.startswith(('tests/', 'dev/', 'test-results/', 'dist/')) for name in names)
         assert 'config.local.php' not in names
+        assert 'config.example.php' not in names
+        assert 'config.php' in names
+        assert b"'password' => ''" in archive.read('config.php')
+        assert (archive.getinfo('config.php').external_attr >> 16) & 0o777 == 0o600
+        assert not any(name.startswith('tools/') for name in names)
         assert not any(name.endswith(('.key', '.sql.gz', '.zip', '.log', '.env')) for name in names)
         assert (archive.getinfo('storage/').external_attr >> 16) & 0o777 == 0o700
         for name in names:
@@ -26,13 +31,20 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         for line in archive.read('MANIFEST.sha256').decode().splitlines():
             checksum, name = line.split('  ', 1)
             assert hashlib.sha256(archive.read(name)).hexdigest() == checksum, name
-        target = base / 'upgrade'
-        (target / 'storage').mkdir(parents=True, mode=0o700)
-        (target / 'config.local.php').write_text('PRIVATE CONFIG SENTINEL')
-        (target / 'storage/application.key').write_text('ORIGINAL KEY SENTINEL')
-        archive.extractall(target)
-        assert (target / 'config.local.php').read_text() == 'PRIVATE CONFIG SENTINEL'
-        assert (target / 'storage/application.key').read_text() == 'ORIGINAL KEY SENTINEL'
         contents = b''.join(archive.read(name) for name in names)
         assert b'Synthetic-Test-Password' not in contents
-print('PASS deterministic ZIP, manifest, safe paths, private directory permissions, no secrets/test tools, in-place configuration/key preservation')
+    update = base / 'update.zip'
+    subprocess.run(['python3', str(root / 'tools/package.py'), '--update', str(update)], check=True, capture_output=True)
+    with zipfile.ZipFile(update) as archive:
+        assert 'config.php' not in archive.namelist()
+        target = base / 'upgrade'
+        (target / 'storage').mkdir(parents=True, mode=0o700)
+        (target / 'config.php').write_text('PRIVATE CONFIG SENTINEL')
+        (target / 'storage/application.key').write_text('ORIGINAL KEY SENTINEL')
+        archive.extractall(target)
+        assert (target / 'config.php').read_text() == 'PRIVATE CONFIG SENTINEL'
+        assert (target / 'storage/application.key').read_text() == 'ORIGINAL KEY SENTINEL'
+        for line in archive.read('MANIFEST.sha256').decode().splitlines():
+            checksum, name = line.split('  ', 1)
+            assert hashlib.sha256(archive.read(name)).hexdigest() == checksum
+print('PASS fresh ZIP contains one blank-password config.php; update ZIP preserves it; deterministic manifests and private keys verified')

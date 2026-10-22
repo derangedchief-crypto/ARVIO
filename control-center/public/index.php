@@ -38,7 +38,7 @@ try {
     }
     if (!$config->configured()) {
         if ($method === 'GET' && $path === '/api/status') Http::json(['configured' => false, 'installed' => false]);
-        throw new Problem(503, 'Configure config.local.php privately before owner setup.');
+        throw new Problem(503, 'Enter the database password in config.php beside public/ before owner setup.');
     }
     (new Application($config))->serve($method, $path);
 } catch (Problem $error) {

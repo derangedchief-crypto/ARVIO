@@ -1,6 +1,10 @@
-# Backend foundation 0.1.0 — validation
+# Backend foundation 0.1.1 — validation
 
-Validated locally on Linux with PHP 8.3.6 and real MariaDB 10.11.14.
+The foundation baseline was validated locally on Linux with PHP 8.3.6 and real
+MariaDB 10.11.14. The config.php-only 0.1.1 change is additionally checked by
+`tests/config.php`, PHP/JS syntax checks and the install/update ZIP tests. The
+database and browser suites below are the prior foundation baseline, not a claim
+that stopped local services were restarted/retested for this filename change.
 
 - **67 passing backend/database/HTTP cases**, zero failures: setup locking, typed
   input, authentication/CSRF/origin checks, tenant/resource isolation, private-file
@@ -18,7 +22,9 @@ Validated locally on Linux with PHP 8.3.6 and real MariaDB 10.11.14.
   No uncaught JavaScript errors. Desktop and 390px-wide screenshots inspected.
 - PHP, JavaScript and shell syntax checks pass. The ZIP is deterministic, its
   manifest matches contents, private/test files are excluded, and extracting it
-  over an initialized local copy preserves configuration and encryption keys.
+  using the update ZIP over an initialized local copy preserves config.php and
+  encryption keys. The full install ZIP ships exactly one application config.php
+  with a blank password; no example/local config files are shipped.
 
 This is **not** a claim of completed Android device management or production fleet
 capacity. Devices in preview screenshots are explicitly synthetic test simulators.

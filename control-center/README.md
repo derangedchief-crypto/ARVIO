@@ -40,8 +40,11 @@ PHP extensions: PDO/pdo_mysql, mbstring, OpenSSL, cURL, fileinfo. No Composer, N
 Python or permanent queue/WebSocket service is needed on the hosting server.
 There are no third-party production PHP packages in this initial milestone.
 
-Copy `config.example.php` to private `config.local.php` on the server. Never commit
-it, publish an initialized archive or put secrets in URLs. The DB must be dedicated
+The install ZIP already contains **one `config.php` beside `public/`**. Open that
+file, enter the database password privately and reload. Host, port, database/user
+and origin are prefilled for this deployment. No copying/renaming is required.
+Never commit a filled config.php, publish an initialized archive or put secrets in
+URLs. The DB must be dedicated
 and empty on first setup. Backup/restore instructions include both DB and private
 keys; a new encryption key cannot decrypt a restored database's previous ciphertext.
 
@@ -62,7 +65,7 @@ python3 control-center/tools/package.py
 The test runner creates only randomly named `control_test_*` databases through the
 local Unix socket, tests actual MySQL/MariaDB constraints and real HTTP endpoints,
 and drops only those generated databases. It creates an isolated application copy
-under `/tmp/opencode`, never overwriting `config.local.php` in this checkout. Test
+under `/tmp/opencode`, never overwriting `config.php` in this checkout. Test
 credentials are synthetic, not defaults, and tests/dev tools are excluded from ZIPs.
 Keep generated logs/backups private. Package hashes are recorded by the tool helper.
 

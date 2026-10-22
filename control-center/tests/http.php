@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-/** Launches an isolated copy of the application; never writes config.local.php
+/** Launches an isolated copy of the application; never writes config.php
  * into the developer's checkout or connects to the user's aaPanel website. */
 final class HttpFixture
 {
@@ -16,8 +16,8 @@ final class HttpFixture
         fclose($probe);
         $this->origin = 'http://127.0.0.1:' . $port;
         $settings['origin'] = $this->origin;
-        file_put_contents($root . '/config.local.php', "<?php\nreturn " . var_export($settings, true) . ";\n");
-        chmod($root . '/config.local.php', 0600);
+        file_put_contents($root . '/config.php', "<?php\nreturn " . var_export($settings, true) . ";\n");
+        chmod($root . '/config.php', 0600);
         $args = [PHP_BINARY, '-n', '-d', 'extension_dir=' . ini_get('extension_dir')];
         foreach (['ctype','fileinfo','mbstring','pdo','mysqlnd','pdo_mysql','curl'] as $extension) array_push($args, '-d', 'extension=' . $extension);
         array_push($args, '-d', 'date.timezone=UTC', '-S', '127.0.0.1:' . $port, '-t', $root . '/public', $root . '/dev/router.php');
@@ -67,7 +67,7 @@ function httpCases(HttpFixture $http, array &$tests, string $password, ControlCe
     };
     $tests['HTTP unauthenticated data access is denied'] = function () use ($http): void { same(401,$http->request('GET','/api/devices')['status']); same(401,$http->request('GET','/api/tenants')['status']); };
     $tests['HTTP security headers disallow framing, external scripts and response caching'] = function () use ($http): void { $r=$http->request('GET','/'); same(200,$r['status']); same(['DENY'],$r['headers']['x-frame-options']); check(str_contains($r['headers']['content-security-policy'][0],"frame-ancestors 'none'")); check(str_contains($r['headers']['cache-control'][0],'no-store')); check(!isset($r['headers']['access-control-allow-origin'])); };
-    $tests['HTTP private config, keys and SQL files are not downloadable'] = function () use ($http,$app): void { foreach(['/config.local.php','/storage/application.key','/storage/setup.key','/database/migrations/001_foundation.sql','/src/Auth.php','/dev/router.php','/../config.local.php'] as $path) { $r=$http->request('GET',$path); check($r['status']!==200,'Private path returned 200: '.$path); check(!str_contains($r['raw'],$app->config->secret('application.key'))); check(!str_contains($r['raw'],'<?php')); } };
+    $tests['HTTP private config, keys and SQL files are not downloadable'] = function () use ($http,$app): void { foreach(['/config.php','/config.local.php','/storage/application.key','/storage/setup.key','/database/migrations/001_foundation.sql','/src/Auth.php','/dev/router.php','/../config.php'] as $path) { $r=$http->request('GET',$path); check($r['status']!==200,'Private path returned 200: '.$path); check(!str_contains($r['raw'],$app->config->secret('application.key'))); check(!str_contains($r['raw'],'<?php')); } };
     $tests['HTTP Host spoofing and cross-origin writes are rejected'] = function () use ($http,&$sessions): void { same(400,$http->request('GET','/api/me',null,['Host'=>'attacker.example.test'],'owner')['status']); same(403,$http->request('POST','/api/customers',['name'=>'No'],['Origin'=>'https://attacker.test','X-CSRF-Token'=>$sessions['owner']['csrf']],'owner')['status']); };
     $tests['HTTP JSON content-type and CSRF are mandatory for browser writes'] = function () use ($http,&$sessions): void { same(415,$http->request('POST','/api/customers',[],['Content-Type'=>'text/plain'],'owner')['status']); same(403,$http->request('POST','/api/customers',[],[],'owner')['status']); same(403,$http->request('POST','/api/customers',[],['X-CSRF-Token'=>$sessions['alpha']['csrf']],'owner')['status']); };
     $tests['HTTP valid owner/reseller reads are scoped by authenticated session'] = function () use ($http,$tenantA): void { $r=$http->request('GET','/api/tenants',null,[],'alpha'); same(200,$r['status']); same(1,count($r['body']['items'])); same($tenantA['id'],$r['body']['items'][0]['id']); same(200,$http->request('GET','/api/overview',null,[],'owner')['status']); };

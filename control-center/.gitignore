@@ -1,3 +1,4 @@
+/config.php
 /config.local.php
 /storage/*
 !/storage/.gitkeep
