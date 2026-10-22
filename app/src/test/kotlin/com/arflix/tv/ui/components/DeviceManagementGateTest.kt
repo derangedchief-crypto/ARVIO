@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.arflix.tv.management.DeviceManagementState
 import com.arflix.tv.management.ManagementMessage
+import com.arflix.tv.management.preparingManagementAccount
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -30,6 +31,21 @@ class DeviceManagementGateTest {
         compose.setContent { DeviceManagementGate(DeviceManagementState(false, status = "Offline"), {}) { Text("Normal app") } }
         compose.onNodeWithText("Normal app").assertExists()
         compose.onNodeWithText("Service suspended").assertDoesNotExist()
+    }
+    @Test fun activatedPlaylistIdentityCheckKeepsTheOnboardingCompositionAlive() {
+        val state = mutableStateOf(DeviceManagementState(false, status = "No eligible activation account"))
+        var created = 0; var disposed = 0
+        compose.setContent {
+            DeviceManagementGate(state.value, {}) {
+                DisposableEffect(Unit) { created++; onDispose { disposed++ } }
+                Text("Activation entered once; signing in")
+            }
+        }
+        compose.runOnIdle { state.value = preparingManagementAccount(state.value, false) }
+        compose.onNodeWithText("Activation entered once; signing in").assertExists()
+        compose.runOnIdle { assertEquals(1, created); assertEquals(0, disposed) }
+        compose.runOnIdle { state.value = state.value.copy(status = "Awaiting enrollment", checkingLocalState = false) }
+        compose.runOnIdle { assertEquals(1, created); assertEquals(0, disposed) }
     }
     @Test fun knownSuspensionDisposesPlaybackAndBackDoesNotExposeIt() {
         val state = mutableStateOf(DeviceManagementState(false))

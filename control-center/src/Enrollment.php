@@ -125,7 +125,8 @@ final class Enrollment
             }
             $this->db->query('UPDATE enrollment_requests SET label=?,model=?,os_version=?,app_version=?,last_request_at=UTC_TIMESTAMP() WHERE id=?',[$label,$model,$os,$version,$row['id']]);
             if($row['status']==='approved'&&$row['device_id']) {
-                if(isset($claim['panel'])) {
+                $detached=$this->db->one('SELECT reseller_detached FROM devices WHERE id=?',[$row['device_id']]);
+                if(isset($claim['panel'])&&empty($detached['reseller_detached'])) {
                     $binding=$this->db->one('SELECT a.tenant_id,p.reseller_id,p.panel_id FROM managed_accounts a LEFT JOIN panel_customers p ON p.account_ref=a.account_ref WHERE a.account_ref=?',[$row['account_ref']]);
                     $linked=$this->db->one('SELECT tenant_id FROM panel_resellers WHERE panel_id=?',[$claim['panel']['reseller_id']]);
                     if(($linked&&$binding&&$linked['tenant_id']!==$binding['tenant_id'])||($binding&&$binding['panel_id']!==null&&($binding['panel_id']!==$claim['panel']['customer_id']||$binding['reseller_id']!==$claim['panel']['reseller_id']))) {
@@ -133,7 +134,7 @@ final class Enrollment
                     }
                 }
                 $device=$this->db->one('SELECT d.*,a.customer_id AS bound_customer FROM devices d JOIN managed_accounts a ON a.account_ref=? WHERE d.id=? FOR UPDATE',[$row['account_ref'],$row['device_id']]);
-                if($device&&$device['policy']!=='removed'&&$device['customer_id']===$device['bound_customer']&&$device['key_fingerprint']===$row['key_fingerprint']&&$device['app_package']===$row['app_package']) {
+                if($device&&$device['policy']!=='removed'&&(!empty($device['reseller_detached'])||$device['customer_id']===$device['bound_customer'])&&$device['key_fingerprint']===$row['key_fingerprint']&&$device['app_package']===$row['app_package']) {
                     if($row['credential_cipher']===null||$row['confirmed_at']!==null||$row['credential_expired']) $this->mintCredential($row['id'],$device['id']);
                 } else {
                     // Removal never silently reactivates a device. A new proof

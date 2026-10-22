@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.util.Base64
 import com.arflix.tv.BuildConfig
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.ProfileManager
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -43,6 +44,7 @@ import kotlin.random.Random
 class DeviceManagementAgent @Inject constructor(
     @ApplicationContext private val context: Context,
     private val repository: Lazy<IptvRepository>,
+    private val profiles: ProfileManager,
 ) {
     private val vault by lazy { ManagementVault(context) }
     private val api = ManagementApi()
@@ -108,7 +110,7 @@ class DeviceManagementAgent @Inject constructor(
                     val sameAccount = active?.account?.scope == account.scope
                     val previous = _state.value
                     active = null
-                    _state.value = DeviceManagementState(true, if (sameAccount) previous.installationId else "", "Checking saved device policy", if (sameAccount) previous.policy else null)
+                    _state.value = preparingManagementAccount(previous, sameAccount)
                     if (sameAccount) previous.policy else null
                 }
                 try {
@@ -243,14 +245,38 @@ class DeviceManagementAgent @Inject constructor(
             val payload = command.optJSONObject("payload") ?: JSONObject()
             val item = ManagementCommand(id, kind, runCatching { parseManagementTime(command.getString("expires_at")) }.getOrDefault(0),
                 payload.optString("message", ""), payload.optInt("duration_seconds", 0))
+            if (kind in listOf("refresh_playlist", "reload_epg", "get_settings", "get_diagnostics") && item.expiresAtMs > System.currentTimeMillis()) {
+                beginCommand(current, id, lease)
+                // Persist an interrupted-operation receipt BEFORE side effects. A
+                // process/network retry cannot silently start an expensive job twice.
+                val interrupted = CommandReceipt(id, "failed", "Action interrupted; request a new command to retry safely")
+                change(current) { it.copy(receipts = (it.receipts + interrupted).takeLast(512)) }
+                val executed = ManagementActions(context, repository.get(), profiles).execute(id, kind, current.account.scope)
+                change(current) { it.copy(receipts = it.receipts.map { old -> if (old.id == id) executed else old }) }
+                acknowledge(current, lease, executed)
+                return
+            }
             var result: CommandReceipt? = null
+            if (kind in listOf("request_checkin", "show_message") && item.expiresAtMs > System.currentTimeMillis()) beginCommand(current, id, lease)
             // Persist before acknowledgment: a retry after process/network failure
             // returns the same result and does not redisplay a dismissed message.
             change(current) { val plan = planManagementCommand(it, item, System.currentTimeMillis()); result = plan.receipt; plan.session }
             result ?: return
         }
+        acknowledge(current, lease, receipt)
+    }
+    private suspend fun acknowledge(current: Active, lease: String, receipt: CommandReceipt) {
+        val body = JSONObject().put("schema_version", 1).put("lease_token", lease).put("status", receipt.status).put("summary", receipt.summary)
+        receipt.snapshot?.let { body.put("snapshot", JSONObject(it)) }
+        api.control("/api/device/commands/${receipt.id}/ack", body, current.session.credential)
+    }
+    private suspend fun beginCommand(current: Active, id: String, lease: String) {
+        // Revalidate the lease/current policy immediately before starting. A
+        // cancelled former-reseller delivery must not run merely because it was
+        // present in an earlier check-in response. Already-running work cannot
+        // be recalled atomically by a web request.
         api.control("/api/device/commands/$id/ack", JSONObject().put("schema_version", 1).put("lease_token", lease)
-            .put("status", receipt.status).put("summary", receipt.summary), current.session.credential)
+            .put("status", "running").put("summary", "App accepted the current command lease"), current.session.credential)
     }
     private fun newInstallation() = UUID.randomUUID().toString().replace("-", "")
 }

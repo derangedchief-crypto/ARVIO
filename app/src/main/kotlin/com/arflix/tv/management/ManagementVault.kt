@@ -38,7 +38,7 @@ internal class ManagementVault(context: Context) {
         val file = file(scope)
         if (!file.baseFile.exists()) return null
         val bytes = file.readFully()
-        check(bytes.size in 29..262144 && bytes[0] == 1.toByte()) { "Invalid management state" }
+        check(bytes.size in 29..1048576 && bytes[0] == 1.toByte()) { "Invalid management state" }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, encryptionKey(false), GCMParameterSpec(128, bytes.copyOfRange(1, 13)))
         cipher.updateAAD(scope.toByteArray(Charsets.UTF_8))

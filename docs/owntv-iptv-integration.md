@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `423`. Version name is `2.0.107`, following the actual
+Current development version code is `424`. Version name is `2.0.108`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,32 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Management follow-up in 2.0.108 / 424
+
+Fix the first-activation navigation reset: preparing the management identity after
+the playlist is saved must not switch an already-running app back into the
+cold-start loading gate. The former true -> false transition disposed NavHost,
+could cancel the activation ViewModel before completion, and asked for the code
+again. Initial persisted policy checks and explicit suspension/block disposal stay
+intact. A pure transition test and composition-lifetime regression cover this path;
+physical first-install confirmation remains required.
+
+New foreground command capabilities: playlist reload using the existing repository
+without purging source/guide caches, requesting the existing shared guide job,
+read-only active-profile settings counts/enums, and basic app/storage/guide-state
+diagnostics. Closed typed snapshot schemas exclude credentials, URLs, source/profile
+names, favourite values, raw logs/files and update controls. Persist-before-action
+receipts bound retries; profile/account switches discard inappropriate snapshots.
+Guide acknowledgment explicitly reports a job REQUEST, not successful guide import.
+No player, decoder, original Back, central updater or activation-worker changes.
+
+Control-center 0.3.0 also separates owner-only management unassignment from blocking.
+Detachment moves one device to the owner inventory without changing its app token
+or underlying IPTV line. Existing 107 clients remain compatible with detachment;
+108 is needed for the new actions and activation fix. Website migration comes
+before the testing APK. Configuration editing/category sync/log/screenshots remain
+unimplemented future increments, not advertised capabilities.
 
 ## Device-management pilot in 2.0.107 / 423
 

@@ -1,4 +1,24 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.2.1
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.3.0
+
+0.3.0 UPDATE
+Back up database, config.php and private storage. Extract the UPDATE ZIP over the
+existing website and open Enrollments -> Apply database upgrade. Migration 004
+adds the detached marker and an ON UPDATE CASCADE command-history relation.
+Existing config.php, storage keys, app credentials, accounts and records remain.
+
+Owner device Overview -> Remove from reseller — keep app working moves ONE device
+to owner-only Unassigned devices, clears management restriction and cancels the
+former reseller's unfinished commands. That reseller immediately loses device/
+command/snapshot access. It does NOT wipe/revoke a working app login or modify
+the underlying IPTV subscription. Other devices on that line keep their original
+reseller. Block app / Revoke enrollment (locks app) remain separate explicit actions.
+
+2.0.107 clients can use this unassignment behavior without an APK update. 2.0.108
+testing adds the first-login double-prompt fix, playlist reload, shared guide-refresh
+requests, read-only settings and BASIC diagnostics snapshots (not logs/screenshots).
+Install this website update BEFORE the 108 pilot. Guide-request success means a
+job was requested, NOT that a full import completed. No extra worker patch is needed
+for 0.3.0 if the ownership bridge from 0.2.1 is already installed.
 
 0.2.1 OWNERSHIP UPDATE
 Back up database/config.php/private storage, extract the UPDATE ZIP over the

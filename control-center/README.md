@@ -5,7 +5,59 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone — 0.2.1
+## Current milestone — 0.3.0
+
+### Unassign reseller without blocking the app
+
+Owner device Overview now separates **Remove from reseller — keep app working**
+from **Block app / Revoke enrollment (locks app)**. Unassignment moves that ONE
+device into the owner-only `Unassigned devices` customer, sets management policy
+active, cancels pending/delivered/running commands and removes former reseller
+access immediately. The composite command-history FK cascades into the owner
+workspace without deleting history. No app login/profile/guide data is wiped.
+The app revalidates a command lease before starting it. Cancellation prevents new
+delivery/results; an operation that already started cannot be atomically recalled.
+Existing valid credentials continue to check in; previously revoked credentials
+stay revoked and recover only through the existing signed enrollment exchange.
+
+An explicit detached marker keeps later proof/credential renewals owner-managed;
+the panel's original account mapping still applies to other installations of that
+line. Suspending the former reseller does not suspend the detached device. This is
+management assignment only: it does NOT transfer the IPTV line in the external
+panel or prevent its panel reseller from changing the underlying subscription.
+Owner re-assignment of detached devices is separate future transfer work.
+
+### Next remote-management increment
+
+Testing client 2.0.108 adds `refresh_playlist`, `reload_epg`, `get_settings` and
+`get_diagnostics`. The Settings/Logs tabs show requested read-only snapshots with
+their receipt time; unknown/stale results are not presented as live. The typed
+closed schema rejects passwords, URLs, raw logs/files, unsupported fields and
+impossible counters. Only hashed active-profile identity, safe enums/counts and
+basic app/storage/guide state are exported. Snapshots use the same tenant-scoped
+leased command/acknowledgment flow and existing retention.
+
+Playlist reload uses the existing repository with NO cache purge or config write,
+and a bounded 45-second wait. A guide action requests/reuses the shared background
+job and ACKs only that request: it is NOT proof that a full guide import succeeded.
+Existing listings remain available. Action receipts are persisted before side
+effects so retries cannot repeat an expensive action blindly. Account/profile
+changes cancel/discard inappropriate results. Full remote configuration editing,
+playlist URL changes, category/favourite synchronization, log uploads and optional
+screenshots remain later increments; their controls are not falsely enabled.
+
+The 2.0.108 first-activation fix keeps the initial cold-start policy read but does
+not re-enter that gate when saving the first activated playlist. That transient
+gate previously removed the NavHost and could cancel activation mid-submit,
+causing a second code prompt. Explicit known restrictions still replace/dispose
+the app/player UI. Physical first-run confirmation is part of the next pilot.
+
+Deployment: back up and install the **0.3.0 website UPDATE ZIP**, then apply the
+database upgrade under Enrollments (includes migration 004). Existing 107 clients
+can use reseller unassignment immediately; the new remote capabilities and
+activation fix require the centrally signed 108 testing APK. No additional worker
+patch is needed for these changes. If 0.2.1 ownership was not installed yet, keep
+its separate activation-worker update step; do not alter the auth/EPG workers.
 
 ### Verified panel reseller ownership / automatic enrollment
 
@@ -98,9 +150,10 @@ Older APKs do not gain these capabilities without an update. Provisioning a reco
 alone does not make an app online. Local simulations remain explicitly marked TEST
 and their credential issuer remains CLI/test-only, loopback-only, never HTTP.
 
-Playlist/EPG refresh handlers, playlist editing, settings profiles, category/favourite sync, diagnostic uploads
-and screenshots are later milestones. Their dashboard tabs explicitly show that
-they are not available. Android permission/OEM limitations still apply. Rebranding,
+Playlist editing, writable settings profiles, category/favourite sync, raw diagnostic
+file/log uploads and screenshots are later milestones. Their unsupported controls
+remain unavailable. Read-only settings/basic diagnostics and refresh requests are
+implemented as described above. Android permission/OEM limitations still apply. Rebranding,
 launcher icons/names and branded APK generation are deferred. Every customer and
 reseller continues to use **our existing centrally controlled update source**.
 

@@ -106,6 +106,7 @@ final class Application
         if ($method === 'POST' && $path === '/api/devices') Http::json($this->management->createDevice($actor, Http::body()), 201);
         if ($method === 'GET' && preg_match('~^/api/devices/([a-f0-9]{32})$~D', $path, $match)) Http::json($this->management->device($actor, $match[1]));
         if ($method === 'POST' && preg_match('~^/api/devices/([a-f0-9]{32})$~D', $path, $match)) Http::json($this->management->updateDevice($actor, $match[1], Http::body()));
+        if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/detach-reseller$~D',$path,$match)) {Input::keys(Http::body(),[]);Http::json($this->management->detachReseller($actor,$match[1]));}
         if (preg_match('~^/api/devices/([a-f0-9]{32})/commands$~D', $path, $match)) {
             if ($method === 'GET') Http::json($this->commands->listing($actor, $match[1], $_GET));
             if ($method === 'POST') Http::json($this->commands->enqueue($actor, $match[1], Http::body(), $_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? ''), 201);

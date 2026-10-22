@@ -83,6 +83,21 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.screenshot({ path: path.join(output, 'device-commands-desktop.png'), fullPage: true });
     done('command is queued and shown pending, never faked as executed');
 
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('heading', { name: 'Read-only active-profile settings', exact: true }).waitFor();
+    await page.getByText('No successful snapshot in the latest command-history page.', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Logs', exact: true }).click();
+    await page.getByRole('heading', { name: 'Basic app diagnostics — no logs or screenshots', exact: true }).waitFor();
+    done('settings and diagnostics require requested app snapshots, not fabricated live data');
+    await page.getByRole('button', { name: 'Overview', exact: true }).click();
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Remove from reseller — keep app working', exact: true }).click();
+    await page.getByText('UNASSIGNED — owner-managed only.', { exact: false }).waitFor();
+    const unassigned = await page.evaluate(async id => (await (await fetch('/api/devices/' + id)).json()), credentials.device_id);
+    assert.equal(unassigned.reseller_detached, true); assert.equal(unassigned.policy, 'active');
+    await page.screenshot({ path: path.join(output, 'device-unassigned-desktop.png'), fullPage: true });
+    done('owner unassigns reseller management without blocking the synthetic device');
+
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('nav a[href="#overview"]').click();
     await page.getByRole('heading', { name: 'Operations overview', exact: true }).waitFor();

@@ -9,6 +9,17 @@ import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 
 class ManagementProtocolTest {
+    @Test fun savingFirstActivatedLineDoesNotRestartTheColdStartGate() {
+        val initial = DeviceManagementState()
+        assertTrue(preparingManagementAccount(initial, false).checkingLocalState)
+        val noAccountYet = DeviceManagementState(false, status = "No eligible activation account")
+        val activated = preparingManagementAccount(noAccountYet, false)
+        assertFalse(activated.checkingLocalState)
+        assertFalse(activated.restricted)
+        val blocked = DeviceManagementState(false, "saved-id", policy = "blocked")
+        assertTrue(preparingManagementAccount(blocked, true).restricted)
+        assertFalse(preparingManagementAccount(blocked, true).checkingLocalState)
+    }
     @Test fun existingEncodedActivationNeedsNoReactivation() {
         val account = managementAccount(IptvConfig(m3uUrl = "https://tv.extremeiptv.net/get.php?username=fixture&password=pa%26ss"))!!
         assertEquals("fixture", account.username); assertEquals("pa&ss", account.password)

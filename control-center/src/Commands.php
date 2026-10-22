@@ -127,7 +127,7 @@ final class Commands
 
     public function acknowledge(string $token, string $commandId, array $input): array
     {
-        Input::keys($input, ['schema_version', 'lease_token', 'status', 'summary']);
+        Input::keys($input, ['schema_version', 'lease_token', 'status', 'summary', 'snapshot']);
         Input::integer($input['schema_version'] ?? 1, 1, 1);
         $device = $this->deviceIdentity($token);
         $status = $input['status'] ?? '';
@@ -135,7 +135,7 @@ final class Commands
         $lease = $input['lease_token'] ?? '';
         if (!in_array($status, ['running','succeeded','failed'], true) || !is_string($lease) || !preg_match('/^[a-f0-9]{64}$/D', $lease)) throw new Problem(422, 'Invalid command acknowledgment.');
         $summary = Secrets::redact(Input::text($input['summary'] ?? '', 'summary', 1000, false));
-        return $this->db->transaction(function () use ($token, $device, $commandId, $status, $lease, $summary): array {
+        return $this->db->transaction(function () use ($token, $device, $commandId, $status, $lease, $summary, $input): array {
             $this->db->one('SELECT id FROM devices WHERE id = ? FOR UPDATE', [$device['id']]);
             $current = $this->deviceIdentity($token);
             if ($current['policy'] !== 'active' || $current['tenant_status'] !== 'active') throw new Problem(403, 'Device is restricted; stop queued actions.');
@@ -147,7 +147,13 @@ final class Commands
             if ($row['lease_hash'] === null || !hash_equals($row['lease_hash'], hash('sha256', $lease))) throw new Problem(409, 'Delivery lease is no longer valid.');
             if (in_array($row['status'], ['succeeded','failed'], true) && $row['status'] === $status) return self::publicCommand($row);
             if (!in_array($row['status'], ['delivered','running'], true) || !$leaseValid) throw new Problem(409, 'Command has expired or the lease is no longer valid.');
-            $this->db->query('UPDATE commands SET status = ?, result = ?, finished_at = ' . ($status === 'running' ? 'NULL' : 'UTC_TIMESTAMP()') . ' WHERE id = ?', [$status, json_encode(['summary' => $summary], JSON_THROW_ON_ERROR), $commandId]);
+            $result=['summary'=>$summary];
+            if($status==='succeeded'&&in_array($row['kind'],['get_settings','get_diagnostics'],true)&&!array_key_exists('snapshot',$input))throw new Problem(422,'A completed snapshot command must include its typed snapshot.');
+            if(array_key_exists('snapshot',$input)) {
+                if($status!=='succeeded')throw new Problem(422,'Only completed snapshot commands can upload a snapshot.');
+                $result['snapshot']=CommandSnapshots::validate($row['kind'],$input['snapshot']);
+            }
+            $this->db->query('UPDATE commands SET status = ?, result = ?, finished_at = ' . ($status === 'running' ? 'NULL' : 'UTC_TIMESTAMP()') . ' WHERE id = ?', [$status, json_encode($result, JSON_THROW_ON_ERROR), $commandId]);
             if ($status !== 'running') $this->auth->audit(null, 'command.' . $status, $commandId, $current['tenant_id'], ['device_id' => $current['id'], 'kind' => $row['kind']]);
             return self::publicCommand($this->db->one('SELECT * FROM commands WHERE id = ?', [$commandId]));
         });

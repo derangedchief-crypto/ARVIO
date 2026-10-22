@@ -164,10 +164,38 @@ final class Management
             return $this->device($actor, $id);
         });
     }
+    public function detachReseller(array $actor,string $id): array
+    {
+        Auth::owner($actor);
+        return $this->db->transaction(function ()use($actor,$id):array {
+            $device=$this->device($actor,$id,true);
+            if(!empty($device['reseller_detached']))return $device;
+            $owner=$this->db->one("SELECT * FROM tenants WHERE kind='owner' ORDER BY created_at,id LIMIT 1 FOR UPDATE");
+            if(!$owner)throw new Problem(409,'Owner workspace is unavailable.');
+            $customer=$this->db->one('SELECT id FROM customers WHERE tenant_id=? AND external_reference=?',[$owner['id'],'management:unassigned']);
+            if(!$customer) {
+                $customer=['id'=>Database::id()];
+                $this->db->query("INSERT INTO customers (id,tenant_id,name,notes,external_reference) VALUES (?,?,'Unassigned devices','','management:unassigned')",[$customer['id'],$owner['id']]);
+            }
+            $this->db->query("UPDATE commands SET status='cancelled',finished_at=UTC_TIMESTAMP(),lease_hash=NULL,lease_until=NULL WHERE device_id=? AND status IN ('pending','delivered','running')",[$id]);
+            // Cascading the composite FK preserves command history while removing
+            // ALL former reseller access. Device tokens/login are not erased.
+            $this->db->query("UPDATE devices SET tenant_id=?,customer_id=?,reseller_detached=1,policy='active' WHERE id=?",[$owner['id'],$customer['id'],$id]);
+            // An older client may already have re-requested enrollment after
+            // seeing "removed". Restore ONLY this record's previously bound key,
+            // not arbitrary pending installations. Polling then requests a fresh
+            // credential; previously revoked bearers are never revived.
+            $this->db->query("UPDATE enrollment_requests SET status='approved',credential_cipher=NULL,credential_expires_at=NULL,reviewed_by=? WHERE device_id=? AND key_fingerprint=? AND app_package=? AND status='pending'",[$actor['id'],$id,$device['key_fingerprint'],$device['app_package']]);
+            $this->auth->audit($actor,'device.reseller_detached',$id,$device['tenant_id'],['owner_workspace'=>$owner['id']]);
+            $this->auth->audit($actor,'device.unassigned',$id,$owner['id'],['previous_tenant'=>$device['tenant_id']]);
+            return $this->device($actor,$id);
+        });
+    }
     private function publicDevice(array $row): array
     {
         $row['capabilities'] = json_decode($row['capabilities'], true, 16, JSON_THROW_ON_ERROR);
         $row['is_test'] = (bool) $row['is_test'];
+        $row['reseller_detached'] = (bool) ($row['reseller_detached'] ?? false);
         $age = $row['last_seen_age'] === null ? PHP_INT_MAX : (int) $row['last_seen_age'];
         unset($row['last_seen_age']);
         $threshold = $this->config->number('offline_after_seconds', 180, 60, 1800);

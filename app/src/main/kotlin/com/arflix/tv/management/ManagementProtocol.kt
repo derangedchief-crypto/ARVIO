@@ -35,7 +35,7 @@ internal fun enrollmentSigningText(nonce: String, proof: String, install: String
     "ECENROLL1\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint"
 
 internal val MANAGEMENT_POLICIES = setOf("active", "suspended", "blocked", "removed")
-internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message")
+internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics")
 
 @Keep
 data class ManagementMessage(val id: String, val text: String, val expiresAtMs: Long)
@@ -49,8 +49,14 @@ data class DeviceManagementState(
     val restricted: Boolean get() = policy in setOf("suspended", "blocked", "removed")
 }
 
+/** Only the initial cold-start policy read may hold startup. A playlist/profile
+ * emission during activation must not remove the NavHost and cancel its ViewModel. */
+internal fun preparingManagementAccount(previous: DeviceManagementState, sameAccount: Boolean): DeviceManagementState =
+    DeviceManagementState(previous.checkingLocalState, if (sameAccount) previous.installationId else "",
+        "Checking saved device policy", if (sameAccount) previous.policy else null)
+
 @Keep
-internal data class CommandReceipt(val id: String, val status: String, val summary: String)
+internal data class CommandReceipt(val id: String, val status: String, val summary: String, val snapshot: Map<String,String>? = null)
 internal data class ManagementCommand(val id: String, val kind: String, val expiresAtMs: Long, val text: String = "", val durationSeconds: Int = 0) {
     override fun toString() = "ManagementCommand(id=$id, kind=$kind, payload=[redacted])"
 }
@@ -77,7 +83,7 @@ internal fun planManagementCommand(session: ManagementSession, command: Manageme
     session.receipts.firstOrNull { it.id == command.id }?.let { return ManagementCommandPlan(session, it) }
     var message = session.message
     val result = when {
-        command.expiresAtMs <= now || command.kind !in MANAGEMENT_CAPABILITIES -> CommandReceipt(command.id, "failed", "Unsupported or expired command")
+        command.expiresAtMs <= now || command.kind !in listOf("request_checkin", "show_message") -> CommandReceipt(command.id, "failed", "Unsupported or expired command")
         command.kind == "request_checkin" -> CommandReceipt(command.id, "succeeded", "Fresh foreground app check-in received")
         command.text.isBlank() || command.text.codePointCount(0, command.text.length) > 1000 || command.durationSeconds !in 30..3600 ->
             CommandReceipt(command.id, "failed", "Invalid provider message")

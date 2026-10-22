@@ -1,6 +1,40 @@
-# Device management 0.2.1 — validation
+# Device management 0.3.0 — validation
 
-## Automatic panel ownership update
+## Unassignment, first-activation lifetime and next remote actions
+
+- **98 real MariaDB/service/HTTP cases passed**, zero failures. Covers owner-only
+  CSRF-protected detachment, composite-FK command history migration, cancellation
+  and old reseller read/command denial, preserved working credentials, owner-only
+  proof renewal, revoked-token recovery (including an already-pending re-enrollment),
+  original panel ownership for sibling installations and independence from former
+  reseller suspension. Typed leased snapshots reject secret/URL/raw-log fields,
+  missing results, foreign tenant reads and invalid values. Full previous suites
+  and upgrade/backup/restore/concurrency checks are included.
+- **12 browser checks passed**, including actual unassignment with active policy,
+  requested/not-fabricated snapshot UI, new labels and existing reseller isolation.
+  `test-results/device-unassigned-desktop.png` is an inspected SYNTHETIC fixture.
+- **96 Android JVM/Robolectric cases passed**, zero failures. New transition and
+  composition-lifetime tests retain the onboarding tree during the first activated
+  playlist's management check. Existing Xtream submit/duplicate-click, updater,
+  live output and codec tests remain green. Action tests cover read-only safe
+  settings, no cache/config purge on reload, shared guide-job request semantics,
+  profile changes and generic non-secret failures.
+- Internal-test and Android-instrumentation Kotlin compilation passed. Native
+  Keystore/device tests remain compile-only locally. Cold first-code entry,
+  actual provider reload and snapshot delivery still need the next owner-device
+  pilot; mocks/Compose tests are not physical Android/network measurements.
+- **19 unchanged activation-worker/interoperability cases passed**. No worker
+  code, central updater source, manifest permissions, player engine or Back handler
+  changed. Update the website BEFORE publishing/installing 108 testing.
+- Applied migrations 001–003 are unchanged. Migration 004 adds the device marker
+  and cascade relation without dropping history or initialized private storage.
+
+Full remote settings/playlist editing, category/favourite sync, raw logs and
+screenshots are not implemented or advertised by this increment. Detachment does
+not rewrite external panel ownership or guarantee an already-running operation
+can be recalled; it removes management access and cancels further delivery/results.
+
+## Previous automatic panel ownership update (0.2.1)
 
 - **93 real MariaDB/service/HTTP cases passed**, zero failures. New cases verify
   signed panel-ID ownership, automatic customer/device creation without per-device

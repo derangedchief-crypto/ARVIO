@@ -200,4 +200,70 @@ function enrollmentCases(array &$tests, ControlCenter\Application $app, ControlC
         problem(503,fn()=> $management->createReseller($owner,$input));
         same(0,(int)$app->db->query('SELECT COUNT(*) FROM users WHERE email=?',[$input['email']])->fetchColumn());
     };
+    $tests['removing reseller assignment moves the device owner-only without locking or revoking credentials'] = function ()use($app,$owner,$identity,$body,$panelClaim,$delivery):void {
+        $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1001','2011')),'127.0.0.41');$poll=$app->enrollment->poll($delivery($r),'127.0.0.41');$app->enrollment->poll($delivery($r),'127.0.0.41',true);
+        $device=$app->management->device($owner,$poll['device_id']);
+        $seller=['id'=>$owner['id'],'role'=>'reseller','tenant_id'=>$device['tenant_id']];
+        $app->commands->checkIn($poll['credential'],['capabilities'=>['request_checkin']],'127.0.0.41');
+        $command=$app->commands->enqueue($seller,$device['id'],['kind'=>'request_checkin'],bin2hex(random_bytes(16)));
+        $lease=$app->commands->checkIn($poll['credential'],['capabilities'=>['request_checkin']],'127.0.0.41')['commands'][0]['lease_token'];
+        problem(403,fn()=> $app->management->detachReseller($seller,$device['id']));
+        $detached=$app->management->detachReseller($owner,$device['id']);same('active',$detached['policy']);check((bool)$detached['reseller_detached']);check($device['tenant_id']!==$detached['tenant_id']);
+        problem(404,fn()=> $app->management->device($seller,$device['id']));problem(404,fn()=> $app->commands->listing($seller,$device['id'],[]));
+        same('active',$app->commands->checkIn($poll['credential'],['capabilities'=>['request_checkin']],'127.0.0.41')['policy']);
+        same('cancelled',$app->db->one('SELECT status FROM commands WHERE id=?',[$command['id']])['status']);
+        same($detached['tenant_id'],$app->db->one('SELECT tenant_id FROM commands WHERE id=?',[$command['id']])['tenant_id']);
+        problem(409,fn()=> $app->commands->acknowledge($poll['credential'],$command['id'],['lease_token'=>$lease,'status'=>'succeeded']));
+        same($detached['id'],$app->management->detachReseller($owner,$device['id'])['id']);
+        $renew=$app->enrollment->register($body($id,$panelClaim('1001','2011')),'127.0.0.41');
+        same('approved',$renew['status']);$new=$app->enrollment->poll($delivery($renew),'127.0.0.41');same($detached['id'],$new['device_id']);same($detached['tenant_id'],$app->commands->deviceIdentity($new['credential'])['tenant_id']);
+        // The panel account binding still belongs to the source reseller for
+        // OTHER installations. Detaching one device never transfers the line.
+        $other=$identity($id['account']);$sibling=$app->enrollment->register($body($other,$panelClaim('1001','2011')),'127.0.0.41');
+        $s=$app->enrollment->poll($delivery($sibling),'127.0.0.41');same($device['tenant_id'],$app->commands->deviceIdentity($s['credential'])['tenant_id']);
+        $source=$app->management->tenant($owner,$device['tenant_id']);
+        $app->management->updateTenant($owner,$source['id'],['status'=>'suspended','device_limit'=>(int)$source['device_limit']]);
+        try {same('active',$app->commands->checkIn($new['credential'],['capabilities'=>[]],'127.0.0.41')['policy']);}
+        finally {$app->management->updateTenant($owner,$source['id'],['status'=>'active','device_limit'=>(int)$source['device_limit']]);}
+    };
+    $tests['detaching an already revoked device permits proof-based recovery without restoring old revoked tokens'] = function ()use($app,$owner,$identity,$body,$panelClaim,$delivery):void {
+        $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1001','2012')),'127.0.0.41');$poll=$app->enrollment->poll($delivery($r),'127.0.0.41');$app->enrollment->poll($delivery($r),'127.0.0.41',true);
+        $app->management->updateDevice($owner,$poll['device_id'],['policy'=>'removed']);
+        same('pending',$app->enrollment->register($body($id,$panelClaim('1001','2012')),'127.0.0.41')['status']);
+        $app->management->detachReseller($owner,$poll['device_id']);problem(401,fn()=> $app->commands->deviceIdentity($poll['credential']));
+        $again=$app->enrollment->register($body($id,$panelClaim('1001','2012')),'127.0.0.41');same('approved',$again['status']);
+        $new=$app->enrollment->poll($delivery($again),'127.0.0.41');same('active',$app->commands->checkIn($new['credential'],['capabilities'=>[]],'127.0.0.41')['policy']);
+    };
+    $tests['read-only settings results are closed-schema leased and tenant scoped'] = function ()use($app,$owner,$alpha,$beta,$tenantA,$makeCustomer):void {
+        $c=$makeCustomer($alpha,$tenantA['id']);$d=$app->management->createDevice($alpha,['customer_id'=>$c['id'],'label'=>'TEST snapshots']);$token=$app->commands->issueTestCredential($owner,$d['id']);
+        $app->commands->checkIn($token,['capabilities'=>['get_settings','request_checkin']],'127.0.0.41');
+        $command=$app->commands->enqueue($alpha,$d['id'],['kind'=>'get_settings'],bin2hex(random_bytes(16)));
+        $lease=$app->commands->checkIn($token,['capabilities'=>['get_settings','request_checkin']],'127.0.0.41')['commands'][0]['lease_token'];
+        $snapshot=['schema_version'=>'1','profile_ref'=>str_repeat('a',64),'sort_order'=>'provider','playlist_count'=>'2','enabled_playlist_count'=>'1','portal_count'=>'0','favourite_channel_count'=>'3','favourite_group_count'=>'1'];
+        $input=['lease_token'=>$lease,'status'=>'succeeded','summary'=>'Read-only settings','snapshot'=>$snapshot];
+        $missing=$input;unset($missing['snapshot']);problem(422,fn()=> $app->commands->acknowledge($token,$command['id'],$missing));
+        $bad=$input;$bad['snapshot']['password']='must-not-store';problem(422,fn()=> $app->commands->acknowledge($token,$command['id'],$bad));
+        $result=$app->commands->acknowledge($token,$command['id'],$input);same(2,$result['result']['snapshot']['playlist_count']);
+        problem(404,fn()=> $app->commands->listing($beta,$d['id'],[]));
+        same($snapshot['profile_ref'],$app->commands->listing($alpha,$d['id'],[])['items'][0]['result']['snapshot']['profile_ref']);
+        problem(422,fn()=> ControlCenter\CommandSnapshots::validate('show_message',$snapshot));
+        $snapshot['enabled_playlist_count']='3';problem(422,fn()=> ControlCenter\CommandSnapshots::validate('get_settings',$snapshot));
+    };
+    $tests['basic diagnostics reject secrets URLs unsupported packages and impossible counters'] = function ():void {
+        $snapshot=['schema_version'=>'1','profile_ref'=>str_repeat('a',64),'app_package'=>'com.arvio.tv.test','app_version'=>'2.0.108-test','sdk'=>'36','storage_total'=>'1000','storage_free'=>'900','channel_count'=>'4000','guide_state'=>'loading'];
+        same(4000,ControlCenter\CommandSnapshots::validate('get_diagnostics',$snapshot)['channel_count']);
+        foreach([['storage_free'=>'2000'],['guide_state'=>'https://provider.test/password'],['app_version'=>'user:password'],['app_package'=>'foreign.app'],['sdk'=>'1']] as $override)problem(422,fn()=> ControlCenter\CommandSnapshots::validate('get_diagnostics',array_replace($snapshot,$override)));
+        $snapshot['logs']='private raw text';problem(422,fn()=> ControlCenter\CommandSnapshots::validate('get_diagnostics',$snapshot));
+    };
+    $tests['HTTP reseller detachment is owner-only CSRF-protected and immediately removes old reseller reads'] = function ()use($app,$owner,$alpha,$tenantA,$makeCustomer,$http,$password):void {
+        $customer=$makeCustomer($alpha,$tenantA['id']);$device=$app->management->createDevice($alpha,['customer_id'=>$customer['id'],'label'=>'TEST HTTP detach']);
+        $o=$http->request('POST','/api/login',['email'=>'owner@example.test','password'=>$password],[],'detach-owner')['body'];
+        $a=$http->request('POST','/api/login',['email'=>'alpha@example.test','password'=>$password],[],'detach-alpha')['body'];
+        $path='/api/devices/'.$device['id'].'/detach-reseller';
+        same(403,$http->request('POST',$path,new stdClass(),[],'detach-owner')['status']);
+        same(403,$http->request('POST',$path,new stdClass(),['X-CSRF-Token'=>$a['csrf']],'detach-alpha')['status']);
+        $response=$http->request('POST',$path,new stdClass(),['X-CSRF-Token'=>$o['csrf']],'detach-owner');same(200,$response['status']);same('active',$response['body']['policy']);same(true,$response['body']['reseller_detached']);
+        same(404,$http->request('GET','/api/devices/'.$device['id'],null,[],'detach-alpha')['status']);
+        same(404,$http->request('GET','/api/devices/'.$device['id'].'/commands',null,[],'detach-alpha')['status']);
+    };
 }

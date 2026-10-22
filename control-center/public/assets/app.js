@@ -138,6 +138,7 @@ async function devicePage(id, epoch) {
   const d = await api('/api/devices/' + id); if (epoch !== state.epoch) return;
   const main = $('main'); main.replaceChildren(); const back = el('a', '← All devices', 'back-link'); back.href = '#devices'; main.append(back, heading(d.label, d.customer_name + ' · ' + d.tenant_name, [button('Refresh', route), badge(d.presence)]));
   if (d.is_test) main.append(el('p', 'LOCAL TEST SIMULATOR — not a real customer device.', 'notice warning'));
+  if (d.reseller_detached) main.append(el('p', 'UNASSIGNED — owner-managed only. Former reseller access has been removed; the app is not blocked.', 'notice'));
   if (!d.enrolled_at) main.append(el('p', 'Reserved device record awaiting approved enrollment. It is not an online app connection. The owner can attach a verified enrollment request using this record ID.', 'notice'));
   const tabs = el('div', null, 'tabs'); const body = el('div'); main.append(tabs, body);
   const names = ['Overview', 'Playlists', 'Settings', 'Categories', 'Favourites', 'Notifications', 'Logs', 'Commands'];
@@ -150,13 +151,33 @@ async function devicePage(id, epoch) {
       body.append(panel('Quick actions', actions, el('p', 'Commands are queued until check-in. Restarting/reopening remains subject to Android/OEM policy.', 'hint')));
       const columns = el('div', null, 'columns'); columns.append(panel('Device information', detailRows([['Installation record', d.id], ['Model', d.model], ['OS version', d.os_version], ['App version', d.app_version], ['Storage free / total', d.storage_total === null ? null : `${(d.storage_free / 1073741824).toFixed(1)} / ${(d.storage_total / 1073741824).toFixed(1)} GB`], ['Capabilities', d.capabilities.join(', ') || 'None reported']])), panel('Connection & policy', detailRows([['Policy', d.policy], ['Connection', d.presence.replaceAll('_', ' ')], ['First seen / provisioned', date(d.created_at)], ['Last app check-in', date(d.last_seen_at)], ['Observed IP', d.last_ip]]))); body.append(columns);
       const policyActions = el('div', null, 'actions'); policyActions.append(button('Edit notes', () => modal('Device details', [{ key: 'label', label: 'Nickname', value: d.label }, { key: 'notes', label: 'Private notes', type: 'textarea', value: d.notes, required: false }], async values => { await api('/api/devices/' + d.id, values); toast('Device details saved.'); })));
-      const policies = d.policy === 'removed' ? [] : [...(d.policy === 'active' ? [['suspended', 'Suspend app']] : (d.policy !== 'blocked' || state.user.role === 'owner' ? [['active', 'Reactivate']] : [])), ...(state.user.role === 'owner' ? [['blocked', 'Block'], ['removed', 'Remove device']] : [])];
+       const policies = d.policy === 'removed' ? [] : [...(d.policy === 'active' ? [['suspended', 'Suspend app']] : (d.policy !== 'blocked' || state.user.role === 'owner' ? [['active', 'Reactivate']] : [])), ...(state.user.role === 'owner' ? [['blocked', 'Block app'], ['removed', 'Revoke enrollment (locks app)']] : [])];
+       if (state.user.role === 'owner' && !d.reseller_detached) policyActions.append(button('Remove from reseller — keep app working', async () => {
+         if (!confirm('Remove this device from its reseller and move it to the owner-only Unassigned devices area? This clears management restrictions, cancels old queued commands and keeps the app login/data intact. It does NOT change the IPTV subscription in your panel.')) return;
+         try { await api('/api/devices/' + d.id + '/detach-reseller', {}); toast('Reseller access removed. App remains active.'); await route(); } catch (e) { toast(e.message); }
+       }));
       policies.forEach(([policy, label]) => policyActions.append(button(label, async () => { if (!confirm(`${label}? This changes service policy, not the whole Android device. It applies to connected management clients and does not erase app data.`)) return; try { await api('/api/devices/' + d.id, { policy }); toast('Policy saved.'); await route(); } catch (e) { toast(e.message); } }, policy === 'active' ? '' : 'danger')));
       body.append(panel('Private notes & management policy', el('p', d.notes || 'No notes yet.', 'notes'), policyActions));
     } else if (name === 'Commands') {
       const p = panel('Command history'); body.append(p);
       const load = async (page = 1) => { const result = await api(`/api/devices/${id}/commands?page=${page}`); if (epoch !== state.epoch || !tabs.querySelector('[data-tab="Commands"]').classList.contains('active')) return; p.replaceChildren(el('h2', 'Command history'), table(['Action', 'Status', 'Attempts', 'Requested', 'Result'], result.items.map(c => [c.kind.replaceAll('_', ' '), badge(c.status), c.attempts, date(c.created_at), c.result?.summary || '—'])), pagination(result, load)); };
       try { await load(); } catch (e) { toast(e.message); }
+    } else if ((name === 'Settings' || name === 'Logs') && d.capabilities.includes(name === 'Settings' ? 'get_settings' : 'get_diagnostics')) {
+      const kind = name === 'Settings' ? 'get_settings' : 'get_diagnostics';
+      const p = panel(name === 'Settings' ? 'Read-only active-profile settings' : 'Basic app diagnostics — no logs or screenshots'); body.append(p);
+      const request = button('Request fresh snapshot', () => queue(d, kind).catch(e => toast(e.message)), 'primary'); request.disabled = d.policy !== 'active'; p.append(request, el('p', 'The app must be open to respond. This snapshot reports one active profile at execution time, not every profile. Refresh this tab after the next app check-in.', 'hint'));
+      try {
+        const commands = await api(`/api/devices/${id}/commands`); if (epoch !== state.epoch || !tabs.querySelector(`[data-tab="${name}"]`).classList.contains('active')) return;
+        const latest = commands.items.find(c => c.kind === kind && c.status === 'succeeded' && c.result?.snapshot);
+        if (latest) p.append(el('p', 'Snapshot received: ' + date(latest.finished_at), 'subtle'), detailRows(Object.entries(latest.result.snapshot).map(([key, value]) => [key.replaceAll('_', ' '), String(value)])));
+        else p.append(el('p', 'No successful snapshot in the latest command-history page. Nothing has been fetched until you request it.', 'subtle'));
+      } catch (e) { toast(e.message); }
+    } else if (name === 'Playlists' && d.capabilities.includes('refresh_playlist')) {
+      const actions = el('div', null, 'actions');
+      for (const [kind, label] of [['refresh_playlist', 'Refresh playlist'], ['reload_epg', 'Request guide refresh']]) {
+        const b = button(label, () => queue(d, kind).catch(e => toast(e.message))); b.disabled = d.policy !== 'active' || !d.capabilities.includes(kind); actions.append(b);
+      }
+      body.append(panel('Playlist / guide actions', el('p', 'Reload the current profile’s configured playlist or request its shared background guide refresh. Credentials and URLs are not displayed or changed. A requested guide job is not proof of a completed import.', 'subtle'), actions));
     } else if (name === 'Notifications' && d.capabilities.includes('show_message') && d.policy === 'active') {
       body.append(panel('Send a customer message', el('p', 'Visible app message, delivered on the next check-in. It cannot override mandatory updates or maintenance.', 'subtle'), button('Compose message', () => modal('Message device', [{ key: 'message', label: 'Message', type: 'textarea', max: 1000 }, { key: 'priority', label: 'Priority', options: [['normal', 'Normal'], ['urgent', 'Urgent']] }], values => queue(d, 'show_message', values), 'Queue message'), 'primary')));
     } else body.append(panel(name, el('p', 'Not available in the backend foundation yet. Secure app integration and a supported capability are required; no live data has been fetched.', 'subtle')));
@@ -206,7 +227,7 @@ async function enrollments(epoch) {
   const main = $('main'); main.replaceChildren(heading('Device enrollments', 'Linked verified panel accounts enroll automatically. Review unmatched requests and ownership exceptions here.'));
   const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
   if (system.pending_migrations.length) {
-    main.append(panel('Database upgrade required', el('p', 'This release adds enrollment tables without replacing existing accounts, devices or configuration. Back up the database and private storage before upgrading.', 'subtle'),
+    main.append(panel('Database upgrade required', el('p', 'This release applies versioned schema changes without replacing existing accounts, devices or configuration. Back up the database and private storage before upgrading.', 'subtle'),
       button('Apply database upgrade', async () => {
         if (!confirm('Have you backed up the control-center database, config.php and private storage? Apply the versioned database upgrade now?')) return;
         try { await api('/api/system/migrate', {}); toast('Database upgraded.'); await route(); } catch (e) { toast(e.message); }
