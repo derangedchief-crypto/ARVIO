@@ -48,6 +48,14 @@ $settingsCommand=$app->commands->enqueue($owner,$bindings[0]['id'],['kind'=>'get
 $settingsLease=$app->commands->checkIn($bindings[0]['token'],$snapshot,'127.0.0.1')['commands'][0];
 $app->commands->acknowledge($bindings[0]['token'],$settingsCommand['id'],['status'=>'succeeded','lease_token'=>$settingsLease['lease_token'],'summary'=>'TEST SYNTHETIC SETTINGS SNAPSHOT — not from Android',
     'snapshot'=>['schema_version'=>'1','profile_ref'=>hash('sha256','SYNTHETIC PROFILE'),'settings_revision'=>hash('sha256','SYNTHETIC SETTINGS'),'sort_order'=>'provider','playlist_count'=>'1','enabled_playlist_count'=>'1','portal_count'=>'0','favourite_channel_count'=>'0','favourite_group_count'=>'0']]);
+$categoryCommand=$app->commands->enqueue($owner,$bindings[0]['id'],['kind'=>'get_categories'],bin2hex(random_bytes(16)));
+$categoryLease=$app->commands->checkIn($bindings[0]['token'],$snapshot,'127.0.0.1')['commands'][0];
+$categorySource=hash('sha256','SYNTHETIC CATEGORY SOURCE');
+$app->commands->acknowledge($bindings[0]['token'],$categoryCommand['id'],['status'=>'succeeded','lease_token'=>$categoryLease['lease_token'],'summary'=>'TEST SYNTHETIC CATEGORY PAGE — not from Android',
+    'catalog'=>['schema_version'=>1,'profile_ref'=>hash('sha256','SYNTHETIC PROFILE'),'source_ref'=>$categorySource,'revision'=>hash('sha256','SYNTHETIC CATEGORY REVISION'),'page'=>1,'pages'=>1,'total'=>2,'order_editable'=>true,
+        'sources'=>[['ref'=>$categorySource,'label'=>'Playlist 1','total'=>2]],'items'=>[
+            ['ref'=>hash('sha256','SYNTHETIC CATEGORY 1'),'label'=>'TEST <img src=x onerror="window.__categoryInjected=1">','channels'=>20,'hidden'=>false,'position'=>1],
+            ['ref'=>hash('sha256','SYNTHETIC CATEGORY 2'),'label'=>'TEST Sports','channels'=>30,'hidden'=>true,'position'=>2]]]]);
 // A local synthetic issuer/request for exercising the OWNER review UI only.
 // This is not evidence that a real activation worker or Android device connected.
 $app->enrollment->setEnabled($owner,['enabled'=>true]);

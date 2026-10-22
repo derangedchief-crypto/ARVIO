@@ -996,6 +996,67 @@ class IptvRepository @Inject constructor(
         return applied
     }
 
+    private fun managedConfig(profileId: String,prefs: Preferences): IptvConfig {
+        val playlists=decodePlaylists(prefs[playlistsKeyFor(profileId)].orEmpty())
+        return IptvConfig(m3uUrl=playlists.firstOrNull()?.m3uUrl ?: normalizeStoredIptvUrl(decryptConfigValue(prefs[m3uUrlKeyFor(profileId)].orEmpty())),
+            epgUrl=playlists.firstOrNull()?.epgUrl ?: decryptConfigValue(prefs[epgUrlKeyFor(profileId)].orEmpty()),playlists=playlists,
+            stalkerPortals=readStalkerPortalsFor(prefs,profileId),sortOrder=normalizeIptvSortOrder(prefs[sortOrderKeyFor(profileId)]))
+    }
+
+    private fun managedCategoryState(profileId: String,prefs: Preferences,accountMatches: (IptvConfig)->Boolean): ManagedCategoryState {
+        check(profileManager.getProfileIdSync()==profileId)
+        val config=managedConfig(profileId,prefs);check(accountMatches(config))
+        val playlists=activePlaylists(config);val portals=activeStalkerPortals(config)
+        val sourceIds=playlists.map { it.id }+portals.map { it.id }
+        check(validManagedCategorySourceIds(sourceIds))
+        val cacheKey=epgIndexKey(profileId,config)
+        val counts=channelStore.playlistGroupCounts(cacheKey).ifEmpty {
+            if(currentEpgIndexKey!=cacheKey) emptyList() else cachedChannels.groupBy { channel ->
+                val id=channel.id.removePrefix("stalker:").substringBefore(':',"")
+                id to channel.group
+            }.map { (key,channels)->Triple(key.first,key.second,channels.size) }
+        }
+        fun groups(id: String)=counts.filter { it.first==id && it.second.trim().isNotBlank() }.groupBy { it.second.trim() }.map { (name,rows)->ManagedCategoryGroup(PlaylistGroupKey.build(id,name),name,rows.sumOf { it.third }) }
+        // Keep one private digest rather than copying a credential-bearing full
+        // configuration into every source. This digest is NEVER exported: wire
+        // refs additionally HMAC it with the device's private catalog key.
+        val context=MessageDigest.getInstance("SHA-256").digest(gson.toJson(config).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        val sources=playlists.mapIndexed { i,p -> ManagedCategorySource(p.id,"Playlist ${i+1}","playlist\n$context\n${p.id}",groups(p.id)) } +
+            portals.mapIndexed { i,p -> ManagedCategorySource(p.id,"Portal ${i+1}","portal\n$context\n${p.id}",groups(p.id)) }
+        check(sources.all { source -> source.groups.size<=2000 && source.groups.all { it.name.length in 1..1024 && Charsets.UTF_8.newEncoder().canEncode(it.name) && it.channels in 0..10000000 } })
+        fun keys(raw: String):List<String> {
+            if(raw.isBlank())return emptyList()
+            val json=com.google.gson.JsonParser.parseString(raw);check(json.isJsonArray && json.asJsonArray.size()<=10000)
+            val first=config.playlists.firstOrNull()?.id
+            val list=json.asJsonArray.map { check(it.isJsonPrimitive && it.asJsonPrimitive.isString);it.asString.trim() }.filter { it.isNotBlank() }
+                .map { if('|' !in it && first!=null) PlaylistGroupKey.build(first,it) else it }
+            // Ambiguous pre-profile preferences must be migrated locally, never
+            // guessed or overwritten by a remote operation.
+            check(list.all { '|' in it })
+            return StalkerPortalSupport.normalizePlaylistGroupKeys(list)
+        }
+        val hidden=prefs[hiddenGroupsKeyFor(profileId)].orEmpty();val order=prefs[groupOrderKeyFor(profileId)].orEmpty();val schema=prefs[groupOrderSchemaKeyFor(profileId)].orEmpty()
+        return ManagedCategoryState(profileId,sources,keys(hidden),if(schema==IPTV_GROUP_ORDER_SCHEMA.toString())keys(order) else emptyList(),hidden,order,schema)
+    }
+
+    internal suspend fun readManagedCategories(profileId: String,accountMatches: (IptvConfig)->Boolean): ManagedCategoryState = loadMutex.withLock {
+        managedCategoryState(profileId,context.settingsDataStore.data.first(),accountMatches)
+    }
+
+    internal suspend fun applyManagedCategoryPatch(expected: ManagedCategoryState,sourceId: String,operation: String,key: String?,accountMatches: (IptvConfig)->Boolean): Boolean = loadMutex.withLock {
+        var applied=false
+        context.settingsDataStore.edit { prefs ->
+            if(profileManager.getProfileIdSync()!=expected.profileId)return@edit
+            val current=managedCategoryState(expected.profileId,prefs,accountMatches)
+            val patch=guardedManagedCategoryPatch(expected,current,sourceId,operation,key) ?: return@edit
+            if(patch.writesHidden)prefs[hiddenGroupsKeyFor(expected.profileId)]=gson.toJson(patch.hidden)
+            if(patch.writesOrder){prefs[groupOrderKeyFor(expected.profileId)]=gson.toJson(patch.order);prefs[groupOrderSchemaKeyFor(expected.profileId)]=IPTV_GROUP_ORDER_SCHEMA.toString()}
+            applied=true
+        }
+        if(applied){if(operation!="hide"&&operation!="show")groupOrderLocallyDirty=true;invalidationBus.markDirty(CloudSyncScope.IPTV,expected.profileId,"managed category operation")}
+        applied
+    }
+
     /**
      * Accept common Xtream Codes inputs and convert to a canonical M3U URL.
      *

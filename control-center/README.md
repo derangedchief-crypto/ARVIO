@@ -5,7 +5,57 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone — 0.4.0
+## Current milestone — 0.5.0
+
+### Remote category management (testing client 2.0.109)
+
+The device **Categories** tab now requests a typed cached Live TV category page from one
+active profile/source. It lists visibility, channel counts and current positions;
+operators can hide/show, move up/down/to top, or reset custom ordering for that
+source. Resetting order does not reset visibility, favourites or another source.
+After a queued change succeeds, request a fresh read to confirm it: existing
+tables are labelled snapshots, not live or assumed-applied state. The selected
+device tab remains open after queue/refresh operations.
+
+Source choices use generic Playlist/Portal labels, not provider URLs or user-entered
+source names. Row/source references are opaque device-keyed HMACs; a private random
+catalog salt stays in the app's encrypted no-backup session. Even source identities
+containing credentials are never exported as public dictionary-guessable password
+hashes. Titles are shortened to80 Unicode codepoints and obvious URL/credential
+assignments are masked both app-side and server-side. Raw channel URLs, MAC/login
+configuration and playlist keys never leave the device through this schema.
+
+Reads paginate50 categories at a time (up to2000 categories/source,32 active
+sources). Unavailable caches require opening Live TV/refreshing the playlist;
+they are not guessed from another profile. Invalid/ambiguous legacy preferences
+are not overwritten remotely. Legacy custom ordering may require a local migration
+before reorder controls are enabled. A20-second cooperative timeout keeps a stalled
+catalog request from deliberately monopolizing the foreground management loop.
+
+Writes bind the profile/source, complete selected category catalog and current
+preference revision. The app rechecks them inside an explicit-profile DataStore
+edit, preserving other sources, unknown saved keys, favourites, activation and
+retained guide data. No network guide import/cache purge or player operation is
+triggered by category edits. Source/profile/account/preferences/catalog conflicts
+fail safely. Mutations use the existing persist-before-effect duplicate journal.
+Large read pages are NOT stored in that journal: on retry they may be reread only
+against the original profile/source/page target. Mutations never replay blindly.
+
+The backend accepts closed typed catalogs only for successful get_categories
+commands and enforces requested profile/source/page echoes. Set-category success
+is a mutation receipt, not a fabricated fresh read. Standard tenant authorization,
+capability/lease checks, cancellation and retention apply. Operator-supplied refs
+cannot add categories, change sources, URLs, entitlements, updater settings or
+perform arbitrary Android operations.
+
+Deploy the **0.5.0 website UPDATE ZIP before the109 testing APK**. If already on
+0.4.0, this increment needs no new database migration; apply any older pending
+migrations if Enrollments shows them. No worker patch or Android permission changes.
+Linked-reseller-only admission, owner unassignment without blocking, previous
+settings/presets and the first-activation lifetime fix remain intact. Full playlist
+editing, favourite synchronization, log/screenshot permissions, billing and branding
+remain subsequent work. Physical-device category testing is still required.
+This increment does not edit movie/series library categories.
 
 ### Linked-reseller admission only (future paid-service boundary)
 
@@ -56,7 +106,7 @@ without linking it is deliberately insufficient.
 the **0.4.0 website UPDATE ZIP** and apply migrations 005/006 under Enrollments
 before the combined centrally signed 108 testing APK. The existing ownership
 worker bridge is compatible; no additional worker update is needed. Presets
-currently configure sorting ONLY; full playlist editing/category/favourite sync,
+currently configure sorting ONLY; full playlist editing and favourite synchronization,
 log uploads/screenshots and billing remain separate later increments.
 
 ### Unassign reseller without blocking the app
@@ -95,7 +145,7 @@ job and ACKs only that request: it is NOT proof that a full guide import succeed
 Existing listings remain available. Action receipts are persisted before side
 effects so retries cannot repeat an expensive action blindly. Account/profile
 changes cancel/discard inappropriate results. Full remote configuration editing,
-playlist URL changes, category/favourite synchronization, log uploads and optional
+playlist URL changes, favourite synchronization, log uploads and optional
 screenshots remain later increments; their controls are not falsely enabled.
 
 The 2.0.108 first-activation fix keeps the initial cold-start policy read but does
@@ -203,7 +253,7 @@ Older APKs do not gain these capabilities without an update. Provisioning a reco
 alone does not make an app online. Local simulations remain explicitly marked TEST
 and their credential issuer remains CLI/test-only, loopback-only, never HTTP.
 
-Playlist editing, writable settings profiles, category/favourite sync, raw diagnostic
+Playlist editing, full settings profiles/per-device overrides, favourite sync, raw diagnostic
 file/log uploads and screenshots are later milestones. Their unsupported controls
 remain unavailable. Read-only settings/basic diagnostics and refresh requests are
 implemented as described above. Android permission/OEM limitations still apply. Rebranding,

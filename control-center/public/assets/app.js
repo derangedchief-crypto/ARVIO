@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-const state = { user: null, csrf: '', tenants: [], epoch: 0 };
+const state = { user: null, csrf: '', tenants: [], epoch: 0, deviceTab: null };
 const requestKeys = new Map();
 let toastTimer;
 let formCounter = 0;
@@ -53,7 +53,7 @@ function modal(title, schema, save, label = 'Save') {
   form.onsubmit = async event => { event.preventDefault(); submit.disabled = true; error.textContent = ''; try { await save(formValues(form, schema)); $('modal').close(); await route(); } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; } };
   $('modal').showModal();
 }
-function signedOut() { state.user = null; state.csrf = ''; state.tenants = []; state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
+function signedOut() { state.user = null; state.csrf = ''; state.tenants = []; state.deviceTab = null; state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
 function entryCard(title, description) { const card = el('div', null, 'entry-card'); card.append(el('span', 'E', 'brand-mark'), el('h1', title), el('p', description, 'subtle')); $('entry').replaceChildren(card); return card; }
 function loginForm() {
   const card = entryCard('Welcome back', 'Sign in to your owner or reseller workspace.'); const form = el('form');
@@ -158,6 +158,46 @@ async function queue(device, kind, payload = {}) {
   try { await api(`/api/devices/${device.id}/commands`, { kind, payload }, { 'Idempotency-Key': key }); requestKeys.delete(fingerprint); toast('Action queued—not yet executed.'); await route(); }
   catch (error) { if (error.status && error.status < 500) requestKeys.delete(fingerprint); throw error; }
 }
+async function categoryPanel(d, body, isCurrent, goCommands) {
+  const p = panel('Source-scoped categories'); body.append(p);
+  p.append(el('p', 'Read the app’s cached Live TV categories for one active profile/source. Titles (up to 80 characters) and counts only—no playlist URLs or credentials. Titles may be redacted; row references distinguish them. This is a snapshot, not a live provider lookup.', 'subtle'));
+  const commands = (await api(`/api/devices/${d.id}/commands`)).items; if (!isCurrent()) return;
+  const pending = commands.some(c => ['get_categories', 'set_categories'].includes(c.kind) && ['pending', 'delivered', 'running'].includes(c.status));
+  const canRead = d.policy === 'active' && !pending;
+  const actions = el('div', null, 'actions');
+  const read = button('Read current profile categories', () => queue(d, 'get_categories').catch(e => toast(e.message)), 'primary'); read.disabled = !canRead; actions.append(read, button('View category commands', goCommands)); p.append(actions);
+  if (pending) p.append(el('p', 'A category request/change is queued or running. Leave the app open, then Refresh this view. Queued requests can be cancelled under Commands.', 'notice'));
+  const result = commands.filter(c => c.kind === 'get_categories' && c.status === 'succeeded' && c.result?.catalog).sort((a, b) => Number(b.result.received_at_us || 0) - Number(a.result.received_at_us || 0) || String(b.finished_at).localeCompare(String(a.finished_at)))[0];
+  if (!result) { p.append(el('p', 'No category snapshot in the latest command-history page. Request one from the app first. Nothing is guessed from other devices or sources.', 'hint')); return; }
+  const catalog = result.result.catalog;
+  if (commands.some(c => ['get_categories', 'set_categories'].includes(c.kind) && c.status === 'failed' && c.created_at >= result.created_at)) p.append(el('p', 'A category request/change failed since this snapshot. The previous snapshot is retained below—not treated as a successful fresh read. View Commands for the result or read again.', 'notice warning'));
+  p.append(el('p', `Snapshot received: ${date(result.finished_at)} · Profile ${catalog.profile_ref.slice(0, 12)} · ${catalog.total} categories in this source`, 'hint'));
+  const selector = el('select'); selector.setAttribute('aria-label', 'Category source'); selector.disabled = !canRead;
+  for (const source of catalog.sources) { const o = el('option', `${source.label} · ${source.total} categories`); o.value = source.ref; o.selected = source.ref === catalog.source_ref; selector.append(o); }
+  const sourcePayload = (page = 1, source = catalog.source_ref) => ({ profile_ref: catalog.profile_ref, source_ref: source, page });
+  selector.addEventListener('change', () => queue(d, 'get_categories', sourcePayload(1, selector.value)).catch(e => toast(e.message)));
+  const refresh = button('Refresh this source', () => queue(d, 'get_categories', sourcePayload(catalog.page)).catch(e => toast(e.message))); refresh.disabled = !canRead;
+  const sourceActions = el('div', null, 'actions'); sourceActions.append(selector, refresh); p.append(sourceActions);
+  const canWrite = canRead && d.capabilities.includes('set_categories');
+  const change = (operation, ref) => queue(d, 'set_categories', { profile_ref: catalog.profile_ref, source_ref: catalog.source_ref, expected_revision: catalog.revision, operation, ...(ref ? { category_ref: ref } : {}) });
+  const reset = button('Reset this source’s category order', async () => {
+    if (!confirm('Reset custom category ordering for this source only? Hidden categories, favourites, other sources and app data stay intact.')) return;
+    try { await change('reset_order'); } catch (e) { toast(e.message); }
+  }); reset.disabled = !canWrite || !catalog.order_editable; p.append(reset);
+  if (!catalog.order_editable) p.append(el('p', 'Legacy category ordering needs migration on the app before remote reordering. Visibility actions can still be used.', 'notice'));
+  p.append(el('p', 'After a successful change, request a fresh snapshot to confirm it. A stale profile/source/catalog revision is rejected rather than overwriting newer preferences.', 'hint'));
+  p.append(table(['Position', 'Category', 'Channels', 'Visibility', 'Actions'], catalog.items.map(item => {
+    const a = el('div', null, 'actions');
+    const visibility = button(item.hidden ? 'Show category' : 'Hide category', () => change(item.hidden ? 'show' : 'hide', item.ref).catch(e => toast(e.message))); visibility.disabled = !canWrite; a.append(visibility);
+    for (const [operation, label, edge] of [['move_up', 'Move up', item.position === 1], ['move_down', 'Move down', item.position === catalog.total], ['move_top', 'Move to top', item.position === 1]]) {
+      const b = button(label, () => change(operation, item.ref).catch(e => toast(e.message))); b.disabled = !canWrite || !catalog.order_editable || edge; a.append(b);
+    }
+    return [item.position, cellName(item.label, item.ref.slice(0, 8)), item.channels, badge(item.hidden ? 'hidden' : 'visible'), a];
+  })));
+  const pages = el('div', null, 'pagination'); const previous = button('Previous category page', () => queue(d, 'get_categories', sourcePayload(catalog.page - 1)).catch(e => toast(e.message))); previous.disabled = !canRead || catalog.page === 1;
+  const next = button('Next category page', () => queue(d, 'get_categories', sourcePayload(catalog.page + 1)).catch(e => toast(e.message))); next.disabled = !canRead || catalog.page === catalog.pages;
+  pages.append(el('span', `Page ${catalog.page} of ${catalog.pages}`), previous, next); p.append(pages);
+}
 async function devicePage(id, epoch) {
   const d = await api('/api/devices/' + id); if (epoch !== state.epoch) return;
   const main = $('main'); main.replaceChildren(); const back = el('a', '← All devices', 'back-link'); back.href = '#devices'; main.append(back, heading(d.label, d.customer_name + ' · ' + d.tenant_name, [button('Refresh', route), badge(d.presence)]));
@@ -168,6 +208,7 @@ async function devicePage(id, epoch) {
   const names = ['Overview', 'Playlists', 'Settings', 'Categories', 'Favourites', 'Notifications', 'Logs', 'Commands'];
   for (const name of names) { const b = button(name, () => select(name)); b.dataset.tab = name; tabs.append(b); }
   async function select(name) {
+    state.deviceTab = { id, name };
     tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tab === name)); body.replaceChildren();
     if (name === 'Overview') {
       const actions = el('div', null, 'actions'); const kinds = [['refresh_playlist', 'Refresh playlist'], ['reload_epg', 'Reload EPG'], ['request_checkin', 'Request check-in'], ['clear_cache', 'Clear expendable cache'], ['restart_app', 'Restart app']];
@@ -193,6 +234,8 @@ async function devicePage(id, epoch) {
         return [c.kind.replaceAll('_', ' '), badge(c.status), c.attempts, date(c.created_at), c.result?.summary || '—', a];
       })), pagination(result, load)); };
       try { await load(); } catch (e) { toast(e.message); }
+    } else if (name === 'Categories' && d.capabilities.includes('get_categories')) {
+      try { await categoryPanel(d, body, () => epoch === state.epoch && tabs.querySelector('[data-tab="Categories"]').classList.contains('active'), () => select('Commands')); } catch (e) { toast(e.message); }
     } else if ((name === 'Settings' || name === 'Logs') && d.capabilities.includes(name === 'Settings' ? 'get_settings' : 'get_diagnostics')) {
       const kind = name === 'Settings' ? 'get_settings' : 'get_diagnostics';
       const p = panel(name === 'Settings' ? 'Read-only active-profile settings' : 'Basic app diagnostics — no logs or screenshots'); body.append(p);
@@ -226,7 +269,7 @@ async function devicePage(id, epoch) {
       body.append(panel('Send a customer message', el('p', 'Visible app message, delivered on the next check-in. It cannot override mandatory updates or maintenance.', 'subtle'), button('Compose message', () => modal('Message device', [{ key: 'message', label: 'Message', type: 'textarea', max: 1000 }, { key: 'priority', label: 'Priority', options: [['normal', 'Normal'], ['urgent', 'Urgent']] }], values => queue(d, 'show_message', values), 'Queue message'), 'primary')));
     } else body.append(panel(name, el('p', 'Not available in the backend foundation yet. Secure app integration and a supported capability are required; no live data has been fetched.', 'subtle')));
   }
-  await select('Overview');
+  await select(state.deviceTab?.id === id && names.includes(state.deviceTab.name) ? state.deviceTab.name : 'Overview');
 }
 async function audit(epoch) {
   const main = $('main'); main.replaceChildren(heading('Activity log', 'Who changed what—without passwords, tokens or provider URLs.')); const box = panel(null); main.append(box);

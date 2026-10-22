@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `424`. Version name is `2.0.108`, following the actual
+Current development version code is `425`. Version name is `2.0.109`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,24 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Category management in 2.0.109 / 425
+
+Adds cached source/profile-scoped get_categories and guarded set_categories
+(hide/show, up/down/top, reset source custom order). No source/credential/guide/
+favourite/player/update changes. Reads use an explicit profile/source cache key,
+50-row paging and sanitized titles/counts, not raw source keys/URLs. A random salt
+inside the encrypted management session keys opaque source/group HMAC refs so
+credential-bearing configurations do not become public password hashes.
+
+Requests bind profile/source and category/preference revision; writes recheck a
+fresh state inside the selected profile's DataStore edit and preserve other
+sources/unknown keys. Legacy ordering is not silently migrated by a remote edit.
+Bounded catalog operations use a20-second cooperative timeout. Full pages are
+transient in receipts; safe read retries reread the original target, while
+mutations retain persist-before-effect duplicate prevention. Website0.5.0 must
+precede publishing109 via the unchanged testing workflow. Current signed testing
+release remains108 until that publication; main/customer remains unchanged.
 
 ## Management follow-up in 2.0.108 / 424
 

@@ -4,12 +4,13 @@ namespace ControlCenter;
 
 final class Commands
 {
-    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app', 'set_settings'];
+    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app', 'set_settings', 'get_categories', 'set_categories'];
     public function __construct(private readonly Database $db, private readonly Config $config, private readonly Auth $auth, private readonly Management $management) {}
 
     private static function payload(string $kind, mixed $payload): array
     {
         if (!is_array($payload) || array_is_list($payload) && $payload !== []) throw new Problem(422, 'Invalid command payload.');
+        if(in_array($kind,['get_categories','set_categories'],true))return CommandCategories::payload($kind,$payload);
         if($kind==='set_settings') {
             Input::keys($payload,['profile_ref','expected_revision','sort_order']);
             EnrollmentProof::hex($payload['profile_ref']??null,64);EnrollmentProof::hex($payload['expected_revision']??null,64);
@@ -147,7 +148,7 @@ final class Commands
 
     public function acknowledge(string $token, string $commandId, array $input): array
     {
-        Input::keys($input, ['schema_version', 'lease_token', 'status', 'summary', 'snapshot']);
+        Input::keys($input, ['schema_version', 'lease_token', 'status', 'summary', 'snapshot', 'catalog']);
         Input::integer($input['schema_version'] ?? 1, 1, 1);
         $device = $this->deviceIdentity($token);
         $status = $input['status'] ?? '';
@@ -168,6 +169,16 @@ final class Commands
             if (in_array($row['status'], ['succeeded','failed'], true) && $row['status'] === $status) return self::publicCommand($row);
             if (!in_array($row['status'], ['delivered','running'], true) || !$leaseValid) throw new Problem(409, 'Command has expired or the lease is no longer valid.');
             $result=['summary'=>$summary];
+            if($status==='succeeded'&&$row['kind']==='get_categories'&&!array_key_exists('catalog',$input))throw new Problem(422,'A completed category read must include its catalog page.');
+            if(array_key_exists('catalog',$input)) {
+                if($status!=='succeeded')throw new Problem(422,'Only completed reads can upload a category page.');
+                $result['catalog']=CommandCategories::catalog($row['kind'],$input['catalog']);
+                // DATETIME columns have second precision. Keep read ordering
+                // unambiguous when two catalog replies finish in the same second.
+                $result['received_at_us']=(int)floor(microtime(true)*1000000);
+                $requested=json_decode($row['payload'],true,16,JSON_THROW_ON_ERROR);
+                foreach(['profile_ref','source_ref','page'] as $field)if(isset($requested[$field])&&$result['catalog'][$field]!==$requested[$field])throw new Problem(422,'Category response does not match the requested target/page.');
+            }
             if($status==='succeeded'&&in_array($row['kind'],['get_settings','get_diagnostics','set_settings'],true)&&!array_key_exists('snapshot',$input))throw new Problem(422,'A completed snapshot command must include its typed snapshot.');
             if(array_key_exists('snapshot',$input)) {
                 if($status!=='succeeded')throw new Problem(422,'Only completed snapshot commands can upload a snapshot.');

@@ -12,7 +12,7 @@ import kotlinx.coroutines.withTimeout
 
 /** Explicit app operations only. No URLs, credentials, source labels, profile names,
  * free-form errors/logs, favourite values or update controls leave the device. */
-internal class ManagementActions(private val context: Context, private val repository: IptvRepository, private val profiles: ProfileManager) {
+internal class ManagementActions(private val context: Context, private val repository: IptvRepository, private val profiles: ProfileManager,private val catalogSecret: String = "") {
     suspend fun execute(id: String, kind: String, accountScope: String, payload: Map<String,String> = emptyMap()): CommandReceipt {
         val profile = profiles.getProfileId()
         suspend fun eligible(): Boolean = profiles.getProfileId() == profile && managementAccount(repository.observeConfig().first())?.scope == accountScope
@@ -26,6 +26,7 @@ internal class ManagementActions(private val context: Context, private val repos
                 if (!applied) return CommandReceipt(id, "failed", "Profile, source account or sort order changed; request a fresh snapshot")
             }
             val receipt = when (kind) {
+                "get_categories", "set_categories" -> withTimeout(20_000) { ManagementCategoryActions(repository,profiles,catalogSecret).execute(id,kind,accountScope,payload) }
                 "get_settings", "set_settings" -> {
                     val config = repository.observeConfig().first()
                     val playlists = if (config.playlists.isEmpty()) if (config.m3uUrl.isBlank()) 0 else 1 else config.playlists.size

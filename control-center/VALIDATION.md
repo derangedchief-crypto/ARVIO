@@ -1,6 +1,40 @@
-# Device management 0.4.0 — validation
+# Device management 0.5.0 — validation
 
-## Linked-only admission and more controls
+## Source-scoped category controls
+
+- **113 real MariaDB/service/HTTP cases passed**, zero failures. New cases check
+  closed opaque-reference operation payloads, profile/source/page response matching,
+  capability/lease/tenant enforcement, duplicate/malformed row rejection, title
+  redaction, precise read chronology/idempotency and separation of read catalogs from mutation receipts. A worst-case
+  Unicode50-row/32-source page fits BOTH the actual32KiB HTTP upload limit and
+  Android client's64KiB response limit. Previous enrollment, cancellation,
+  unassignment, migration, backup/restore and service-isolation suites are included.
+- **15 headless browser checks passed**, including source category rendering with
+  literal hostile text (no injected image element), real queue creation with
+  profile/source/revision refs, pending-action controls and cancellation. Existing
+  preset/unassignment/isolation/mobile checks remain green. The inspected category
+  screenshot is an explicitly SYNTHETIC local fixture, not real customer/app data.
+- **119 Android JVM/Robolectric cases passed**, zero failures. New cases cover
+  source-only visibility/order/reset planning, preservation of other/unknown keys,
+  profile/source/catalog/preferences conflicts, legacy-order refusal, per-device
+  keyed refs, Unicode/redacted labels, paging and no raw source identities on wire.
+  Read retries retain their original target; full pages stay out of receipt JSON.
+  Executor tests reject wrong/stale refs before writes, discard a read after a
+  profile switch and time out a stalled catalog wait. Previous activation/update/
+  relaunch/live/codec regressions remain green.
+- Internal-test and Android-instrumentation Kotlin compilation passed. Native
+  SQLite/DataStore/Keystore behavior and actual category UI changes still need a
+  controlled109 device pilot; mocks/helper tests are not hardware measurements.
+- All existing migration files and worker source are unchanged. There is no NEW
+  database migration for0.5.0, no new Android permission and no player/Back/updater
+  modification. Install website0.5.0 BEFORE the109 testing APK.
+
+Reads are cached paged snapshots, not provider freshness guarantees. A successful
+mutation receipt is not a fresh read; request another page to confirm. Missing or
+ambiguous legacy state is not remotely guessed/migrated. Playback timing/fleet
+capacity and full automatic cross-device category/favourite sync are not claimed.
+
+## Previous linked-only admission/control increment (0.4.0)
 
 - **107 real MariaDB/service/HTTP cases passed**, zero failures. New admission
   checks prove missing/unlinked/suspended/legacy-proof resellers create no request,

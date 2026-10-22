@@ -129,6 +129,7 @@ class DeviceManagementAgent @Inject constructor(
                     val key = vault.publicKey(account.scope)
                     val fingerprint = managementHash(key)
                     var saved = vault.load(account.scope) ?: ManagementSession(account.scope, newInstallation())
+                    if(saved.catalogSecret?.matches(Regex("[a-f0-9]{64}"))!=true)saved=saved.copy(catalogSecret=managementHash(UUID.randomUUID().toString()+UUID.randomUUID().toString()))
                     if (knownPolicy in setOf("suspended", "blocked", "removed")) saved = saved.copy(policy = knownPolicy)
                     if (saved.keyFingerprint.isNotEmpty() && saved.keyFingerprint != fingerprint) {
                         // A lost signing key cannot silently reuse another identity.
@@ -262,21 +263,33 @@ class DeviceManagementAgent @Inject constructor(
     private suspend fun handle(current: Active, command: JSONObject) {
         val id = command.getString("id").also { require(it.matches(Regex("[a-f0-9]{32}"))) }
         val lease = command.getString("lease_token").also { require(it.matches(Regex("[a-f0-9]{64}"))) }
+        val kind = command.getString("kind")
         val prior = current.session.receipts.firstOrNull { it.id == id }
+        if(prior!=null && kind=="get_categories" && prior.status=="succeeded") {
+            beginCommand(current,id,lease)
+            val target=categoryRetryPayload(prior)
+            val refreshed=if(target==null)CommandReceipt(id,"failed","Original category target is unavailable; request a new snapshot") else
+                ManagementActions(context,repository.get(),profiles,current.session.catalogSecret.orEmpty()).execute(id,kind,current.account.scope,target)
+            change(current){it.copy(receipts=it.receipts.map { old -> if(old.id==id)refreshed.copy(catalog=null) else old })}
+            acknowledge(current,lease,refreshed);return
+        }
         val receipt = if (prior != null) prior else {
-            val kind = command.getString("kind")
             val payload = command.optJSONObject("payload") ?: JSONObject()
             val item = ManagementCommand(id, kind, runCatching { parseManagementTime(command.getString("expires_at")) }.getOrDefault(0),
                 payload.optString("message", ""), payload.optInt("duration_seconds", 0))
-            if (kind in listOf("refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings") && item.expiresAtMs > System.currentTimeMillis()) {
+            if (kind in listOf("refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories") && item.expiresAtMs > System.currentTimeMillis()) {
                 beginCommand(current, id, lease)
                 // Persist an interrupted-operation receipt BEFORE side effects. A
                 // process/network retry cannot silently start an expensive job twice.
                 val interrupted = CommandReceipt(id, "failed", "Action interrupted; request a new command to retry safely")
                 change(current) { it.copy(receipts = (it.receipts + interrupted).takeLast(512)) }
-                val settings = if (kind == "set_settings") payload.keys().asSequence().associateWith { key -> (payload.opt(key) as? String).orEmpty() } else emptyMap()
-                val executed = ManagementActions(context, repository.get(), profiles).execute(id, kind, current.account.scope, settings)
-                change(current) { it.copy(receipts = it.receipts.map { old -> if (old.id == id) executed else old }) }
+                val settings = if (kind in listOf("set_settings","get_categories","set_categories")) payload.keys().asSequence().associateWith { key ->
+                    val value=payload.opt(key);if(value is String || (kind!="set_settings" && key=="page" && value is Int))value.toString() else ""
+                } else emptyMap()
+                val executed = ManagementActions(context, repository.get(), profiles,current.session.catalogSecret.orEmpty()).execute(id, kind, current.account.scope, settings)
+                // Catalog pages are transient. Persist only a read's scoped retry
+                // target, not hundreds of full pages in the duplicate journal.
+                change(current) { it.copy(receipts = it.receipts.map { old -> if (old.id == id) executed.copy(catalog=null) else old }) }
                 acknowledge(current, lease, executed)
                 return
             }
@@ -292,6 +305,7 @@ class DeviceManagementAgent @Inject constructor(
     private suspend fun acknowledge(current: Active, lease: String, receipt: CommandReceipt) {
         val body = JSONObject().put("schema_version", 1).put("lease_token", lease).put("status", receipt.status).put("summary", receipt.summary)
         receipt.snapshot?.let { body.put("snapshot", JSONObject(it)) }
+        receipt.catalog?.let { body.put("catalog",it.json()) }
         api.control("/api/device/commands/${receipt.id}/ack", body, current.session.credential)
     }
     private suspend fun beginCommand(current: Active, id: String, lease: String) {

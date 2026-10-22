@@ -35,7 +35,7 @@ internal fun enrollmentSigningText(nonce: String, proof: String, install: String
     "ECENROLL1\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint"
 
 internal val MANAGEMENT_POLICIES = setOf("active", "suspended", "blocked", "removed")
-internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings")
+internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories")
 internal fun managementSettingsRevision(profileRef: String, accountScope: String, sortOrder: String): String =
     managementHash("ECSET1\n$profileRef\n$accountScope\n$sortOrder")
 
@@ -61,7 +61,8 @@ internal fun preparingManagementAccount(previous: DeviceManagementState, sameAcc
         "Checking saved device policy", if (sameAccount) previous.policy else null)
 
 @Keep
-internal data class CommandReceipt(val id: String, val status: String, val summary: String, val snapshot: Map<String,String>? = null)
+internal data class CommandReceipt(val id: String, val status: String, val summary: String, val snapshot: Map<String,String>? = null,
+    @Transient val catalog: ManagementCategoryCatalog? = null,val categoryProfileRef: String? = null,val categorySourceRef: String? = null,val categoryPage: Int = 1)
 internal data class ManagementCommand(val id: String, val kind: String, val expiresAtMs: Long, val text: String = "", val durationSeconds: Int = 0) {
     override fun toString() = "ManagementCommand(id=$id, kind=$kind, payload=[redacted])"
 }
@@ -80,6 +81,7 @@ internal data class ManagementSession(
     val message: ManagementMessage? = null,
     val receipts: List<CommandReceipt> = emptyList(),
     val unmanagedUntilMs: Long = 0,
+    val catalogSecret: String? = null,
 ) {
     override fun toString() = "ManagementSession([redacted])"
 }

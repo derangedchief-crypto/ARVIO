@@ -1,4 +1,27 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.4.0
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.5.0
+
+0.5.0 UPDATE — SOURCE-SCOPED CATEGORIES
+Back up database/config.php/private storage, extract the UPDATE ZIP over the site,
+then refresh the browser. Configuration and initialized storage are preserved.
+If Enrollments shows older pending migrations, apply them after backup. No NEW
+migration is needed when already on0.4.0, and no worker patch is required.
+
+The109 testing APK adds get_categories/set_categories for LIVE TV (not movie/series
+library categories). Open a device -> Categories
+-> Read current profile categories. Leave the app open; refresh the website view
+after its check-in. Choose a source and page through cached titles/counts/visibility.
+Hide/show, move up/down/to top, or reset THIS source's custom order. After a write
+completes, read again to confirm. A queued action is NOT shown as applied.
+
+Operations require a matching profile/source/catalog/preferences revision and
+cannot write another source's settings. Favourites, guides, activation, player and
+updater settings remain unchanged. Source refs are opaque keyed hashes; URLs/login
+configuration are not displayed. Titles may be shortened/redacted. Reads are50
+rows/page with bounded sources/categories. Missing or legacy-invalid local caches
+must be fixed/refreshed on the app rather than guessed from another profile.
+Older APKs retain existing functions but do not gain category controls until109.
+Install this website update BEFORE publishing/installing109. This package does
+not itself publish an APK or change the customer release.
 
 0.4.0 UPDATE — LINKED RESELLERS ONLY + SETTINGS CONTROLS
 Back up the database, config.php and private storage. Extract the UPDATE ZIP over

@@ -105,6 +105,8 @@ require __DIR__ . '/enrollment.php';
 enrollmentCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA,$tenantB,$makeCustomer,$http,$password);
 require __DIR__.'/settings-presets.php';
 settingsCases($tests,$app,$owner,$alpha,$beta,$tenantA,$tenantB,$http,$password);
+require __DIR__.'/categories.php';
+categoryCases($tests,$app,$owner,$alpha,$beta,$tenantA,$http);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {
