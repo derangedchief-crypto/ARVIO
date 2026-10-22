@@ -1,4 +1,4 @@
-EXTREME CONTROL CENTER — FOUNDATION 0.1.1
+EXTREME CONTROL CENTER — FOUNDATION 0.1.2
 Target: https://control.fecxbrfzku.net, aaPanel Nginx + PHP 8.3+
 
 IMPORTANT: This is a working backend/dashboard foundation, not a completed Android
@@ -85,6 +85,11 @@ preflight/migrate/login before switching DNS. Do not restore over the live DB as
 a test. Restrict backup access and never store SQL/ZIP/config backups in public/.
 
 SECURITY / TROUBLESHOOTING
+0.1.2 shows safe, specific MySQL startup diagnostics and the request ID on screen.
+It distinguishes refused connections, missing/denied Unix sockets, TLS/certificate
+failure, rejected logins, unavailable databases, DNS failures and timeouts without
+returning raw driver text, usernames, database names or passwords. Use the update
+ZIP on an existing site; it does not replace config.php or initialized storage.
 Do not log request bodies, cookies, authorization headers or database passwords.
 App errors return a request ID; private PHP logs use that ID without SQL values.
 Configure CDN rules to bypass caching for the whole control-center hostname.

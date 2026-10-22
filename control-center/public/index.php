@@ -32,6 +32,9 @@ try {
     Http::guard($config);
     $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    if ($method === 'GET' && $path === '/favicon.ico') {
+        http_response_code(204); exit;
+    }
     if ($method === 'GET' && $path === '/') {
         header('Content-Type: text/html; charset=utf-8');
         readfile(__DIR__ . '/index.html'); exit;
@@ -42,6 +45,7 @@ try {
     }
     (new Application($config))->serve($method, $path);
 } catch (Problem $error) {
+    if ($error->status >= 500) error_log(json_encode(['request_id' => $requestId, 'type' => 'StartupProblem', 'hint' => $error->getMessage()]));
     if ($error->status === 429) header('Retry-After: 60');
     Http::json(['error' => $error->getMessage(), 'request_id' => $requestId], $error->status);
 } catch (Throwable $error) {

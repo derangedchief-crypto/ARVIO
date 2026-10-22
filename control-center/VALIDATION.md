@@ -1,10 +1,17 @@
-# Backend foundation 0.1.1 — validation
+# Backend foundation 0.1.2 — validation
 
 The foundation baseline was validated locally on Linux with PHP 8.3.6 and real
 MariaDB 10.11.14. The config.php-only 0.1.1 change is additionally checked by
 `tests/config.php`, PHP/JS syntax checks and the install/update ZIP tests. The
 database and browser suites below are the prior foundation baseline, not a claim
 that stopped local services were restarted/retested for this filename change.
+
+0.1.2 additionally checks 12 safe connection-error classifications, including
+proof that synthetic usernames/passwords/hostnames in driver messages do not
+appear in public diagnostics. PHP/JS syntax and install/update ZIP checks pass.
+No connection to the user's live SQL server or use of their supplied password is
+part of these checks. The update improves diagnosis; it does not start/configure
+the live MySQL service or claim to repair its underlying connection failure.
 
 - **67 passing backend/database/HTTP cases**, zero failures: setup locking, typed
   input, authentication/CSRF/origin checks, tenant/resource isolation, private-file

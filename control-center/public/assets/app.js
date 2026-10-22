@@ -19,7 +19,7 @@ async function api(path, body, extra = {}) {
   try { data = await response.json(); } catch { throw new Error('Server response was not JSON. Check the PHP/Nginx configuration.'); }
   if (!response.ok) {
     if (response.status === 401 && path !== '/api/login') signedOut();
-    const error = new Error(data.error || 'Request failed.'); error.status = response.status; throw error;
+    const error = new Error((data.error || 'Request failed.') + (data.request_id ? ' Request ID: ' + data.request_id : '')); error.status = response.status; throw error;
   }
   return data;
 }
