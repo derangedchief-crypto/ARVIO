@@ -5,7 +5,72 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone — 0.5.0
+## Current milestone — 0.6.0
+
+### Organize locally, then push ONE complete layout
+
+The110 testing client replaces the slow one-command-per-category workflow. In a
+device's **Categories** tab, read one complete cached Live TV source layout (up to
+2000 categories). The website then edits a LOCAL draft: drag/drop rows, enter an
+absolute position, move selected blocks to top/bottom, filter/select across local
+pages, bulk hide/show, or use provider order. None of those edits send a device
+command. **Push entire layout once** queues ONE atomic order/visibility update.
+The app still needs to be foreground/reachable; this is not an OS wake/push service.
+
+Pushes validate the complete category set and the original profile/source/catalog/
+preference revision, then write both preference lists in one DataStore transaction.
+No partial page is treated as a replacement. Other sources, unavailable saved keys,
+favourites, login/source credentials, guides and playback/updater settings remain
+intact. Provider-order mode explicitly clears only that source's custom ordering.
+Mutations retain persist-before-effect duplicate protection. Large layout deliveries
+are exclusive so the app never receives five huge layouts in one heartbeat.
+
+Drafts survive SPA navigation, command errors and failed/stale pushes in browser
+memory. A fresh read never silently replaces a dirty draft. Explicit **Rebase**
+previews added/removed categories, preserves your changed order/visibility, adopts
+fresh visibility you did not edit and appends new categories. Changed profile/source
+refs cannot be rebased by guessing: save a template and explicitly load the new
+source instead. Save a template before page reload/closing; unsaved drafts trigger
+a leave/sign-out warning and are cleared on logout/session expiry for privacy.
+
+After a successful push, the UI requests one fresh read and clears the draft only
+after confirmation. It does not pretend queued changes are applied. A small status
+poll runs only while work is pending, not while you are simply organizing a draft.
+Interactive command deliveries temporarily request a15-second next check-in
+(`interactive_heartbeat_seconds`, optional in the SAME config.php); idle intervals
+return to the configured normal heartbeat. No new permanent service is required.
+
+### Custom playlist/category templates under Settings presets
+
+**Save as layout template** saves the organized draft's safe full category names,
+order and visibility without waiting for/pushing the device. Templates are workspace
+scoped, named, version-guarded and archivable (100 active per workspace). Settings
+presets now lists both the older channel-sort presets and full layout templates.
+Owners may explicitly copy a template to another workspace; nothing is globally
+shared or automatically pushed.
+
+On another device/source, read its complete layout and **Preview / apply saved layout
+template**. Exact complete category names map to THAT device's opaque refs, never
+the source device's IDs. Preview shows matched/missing/target-only categories.
+Missing template categories are skipped; target-only categories follow matched ones
+in their existing order and keep their visibility. Order-only application is also
+available. Ambiguous matches are rejected, not guessed. Shortened/redacted names
+are explicitly excluded when saving because they cannot be matched reliably.
+Applying a template changes only the browser draft until you press Push.
+
+Migration007 adds a bounded full-snapshot cache and durable templates. Only the
+latest three full snapshots per device are retained; command history keeps small
+read summaries. Full metadata is served through tenant-authorized dedicated routes,
+not embedded in every command-history page. Full uploads are authenticated before
+decoding and bounded to2MiB; batch pushes are bounded to512KiB. Ordinary endpoint
+limits remain32KiB. Template archives follow normal configured retention.
+
+Deployment: install **0.6.0 UPDATE ZIP**, back up/apply migration007 under Enrollments,
+and change the CONTROL WEBSITE's Nginx `client_max_body_size 64k;` to
+`client_max_body_size 2m;` if it uses the old snippet. PHP post_max_size should be at
+least2M (defaults are normally higher). No worker change. Then install the110 testing
+APK;109 retains its old per-command controls until upgraded. This is Live TV category
+layout management, not manual channel-row sorting or movie/series library editing.
 
 ### Remote category management (testing client 2.0.109)
 

@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `425`. Version name is `2.0.109`, following the actual
+Current development version code is `426`. Version name is `2.0.110`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,28 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Complete category layouts in 2.0.110 / 426
+
+Adds get_category_layout/apply_category_layout: one full cached source snapshot,
+all organization in a local website draft, and ONE complete atomic order/visibility
+transaction. Whole-set/profile/source/revision checks reject partial, duplicate,
+foreign or stale lists. Other sources/unavailable keys/favourites/credentials/
+guides/player/update settings are preserved. Provider mode resets only the chosen
+source's custom order. Per-category commands remain for older clients.
+
+Full snapshots add provider positions and an optional safe complete match_name;
+truncated/redacted names cannot become portable selectors. Templates store exact
+names/order/visibility, not a different device's keyed refs. The website previews
+matches/missing/extras and applies templates to target drafts before one push.
+Failed pushes retain work and explicit rebase guards profile/source transitions.
+Full uploads cap2MiB, authenticated before decode; check-in responses cap512KiB
+and deliver large layout writes exclusively. ACKs/history stay small; full pages
+are transient in app receipts and stored separately/bounded on the backend.
+
+Website0.6.0 + migration007 + Nginx2m request limit must precede110. No worker patch,
+new Android permission or customer updater/source change. Native pilot is required;
+latest signed testing remains109 until an explicitly authorized110 publication.
 
 ## Category management in 2.0.109 / 425
 

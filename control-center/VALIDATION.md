@@ -1,6 +1,43 @@
-# Device management 0.5.0 — validation
+# Device management 0.6.0 — validation
 
-## Source-scoped category controls
+## Whole-layout draft editor and portable custom templates
+
+- **119 real MariaDB/service/HTTP cases passed**, zero failures. New coverage
+  checks separate bounded whole-layout snapshots, latest-three cache retention,
+  command-history/ACK size, atomic-push idempotency/capability/scope checks,
+  exclusive large delivery, complete reference validation, authenticated large
+  uploads, safe portable names, versioned template CRUD/copy/tenant boundaries
+  and CSRF. Worst-case2000-row Unicode reads upload under2MiB and ACK only small
+  metadata;2000-ref order/hidden pushes fit the client's512KiB response limit.
+- **18 headless browser checks passed**, including many local position/filter/
+  bulk-visibility edits with ZERO native commands, saving a custom ordered
+  template without pushing, one complete mutation command plus explicit success/
+  fresh confirmation read, and cross-device exact-name template preview/application
+  that remains LOCAL until Push. Native protocol receipts in this E2E test are
+  explicitly SYNTHETIC drivers, not actual Android execution.
+- **6 pure browser-draft tests passed** for complete payloads, cross-device ref
+  mapping, missing/unmatchable/ambiguous names, provider mode and explicit rebase
+  preserving edited values while adopting untouched fresh values. Source/profile
+  changes cannot rebase by guessing. Drafts are cleared on logout/session expiry.
+- **123 Android JVM/Robolectric cases passed**, zero failures. Full-read tests
+  verify complete data, provider positions, portable-name eligibility and scoped
+  transient retry targets. Whole-layout cases reject partial/duplicate/foreign
+  sets, preserve other/unavailable keys, and verify ONE guarded repository call,
+  not a per-category loop. Previous activation/update/live/codec tests remain green.
+- App/internal-test/instrumentation Kotlin compilation passed. Real full-layout
+  SQLite/DataStore/Keystore behavior and phone/TV UI changes still need the110
+  pilot. No physical latency/fleet capacity or automatic offline waking claimed.
+- Migration007 preserves configuration/approved devices and adds caches/templates.
+  Large body parsing is authenticated first; normal endpoints remain32KiB.
+  Nginx snippet changes64k ->2m for whole-layout traffic. No worker, player,
+  Android permission, Back handler or central updater/workflow changes.
+
+This is custom Live TV CATEGORY order/visibility, not arbitrary channel-row order,
+full source URL editing, movie/series category editing, payment processing or
+automatic fleet-wide rollout. Templates use exact safe complete names with an
+explicit preview; shortened/redacted names never become guessed portable IDs.
+
+## Previous source-scoped category increment (0.5.0)
 
 - **113 real MariaDB/service/HTTP cases passed**, zero failures. New cases check
   closed opaque-reference operation payloads, profile/source/page response matching,

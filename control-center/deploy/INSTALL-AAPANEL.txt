@@ -1,4 +1,32 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.5.0
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.6.0
+
+0.6.0 UPDATE — COMPLETE DRAFT EDITOR + PORTABLE LAYOUT TEMPLATES
+1. Back up database, config.php and private storage; extract UPDATE ZIP over site.
+2. Enrollments -> Apply database upgrade (migration007). Existing credentials,
+   approved inventory and app data are preserved. No worker update is needed.
+3. On the CONTROL WEBSITE's EXISTING aaPanel Nginx configuration, replace the old
+   client_max_body_size 64k; with client_max_body_size 2m; then save/reload Nginx.
+   Keep existing SSL, public document root, PHP and routes. This is NOT a worker-
+   server change. Ensure PHP post_max_size >=2M (normally already8M or more).
+4. Install the110 testing APK after the website upgrade. In Categories request
+   one whole source layout; leave app open and wait for the snapshot.
+5. Organize LOCALLY: drag/drop, numeric positions, filtering/local pages, selected
+   blocks to top/bottom, bulk hide/show and provider order. These create ZERO
+   native commands. Push entire layout once sends one atomic source update.
+   A fresh confirmation read follows success; queued is never shown as applied.
+6. Save as layout template BEFORE pushing if desired. Settings presets now lists
+   custom category-layout templates beside the older channel-sort presets. On
+   other devices preview exact name matches, missing categories and preserved
+   extras; template application changes only a draft until Push. Shortened/
+   redacted names are excluded explicitly, not guessed. Owners can copy templates
+   to other workspaces. No reseller-controlled update source is introduced.
+
+Failed/stale pushes retain the draft. Read fresh, inspect additions/removals and
+explicitly Rebase. Profile/source changes require a template or explicit discard,
+never an automatic unsafe rebase. Drafts live in browser memory, not a native
+device queue; save a template before reloading/leaving. Logout/session expiry
+clears browser drafts. Other sources, favourites, guides, login and player unchanged.
+Still foreground/check-in delivery, NOT a guarantee of waking offline devices.
 
 0.5.0 UPDATE — SOURCE-SCOPED CATEGORIES
 Back up database/config.php/private storage, extract the UPDATE ZIP over the site,

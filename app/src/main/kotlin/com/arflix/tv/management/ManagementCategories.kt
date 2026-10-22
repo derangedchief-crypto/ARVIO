@@ -6,6 +6,7 @@ import com.arflix.tv.data.repository.ManagedCategorySource
 import com.arflix.tv.data.repository.ManagedCategoryState
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.managedCategoryOrder
+import com.arflix.tv.data.model.PlaylistGroupKey
 import com.google.gson.Gson
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
@@ -16,14 +17,16 @@ import javax.crypto.spec.SecretKeySpec
 @Keep
 internal data class ManagementCategorySource(val ref: String,val label: String,val total: Int)
 @Keep
-internal data class ManagementCategoryItem(val ref: String,val label: String,val channels: Int,val hidden: Boolean,val position: Int)
+internal data class ManagementCategoryItem(val ref: String,val label: String,val channels: Int,val hidden: Boolean,val position: Int,val providerPosition: Int = 0,val matchName: String? = null)
 @Keep
 internal data class ManagementCategoryCatalog(val profileRef: String,val sourceRef: String,val revision: String,val sources: List<ManagementCategorySource>,
-    val items: List<ManagementCategoryItem>,val page: Int,val pages: Int,val total: Int,val orderEditable: Boolean) {
+    val items: List<ManagementCategoryItem>,val page: Int,val pages: Int,val total: Int,val orderEditable: Boolean,val full: Boolean = false,val providerOrder: Boolean = false) {
     fun json(): JSONObject = JSONObject().put("schema_version",1).put("profile_ref",profileRef).put("source_ref",sourceRef).put("revision",revision)
         .put("page",page).put("pages",pages).put("total",total).put("order_editable",orderEditable)
         .put("sources",JSONArray().also { array -> sources.forEach { array.put(JSONObject().put("ref",it.ref).put("label",it.label).put("total",it.total)) } })
-        .put("items",JSONArray().also { array -> items.forEach { array.put(JSONObject().put("ref",it.ref).put("label",it.label).put("channels",it.channels).put("hidden",it.hidden).put("position",it.position)) } })
+        .put("items",JSONArray().also { array -> items.forEach { row -> array.put(JSONObject().put("ref",row.ref).put("label",row.label).put("channels",row.channels).put("hidden",row.hidden).put("position",row.position).also {
+            if(full){it.put("provider_position",row.providerPosition);it.put("match_name",row.matchName ?: JSONObject.NULL)}
+        }) } }).also { if(full){it.put("page_size",2000);it.put("provider_order",providerOrder)} }
 }
 
 internal fun categoryLabel(raw: String): String {
@@ -46,14 +49,15 @@ internal class ManagementCategoryProtocol(private val secret: String,private val
     fun sourceRef(state: ManagedCategoryState,source: ManagedCategorySource)=sourceRefs.getOrPut(Triple(state.profileId,source.id,source.privateIdentity)){mac(listOf("ECCATSRC1",accountScope,state.profileId,source.id,source.privateIdentity))}
     fun groupRef(state: ManagedCategoryState,source: ManagedCategorySource,key: String)=mac(listOf("ECCATROW1",sourceRef(state,source),key))
     fun revision(state: ManagedCategoryState,source: ManagedCategorySource)=mac(listOf("ECCATREV1",sourceRef(state,source),state.hiddenRaw,state.orderRaw,state.schemaRaw,source.groups.map { listOf(it.key,it.channels) }))
-    fun catalog(state: ManagedCategoryState,source: ManagedCategorySource,page: Int): ManagementCategoryCatalog {
+    fun catalog(state: ManagedCategoryState,source: ManagedCategorySource,page: Int,full: Boolean = false): ManagementCategoryCatalog {
         val ordered=managedCategoryOrder(source,state.order);require(ordered.isNotEmpty() && ordered.size<=2000)
-        val pages=(ordered.size+49)/50;require(page in 1..pages)
-        val groups=source.groups.associateBy { it.key };val start=(page-1)*50
+        val size=if(full)2000 else 50;val pages=(ordered.size+size-1)/size;require(page in 1..pages)
+        val groups=source.groups.associateBy { it.key };val start=(page-1)*size;val provider=source.groups.mapIndexed { i,g -> g.key to i+1 }.toMap()
         return ManagementCategoryCatalog(managementHash(state.profileId),sourceRef(state,source),revision(state,source),
             state.sources.map { ManagementCategorySource(sourceRef(state,it),it.label,it.groups.size) },
-            ordered.drop(start).take(50).mapIndexed { index,key -> val group=groups.getValue(key);ManagementCategoryItem(groupRef(state,source,key),categoryLabel(group.name),group.channels,key in state.hidden,start+index+1) },
-            page,pages,ordered.size,state.orderEditable)
+            ordered.drop(start).take(size).mapIndexed { index,key -> val group=groups.getValue(key);val label=categoryLabel(group.name)
+                ManagementCategoryItem(groupRef(state,source,key),label,group.channels,key in state.hidden,start+index+1,provider.getValue(key),group.name.takeIf { it==label && it.codePointCount(0,it.length)<=80 && it!="[redacted category label]" }) },
+            page,pages,ordered.size,state.orderEditable,full,state.order.none { PlaylistGroupKey(it).playlistId==source.id })
     }
 }
 
@@ -61,7 +65,7 @@ internal fun validCategoryPayload(kind: String,payload: Map<String,String>): Boo
     val refs=listOf("profile_ref","source_ref","expected_revision","category_ref")
     if(payload.any { (key,value)->key in refs && !value.matches(Regex("[a-f0-9]{64}")) })return false
     if(payload["page"]?.let { it.toIntOrNull()?.let { n->n !in 1..40 || n.toString()!=it } ?: true }==true)return false
-    if(kind=="get_categories")return payload.keys.all { it in listOf("profile_ref","source_ref","page") } && (("source_ref" in payload)==("profile_ref" in payload))
+    if(kind in listOf("get_categories","get_category_layout"))return payload.keys.all { it in (if(kind=="get_categories")listOf("profile_ref","source_ref","page") else listOf("profile_ref","source_ref")) } && (("source_ref" in payload)==("profile_ref" in payload))
     if(kind!="set_categories"||!payload.keys.containsAll(listOf("profile_ref","source_ref","expected_revision","operation")))return false
     if(payload.keys.any { it !in refs+listOf("operation") })return false
     val op=payload["operation"]
@@ -69,15 +73,27 @@ internal fun validCategoryPayload(kind: String,payload: Map<String,String>): Boo
 }
 
 /** Read retries may refresh the SAME target; mutations never rerun from receipts. */
-internal fun categoryRetryPayload(receipt: CommandReceipt): Map<String,String>? {
+internal fun categoryRetryPayload(receipt: CommandReceipt,kind: String = "get_categories"): Map<String,String>? {
     val profile=receipt.categoryProfileRef ?: return null;val source=receipt.categorySourceRef ?: return null
-    val payload=mapOf("profile_ref" to profile,"source_ref" to source,"page" to receipt.categoryPage.toString())
-    return payload.takeIf { receipt.status=="succeeded" && validCategoryPayload("get_categories",it) }
+    val payload=mapOf("profile_ref" to profile,"source_ref" to source)+(if(kind=="get_categories")mapOf("page" to receipt.categoryPage.toString()) else emptyMap())
+    return payload.takeIf { receipt.status=="succeeded" && validCategoryPayload(kind,it) }
 }
+
+internal data class ManagementLayoutUpdate(val order: List<String>,val hidden: List<String>,val providerOrder: Boolean)
+internal fun managedLayoutUpdate(payload: Map<String,String>): ManagementLayoutUpdate? = runCatching {
+    require(payload.keys.all { it in listOf("profile_ref","source_ref","expected_revision","order","hidden","provider_order") } && payload.keys.containsAll(listOf("profile_ref","source_ref","expected_revision","order","hidden")))
+    for(key in listOf("profile_ref","source_ref","expected_revision"))require(payload.getValue(key).matches(Regex("[a-f0-9]{64}")))
+    fun refs(key: String):List<String> {val json=com.google.gson.JsonParser.parseString(payload.getValue(key));require(json.isJsonArray && json.asJsonArray.size()<=2000)
+        return json.asJsonArray.map { require(it.isJsonPrimitive && it.asJsonPrimitive.isString);it.asString.also { ref->require(ref.matches(Regex("[a-f0-9]{64}"))) } }.also { require(it.distinct().size==it.size) }}
+    val order=refs("order");val hidden=refs("hidden");require(order.isNotEmpty() && hidden.all { it in order })
+    require(payload["provider_order"]==null || payload["provider_order"] in listOf("true","false"))
+    ManagementLayoutUpdate(order,hidden,payload["provider_order"]=="true")
+}.getOrNull()
 
 internal class ManagementCategoryActions(private val repository: IptvRepository,private val profiles: ProfileManager,private val secret: String) {
     suspend fun execute(id: String,kind: String,accountScope: String,payload: Map<String,String>): CommandReceipt {
-        if(!validCategoryPayload(kind,payload))return CommandReceipt(id,"failed","Invalid category action")
+        val layout=if(kind=="apply_category_layout")managedLayoutUpdate(payload) else null
+        if(if(kind=="apply_category_layout")layout==null else !validCategoryPayload(kind,payload))return CommandReceipt(id,"failed","Invalid category action")
         val profile=profiles.getProfileId()
         if(payload["profile_ref"]?.let { it!=managementHash(profile) }==true)return CommandReceipt(id,"failed","Active profile changed; request its current categories")
         return try {
@@ -85,12 +101,18 @@ internal class ManagementCategoryActions(private val repository: IptvRepository,
             val protocol=ManagementCategoryProtocol(secret,accountScope)
             val source=if(payload["source_ref"]==null)state.sources.firstOrNull { it.groups.isNotEmpty() } else state.sources.firstOrNull { protocol.sourceRef(state,it)==payload["source_ref"] }
             if(source==null)return CommandReceipt(id,"failed","Source changed or no cached categories are available; open Live TV or reload the playlist first")
-            if(kind=="get_categories") {
-                val page=payload["page"]?.toInt() ?: 1;val catalog=protocol.catalog(state,source,page)
+            if(kind in listOf("get_categories","get_category_layout")) {
+                val page=payload["page"]?.toInt() ?: 1;val catalog=protocol.catalog(state,source,page,kind=="get_category_layout")
                 CommandReceipt(id,"succeeded","Category snapshot read from the selected profile/source cache; not live provider data",catalog=catalog,
                     categoryProfileRef=catalog.profileRef,categorySourceRef=catalog.sourceRef,categoryPage=page)
             } else {
                 if(protocol.revision(state,source)!=payload["expected_revision"])return CommandReceipt(id,"failed","Category settings or catalog changed; request a fresh snapshot")
+                if(layout!=null) {
+                    val refs=source.groups.associateBy { protocol.groupRef(state,source,it.key) }
+                    if(layout.order.size!=refs.size || layout.order.toSet()!=refs.keys)return CommandReceipt(id,"failed","Complete layout no longer matches this source; read/rebase before pushing")
+                    val applied=repository.applyManagedCategoryLayout(state,source.id,layout.order.map { refs.getValue(it).key },layout.hidden.map { refs.getValue(it).key },layout.providerOrder){managementAccount(it)?.scope==accountScope}
+                    return if(applied)CommandReceipt(id,"succeeded","Entire source layout applied in one transaction; other sources, favourites and guides unchanged") else CommandReceipt(id,"failed","Layout conflict; your website draft is retained. Refresh and explicitly rebase before pushing again")
+                }
                 val key=payload["category_ref"]?.let { ref -> source.groups.firstOrNull { protocol.groupRef(state,source,it.key)==ref }?.key }
                 if(payload["operation"]!="reset_order"&&key==null)return CommandReceipt(id,"failed","Category no longer belongs to the selected source")
                 val applied=repository.applyManagedCategoryPatch(state,source.id,payload.getValue("operation"),key) { managementAccount(it)?.scope==accountScope }

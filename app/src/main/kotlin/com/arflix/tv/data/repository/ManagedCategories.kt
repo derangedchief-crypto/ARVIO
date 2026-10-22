@@ -21,6 +21,19 @@ internal fun guardedManagedCategoryPatch(expected: ManagedCategoryState,current:
     return planManagedCategoryPatch(current,source,operation,key)
 }
 
+/** Complete-source batch, applied atomically; partial pages are never replacements. */
+internal fun planManagedCategoryLayout(state: ManagedCategoryState,source: ManagedCategorySource,ordered: List<String>,hidden: List<String>,providerOrder: Boolean): ManagedCategoryPatch? {
+    val known=source.groups.map { it.key };val set=known.toSet()
+    if(!state.orderEditable || ordered.size!=known.size || ordered.distinct().size!=ordered.size || ordered.toSet()!=set || hidden.distinct().size!=hidden.size || hidden.any { it !in set })return null
+    if(providerOrder && ordered!=known)return null
+    val nextHidden=state.hidden.filterNot { it in set }+hidden
+    if(providerOrder)return ManagedCategoryPatch(nextHidden.distinct(),state.order.filterNot { com.arflix.tv.data.model.PlaylistGroupKey(it).playlistId==source.id },true,true)
+    var next=0;val nextOrder=mutableListOf<String>()
+    for(saved in state.order) {if(saved in set){if(next<ordered.size)nextOrder+=ordered[next++]}else nextOrder+=saved}
+    while(next<ordered.size)nextOrder+=ordered[next++]
+    return ManagedCategoryPatch(nextHidden.distinct(),nextOrder.distinct(),true,true)
+}
+
 /** Source-scoped operations preserve other sources, unavailable keys and favourites. */
 internal fun managedCategoryOrder(source: ManagedCategorySource, saved: List<String>): List<String> {
     val known=source.groups.map { it.key }.toSet()

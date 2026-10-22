@@ -37,11 +37,11 @@ final class Http
         if (($_SERVER['HTTP_ORIGIN'] ?? '') !== $config->origin()) throw new Problem(403, 'Request origin could not be verified.');
         if (strtolower(trim(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0])) !== 'application/json') throw new Problem(415, 'Use an application/json request.');
     }
-    public static function body(): array
+    public static function body(int $limit = 32768): array
     {
-        if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 32768) throw new Problem(413, 'Request is too large.');
-        $raw = file_get_contents('php://input', false, null, 0, 32769);
-        if (strlen($raw) > 32768) throw new Problem(413, 'Request is too large.');
+        if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > $limit) throw new Problem(413, 'Request is too large.');
+        $raw = file_get_contents('php://input', false, null, 0, $limit+1);
+        if (strlen($raw) > $limit) throw new Problem(413, 'Request is too large.');
         try {
             if (!(json_decode($raw, false, 20, JSON_THROW_ON_ERROR) instanceof \stdClass)) throw new \JsonException();
             return json_decode($raw, true, 20, JSON_THROW_ON_ERROR);
@@ -51,7 +51,7 @@ final class Http
     {
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
-        echo json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        echo json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         exit;
     }
     public static function cookie(Config $config, string $token): void

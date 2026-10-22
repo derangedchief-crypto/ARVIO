@@ -5,7 +5,9 @@
 # root /www/wwwroot/control.fecxbrfzku.net/public;
 
 index index.php;
-client_max_body_size 64k;
+# Full cached layouts are bounded to 2 MiB; PHP authenticates before decoding them.
+# Ordinary endpoints still enforce the smaller application-level limits.
+client_max_body_size 2m;
 
 # Defense in depth if the document root is accidentally changed later.
 location ^~ /storage/ { return 404; }

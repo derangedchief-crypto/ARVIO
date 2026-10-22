@@ -109,4 +109,28 @@ class ManagementCategoriesTest {
         val result=ManagementActions(mockk(),repository,profiles,"ab".repeat(32)).execute("id","get_categories",account.scope)
         assertEquals("failed",result.status);assertTrue(result.summary.contains("timed out"));assertNull(result.catalog)
     }
+    @Test fun completeCatalogIncludesPortableNamesAndProviderPositionsButNeverPretendsAPageIsComplete() {
+        val full=protocol.catalog(state,source,1,true)
+        assertTrue(full.full);assertEquals(60,full.items.size);assertEquals(1,full.pages);assertTrue(full.providerOrder)
+        assertEquals("Category 1",full.items[0].matchName);assertEquals(60,full.items.last().providerPosition)
+        val unsafe=source.copy(groups=listOf(ManagedCategoryGroup("list_1|private","https://private.test/?password=x",1)))
+        assertNull(protocol.catalog(state.copy(sources=listOf(unsafe)),unsafe,1,true).items[0].matchName)
+        val receipt=CommandReceipt("id","succeeded","full",catalog=full,categoryProfileRef=full.profileRef,categorySourceRef=full.sourceRef)
+        assertFalse(categoryRetryPayload(receipt,"get_category_layout")!!.containsKey("page"))
+        assertFalse(Gson().toJson(receipt).contains("Category 1"))
+    }
+    @Test fun wholeLayoutIsOneGuardedRepositoryCallAndPartialListsNeverWrite() = runTest {
+        val repository=mockk<IptvRepository>();val profiles=mockk<ProfileManager>()
+        coEvery { profiles.getProfileId() } returns "profile"
+        coEvery { repository.readManagedCategories("profile",any()) } returns state
+        val actions=ManagementCategoryActions(repository,profiles,"ab".repeat(32));val order=source.groups.reversed().map { protocol.groupRef(state,source,it.key) }
+        val payload=mapOf("profile_ref" to managementHash("profile"),"source_ref" to protocol.sourceRef(state,source),"expected_revision" to protocol.revision(state,source),"order" to Gson().toJson(order),"hidden" to Gson().toJson(order.take(3)),"provider_order" to "false")
+        assertEquals("failed",actions.execute("id","apply_category_layout",account.scope,payload+mapOf("order" to Gson().toJson(order.drop(1)))).status)
+        coVerify(exactly=0) { repository.applyManagedCategoryLayout(any(),any(),any(),any(),any(),any()) }
+        coEvery { repository.applyManagedCategoryLayout(state,"list_1",source.groups.reversed().map { it.key },source.groups.reversed().take(3).map { it.key },false,any()) } returns true
+        val result=actions.execute("id","apply_category_layout",account.scope,payload)
+        assertEquals("succeeded",result.status);assertNull(result.catalog)
+        coVerify(exactly=1) { repository.applyManagedCategoryLayout(any(),any(),any(),any(),any(),any()) }
+        coVerify(exactly=0) { repository.applyManagedCategoryPatch(any(),any(),any(),any(),any()) }
+    }
 }

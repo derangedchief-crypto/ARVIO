@@ -265,9 +265,9 @@ class DeviceManagementAgent @Inject constructor(
         val lease = command.getString("lease_token").also { require(it.matches(Regex("[a-f0-9]{64}"))) }
         val kind = command.getString("kind")
         val prior = current.session.receipts.firstOrNull { it.id == id }
-        if(prior!=null && kind=="get_categories" && prior.status=="succeeded") {
+        if(prior!=null && kind in listOf("get_categories","get_category_layout") && prior.status=="succeeded") {
             beginCommand(current,id,lease)
-            val target=categoryRetryPayload(prior)
+            val target=categoryRetryPayload(prior,kind)
             val refreshed=if(target==null)CommandReceipt(id,"failed","Original category target is unavailable; request a new snapshot") else
                 ManagementActions(context,repository.get(),profiles,current.session.catalogSecret.orEmpty()).execute(id,kind,current.account.scope,target)
             change(current){it.copy(receipts=it.receipts.map { old -> if(old.id==id)refreshed.copy(catalog=null) else old })}
@@ -277,14 +277,14 @@ class DeviceManagementAgent @Inject constructor(
             val payload = command.optJSONObject("payload") ?: JSONObject()
             val item = ManagementCommand(id, kind, runCatching { parseManagementTime(command.getString("expires_at")) }.getOrDefault(0),
                 payload.optString("message", ""), payload.optInt("duration_seconds", 0))
-            if (kind in listOf("refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories") && item.expiresAtMs > System.currentTimeMillis()) {
+            if (kind in listOf("refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories", "get_category_layout", "apply_category_layout") && item.expiresAtMs > System.currentTimeMillis()) {
                 beginCommand(current, id, lease)
                 // Persist an interrupted-operation receipt BEFORE side effects. A
                 // process/network retry cannot silently start an expensive job twice.
                 val interrupted = CommandReceipt(id, "failed", "Action interrupted; request a new command to retry safely")
                 change(current) { it.copy(receipts = (it.receipts + interrupted).takeLast(512)) }
-                val settings = if (kind in listOf("set_settings","get_categories","set_categories")) payload.keys().asSequence().associateWith { key ->
-                    val value=payload.opt(key);if(value is String || (kind!="set_settings" && key=="page" && value is Int))value.toString() else ""
+                val settings = if (kind in listOf("set_settings","get_categories","set_categories","get_category_layout","apply_category_layout")) payload.keys().asSequence().associateWith { key ->
+                    val value=payload.opt(key);if(value is String || (kind!="set_settings" && key=="page" && value is Int) || (kind=="apply_category_layout" && ((key in listOf("order","hidden") && value is JSONArray)||(key=="provider_order" && value is Boolean))))value.toString() else ""
                 } else emptyMap()
                 val executed = ManagementActions(context, repository.get(), profiles,current.session.catalogSecret.orEmpty()).execute(id, kind, current.account.scope, settings)
                 // Catalog pages are transient. Persist only a read's scoped retry

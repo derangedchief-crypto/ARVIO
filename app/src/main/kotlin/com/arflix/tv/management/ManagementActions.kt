@@ -26,7 +26,7 @@ internal class ManagementActions(private val context: Context, private val repos
                 if (!applied) return CommandReceipt(id, "failed", "Profile, source account or sort order changed; request a fresh snapshot")
             }
             val receipt = when (kind) {
-                "get_categories", "set_categories" -> withTimeout(20_000) { ManagementCategoryActions(repository,profiles,catalogSecret).execute(id,kind,accountScope,payload) }
+                "get_categories", "set_categories", "get_category_layout", "apply_category_layout" -> withTimeout(20_000) { ManagementCategoryActions(repository,profiles,catalogSecret).execute(id,kind,accountScope,payload) }
                 "get_settings", "set_settings" -> {
                     val config = repository.observeConfig().first()
                     val playlists = if (config.playlists.isEmpty()) if (config.m3uUrl.isBlank()) 0 else 1 else config.playlists.size

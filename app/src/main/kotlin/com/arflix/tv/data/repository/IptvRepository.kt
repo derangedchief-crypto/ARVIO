@@ -1057,6 +1057,23 @@ class IptvRepository @Inject constructor(
         applied
     }
 
+    internal suspend fun applyManagedCategoryLayout(expected: ManagedCategoryState,sourceId: String,order: List<String>,hidden: List<String>,providerOrder: Boolean,accountMatches: (IptvConfig)->Boolean): Boolean = loadMutex.withLock {
+        var applied=false
+        context.settingsDataStore.edit { prefs ->
+            if(profileManager.getProfileIdSync()!=expected.profileId)return@edit
+            val current=managedCategoryState(expected.profileId,prefs,accountMatches)
+            if(current!=expected)return@edit
+            val source=current.sources.firstOrNull { it.id==sourceId } ?: return@edit
+            val patch=planManagedCategoryLayout(current,source,order,hidden,providerOrder) ?: return@edit
+            prefs[hiddenGroupsKeyFor(expected.profileId)]=gson.toJson(patch.hidden)
+            prefs[groupOrderKeyFor(expected.profileId)]=gson.toJson(patch.order)
+            prefs[groupOrderSchemaKeyFor(expected.profileId)]=IPTV_GROUP_ORDER_SCHEMA.toString()
+            applied=true
+        }
+        if(applied){groupOrderLocallyDirty=true;invalidationBus.markDirty(CloudSyncScope.IPTV,expected.profileId,"managed complete category layout")}
+        applied
+    }
+
     /**
      * Accept common Xtream Codes inputs and convert to a canonical M3U URL.
      *

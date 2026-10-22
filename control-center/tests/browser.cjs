@@ -118,25 +118,85 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.locator('tr').filter({ hasText: 'set settings' }).locator('.badge.cancelled').waitFor();
     done('preset application queues a revision-bound setting and queued cancellation is real');
     await page.getByRole('button', { name: 'Categories', exact: true }).click();
-    await page.getByRole('heading', { name: 'Source-scoped categories', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Organize entire playlist/category layout', exact: true }).waitFor();
     const categoryName = 'TEST <img src=x onerror="window.__categoryInjected=1">';
     await page.getByText(categoryName, { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__categoryInjected), undefined);
     assert.equal(await page.locator('img[src="x"]').count(), 0);
-    await page.screenshot({ path: path.join(output, 'category-management-desktop.png'), fullPage: true });
-    const categoryRow = page.locator('tr').filter({ hasText: categoryName });
-    assert.equal(await categoryRow.getByRole('button', { name: 'Move up', exact: true }).isDisabled(), true);
-    await categoryRow.getByRole('button', { name: 'Hide category', exact: true }).click();
-    await page.getByText('A category request/change is queued or running.', { exact: false }).waitFor();
-    assert.equal(await page.locator('tr').filter({ hasText: categoryName }).getByRole('button', { name: 'Hide category', exact: true }).isDisabled(), true);
-    const categoryQueue = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).items.find(c => c.kind === 'set_categories'), credentials.device_id);
-    assert.equal(categoryQueue.payload.operation, 'hide'); assert.equal(categoryQueue.status, 'pending'); assert.equal(categoryQueue.result, null);
-    assert(/^[a-f0-9]{64}$/.test(categoryQueue.payload.category_ref)); assert(/^[a-f0-9]{64}$/.test(categoryQueue.payload.source_ref));
-    await page.getByRole('button', { name: 'View category commands', exact: true }).click();
+    const commandsBeforeDraft = (await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).total, credentials.device_id));
+    await page.getByRole('button', { name: 'Next local page', exact: true }).click();
+    await page.getByLabel('Position of TEST Category 60', { exact: true }).fill('1');
+    await page.getByLabel('Position of TEST Category 60', { exact: true }).press('Tab');
+    await page.getByRole('button', { name: 'Previous local page', exact: true }).click();
+    await page.locator('.layout-draft tr').filter({ hasText: categoryName }).dragTo(page.locator('.layout-draft tr').filter({ hasText: 'TEST Category 60' }));
+    await page.locator('.layout-draft tbody tr').first().getByText(categoryName, { exact: true }).waitFor();
+    await page.locator('.layout-draft tr').filter({ hasText: 'TEST Category 60' }).dragTo(page.locator('.layout-draft tr').filter({ hasText: categoryName }));
+    await page.locator('.layout-draft tbody tr').first().getByText('TEST Category 60', { exact: true }).waitFor();
+    await page.getByLabel('Filter layout categories', { exact: true }).fill('TEST Category 5');
+    await page.getByRole('button', { name: 'Select all filtered categories', exact: true }).click();
+    await page.getByRole('button', { name: 'Hide selected', exact: true }).click();
+    await page.getByLabel('Filter layout categories', { exact: true }).fill('');
+    await page.getByLabel('Visible ' + categoryName, { exact: true }).uncheck();
+    assert.equal(await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).total, credentials.device_id), commandsBeforeDraft);
+    await page.screenshot({ path: path.join(output, 'whole-layout-draft-desktop.png'), fullPage: true });
+    done('complete-source paging, positions and bulk visibility are local edits with ZERO device commands');
+    page.once('dialog', dialog => dialog.accept()); // explicit excluded-name preview
+    await page.getByRole('button', { name: 'Save as layout template', exact: true }).click();
+    await page.getByLabel('Layout name', { exact: true }).fill('TEST Organized Layout');
+    await page.locator('#modal-form').getByRole('button', { name: 'Save', exact: true }).click();
+    await page.locator('#modal').waitFor({ state: 'hidden' });
+    const templates = await page.evaluate(async () => (await (await fetch('/api/category-layout-templates')).json()).items);
+    assert(templates.some(t => t.name === 'TEST Organized Layout' && t.category_count === 59));
+    assert.equal(await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).total, credentials.device_id), commandsBeforeDraft);
+    done('custom organized layout saves as a portable template without pushing device changes');
+    const originalFull = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/category-layout')).json()).catalog, credentials.device_id);
     page.once('dialog', dialog => dialog.accept());
-    await page.locator('tr').filter({ hasText: 'set categories' }).getByRole('button', { name: 'Cancel', exact: true }).click();
-    await page.locator('tr').filter({ hasText: 'set categories' }).locator('.badge.cancelled').waitFor();
-    done('category titles are literal, writes bind source/revision and queued changes never pretend to be applied');
+    await page.getByRole('button', { name: 'Push entire layout once', exact: true }).click();
+    await page.getByText('ONE complete layout command queued', { exact: false }).waitFor();
+    const queuedLayout = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).items.find(c => c.kind === 'apply_category_layout'), credentials.device_id);
+    assert.equal(queuedLayout.status, 'pending'); assert.equal(queuedLayout.payload.order_count, 60); assert.equal(queuedLayout.result, null);
+    assert.equal(await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).total, credentials.device_id), commandsBeforeDraft + 1);
+    async function syntheticDelivery(kind) {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const found = await page.evaluate(async ({ id, token, kind }) => {
+          const device = await (await fetch('/api/devices/' + id)).json();
+          const check = await (await fetch('/api/device/check-in', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ capabilities: device.capabilities, model: 'SYNTHETIC TEST DRIVER' }) })).json();
+          for (const c of check.commands || []) {
+            if (c.kind === kind) return c;
+            await fetch('/api/device/commands/' + c.id + '/ack', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ status: 'failed', lease_token: c.lease_token, summary: 'TEST simulator does not execute this other command' }) });
+          }
+          return null;
+        }, { id: credentials.device_id, token: credentials.synthetic_device_token, kind });
+        if (found) return found;
+      }
+      throw new Error('Synthetic expected delivery not found: ' + kind);
+    }
+    const applyDelivery = await syntheticDelivery('apply_category_layout');
+    assert.equal(applyDelivery.payload.order.length, 60); assert.equal(new Set(applyDelivery.payload.order).size, 60);
+    const hidden = new Set(applyDelivery.payload.hidden), byRef = new Map(originalFull.items.map(r => [r.ref, r]));
+    const confirmedFull = { ...originalFull, revision: '9'.repeat(64), provider_order: applyDelivery.payload.provider_order, items: applyDelivery.payload.order.map((ref, i) => ({ ...byRef.get(ref), hidden: hidden.has(ref), position: i + 1 })) };
+    const ack = async (c, extra) => page.evaluate(async ({ c, token, extra }) => {
+      const r = await fetch('/api/device/commands/' + c.id + '/ack', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ status: 'succeeded', lease_token: c.lease_token, summary: 'TEST SYNTHETIC RECEIPT — NOT ANDROID EXECUTION', ...extra }) }); return { status: r.status, body: await r.json() };
+    }, { c, token: credentials.synthetic_device_token, extra });
+    assert.equal((await ack(applyDelivery, {})).status, 200);
+    await page.getByText('Whole layout applied; requesting one fresh read to confirm.', { exact: true }).waitFor();
+    const readDelivery = await syntheticDelivery('get_category_layout'); assert.equal((await ack(readDelivery, { catalog: confirmedFull })).status, 200);
+    await page.getByText('Whole layout applied and confirmed by a fresh app read.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Push entire layout once', exact: true }).isDisabled(), true);
+    done('many browser edits push as ONE atomic command; only a real successful receipt/read clears the draft (synthetic driver)');
+    await page.locator('nav a[href="#devices"]').click();
+    await page.locator('tr').filter({ hasText: credentials.layout_target_id }).getByRole('button', { name: 'View →' }).click();
+    await page.getByRole('button', { name: 'Categories', exact: true }).click();
+    const targetBefore = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).total, credentials.layout_target_id);
+    await page.getByRole('button', { name: 'Preview / apply saved layout template', exact: true }).click();
+    await page.getByText('58 exact matches', { exact: false }).waitFor();
+    await page.locator('#modal-form').getByRole('button', { name: 'Apply to browser draft', exact: true }).click();
+    await page.locator('#modal').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).total, credentials.layout_target_id), targetBefore);
+    await page.locator('.layout-draft tbody tr').first().getByText('TEST Category 60', { exact: true }).waitFor();
+    done('cross-device template preview maps exact names to target refs, preserves extras and remains LOCAL until push');
+    await page.locator('nav a[href="#devices"]').click();
+    await page.locator('tr').filter({ hasText: credentials.device_id }).getByRole('button', { name: 'View →' }).click();
     await page.getByRole('button', { name: 'Overview', exact: true }).click();
     page.once('dialog', dialog => dialog.accept());
     await page.getByRole('button', { name: 'Remove from reseller — keep app working', exact: true }).click();
@@ -170,6 +230,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.locator('#modal-form').getByRole('button', { name: 'Save', exact: true }).click();
     await page.locator('#modal').waitFor({ state: 'hidden' });
     await page.getByText(company, { exact: true }).waitFor();
+    page.once('dialog', dialog => dialog.accept()); // target layout draft intentionally not pushed
     await page.getByRole('button', { name: 'Sign out', exact: true }).click();
     await page.getByLabel('Email address').waitFor();
     assert.equal(await page.locator('#main').textContent(), '');

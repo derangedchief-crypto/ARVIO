@@ -35,7 +35,7 @@ internal fun enrollmentSigningText(nonce: String, proof: String, install: String
     "ECENROLL1\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint"
 
 internal val MANAGEMENT_POLICIES = setOf("active", "suspended", "blocked", "removed")
-internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories")
+internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories", "get_category_layout", "apply_category_layout")
 internal fun managementSettingsRevision(profileRef: String, accountScope: String, sortOrder: String): String =
     managementHash("ECSET1\n$profileRef\n$accountScope\n$sortOrder")
 

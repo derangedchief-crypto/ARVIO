@@ -33,7 +33,7 @@ $a=$app->management->createReseller($owner,['company'=>'DEMO · Northstar','name
 $b=$app->management->createReseller($owner,['company'=>'DEMO · Horizon','name'=>'Demo reseller','email'=>'horizon@preview.test','password'=>bin2hex(random_bytes(12)),'device_limit'=>25]);
 $ownerTenant=$app->management->tenants($owner)[0];
 $bindings=[];
-foreach([[$ownerTenant,'TEST · Owner workspace','TEST simulator · Living room'],[$a,'TEST · Northstar customer','TEST simulator · Bedroom'],[$b,'TEST · Horizon customer','TEST simulator · Office']] as [$tenant,$customerName,$label]) {
+foreach([[$ownerTenant,'TEST · Owner workspace','TEST simulator · Living room'],[$a,'TEST · Northstar customer','TEST simulator · Bedroom'],[$b,'TEST · Horizon customer','TEST simulator · Office'],[$ownerTenant,'TEST · Second owner device','TEST simulator · Second owner device']] as [$tenant,$customerName,$label]) {
     $customer=$app->management->createCustomer($owner,['tenant_id'=>$tenant['id'],'name'=>$customerName,'notes'=>'Synthetic local preview record only.']);
     $device=$app->management->createDevice($owner,['customer_id'=>$customer['id'],'label'=>$label,'notes'=>'No real Android device is connected.']);
     $token=$app->commands->issueTestCredential($owner,$device['id']);
@@ -56,6 +56,20 @@ $app->commands->acknowledge($bindings[0]['token'],$categoryCommand['id'],['statu
         'sources'=>[['ref'=>$categorySource,'label'=>'Playlist 1','total'=>2]],'items'=>[
             ['ref'=>hash('sha256','SYNTHETIC CATEGORY 1'),'label'=>'TEST <img src=x onerror="window.__categoryInjected=1">','channels'=>20,'hidden'=>false,'position'=>1],
             ['ref'=>hash('sha256','SYNTHETIC CATEGORY 2'),'label'=>'TEST Sports','channels'=>30,'hidden'=>true,'position'=>2]]]]);
+foreach([0,3] as $which) {
+    $app->commands->checkIn($bindings[$which]['token'],$snapshot,'127.0.0.1');
+    $sourceRef=hash('sha256','SYNTHETIC FULL SOURCE '.$which);$items=[];
+    for($i=1;$i<=60;$i++) {
+        $name=$i===1?'TEST <img src=x onerror="window.__categoryInjected=1">':($i===2?'TEST Sports':'TEST Category '.$i);
+        if($which===3&&$i===2)$name='TEST Extra target category';
+        $items[]=['ref'=>hash('sha256','SYNTHETIC FULL '.$which.' '.$i),'label'=>$i===3?'[redacted category label]':$name,'match_name'=>$i===3?null:$name,'channels'=>$i,'hidden'=>$i===2,'position'=>$i,'provider_position'=>$i];
+    }
+    $c=$app->commands->enqueue($owner,$bindings[$which]['id'],['kind'=>'get_category_layout'],bin2hex(random_bytes(16)));
+    $delivery=$app->commands->checkIn($bindings[$which]['token'],$snapshot,'127.0.0.1')['commands'][0];
+    $app->commands->acknowledge($bindings[$which]['token'],$c['id'],['status'=>'succeeded','lease_token'=>$delivery['lease_token'],'summary'=>'TEST SYNTHETIC COMPLETE LAYOUT — not from Android','catalog'=>[
+        'schema_version'=>1,'profile_ref'=>hash('sha256','SYNTHETIC PROFILE'),'source_ref'=>$sourceRef,'revision'=>hash('sha256','SYNTHETIC FULL REVISION '.$which),'page'=>1,'pages'=>1,'page_size'=>2000,'total'=>60,'provider_order'=>true,'order_editable'=>true,
+        'sources'=>[['ref'=>$sourceRef,'label'=>'Playlist 1','total'=>60]],'items'=>$items]]);
+}
 // A local synthetic issuer/request for exercising the OWNER review UI only.
 // This is not evidence that a real activation worker or Android device connected.
 $app->enrollment->setEnabled($owner,['enabled'=>true]);
@@ -77,5 +91,5 @@ $request=$app->enrollment->register(['challenge'=>$challenge,'proof'=>$proof,'pu
 $app->db->query('UPDATE tenants SET device_limit=100 WHERE id=?',[$ownerTenant['id']]);
 $target=$app->db->one('SELECT id FROM customers WHERE tenant_id=? ORDER BY created_at,id LIMIT 1',[$ownerTenant['id']]);
 file_put_contents($base.'/preview-credentials.json',json_encode(['email'=>'owner@preview.test','password'=>$password,'device_id'=>$bindings[0]['id'],'database'=>$name,
-    'enrollment_request_id'=>$request['request_id'],'enrollment_customer_id'=>$target['id']],JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR));
+    'enrollment_request_id'=>$request['request_id'],'enrollment_customer_id'=>$target['id'],'layout_target_id'=>$bindings[3]['id'],'synthetic_device_token'=>$bindings[0]['token']],JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR));
 echo $base,"\n";

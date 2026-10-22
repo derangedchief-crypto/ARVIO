@@ -42,4 +42,21 @@ class ManagedCategoriesTest {
         }
         assertNotNull(guardedManagedCategoryPatch(expected,expected,source.id,"hide","list_1|News"))
     }
+    @Test fun completeLayoutAppliesOrderAndVisibilityWithoutDroppingOtherOrUnavailableKeys() {
+        val state=state();val ordered=listOf("list_1|Movies","list_1|Sports","list_1|News")
+        val patch=planManagedCategoryLayout(state,source,ordered,listOf("list_1|Sports"),false)!!
+        assertEquals(ordered,managedCategoryOrder(source,patch.order))
+        assertEquals(listOf("other|Private","list_1|Unavailable","list_1|Sports"),patch.hidden)
+        assertEquals(listOf("other|A","list_1|Unavailable","other|B"),patch.order.filterNot { it in ordered })
+        assertTrue(patch.writesOrder && patch.writesHidden)
+    }
+    @Test fun partialDuplicateForeignOrStaleProviderLayoutsAreRejected() {
+        val state=state();val known=source.groups.map { it.key }
+        for(order in listOf(known.drop(1),listOf(known[0],known[0],known[2]),listOf("other|A",known[1],known[2])))assertNull(planManagedCategoryLayout(state,source,order,emptyList(),false))
+        assertNull(planManagedCategoryLayout(state,source,known,listOf("other|Private"),false))
+        assertNull(planManagedCategoryLayout(state,source,known.reversed(),emptyList(),true))
+        assertNull(planManagedCategoryLayout(state.copy(schemaRaw="1"),source,known,emptyList(),false))
+        val reset=planManagedCategoryLayout(state,source,known,emptyList(),true)!!
+        assertEquals(listOf("other|A","other|B"),reset.order)
+    }
 }

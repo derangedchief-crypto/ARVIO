@@ -38,7 +38,10 @@ with (state / 'startup.log').open('wb') as log:
         if result.returncode == 0 and args.browser:
             probe = socket.socket(); probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]; probe.close()
             preview_env = {**environment, 'CONTROL_PREVIEW_PORT': str(port)}
-            preview = Path(subprocess.check_output(['bash', 'control-center/dev/php.sh', 'control-center/dev/demo.php'], cwd=repository, env=preview_env, text=True).strip())
+            seeded = subprocess.run(['bash', 'control-center/dev/php.sh', 'control-center/dev/demo.php'], cwd=repository, env=preview_env, text=True, capture_output=True)
+            if seeded.returncode:
+                raise SystemExit(seeded.stdout + seeded.stderr)
+            preview = Path(seeded.stdout.strip())
             web = subprocess.Popen(['bash', 'control-center/dev/php.sh', '-S', f'127.0.0.1:{port}', '-t', str(preview/'public'), str(preview/'dev/router.php')],
                                    cwd=repository, env=preview_env, stdout=log, stderr=log, start_new_session=True)
             for _ in range(100):

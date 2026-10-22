@@ -4,13 +4,13 @@ namespace ControlCenter;
 
 final class Commands
 {
-    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app', 'set_settings', 'get_categories', 'set_categories'];
+    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app', 'set_settings', 'get_categories', 'set_categories', 'get_category_layout', 'apply_category_layout'];
     public function __construct(private readonly Database $db, private readonly Config $config, private readonly Auth $auth, private readonly Management $management) {}
 
     private static function payload(string $kind, mixed $payload): array
     {
         if (!is_array($payload) || array_is_list($payload) && $payload !== []) throw new Problem(422, 'Invalid command payload.');
-        if(in_array($kind,['get_categories','set_categories'],true))return CommandCategories::payload($kind,$payload);
+        if(in_array($kind,['get_categories','set_categories','get_category_layout','apply_category_layout'],true))return CommandCategories::payload($kind,$payload);
         if($kind==='set_settings') {
             Input::keys($payload,['profile_ref','expected_revision','sort_order']);
             EnrollmentProof::hex($payload['profile_ref']??null,64);EnrollmentProof::hex($payload['expected_revision']??null,64);
@@ -61,6 +61,9 @@ final class Commands
     {
         unset($row['lease_hash'], $row['request_hash'], $row['idempotency_key']);
         $row['payload'] = json_decode($row['payload'], false, 16, JSON_THROW_ON_ERROR);
+        if($row['kind']==='apply_category_layout') {
+            $p=$row['payload'];$row['payload']=(object)['profile_ref'=>$p->profile_ref,'source_ref'=>$p->source_ref,'expected_revision'=>$p->expected_revision,'order_count'=>count($p->order),'hidden_count'=>count($p->hidden),'provider_order'=>$p->provider_order??false];
+        }
         $row['result'] = $row['result'] === null ? null : json_decode($row['result'], true, 16, JSON_THROW_ON_ERROR);
         return $row;
     }
@@ -132,6 +135,7 @@ final class Commands
                 $rows = $this->db->all("SELECT * FROM commands WHERE device_id = ? AND expires_at > UTC_TIMESTAMP() AND attempts < 3 AND (status = 'pending' OR (status IN ('delivered','running') AND lease_until <= UTC_TIMESTAMP())) ORDER BY created_at, id LIMIT 5 FOR UPDATE", [$current['id']]);
                 $leaseSeconds = $this->config->number('command_lease_seconds', 90, 30, 600);
                 foreach ($rows as $row) {
+                    if($row['kind']==='apply_category_layout'&&$deliveries)break;
                     if (!in_array($row['kind'], $caps, true)) {
                         $this->db->query("UPDATE commands SET status = 'failed', finished_at = UTC_TIMESTAMP(), result = ? WHERE id = ?", [json_encode(['summary' => 'Capability is no longer advertised.']), $row['id']]);
                         continue;
@@ -139,9 +143,12 @@ final class Commands
                     $lease = bin2hex(random_bytes(32));
                     $this->db->query("UPDATE commands SET status = 'delivered', attempts = attempts + 1, lease_hash = ?, lease_until = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? SECOND) WHERE id = ?", [hash('sha256', $lease), $leaseSeconds, $row['id']]);
                     $deliveries[] = ['id' => $row['id'], 'kind' => $row['kind'], 'payload' => json_decode($row['payload'], false, 16, JSON_THROW_ON_ERROR), 'lease_token' => $lease, 'expires_at' => $row['expires_at']];
+                    if($row['kind']==='apply_category_layout')break;
                 }
             }
-            return ['schema_version' => 1, 'device_id'=>$current['id'], 'policy' => $policy, 'heartbeat_seconds' => $this->config->number('heartbeat_seconds', 60, 15, 300), 'commands' => $deliveries,
+            $heartbeat=$this->config->number('heartbeat_seconds',60,15,300);
+            if($deliveries)$heartbeat=min($heartbeat,$this->config->number('interactive_heartbeat_seconds',15,15,300));
+            return ['schema_version' => 1, 'device_id'=>$current['id'], 'policy' => $policy, 'heartbeat_seconds' => $heartbeat, 'commands' => $deliveries,
                 'update_policy' => ['managed_by' => 'platform_owner', 'source' => 'existing_central_channel']];
         });
     }
@@ -169,7 +176,7 @@ final class Commands
             if (in_array($row['status'], ['succeeded','failed'], true) && $row['status'] === $status) return self::publicCommand($row);
             if (!in_array($row['status'], ['delivered','running'], true) || !$leaseValid) throw new Problem(409, 'Command has expired or the lease is no longer valid.');
             $result=['summary'=>$summary];
-            if($status==='succeeded'&&$row['kind']==='get_categories'&&!array_key_exists('catalog',$input))throw new Problem(422,'A completed category read must include its catalog page.');
+            if($status==='succeeded'&&in_array($row['kind'],['get_categories','get_category_layout'],true)&&!array_key_exists('catalog',$input))throw new Problem(422,'A completed category read must include its catalog.');
             if(array_key_exists('catalog',$input)) {
                 if($status!=='succeeded')throw new Problem(422,'Only completed reads can upload a category page.');
                 $result['catalog']=CommandCategories::catalog($row['kind'],$input['catalog']);
@@ -178,6 +185,14 @@ final class Commands
                 $result['received_at_us']=(int)floor(microtime(true)*1000000);
                 $requested=json_decode($row['payload'],true,16,JSON_THROW_ON_ERROR);
                 foreach(['profile_ref','source_ref','page'] as $field)if(isset($requested[$field])&&$result['catalog'][$field]!==$requested[$field])throw new Problem(422,'Category response does not match the requested target/page.');
+                if($row['kind']==='get_category_layout') {
+                    $catalog=$result['catalog'];$received=$result['received_at_us'];
+                    $this->db->query('INSERT INTO category_layout_snapshots (command_id,device_id,profile_ref,source_ref,revision,total,catalog,received_at_us) VALUES (?,?,?,?,?,?,?,?)',[$commandId,$device['id'],$catalog['profile_ref'],$catalog['source_ref'],$catalog['revision'],$catalog['total'],json_encode($catalog,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),$received]);
+                    $keep=$this->db->all('SELECT command_id FROM category_layout_snapshots WHERE device_id=? ORDER BY received_at_us DESC LIMIT 3',[$device['id']]);
+                    $ids=array_column($keep,'command_id');$marks=implode(',',array_fill(0,count($ids),'?'));
+                    $this->db->query("DELETE FROM category_layout_snapshots WHERE device_id=? AND command_id NOT IN ($marks)",array_merge([$device['id']],$ids));
+                    $result['layout_summary']=['profile_ref'=>$catalog['profile_ref'],'source_ref'=>$catalog['source_ref'],'revision'=>$catalog['revision'],'total'=>$catalog['total']];unset($result['catalog']);
+                }
             }
             if($status==='succeeded'&&in_array($row['kind'],['get_settings','get_diagnostics','set_settings'],true)&&!array_key_exists('snapshot',$input))throw new Problem(422,'A completed snapshot command must include its typed snapshot.');
             if(array_key_exists('snapshot',$input)) {

@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-const state = { user: null, csrf: '', tenants: [], epoch: 0, deviceTab: null };
+const state = { user: null, csrf: '', tenants: [], epoch: 0, deviceTab: null, layoutEditors: new Map() };
 const requestKeys = new Map();
 let toastTimer;
 let formCounter = 0;
@@ -12,13 +12,14 @@ function badge(value) { return el('span', String(value).replaceAll('_', ' '), 'b
 function date(value) { return value ? new Date(value.replace(' ', 'T') + 'Z').toLocaleString() : 'Never'; }
 function uuid() { return crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''); }
 async function api(path, body, extra = {}) {
+  const sessionUser = state.user?.id;
   const options = { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json', ...extra } };
   if (body !== undefined) { options.headers['Content-Type'] = 'application/json'; options.headers['X-CSRF-Token'] = state.csrf; options.body = JSON.stringify(body); }
   const response = await fetch(path, options);
   let data;
   try { data = await response.json(); } catch { throw new Error('Server response was not JSON. Check the PHP/Nginx configuration.'); }
   if (!response.ok) {
-    if (response.status === 401 && path !== '/api/login') signedOut();
+    if (response.status === 401 && path !== '/api/login' && sessionUser === state.user?.id) signedOut();
     const error = new Error((data.error || 'Request failed.') + (data.request_id ? ' Request ID: ' + data.request_id : '')); error.status = response.status; throw error;
   }
   return data;
@@ -53,7 +54,7 @@ function modal(title, schema, save, label = 'Save') {
   form.onsubmit = async event => { event.preventDefault(); submit.disabled = true; error.textContent = ''; try { await save(formValues(form, schema)); $('modal').close(); await route(); } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; } };
   $('modal').showModal();
 }
-function signedOut() { state.user = null; state.csrf = ''; state.tenants = []; state.deviceTab = null; state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
+function signedOut() { state.user = null; state.csrf = ''; state.tenants = []; state.deviceTab = null; state.layoutEditors.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
 function entryCard(title, description) { const card = el('div', null, 'entry-card'); card.append(el('span', 'E', 'brand-mark'), el('h1', title), el('p', description, 'subtle')); $('entry').replaceChildren(card); return card; }
 function loginForm() {
   const card = entryCard('Welcome back', 'Sign in to your owner or reseller workspace.'); const form = el('form');
@@ -137,7 +138,7 @@ function presetForm(preset = null) {
   ], async values => { await api(preset ? '/api/settings-presets/' + preset.id : '/api/settings-presets', values); toast('Preset saved. Devices are unchanged until you explicitly apply it from their Settings tab.'); });
 }
 async function presetsPage(epoch) {
-  const main = $('main'); main.replaceChildren(heading('Settings presets', 'Workspace-scoped channel-sorting presets. Saving a preset does not push it to devices.', [button('Create preset', () => presetForm(), 'primary')]));
+  const main = $('main'); main.replaceChildren(heading('Settings presets', 'Channel-sort presets and reusable playlist/category layout templates. Saving does not push to devices.', [button('Create preset', () => presetForm(), 'primary')]));
   const box = panel(null); const filters = el('form', null, 'filters'); const search = el('input'); search.placeholder = 'Search preset name…'; search.setAttribute('aria-label', 'Search presets'); filters.append(search, button('Search', () => load(1))); filters.onsubmit = e => { e.preventDefault(); load(1); }; const results = el('div'); box.append(filters, results); main.append(box);
   async function load(page = 1) {
     try {
@@ -151,6 +152,177 @@ async function presetsPage(epoch) {
     } catch (e) { toast(e.message); }
   }
   await load();
+  if (epoch === state.epoch) await layoutTemplatesPanel(main, epoch);
+}
+async function layoutTemplatesPanel(main, epoch) {
+  const p = panel('Playlist/category layout templates', el('p', 'Organize a complete source in a device’s Categories draft editor, then Save as layout template. Templates match exact full category names, not device-specific IDs. Applying a template only edits the target draft until Push.', 'subtle'));
+  p.append(button('Create from a device layout', () => { location.hash = 'devices'; toast('Open a device → Categories, organize its draft, then Save as layout template.'); }));
+  const search = el('input'); search.placeholder = 'Search layout templates…'; search.setAttribute('aria-label', 'Search layout templates'); const result = el('div'); const filters = el('form', null, 'filters'); filters.append(search, button('Search layouts', () => load(1))); filters.onsubmit = e => { e.preventDefault(); load(1); }; p.append(filters, result); main.append(p);
+  async function load(page = 1) {
+    try {
+      const data = await api(`/api/category-layout-templates?page=${page}&search=${encodeURIComponent(search.value)}`); if (epoch !== state.epoch) return;
+      result.replaceChildren(table(['Layout', 'Workspace', 'Categories', 'Version', 'Actions'], data.items.map(t => {
+        const a = el('div', null, 'actions');
+        a.append(button('View', async () => { try { const full = await api('/api/category-layout-templates/' + t.id); modal(full.name, [], async () => {}, 'Close'); $('modal-form').prepend(el('p', `${full.entries.length} categories · version ${full.version}. First 50 shown.`, 'hint'), table(['Order', 'Category', 'Visibility'], full.entries.slice(0, 50).map((r, i) => [i + 1, r.name, r.hidden ? 'Hidden' : 'Visible']))); } catch (e) { toast(e.message); } }),
+          button('Rename', () => modal('Rename layout template', [{ key: 'name', label: 'Layout name', value: t.name, max: 80 }], v => api('/api/category-layout-templates/' + t.id, { ...v, expected_version: t.version }))),
+          button('Archive', async () => { if (!confirm('Archive this layout template? Devices and queued layouts are unchanged.')) return; try { await api('/api/category-layout-templates/' + t.id + '/archive', { expected_version: t.version }); await load(page); } catch (e) { toast(e.message); } }));
+        if (state.user.role === 'owner') a.append(button('Copy to workspace', () => modal('Copy layout template', [tenantField(), { key: 'name', label: 'Layout name', value: t.name, max: 80 }], async v => { const source = await api('/api/category-layout-templates/' + t.id); await api('/api/category-layout-templates', { ...v, entries: source.entries }); toast('Independent copy saved; existing devices are unchanged.'); })));
+        return [t.name, t.tenant_name, t.category_count, t.version, a];
+      })), pagination(data, load));
+    } catch (e) { result.replaceChildren(el('p', e.message + ' Apply any pending database upgrade under Enrollments.', 'error')); }
+  }
+  await load();
+}
+async function workspaceLayoutTemplates(tenantId) {
+  const items = []; let page = 1, pages = 1;
+  do { const data = await api(`/api/category-layout-templates?tenant_id=${encodeURIComponent(tenantId)}&page=${page}`); items.push(...data.items); pages = Math.min(4, data.pages); page++; } while (page <= pages);
+  return items;
+}
+async function saveLayoutTemplate(d, draft) {
+  const portable = LayoutDraft.template(draft);
+  if (!portable.entries.length) { toast('No full, unredacted category names are eligible for a portable template. Your device draft is still usable.'); return; }
+  if (portable.excluded.length && !confirm(`${portable.entries.length} categories will be saved. ${portable.excluded.length} shortened/redacted names cannot be matched safely and will be excluded from the template (not from the device draft). Continue?`)) return;
+  const saved = await workspaceLayoutTemplates(d.tenant_id);
+  modal('Save playlist/category layout template', [
+    { key: 'template_id', label: 'Save destination', options: [['', 'New template'], ...saved.map(t => [t.id, t.name + ' · v' + t.version])], required: false },
+    { key: 'name', label: 'Layout name', value: d.customer_name + ' layout', max: 80, hint: 'Saves the complete eligible order and visibility from this browser draft. Nothing is pushed to the app.' }
+  ], async v => {
+    const entries = LayoutDraft.template(draft).entries;
+    if (v.template_id) { const t = saved.find(t => t.id === v.template_id); await api('/api/category-layout-templates/' + t.id, { name: v.name, entries, expected_version: t.version }); }
+    else await api('/api/category-layout-templates', { tenant_id: d.tenant_id, name: v.name, entries });
+    toast('Layout template saved. Device unchanged until Push.');
+  });
+}
+async function applyLayoutTemplate(d, draft) {
+  const saved = await workspaceLayoutTemplates(d.tenant_id);
+  if (!saved.length) { toast('No layout templates in this workspace. Create one from an organized device draft first.'); return; }
+  let loaded = null, generation = 0;
+  modal('Preview layout template matches', [
+    { key: 'template_id', label: 'Layout template', options: saved.map(t => [t.id, t.name]) },
+    { key: 'visibility', label: 'Template options', options: [['yes', 'Order and matched-category visibility'], ['no', 'Order only — keep current visibility']] }
+  ], async v => { if (!loaded || loaded.id !== v.template_id) throw new Error('Wait for the match preview.'); const p = LayoutDraft.applyTemplate(draft, loaded.entries, v.visibility === 'yes'); toast(`${p.matched.length} categories arranged locally. No device command sent—Push when ready.`); }, 'Apply to browser draft');
+  const form = $('modal-form'), preview = el('div', null, 'notice'); form.prepend(preview);
+  async function update() {
+    const current = ++generation; preview.textContent = 'Loading match preview…';
+    try {
+      const t = await api('/api/category-layout-templates/' + form.elements.namedItem('template_id').value);
+      if (current !== generation || !form.isConnected || !$('modal').open) return;
+      loaded = t; const p = LayoutDraft.preview(draft, t.entries, form.elements.namedItem('visibility').value === 'yes');
+      preview.replaceChildren(el('p', `${p.matched.length} exact matches · ${p.missing.length} template categories missing · ${p.unmatched.length} target-only/unmatchable categories kept.`),
+        el('p', 'Matched categories move into template order. Target-only categories remain after them in their current order and retain visibility. No fuzzy matching, category creation or device-specific ID copying.', 'hint'));
+      if (p.missing.length) preview.append(el('p', 'Missing (first 10): ' + p.missing.slice(0, 10).join(', '), 'hint'));
+      if (p.ambiguous.length) preview.append(el('p', 'Ambiguous names detected—application will be rejected.', 'error'));
+    } catch (e) { loaded = null; preview.textContent = e.message; }
+  }
+  form.elements.namedItem('template_id').addEventListener('change', update); form.elements.namedItem('visibility').addEventListener('change', update); await update();
+}
+async function layoutDraftPanel(d, body, isCurrent, goCommands) {
+  let op = state.layoutEditors.get(d.id);
+  if (!op) { op = { draft: null, readId: null, push: null, commands: [], message: '', available: null }; state.layoutEditors.set(d.id, op); }
+  const panelNode = panel('Organize entire playlist/category layout'); body.append(panelNode);
+  let timer = null, busy = false, localUi = null;
+  const pending = () => op.commands.some(c => ['pending', 'delivered', 'running'].includes(c.status));
+  const editingLocked = () => Boolean(op.push && !op.push.failed);
+  async function enqueueRead(target = {}, key = uuid()) {
+    const c = await api(`/api/devices/${d.id}/commands`, { kind: 'get_category_layout', payload: target }, { 'Idempotency-Key': key }); op.readId = c.id; op.message = 'Waiting for one complete layout read; the app must be open.'; return c;
+  }
+  async function refreshRead(target = {}) { try { await enqueueRead(target); await sync(); } catch (e) { toast(e.message); } }
+  function ingest(data) {
+    op.commands = data.commands;
+    if (data.catalog && data.snapshot) {
+      const draft = op.draft;
+      if (!draft) op.draft = LayoutDraft.create(data.catalog, data.snapshot.command_id);
+      else if (data.snapshot.command_id !== draft.snapshotId) {
+        if (op.push && op.push.confirmId === data.snapshot.command_id) { op.draft = LayoutDraft.create(data.catalog, data.snapshot.command_id); op.push = null; op.available = null; op.message = 'Whole layout applied and confirmed by a fresh app read.'; }
+        else if (!draft.dirty && !op.push) { op.draft = LayoutDraft.create(data.catalog, data.snapshot.command_id); op.available = null; }
+        else op.available = data;
+      }
+    }
+  }
+  async function sync() {
+    if (busy || !isCurrent()) return; busy = true;
+    try {
+      const watch = op.readId || op.push?.id;
+      const query = new URLSearchParams({ metadata: '1', ...(watch ? { watch_id: watch } : {}), ...(op.readId ? { command_id: op.readId } : {}) });
+      const data = await api(`/api/devices/${d.id}/category-layout?${query}`); if (!isCurrent()) return;
+      op.commands = data.commands;
+      if (op.readId) {
+        const read = data.commands.find(c => c.id === op.readId);
+        if (read && read.status === 'succeeded') {
+          const full = await api(`/api/devices/${d.id}/category-layout?command_id=${op.readId}`); if (!isCurrent()) return; ingest(full);
+          if (!full.catalog) { op.message = 'Read finished, but its cached snapshot was replaced. Read again; your draft is retained.'; if (op.push) { op.push.failed = true; op.draft.needsFresh = true; } }
+          op.readId = null;
+        } else if (read && ['failed', 'cancelled', 'expired'].includes(read.status)) { op.message = `${read.status}: ${read.result?.summary || 'Layout read did not complete'}. Draft retained.`; op.readId = null; if (op.push) { op.push.failed = true; op.draft.needsFresh = true; } }
+      }
+      if (op.push && !op.push.failed) {
+        const pushed = data.commands.find(c => c.id === op.push.id);
+        if (pushed?.status === 'succeeded' && !op.push.confirmId) {
+          const c = await enqueueRead({ profile_ref: op.draft.base.profile_ref, source_ref: op.draft.base.source_ref }, 'confirm-' + op.push.id); op.push.confirmId = c.id; op.message = 'Whole layout applied; requesting one fresh read to confirm.';
+        } else if (pushed && ['failed', 'cancelled', 'expired'].includes(pushed.status)) { op.push.failed = true; op.draft.needsFresh = true; op.message = `${pushed.status}: ${pushed.result?.summary || 'Push did not complete'}. Your draft is retained—read and explicitly rebase before another push.`; }
+      }
+      draw();
+    } catch (e) { if (isCurrent()) { op.message = e.message; draw(); } }
+    finally { busy = false; schedule(); }
+  }
+  function schedule() { clearTimeout(timer); if (isCurrent() && (pending() || op.readId || (op.push && !op.push.failed))) timer = setTimeout(sync, 3000); }
+  async function push() {
+    const draft = op.draft; if (!draft?.dirty || pending() || draft.needsFresh || op.available || !d.capabilities.includes('apply_category_layout')) return;
+    if (!confirm(`Push the entire ${draft.items.length}-category order and visibility in ONE command? Other sources, favourites, credentials and guides are unchanged. Delivery still waits for the app’s check-in.`)) return;
+    const payload = LayoutDraft.payload(draft), fingerprint = JSON.stringify([d.id, 'layout', payload]), key = requestKeys.get(fingerprint) || uuid(); requestKeys.set(fingerprint, key);
+    try { const c = await api(`/api/devices/${d.id}/category-layout`, payload, { 'Idempotency-Key': key }); requestKeys.delete(fingerprint); op.push = { id: c.id, failed: false, confirmId: null }; op.message = 'ONE complete layout command queued; no category-by-category jobs.'; await sync(); }
+    catch (e) { toast(e.message); }
+  }
+  function changed() { if (localUi) { localUi.status.textContent = `${op.draft.dirty ? 'UNSAVED DRAFT' : 'No local changes'} · ${op.draft.items.length} categories · ${op.draft.items.filter(r => r.hidden).length} hidden · ${op.draft.providerOrder ? 'Provider order' : 'Custom order'}`; localUi.push.disabled = !op.draft.dirty || pending() || editingLocked() || op.draft.needsFresh || Boolean(op.available) || d.policy !== 'active' || !d.capabilities.includes('apply_category_layout') || !op.draft.base.order_editable; localUi.table(); } }
+  function draw() {
+    if (!isCurrent()) return; panelNode.replaceChildren(el('h2', 'Organize entire playlist/category layout'));
+    panelNode.append(el('p', 'All moves, drag/drop, positions and visibility changes below are LOCAL browser edits. Arrange everything first, then Push the entire layout once. Save a template before leaving/reloading this page to retain your work.', 'subtle'));
+    const controls = el('div', null, 'actions'); const read = button('Read whole current profile layout', () => refreshRead()); read.disabled = d.policy !== 'active' || pending() || editingLocked(); controls.append(read, button('View layout commands', goCommands)); panelNode.append(controls);
+    if (op.message) panelNode.append(el('p', op.message, 'notice'));
+    const draft = op.draft;
+    if (!draft) { panelNode.append(el('p', 'Request one complete cached source layout from the app first. There is no per-page native command wait after it arrives.', 'hint')); localUi = null; return; }
+    if (op.available) {
+      const fresh = op.available; const box = el('div', null, 'notice'); box.append(el('p', 'A newer snapshot is available. Your unsaved draft has NOT been overwritten.'));
+      const rebase = button('Rebase draft onto fresh snapshot', () => { try { const diff = LayoutDraft.rebasePreview(draft, fresh.catalog); if (!confirm(`Rebase: ${diff.added.length} new and ${diff.removed.length} removed categories. Your edited order/visibility wins where changed; untouched visibility uses the fresh app state. Continue?`)) return; LayoutDraft.rebase(draft, fresh.catalog, fresh.snapshot.command_id); op.available = null; op.push = null; draw(); } catch (e) { toast(e.message); } }); rebase.disabled = editingLocked();
+      const discard = button('Discard draft and load new snapshot', () => { if (!confirm('Discard local layout edits and load the new profile/source snapshot? Save a template first if needed.')) return; op.draft = LayoutDraft.create(fresh.catalog, fresh.snapshot.command_id); op.available = null; op.push = null; draw(); }); discard.disabled = editingLocked(); box.append(rebase, discard); panelNode.append(box);
+    }
+    const source = el('select'); source.setAttribute('aria-label', 'Layout source'); source.disabled = pending() || editingLocked();
+    for (const s of draft.base.sources) { const option = el('option', `${s.label} · ${s.total} categories`); option.value = s.ref; option.selected = s.ref === draft.base.source_ref; source.append(option); }
+    source.addEventListener('change', () => refreshRead({ profile_ref: draft.base.profile_ref, source_ref: source.value }));
+    const refresh = button('Refresh source / get rebase snapshot', () => refreshRead({ profile_ref: draft.base.profile_ref, source_ref: draft.base.source_ref })); refresh.disabled = pending() || editingLocked() || d.policy !== 'active';
+    const context = el('div', null, 'actions'); context.append(source, refresh); panelNode.append(context);
+    const status = el('p', '', 'notice'); panelNode.append(status);
+    const toolbar = el('div', null, 'actions'); const pushButton = button('Push entire layout once', push, 'primary');
+    const apply = button('Preview / apply saved layout template', () => applyLayoutTemplate(d, draft).catch(e => toast(e.message))); apply.disabled = editingLocked();
+    const discard = button('Discard local edits', () => { if (!confirm('Discard this browser draft? Device settings are unchanged.')) return; op.draft = LayoutDraft.create(draft.base, draft.snapshotId); op.draft.needsFresh = draft.needsFresh; op.push = null; draw(); }); discard.disabled = editingLocked();
+    toolbar.append(pushButton, button('Save as layout template', () => saveLayoutTemplate(d, draft).catch(e => toast(e.message))), apply, discard);
+    panelNode.append(toolbar);
+    if (!draft.base.order_editable) panelNode.append(el('p', 'Legacy ordering requires a local app migration before batch push. The draft/template can still be prepared.', 'notice warning'));
+    const search = el('input'); search.placeholder = 'Filter categories locally…'; search.value = draft.filter; search.setAttribute('aria-label', 'Filter layout categories');
+    const bulk = el('div', null, 'actions'); const lock = editingLocked();
+    function filtered() { const q = draft.filter.toLocaleLowerCase(); return draft.items.filter(r => r.label.toLocaleLowerCase().includes(q)); }
+    function action(label, fn) { const b = button(label, () => { fn(); changed(); }); b.disabled = lock; bulk.append(b); return b; }
+    action('Select all filtered categories', () => { filtered().forEach(r => draft.selected.add(r.ref)); }); action('Clear selection', () => draft.selected.clear());
+    action('Hide selected', () => LayoutDraft.visibility(draft, draft.selected, true)); action('Show selected', () => LayoutDraft.visibility(draft, draft.selected, false));
+    action('Selected to top', () => LayoutDraft.block(draft, draft.selected, 'top')); action('Selected to bottom', () => LayoutDraft.block(draft, draft.selected, 'bottom'));
+    action('Use current provider order', () => LayoutDraft.provider(draft));
+    panelNode.append(search, bulk); const area = el('div'); panelNode.append(area);
+    function drawTable() {
+      const rows = filtered(), pages = Math.max(1, Math.ceil(rows.length / 50)); draft.page = Math.min(draft.page, pages); const start = (draft.page - 1) * 50;
+      const roster = table(['Select', 'Position', 'Category — drag row or enter position', 'Visible', 'Local moves'], rows.slice(start, start + 50).map(r => {
+        const index = draft.items.findIndex(i => i.ref === r.ref); const checkbox = el('input'); checkbox.type = 'checkbox'; checkbox.checked = draft.selected.has(r.ref); checkbox.disabled = lock; checkbox.setAttribute('aria-label', 'Select ' + r.label); checkbox.addEventListener('change', () => { if (checkbox.checked) draft.selected.add(r.ref); else draft.selected.delete(r.ref); changed(); });
+        const position = el('input'); position.type = 'number'; position.className = 'layout-position'; position.min = 1; position.max = draft.items.length; position.value = index + 1; position.disabled = lock; position.setAttribute('aria-label', 'Position of ' + r.label); position.addEventListener('change', () => { LayoutDraft.move(draft, r.ref, Number(position.value)); changed(); });
+        const visible = el('input'); visible.type = 'checkbox'; visible.checked = !r.hidden; visible.disabled = lock; visible.setAttribute('aria-label', 'Visible ' + r.label); visible.addEventListener('change', () => { LayoutDraft.visibility(draft, [r.ref], !visible.checked); changed(); });
+        const moves = el('div', null, 'actions'); for (const [label, target] of [['Up', index], ['Down', index + 2], ['Top', 1]]) { const b = button(label, () => { LayoutDraft.move(draft, r.ref, target); changed(); }); b.disabled = lock || target < 1 || target > draft.items.length || target === index + 1; moves.append(b); }
+        return [checkbox, position, cellName(r.label, r.match_name === null ? 'Device-specific only — name is shortened/redacted' : 'Portable exact-name match'), visible, moves];
+      }));
+      roster.classList.add('layout-draft'); const trs = roster.querySelectorAll('tbody tr'); rows.slice(start, start + 50).forEach((row, i) => { const tr = trs[i]; if (!tr) return; tr.draggable = !lock; tr.dataset.categoryRef = row.ref;
+        tr.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', row.ref); e.dataTransfer.effectAllowed = 'move'; }); tr.addEventListener('dragover', e => { if (!lock) e.preventDefault(); }); tr.addEventListener('drop', e => { e.preventDefault(); if (lock) return; const ref = e.dataTransfer.getData('text/plain'), from = draft.items.findIndex(r => r.ref === ref), to = draft.items.findIndex(r => r.ref === row.ref); if (from < 0 || to < 0 || from === to) return; LayoutDraft.move(draft, ref, (from < to ? to - 1 : to) + 1); changed(); }); });
+      const pager = el('div', null, 'pagination'), previous = button('Previous local page', () => { draft.page--; drawTable(); }), next = button('Next local page', () => { draft.page++; drawTable(); }); previous.disabled = draft.page === 1; next.disabled = draft.page === pages; pager.append(el('span', `${rows.length} filtered · ${draft.selected.size} selected · local page ${draft.page}/${pages}`), previous, next); area.replaceChildren(roster, pager);
+    }
+    search.addEventListener('input', () => { draft.filter = search.value; draft.page = 1; drawTable(); });
+    localUi = { status, push: pushButton, table: drawTable }; changed();
+  }
+  try { const data = await api(`/api/devices/${d.id}/category-layout`); if (!isCurrent()) return; ingest(data); draw(); schedule(); } catch (e) { if (isCurrent()) panelNode.append(el('p', e.message + ' Apply the database upgrade under Enrollments first.', 'error')); }
 }
 async function queue(device, kind, payload = {}) {
   if (['clear_cache', 'restart_app'].includes(kind) && !confirm('Request this app action? It may interrupt playback and can only run when the app is connected. Clear cache must preserve login, favourites and saved guides.')) return;
@@ -234,7 +406,10 @@ async function devicePage(id, epoch) {
         return [c.kind.replaceAll('_', ' '), badge(c.status), c.attempts, date(c.created_at), c.result?.summary || '—', a];
       })), pagination(result, load)); };
       try { await load(); } catch (e) { toast(e.message); }
+    } else if (name === 'Categories' && d.capabilities.includes('get_category_layout')) {
+      await layoutDraftPanel(d, body, () => epoch === state.epoch && tabs.querySelector('[data-tab="Categories"]').classList.contains('active'), () => select('Commands'));
     } else if (name === 'Categories' && d.capabilities.includes('get_categories')) {
+      body.append(el('p', 'This older app supports only per-command editing. Update to 110 testing for the complete draft editor and one-shot layout push.', 'notice'));
       try { await categoryPanel(d, body, () => epoch === state.epoch && tabs.querySelector('[data-tab="Categories"]').classList.contains('active'), () => select('Commands')); } catch (e) { toast(e.message); }
     } else if ((name === 'Settings' || name === 'Logs') && d.capabilities.includes(name === 'Settings' ? 'get_settings' : 'get_diagnostics')) {
       const kind = name === 'Settings' ? 'get_settings' : 'get_diagnostics';
@@ -373,7 +548,8 @@ async function route() {
 }
 $('modal-close').addEventListener('click', () => $('modal').close());
 $('modal').addEventListener('close', () => { $('modal-form').replaceChildren(); $('modal-form').onsubmit = null; });
-$('logout-button').addEventListener('click', async () => { try { await api('/api/logout', {}); signedOut(); } catch (e) { toast(e.message); } });
+$('logout-button').addEventListener('click', async () => { if ([...state.layoutEditors.values()].some(o => o.draft?.dirty) && !confirm('Discard unsaved browser layout drafts and sign out? Save them as templates first if needed.')) return; try { await api('/api/logout', {}); signedOut(); } catch (e) { toast(e.message); } });
+window.addEventListener('beforeunload', e => { if ([...state.layoutEditors.values()].some(o => o.draft?.dirty)) { e.preventDefault(); e.returnValue = ''; } });
 $('password-button').addEventListener('click', () => modal('Change your password', [{ key: 'current_password', label: 'Current password', type: 'password' }, { key: 'new_password', label: 'New password', type: 'password', hint: 'Changing your password signs out every session, including this one.' }], async values => { await api('/api/password', values); signedOut(); toast('Password changed. Sign in again.'); }, 'Change password'));
 window.addEventListener('hashchange', route);
 (async () => {

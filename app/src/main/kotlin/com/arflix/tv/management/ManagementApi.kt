@@ -22,7 +22,7 @@ internal class ManagementApi {
         .callTimeout(10, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
     suspend fun control(path: String, body: JSONObject, credential: String? = null): JSONObject {
         require(path.startsWith("/api/device/") && !path.contains('?'))
-        return post("https://control.fecxbrfzku.net$path", body, credential)
+        return post("https://control.fecxbrfzku.net$path", body, credential,if(path=="/api/device/check-in")524288 else 65536)
     }
     suspend fun proof(account: ManagementAccount, installation: String, fingerprint: String, appPackage: String, challenge: String): String {
         val response = post("https://activationworker.extremeiptv.net/management/enrollment-proof", JSONObject()
@@ -31,7 +31,7 @@ internal class ManagementApi {
         check(response.optBoolean("ok") && response.optInt("schema_version") == 1)
         return response.getString("proof").also { check(it.length in 64..4096 && it.startsWith("ec1.")) }
     }
-    private suspend fun post(url: String, body: JSONObject, credential: String?): JSONObject = suspendCancellableCoroutine { continuation ->
+    private suspend fun post(url: String, body: JSONObject, credential: String?,limit: Int = 65536): JSONObject = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder().url(url).header("Accept", "application/json").header("Cache-Control", "no-store")
             .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
             .apply { if (credential != null) header("Authorization", "Bearer $credential") }.build()
@@ -44,8 +44,8 @@ internal class ManagementApi {
                     response.use {
                         if (!it.isSuccessful) throw ManagementHttpException(it.code)
                         val source = it.body?.source() ?: throw IOException("Empty management response")
-                        source.request(65537)
-                        if (source.buffer.size > 65536) throw IOException("Management response too large")
+                        source.request(limit.toLong()+1)
+                        if (source.buffer.size > limit) throw IOException("Management response too large")
                         val parsed = JSONObject(source.readUtf8())
                         if (continuation.isActive) continuation.resume(parsed)
                     }
