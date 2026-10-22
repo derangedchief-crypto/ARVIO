@@ -35,7 +35,7 @@ internal fun enrollmentSigningText(nonce: String, proof: String, install: String
     "ECENROLL1\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint"
 
 internal val MANAGEMENT_POLICIES = setOf("active", "suspended", "blocked", "removed")
-internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories", "get_category_layout", "apply_category_layout")
+internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories", "get_category_layout", "apply_category_layout", "backup_favourites", "preview_favourites_restore", "restore_favourites")
 internal fun managementSettingsRevision(profileRef: String, accountScope: String, sortOrder: String): String =
     managementHash("ECSET1\n$profileRef\n$accountScope\n$sortOrder")
 
@@ -50,6 +50,7 @@ data class DeviceManagementState(
     val status: String = "Not connected",
     val policy: String? = null,
     val message: ManagementMessage? = null,
+    val favouritesBackupStatus: String = "Waiting for managed check-in",
 ) {
     val restricted: Boolean get() = policy in setOf("suspended", "blocked", "removed")
 }
@@ -62,7 +63,8 @@ internal fun preparingManagementAccount(previous: DeviceManagementState, sameAcc
 
 @Keep
 internal data class CommandReceipt(val id: String, val status: String, val summary: String, val snapshot: Map<String,String>? = null,
-    @Transient val catalog: ManagementCategoryCatalog? = null,val categoryProfileRef: String? = null,val categorySourceRef: String? = null,val categoryPage: Int = 1)
+    @Transient val catalog: ManagementCategoryCatalog? = null,val categoryProfileRef: String? = null,val categorySourceRef: String? = null,val categoryPage: Int = 1,
+    @Transient val favouritesPreview: ManagementFavouritePreview? = null,val favouritesBackupId: String? = null)
 internal data class ManagementCommand(val id: String, val kind: String, val expiresAtMs: Long, val text: String = "", val durationSeconds: Int = 0) {
     override fun toString() = "ManagementCommand(id=$id, kind=$kind, payload=[redacted])"
 }
@@ -82,6 +84,7 @@ internal data class ManagementSession(
     val receipts: List<CommandReceipt> = emptyList(),
     val unmanagedUntilMs: Long = 0,
     val catalogSecret: String? = null,
+    val favouritesSync: Map<String,String>? = null,
 ) {
     override fun toString() = "ManagementSession([redacted])"
 }

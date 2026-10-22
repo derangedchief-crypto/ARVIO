@@ -1074,6 +1074,52 @@ class IptvRepository @Inject constructor(
         applied
     }
 
+    private fun managedFavouriteState(profileId: String,prefs: Preferences,candidates: List<ManagedFavouriteKey>,accountMatches: (IptvConfig)->Boolean): ManagedFavouriteState {
+        check(profileManager.getProfileIdSync()==profileId)
+        val config=managedConfig(profileId,prefs);check(accountMatches(config))
+        fun identities(raw: String):List<String> {
+            if(raw.isBlank())return emptyList()
+            val json=com.google.gson.JsonParser.parseString(raw);check(json.isJsonArray && json.asJsonArray.size()<=1000)
+            return json.asJsonArray.map { check(it.isJsonPrimitive && it.asJsonPrimitive.isString);it.asString.trim().also { id -> check(id.isNotBlank() && id.toByteArray(Charsets.UTF_8).size<=512 && id.none { c->c.isISOControl() }) } }.distinct()
+        }
+        val channelRaw=prefs[favoriteChannelsKeyFor(profileId)].orEmpty();val groupRaw=prefs[favoriteGroupsKeyFor(profileId)].orEmpty()
+        val channels=identities(channelRaw).map(StalkerPortalSupport::migrateLegacyChannelId).distinct();val groups=identities(groupRaw)
+        check(channels.size+groups.size<=1000 && candidates.size<=1000)
+        val all=(channels.map { ManagedFavouriteKey("channel",it) }+groups.map { ManagedFavouriteKey("group",it) }+candidates).distinct()
+        val key=epgIndexKey(profileId,config);val ids=all.filter { it.kind=="channel" }.map { it.identity }.toSet()
+        val stored=channelStore.getByIds(key,ids).associateBy { it.id }.toMutableMap()
+        if(currentEpgIndexKey==key)cachedChannels.filter { it.id in ids }.forEach { stored.putIfAbsent(it.id,it) }
+        val knownGroups=channelStore.playlistGroupCounts(key).flatMap { listOf(it.second.trim(),PlaylistGroupKey.build(it.first,it.second.trim())) }.toMutableSet()
+        if(currentEpgIndexKey==key)cachedChannels.forEach { channel -> knownGroups+=channel.group.trim() }
+        val items=all.map { favourite ->
+            if(favourite.kind=="channel")stored[favourite.identity]?.let { ManagedFavouriteItem(favourite,it.name,true) } ?: ManagedFavouriteItem(favourite,"Unavailable saved channel",false)
+            else ManagedFavouriteItem(favourite,PlaylistGroupKey(favourite.identity).groupName,favourite.identity in knownGroups)
+        }
+        // Sorting/visibility are not source identities: those changes must not
+        // make a recovery backup unusable.
+        val source=MessageDigest.getInstance("SHA-256").digest(gson.toJson(config.copy(sortOrder="provider")).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        return ManagedFavouriteState(profileId,source,channels,groups,channelRaw,groupRaw,items)
+    }
+
+    internal suspend fun readManagedFavourites(profileId: String,candidates: List<ManagedFavouriteKey> = emptyList(),accountMatches: (IptvConfig)->Boolean): ManagedFavouriteState = loadMutex.withLock {
+        managedFavouriteState(profileId,context.settingsDataStore.data.first(),candidates,accountMatches)
+    }
+
+    internal suspend fun restoreManagedFavourites(expected: ManagedFavouriteState,keys: List<ManagedFavouriteKey>,mode: String,accountMatches: (IptvConfig)->Boolean): Boolean = loadMutex.withLock {
+        var applied=false
+        context.settingsDataStore.edit { prefs ->
+            if(profileManager.getProfileIdSync()!=expected.profileId)return@edit
+            val current=managedFavouriteState(expected.profileId,prefs,expected.items.map { it.key },accountMatches)
+            if(current!=expected)return@edit
+            val patch=planManagedFavouriteRestore(current,keys,mode) ?: return@edit
+            prefs[favoriteChannelsKeyFor(expected.profileId)]=gson.toJson(patch.channels)
+            prefs[favoriteGroupsKeyFor(expected.profileId)]=gson.toJson(patch.groups)
+            applied=true
+        }
+        if(applied)invalidationBus.markDirty(CloudSyncScope.IPTV,expected.profileId,"managed favourites recovery")
+        applied
+    }
+
     /**
      * Accept common Xtream Codes inputs and convert to a canonical M3U URL.
      *

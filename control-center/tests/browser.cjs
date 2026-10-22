@@ -45,18 +45,27 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
       const approved = await page.evaluate(async id => (await (await fetch('/api/enrollments?status=approved')).json()).items.find(r => r.id === id), credentials.enrollment_request_id);
       assert(approved && approved.device_id); assert.equal(approved.credential_cipher, undefined); assert.equal(approved.poll_hash, undefined);
       done('owner approves synthetic pending identity and assigns customer without exposing delivery credentials');
+      const verified = await page.evaluate(async ({ request, poll, username }) => {
+        const delivery = await (await fetch('/api/device/enrollment/poll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: request, poll_token: poll }) })).json();
+        const check = await fetch('/api/device/check-in', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + delivery.credential }, body: JSON.stringify({ capabilities: [], account_username: username }) });
+        return { status: check.status, device: await (await fetch('/api/devices/' + delivery.device_id)).json() };
+      }, { request: credentials.enrollment_request_id, poll: credentials.synthetic_enrollment_poll_token, username: credentials.synthetic_line_username });
+      assert.equal(verified.status, 200); assert.equal(verified.device.customer_name, credentials.synthetic_line_username);
+      done('verified line username replaces numeric panel label through the signed-account check-in binding');
     }
 
     await page.locator('nav a[href="#customers"]').click();
     await page.getByRole('heading', { name: 'Customers', exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Add customer', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Add customer', exact: true }).count(), 0);
     const malicious = 'TEST ' + Date.now() + ' <img src=x onerror="window.__injected=1">';
-    await page.getByLabel('Customer name', { exact: true }).fill(malicious);
-    await page.locator('#modal-form').getByRole('button', { name: 'Save', exact: true }).click();
+    // Synthetic fixture API seeding only; production UI enrollment is automatic.
+    const seeded = await page.evaluate(async ({ name, tenant }) => { const me = await (await fetch('/api/me')).json(); return (await fetch('/api/customers', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': me.csrf }, body: JSON.stringify({ name, tenant_id: tenant }) })).status; }, { name: malicious, tenant: ownerTenant });
+    assert.equal(seeded, 201); await page.getByRole('button', { name: 'Refresh', exact: true }).click();
     await page.getByText(malicious, { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__injected), undefined);
     assert.equal(await page.locator('img[src="x"]').count(), 0);
     done('customer values render as text, not injected HTML');
+    done('Customers page has no manual Add customer action');
 
     await page.locator('tr').filter({ hasText: malicious }).getByRole('button', { name: 'Add device', exact: true }).click();
     const pendingLabel = 'TEST · Pending ' + Date.now();
@@ -197,6 +206,28 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     done('cross-device template preview maps exact names to target refs, preserves extras and remains LOCAL until push');
     await page.locator('nav a[href="#devices"]').click();
     await page.locator('tr').filter({ hasText: credentials.device_id }).getByRole('button', { name: 'View →' }).click();
+    await page.getByRole('button', { name: 'Favourites', exact: true }).click();
+    await page.getByRole('heading', { name: 'Favourites backups & recovery', exact: true }).waitFor();
+    const recoveryBefore = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/favourites')).json()), credentials.device_id);
+    assert.equal(recoveryBefore.total, 1); assert.equal(recoveryBefore.live[0].channel_count, 0); assert.equal(recoveryBefore.items[0].channel_count, 2); assert.equal(recoveryBefore.items[0].group_count, 1); assert(recoveryBefore.items[0].protected);
+    await page.getByRole('button', { name: 'Preview recovery on the app', exact: true }).click();
+    const favouritePreviewDelivery = await syntheticDelivery('preview_favourites_restore');
+    const favouriteContext = await page.evaluate(async ({ token, id }) => (await (await fetch('/api/device/favourites/context', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ backup_id: id }) })).json()), { token: credentials.synthetic_device_token, id: credentials.synthetic_favourites_backup_id });
+    const favouritePreview = { schema_version: 1, backup_id: credentials.synthetic_favourites_backup_id, profile_ref: favouriteContext.backup.profile_ref, source_ref: favouriteContext.backup.source_ref, expected_revision: '8'.repeat(64), missing_refs: [], matched_channels: 2, matched_groups: 1, current_channels: 0, current_groups: 0, backup_channels: 2, backup_groups: 1 };
+    assert.equal((await ack(favouritePreviewDelivery, { favourites_preview: favouritePreview })).status, 200);
+    await page.getByRole('button', { name: 'Push favourites recovery', exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Favourites recovery mode', { exact: true }).inputValue(), 'merge');
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Push favourites recovery', exact: true }).click();
+    const favouriteRestoreDelivery = await syntheticDelivery('restore_favourites'); assert.equal(favouriteRestoreDelivery.payload.mode, 'merge');
+    const stillEmpty = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/favourites')).json()).live[0].channel_count, credentials.device_id); assert.equal(stillEmpty, 0);
+    assert.equal((await ack(favouriteRestoreDelivery, {})).status, 200);
+    const recaptured = await page.evaluate(async ({ token, doc }) => (await (await fetch('/api/device/favourites/capture', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ ...doc, reason: 'automatic' }) })).json()), { token: credentials.synthetic_device_token, doc: favouriteContext.backup });
+    assert.equal(recaptured.backup_id, credentials.synthetic_favourites_backup_id);
+    await page.getByRole('button', { name: 'Refresh backups / results', exact: true }).click();
+    await page.getByRole('heading', { name: 'Last app-reported favourites state', exact: true }).waitFor();
+    const afterRecovery = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/favourites')).json()), credentials.device_id); assert.equal(afterRecovery.total, 1); assert.equal(afterRecovery.live[0].channel_count, 2);
+    done('empty customer state preserves a protected good favourites version; preview/merge recovery waits for receipts and fresh app reporting (synthetic driver)');
     await page.getByRole('button', { name: 'Overview', exact: true }).click();
     page.once('dialog', dialog => dialog.accept());
     await page.getByRole('button', { name: 'Remove from reseller — keep app working', exact: true }).click();

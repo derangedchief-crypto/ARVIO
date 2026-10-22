@@ -1,6 +1,49 @@
-# Device management 0.6.0 — validation
+# Device management 0.7.0 — validation
 
-## Whole-layout draft editor and portable custom templates
+## Favourites recovery and verified line usernames
+
+- **125 real MariaDB/service/HTTP cases passed**, zero failures. New tests verify
+  encrypted nonempty immutable backups, first-good protection, empty-state status
+  updates WITHOUT replacing/deleting the good version, deduplication, pin quotas,
+  protected retention, same-device context authorization, tenant isolation and
+  former-reseller denial after unassignment. Recovery previews bind lease/backup/
+  profile/source/counts; stale/expired previews and partial destructive Replace are
+  rejected. Browser views never expose original favourite identities/ciphertexts.
+- Username tests recompute the activation account HMAC from the candidate and
+  verify it belongs to the device's approved key/package. Spoofed labels do not
+  populate names. Correct names appear/search in customer/device lists, remain
+  available to the owner after detachment, and stay hidden from the old reseller.
+  Existing schema-upgrade and concurrency checks remain green; idempotency reads
+  are locking/current reads even when username projection queries run first.
+- **21 browser checks passed**, including signed-account username display and
+  removal of Add customer UI, a protected2-channel/1-group version retained after
+  a simulated empty live state, fresh recovery preview, default merge queue and
+  separate receipt/live report before restored counts are shown. Native protocol
+  drivers here are explicitly SYNTHETIC, not physical Android restoration proof.
+- **130 Android JVM/Robolectric cases passed**, zero failures. New cases cover
+  empty-vs-good content/source identity, one-call merge recovery preserving current
+  order, explicit Replace, missing/duplicate/foreign identities, stale previews,
+  source/profile changes and no writes during previews. Previous activation,
+  update/relaunch, live output/codec and whole-layout regressions remain green.
+- App/internal-test/instrumentation Kotlin compilation passed. Native favourite
+  restore/automatic capture and actual phone/TV storage behavior require the111
+  controlled pilot. No data-reset/reinstall migration or timing guarantee claimed.
+- Migrations008/009 add encrypted history/live status/short-lived previews and
+  verified username mappings. Earlier migrations/worker source are unchanged.
+  No additional worker patch or Android permission. Website0.7.0/migrations must
+  precede111. Config.php, private keys and approved inventory are preserved.
+
+The test disk filled during the first Android rerun. Only completed isolated test
+DB data and this variant's truncated generated reports were removed; source/user
+previews were preserved. Clean rerun passed. The temporary DB harness now removes
+its own stopped database data (or retains it with --keep-db), preventing buildup.
+
+Recovery requires a good version captured BEFORE loss. Empty can never become a
+backup; protected versions never auto-expire. Automatic capture is foreground/
+check-in based, not continuous/offline, and cannot reconstruct uncaptured changes.
+Source/profile/installation changes are not guessed as valid restore targets.
+
+## Previous whole-layout increment (0.6.0)
 
 - **119 real MariaDB/service/HTTP cases passed**, zero failures. New coverage
   checks separate bounded whole-layout snapshots, latest-three cache retention,

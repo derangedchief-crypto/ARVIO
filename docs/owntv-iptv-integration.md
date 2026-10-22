@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `426`. Version name is `2.0.110`, following the actual
+Current development version code is `427`. Version name is `2.0.111`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,28 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Favourites recovery / line usernames in 2.0.111 / 427
+
+Adds managed foreground favourites captures and explicit backup/preview/restore
+commands. Nonempty versions append; empty customer state cannot overwrite a good
+backup. Initial good checkpoints are protected; server encryption uses the existing
+application.key. Browser views expose safe labels, not original favourite IDs.
+Current/saved profile/source bindings and channel availability are checked before
+one atomic DataStore write. Merge preserves current favourites; partial Replace
+is refused. Preview expiry and local-change conflicts reject stale restores.
+The app safety-captures current nonempty state before recovery, never blindly
+replays mutations, and reports backup status in Settings.
+
+Capture is check-in based (not continuous/offline); state lost before the first
+capture cannot be recovered. Different installation/profile/source resets require
+separate migration tooling, not fuzzy matching. No playlist/guide/player/visibility/
+update fields are written. Existing source/profile/Cloud dirty tracking stays intact.
+
+111 also reports the canonical saved line username; the backend verifies the HMAC
+against the activation worker's signed account subject before displaying it.
+No worker patch. Website0.7.0 migrations008/009 precede testing111; existing110
+data/keys are preserved. Main/customer publishing remains explicitly separate.
 
 ## Complete category layouts in 2.0.110 / 426
 

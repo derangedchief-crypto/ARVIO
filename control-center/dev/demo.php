@@ -42,6 +42,13 @@ foreach([[$ownerTenant,'TEST · Owner workspace','TEST simulator · Living room'
 $snapshot=['model'=>'LOCAL TEST SIMULATOR','os_version'=>'Synthetic — not Android','app_version'=>'development-simulator','activity_state'=>'active','capabilities'=>Commands::KINDS,'storage_total'=>17179869184,'storage_free'=>10737418240];
 $app->commands->checkIn($bindings[0]['token'],$snapshot,'127.0.0.1');
 $snapshot['activity_state']='idle'; $app->commands->checkIn($bindings[1]['token'],$snapshot,'127.0.0.1');
+$favouriteDocument=['schema_version'=>1,'profile_ref'=>hash('sha256','SYNTHETIC FAVOURITE PROFILE'),'source_ref'=>hash('sha256','SYNTHETIC FAVOURITE SOURCE'),'revision'=>hash('sha256','SYNTHETIC FAVOURITE ORIGINAL'),'content_hash'=>hash('sha256','SYNTHETIC FAVOURITE CONTENT'),'reason'=>'automatic','entries'=>[
+    ['kind'=>'channel','ref'=>hash('sha256','SYNTHETIC FAVOURITE 1'),'identity'=>'list_1:xtream:101','label'=>'TEST News Channel','available'=>true],
+    ['kind'=>'channel','ref'=>hash('sha256','SYNTHETIC FAVOURITE 2'),'identity'=>'list_1:xtream:102','label'=>'TEST Sports Channel','available'=>true],
+    ['kind'=>'group','ref'=>hash('sha256','SYNTHETIC FAVOURITE GROUP'),'identity'=>'TEST News','label'=>'TEST News','available'=>true]]];
+$favouriteSaved=$app->favourites->capture($bindings[0]['token'],$favouriteDocument);
+$emptyFavourites=$favouriteDocument;$emptyFavourites['entries']=[];$emptyFavourites['revision']=hash('sha256','SYNTHETIC EMPTY FAVOURITES');$emptyFavourites['content_hash']=hash('sha256','SYNTHETIC EMPTY CONTENT');
+$app->favourites->capture($bindings[0]['token'],$emptyFavourites);
 $app->db->query('UPDATE devices SET last_seen_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 20 MINUTE) WHERE id=?',[$bindings[2]['id']]);
 // Explicit synthetic response for UI tests; not fetched from an Android device.
 $settingsCommand=$app->commands->enqueue($owner,$bindings[0]['id'],['kind'=>'get_settings'],bin2hex(random_bytes(16)));
@@ -79,6 +86,8 @@ $public=preg_replace('~-----[^\n]+-----|\s~','',openssl_pkey_get_details($privat
 $fingerprint=hash('sha256',base64_decode($public)); $install=ControlCenter\Database::id();
 $challenge=$app->enrollment->challenge(['installation_id'=>$install,'key_fingerprint'=>$fingerprint,'app_package'=>'com.arvio.tv.test'],'127.0.0.1')['challenge'];
 $claim=['v'=>1,'iss'=>'extreme-activation','aud'=>$config->origin(),'sub'=>hash('sha256','SYNTHETIC PREVIEW '.$install),'hint'=>'…demo','install'=>$install,'key'=>$fingerprint,'package'=>'com.arvio.tv.test','challenge'=>hash('sha256',$challenge),'iat'=>time(),'exp'=>time()+60,'jti'=>ControlCenter\Database::id()];
+$syntheticLineUsername='TEST_verified_line';
+$claim['sub']=hash_hmac('sha256',"account-v1\n".$syntheticLineUsername,hex2bin((new ControlCenter\EnrollmentProof($config,new ControlCenter\Secrets($config)))->bridgeSecret()));
 $claim['panel']=['customer_id'=>'700001','reseller_id'=>'700001','reseller_username'=>'SYNTHETIC-preview-owner'];
 $b64=static fn($value)=>rtrim(strtr(base64_encode($value),'+/','-_'),'=');
 $payload=$b64(json_encode($claim,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR));
@@ -91,5 +100,5 @@ $request=$app->enrollment->register(['challenge'=>$challenge,'proof'=>$proof,'pu
 $app->db->query('UPDATE tenants SET device_limit=100 WHERE id=?',[$ownerTenant['id']]);
 $target=$app->db->one('SELECT id FROM customers WHERE tenant_id=? ORDER BY created_at,id LIMIT 1',[$ownerTenant['id']]);
 file_put_contents($base.'/preview-credentials.json',json_encode(['email'=>'owner@preview.test','password'=>$password,'device_id'=>$bindings[0]['id'],'database'=>$name,
-    'enrollment_request_id'=>$request['request_id'],'enrollment_customer_id'=>$target['id'],'layout_target_id'=>$bindings[3]['id'],'synthetic_device_token'=>$bindings[0]['token']],JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR));
+    'enrollment_request_id'=>$request['request_id'],'enrollment_customer_id'=>$target['id'],'synthetic_enrollment_poll_token'=>$request['poll_token'],'synthetic_line_username'=>$syntheticLineUsername,'layout_target_id'=>$bindings[3]['id'],'synthetic_device_token'=>$bindings[0]['token'],'synthetic_favourites_backup_id'=>$favouriteSaved['backup_id']],JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR));
 echo $base,"\n";

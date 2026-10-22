@@ -10,9 +10,10 @@ import subprocess
 import tempfile
 import time
 import argparse
+import shutil
 
 repository = Path(__file__).resolve().parents[2]
-parser = argparse.ArgumentParser(); parser.add_argument('--browser', action='store_true'); args = parser.parse_args()
+parser = argparse.ArgumentParser(); parser.add_argument('--browser', action='store_true'); parser.add_argument('--keep-db', action='store_true'); args = parser.parse_args()
 state = Path(tempfile.mkdtemp(prefix='control-enrollment-tests-', dir='/tmp/opencode'))
 state.chmod(0o700)
 environment = {**os.environ, 'CONTROL_DEV_DIR': str(state), 'CONTROL_TEST_SOCKET': str(state / 'database.sock')}
@@ -64,3 +65,7 @@ with (state / 'startup.log').open('wb') as log:
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
+        # Only this run's mkdtemp-created database, after its process has stopped.
+        # Keep reports/logs/source/private fixture keys; never old user previews.
+        if not args.keep_db and process.poll() is not None and (state/'data').is_dir():
+            shutil.rmtree(state/'data')

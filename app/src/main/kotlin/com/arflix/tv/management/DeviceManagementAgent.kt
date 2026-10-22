@@ -28,6 +28,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeoutOrNull
+import com.google.gson.Gson
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -61,6 +62,7 @@ class DeviceManagementAgent @Inject constructor(
         var status = "Connecting to control center"
         var heartbeat = 60
         var nextRenew = 0L
+        var favouritesStatus = "Waiting for managed check-in"
     }
     @Volatile private var active: Active? = null
 
@@ -104,7 +106,7 @@ class DeviceManagementAgent @Inject constructor(
     private fun publish(current: Active) {
         if (active !== current) return
         _state.value = DeviceManagementState(false, current.session.installationId, current.status, current.session.policy,
-            current.session.message?.takeIf { it.expiresAtMs - System.currentTimeMillis() in 1..3600_000L })
+            current.session.message?.takeIf { it.expiresAtMs - System.currentTimeMillis() in 1..3600_000L },current.favouritesStatus)
     }
     suspend fun runWhileStarted(): Unit = withContext(Dispatchers.IO) {
         runner.withLock {
@@ -243,6 +245,7 @@ class DeviceManagementAgent @Inject constructor(
         }
         val storage = StatFs(context.filesDir.absolutePath)
         val response = api.control("/api/device/check-in", JSONObject().put("schema_version", 1).put("model", "${Build.MANUFACTURER} ${Build.MODEL}".take(120))
+            .put("account_username",current.account.username)
             .put("os_version", "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})").put("app_version", BuildConfig.VERSION_NAME)
             .put("activity_state", if (SystemClock.elapsedRealtime() - lastInteraction >= 300_000) "idle" else "active")
             .put("capabilities", JSONArray(MANAGEMENT_CAPABILITIES)).put("storage_total", storage.totalBytes).put("storage_free", storage.availableBytes), current.session.credential)
@@ -256,6 +259,7 @@ class DeviceManagementAgent @Inject constructor(
             return
         }
         if (policy != "active") return
+        try { captureFavourites(current,"automatic",false) } catch(cancelled: CancellationException){throw cancelled} catch(_: Exception){current.favouritesStatus="Backup unavailable; existing server backups retained";publish(current)}
         val commands = response.getJSONArray("commands")
         require(commands.length() <= 5)
         for (i in 0 until commands.length()) handle(current, commands.getJSONObject(i))
@@ -265,6 +269,30 @@ class DeviceManagementAgent @Inject constructor(
         val lease = command.getString("lease_token").also { require(it.matches(Regex("[a-f0-9]{64}"))) }
         val kind = command.getString("kind")
         val prior = current.session.receipts.firstOrNull { it.id == id }
+        if(kind in listOf("backup_favourites","preview_favourites_restore","restore_favourites")) {
+            if(prior!=null && !(kind=="preview_favourites_restore" && prior.status=="succeeded")) {acknowledge(current,lease,prior);return}
+            beginCommand(current,id,lease)
+            val payload=command.optJSONObject("payload") ?: JSONObject()
+            val args=payload.keys().asSequence().associateWith { key->(payload.opt(key) as? String).orEmpty() }.toMutableMap()
+            if(kind=="preview_favourites_restore" && prior!=null)args["backup_id"]=prior.favouritesBackupId.orEmpty()
+            change(current){it.copy(receipts=(it.receipts.filterNot { old->old.id==id }+CommandReceipt(id,"failed","Recovery interrupted; request a new preview before retrying")).takeLast(512))}
+            val executed=try {
+                if(kind=="backup_favourites") {
+                    val saved=captureFavourites(current,"manual",true)
+                    if(saved==null)CommandReceipt(id,"failed","Favourites capture unavailable; previous good backups retained") else CommandReceipt(id,"succeeded",if(saved.optBoolean("stored"))"Nonempty favourites backup saved; empty states never replace it" else "Current favourites empty; no good backup was replaced")
+                } else {
+                    val context=api.control("/api/device/favourites/context",JSONObject().apply {if(kind=="preview_favourites_restore")put("backup_id",args["backup_id"]) else put("preview_id",args["preview_id"])},current.session.credential)
+                    if(kind=="preview_favourites_restore")require(context.getString("backup_id")==args["backup_id"]) else require(context.getString("preview_id")==args["preview_id"])
+                    val backup=Gson().fromJson(context.getJSONObject("backup").toString(),ManagementFavouriteSnapshot::class.java)
+                    val preview=if(context.has("preview"))Gson().fromJson(context.getJSONObject("preview").toString(),ManagementFavouritePreview::class.java) else null
+                    if(kind=="restore_favourites") { args["backup_id"]=context.getString("backup_id");require(captureFavourites(current,"pre_restore",true)!=null) }
+                    withTimeoutOrNull(20000) { ManagementFavouriteActions(repository.get(),profiles,current.session.catalogSecret.orEmpty()).execute(id,kind,current.account.scope,args,backup,preview) }
+                        ?: CommandReceipt(id,"failed","Favourites recovery timed out; request a fresh preview before retrying")
+                }
+            } catch(cancelled: CancellationException){throw cancelled} catch(_: Exception){CommandReceipt(id,"failed","Favourites recovery context/safety backup unavailable; no blind restore performed")}
+            change(current){it.copy(receipts=it.receipts.map { old->if(old.id==id)executed.copy(favouritesPreview=null) else old })}
+            acknowledge(current,lease,executed);return
+        }
         if(prior!=null && kind in listOf("get_categories","get_category_layout") && prior.status=="succeeded") {
             beginCommand(current,id,lease)
             val target=categoryRetryPayload(prior,kind)
@@ -306,6 +334,7 @@ class DeviceManagementAgent @Inject constructor(
         val body = JSONObject().put("schema_version", 1).put("lease_token", lease).put("status", receipt.status).put("summary", receipt.summary)
         receipt.snapshot?.let { body.put("snapshot", JSONObject(it)) }
         receipt.catalog?.let { body.put("catalog",it.json()) }
+        receipt.favouritesPreview?.let { body.put("favourites_preview",it.json()) }
         api.control("/api/device/commands/${receipt.id}/ack", body, current.session.credential)
     }
     private suspend fun beginCommand(current: Active, id: String, lease: String) {
@@ -317,6 +346,19 @@ class DeviceManagementAgent @Inject constructor(
             .put("status", "running").put("summary", "App accepted the current command lease"), current.session.credential)
     }
     private fun newInstallation() = UUID.randomUUID().toString().replace("-", "")
+    private suspend fun captureFavourites(current: Active,reason: String,force: Boolean): JSONObject? {
+        val snapshot=withTimeoutOrNull(5000) {ManagementFavouriteActions(repository.get(),profiles,current.session.catalogSecret.orEmpty()).capture(current.account.scope)}
+        if(snapshot==null){current.favouritesStatus="Capture timed out; existing backups retained";publish(current);return null}
+        val key=snapshot.profile_ref+":"+snapshot.source_ref;val memo=current.session.favouritesSync?.get(key);val now=System.currentTimeMillis()
+        if(!force && memo!=null && memo.substringBefore(':')==snapshot.content_hash && now-(memo.substringAfter(':').toLongOrNull() ?: 0L) in 0..21600000L) {
+            current.favouritesStatus=if(snapshot.entries.isEmpty())"Currently empty; previous good backups retained" else "Unchanged; last saved favourites retained";publish(current);return null
+        }
+        val result=api.control("/api/device/favourites/capture",snapshot.json().put("reason",reason),current.session.credential)
+        require(result.getInt("schema_version")==1 && result.getString("profile_ref")==snapshot.profile_ref && result.getString("source_ref")==snapshot.source_ref)
+        change(current){session->val sync=session.favouritesSync.orEmpty().toMutableMap();sync.remove(key);sync[key]=snapshot.content_hash+":"+now;while(sync.size>32)sync.remove(sync.keys.first());session.copy(favouritesSync=sync)}
+        current.favouritesStatus=if(result.optBoolean("stored"))"Saved ${snapshot.entries.size} favourites; good backups protected" else "Currently empty; previous good backups retained";publish(current)
+        return result
+    }
 }
 
 internal fun parseManagementTime(value: String): Long {

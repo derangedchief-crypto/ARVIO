@@ -1,4 +1,34 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.6.0
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.7.0
+
+0.7.0 UPDATE — FAVOURITES RECOVERY + VERIFIED LINE USERNAMES
+Back up database/config.php/private storage (especially application.key), extract
+the UPDATE ZIP over the site, then Enrollments -> Apply database upgrade008/009.
+Keep the existing Nginx2m/PHP post_max_size>=2M configuration from0.6.0.
+No worker update, extra editable PHP config or new Android permission is needed.
+
+After installing111, open the app WITH GOOD FAVOURITES, then Settings -> Check in
+/ retry management now. On the website Favourites tab verify a nonempty protected
+backup BEFORE testing recovery. Empty states never overwrite good versions.
+Label/protect a preferred checkpoint. Customer-wiped favourites can then be
+previewed and merged back with one guarded command. Replace is explicit and
+disabled/refused if any backup entries no longer resolve. Cached channels must
+be available (open Live TV/reload first). Local changes after preview reject it.
+Current nonempty state is safety-backed-up before restore. The app must be open;
+queued is not applied, and live counts follow the next actual app report.
+
+Important: favourites deleted before capture cannot be recreated. Current recovery
+requires the same installation/profile/source; app-data reset/reinstall or changed
+sources are not blindly matched. Backups remain server-encrypted for later explicit
+migration tooling. Protected checkpoints never expire automatically; rolling
+versions are bounded/pruned. No source credentials or raw favourite IDs appear in
+browser backup views.
+
+Line usernames populate on111 check-in by cryptographically checking against the
+existing activation account reference. This backfills old records without copying
+the panel database or patching a worker. Old numeric placeholders show awaiting
+username until verified. Customers now auto-enroll; manual Add customer UI removed.
+Install server/migrations BEFORE publishing/installing111 testing.110 continues
+its existing controls but cannot perform the new automatic backup/recovery flow.
 
 0.6.0 UPDATE — COMPLETE DRAFT EDITOR + PORTABLE LAYOUT TEMPLATES
 1. Back up database, config.php and private storage; extract UPDATE ZIP over site.

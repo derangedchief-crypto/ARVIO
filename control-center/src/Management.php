@@ -125,7 +125,8 @@ final class Management
     {
         $args = [Input::id($id)];
         $scope = $this->scope($actor, 'd.tenant_id', $args);
-        $row = $this->db->one("SELECT d.*, TIMESTAMPDIFF(SECOND, d.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, c.name AS customer_name, t.name AS tenant_name FROM devices d JOIN customers c ON c.id = d.customer_id JOIN tenants t ON t.id = d.tenant_id WHERE d.id = ? AND $scope" . ($lock ? ' FOR UPDATE' : ''), $args);
+        $line=$this->deviceUsernameSql('d');
+        $row = $this->db->one("SELECT d.*, TIMESTAMPDIFF(SECOND, d.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, COALESCE($line,c.name) AS customer_name, $line AS line_username, t.name AS tenant_name FROM devices d JOIN customers c ON c.id = d.customer_id JOIN tenants t ON t.id = d.tenant_id WHERE d.id = ? AND $scope" . ($lock ? ' FOR UPDATE' : ''), $args);
         if (!$row) throw new Problem(404, 'Record not found.');
         return $this->publicDevice($row);
     }
@@ -172,7 +173,7 @@ final class Management
             if(!empty($device['reseller_detached']))return $device;
             $owner=$this->db->one("SELECT * FROM tenants WHERE kind='owner' ORDER BY created_at,id LIMIT 1 FOR UPDATE");
             if(!$owner)throw new Problem(409,'Owner workspace is unavailable.');
-            $customer=$this->db->one('SELECT id FROM customers WHERE tenant_id=? AND external_reference=?',[$owner['id'],'management:unassigned']);
+            $customer=$this->db->one('SELECT id FROM customers WHERE tenant_id=? AND external_reference=? FOR UPDATE',[$owner['id'],'management:unassigned']);
             if(!$customer) {
                 $customer=['id'=>Database::id()];
                 $this->db->query("INSERT INTO customers (id,tenant_id,name,notes,external_reference) VALUES (?,?,'Unassigned devices','','management:unassigned')",[$customer['id'],$owner['id']]);
@@ -196,6 +197,7 @@ final class Management
         $row['capabilities'] = json_decode($row['capabilities'], true, 16, JSON_THROW_ON_ERROR);
         $row['is_test'] = (bool) $row['is_test'];
         $row['reseller_detached'] = (bool) ($row['reseller_detached'] ?? false);
+        if(empty($row['line_username'])&&preg_match('/^Panel line [0-9]+$/D',$row['customer_name']??''))$row['customer_name']='Username awaiting app check-in';
         $age = $row['last_seen_age'] === null ? PHP_INT_MAX : (int) $row['last_seen_age'];
         unset($row['last_seen_age']);
         $threshold = $this->config->number('offline_after_seconds', 180, 60, 1800);
@@ -221,20 +223,29 @@ final class Management
                 $scope .= ' AND r.policy = ?'; $args[] = $input['policy'];
             } else $scope .= " AND r.policy != 'removed'";
             $joins = 'devices r JOIN customers c ON c.id = r.customer_id JOIN tenants t ON t.id = r.tenant_id';
-            $fields = 'r.*, TIMESTAMPDIFF(SECOND, r.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, c.name AS customer_name, t.name AS tenant_name';
+            $line=$this->deviceUsernameSql('r');
+            $fields = "r.*, TIMESTAMPDIFF(SECOND, r.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, COALESCE($line,c.name) AS customer_name, $line AS line_username, t.name AS tenant_name";
             if ($search !== '') {
-                $scope .= " AND (LOCATE(?, r.label) > 0 OR LOCATE(?, c.name) > 0 OR LOCATE(?, r.id) > 0 OR LOCATE(?, COALESCE(r.model,'')) > 0)";
-                array_push($args, $search, $search, $search, $search);
+                $scope .= " AND (LOCATE(?, r.label) > 0 OR LOCATE(?, c.name) > 0 OR LOCATE(?, r.id) > 0 OR LOCATE(?, COALESCE(r.model,'')) > 0 OR LOCATE(?,COALESCE($line,''))>0)";
+                array_push($args, $search, $search, $search, $search, $search);
             }
         } elseif ($resource === 'customers') {
-            $joins = 'customers r JOIN tenants t ON t.id = r.tenant_id'; $fields = 'r.*, t.name AS tenant_name';
-            if ($search !== '') { $scope .= ' AND (LOCATE(?, r.name) > 0 OR LOCATE(?, COALESCE(r.external_reference,\'\')) > 0)'; array_push($args, $search, $search); }
+            $joins = 'customers r JOIN tenants t ON t.id = r.tenant_id';
+            $line=$this->hasVerifiedUsernames()?'(SELECT n.username FROM managed_accounts a JOIN verified_line_usernames n ON n.account_ref=a.account_ref WHERE a.customer_id=r.id ORDER BY n.verified_at DESC LIMIT 1)':'NULL';
+            $fields = "r.*, t.name AS tenant_name, $line AS line_username";
+            if ($search !== '') { $scope .= " AND (LOCATE(?, r.name)>0 OR LOCATE(?,COALESCE(r.external_reference,''))>0 OR LOCATE(?,COALESCE($line,''))>0)"; array_push($args, $search, $search, $search); }
         } else throw new Problem(404, 'Record not found.');
         $total = (int) $this->db->query("SELECT COUNT(*) FROM $joins WHERE $scope", $args)->fetchColumn();
         $rows = $this->db->all("SELECT $fields FROM $joins WHERE $scope ORDER BY r.created_at DESC, r.id LIMIT 25 OFFSET $offset", $args);
         if ($resource === 'devices') $rows = array_map($this->publicDevice(...), $rows);
         return ['items' => $rows, 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total];
     }
+    private function deviceUsernameSql(string $alias):string
+    {
+        if(!$this->hasVerifiedUsernames())return 'NULL';
+        return "(SELECT n.username FROM enrollment_requests e JOIN verified_line_usernames n ON n.account_ref=e.account_ref WHERE e.device_id=$alias.id AND e.key_fingerprint=$alias.key_fingerprint AND e.app_package=$alias.app_package AND e.status='approved' ORDER BY n.verified_at DESC LIMIT 1)";
+    }
+    private function hasVerifiedUsernames():bool {return (bool)$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['009_verified_line_usernames.sql']);}
 
     public function overview(array $actor): array
     {

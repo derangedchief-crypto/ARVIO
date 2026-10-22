@@ -4,12 +4,14 @@ namespace ControlCenter;
 
 final class Commands
 {
-    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app', 'set_settings', 'get_categories', 'set_categories', 'get_category_layout', 'apply_category_layout'];
+    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app', 'set_settings', 'get_categories', 'set_categories', 'get_category_layout', 'apply_category_layout', 'backup_favourites', 'preview_favourites_restore', 'restore_favourites'];
     public function __construct(private readonly Database $db, private readonly Config $config, private readonly Auth $auth, private readonly Management $management) {}
 
     private static function payload(string $kind, mixed $payload): array
     {
         if (!is_array($payload) || array_is_list($payload) && $payload !== []) throw new Problem(422, 'Invalid command payload.');
+        if($kind==='preview_favourites_restore') {Input::keys($payload,['backup_id']);Input::id($payload['backup_id']??null);return $payload;}
+        if($kind==='restore_favourites') {Input::keys($payload,['preview_id','mode']);Input::id($payload['preview_id']??null);if(!in_array($payload['mode']??null,['merge','replace'],true))throw new Problem(422,'Unsupported recovery mode.');return $payload;}
         if(in_array($kind,['get_categories','set_categories','get_category_layout','apply_category_layout'],true))return CommandCategories::payload($kind,$payload);
         if($kind==='set_settings') {
             Input::keys($payload,['profile_ref','expected_revision','sort_order']);
@@ -39,7 +41,7 @@ final class Commands
         $requestHash = hash('sha256', json_encode([$deviceId, $kind, $payload, $expiry], JSON_THROW_ON_ERROR));
         return $this->db->transaction(function () use ($actor, $deviceId, $kind, $payload, $expiry, $key, $requestHash): array {
             $device = $this->management->device($actor, $deviceId, true);
-            $existing = $this->db->one('SELECT * FROM commands WHERE requested_by = ? AND idempotency_key = ?', [$actor['id'], $key]);
+            $existing = $this->db->one('SELECT * FROM commands WHERE requested_by = ? AND idempotency_key = ? FOR UPDATE', [$actor['id'], $key]);
             if ($existing) {
                 if (!hash_equals($existing['request_hash'], $requestHash)) throw new Problem(409, 'This request key was already used for a different action.');
                 return self::publicCommand($existing);
@@ -48,6 +50,13 @@ final class Commands
             if ($device['policy'] !== 'active' || $tenant['status'] !== 'active') throw new Problem(409, 'This device is restricted.');
             if ($device['enrolled_at'] === null || !in_array($kind, $device['capabilities'], true)) {
                 throw new Problem(409, 'The connected app has not advertised support for this action.');
+            }
+            if($kind==='preview_favourites_restore'&&!$this->db->one('SELECT id FROM favourites_backups WHERE id=? AND device_id=?',[$payload['backup_id'],$deviceId]))throw new Problem(404,'Backup not found.');
+            if($kind==='restore_favourites') {
+                $preview=$this->db->one('SELECT preview FROM favourites_restore_previews WHERE command_id=? AND device_id=? AND expires_at>UTC_TIMESTAMP()',[$payload['preview_id'],$deviceId]);if(!$preview)throw new Problem(409,'Preview expired or does not belong to this device.');
+                $p=json_decode($preview['preview'],true,16,JSON_THROW_ON_ERROR);
+                if(!$p['matched_channels']&&!$p['matched_groups'])throw new Problem(409,'No saved favourites currently resolve.');
+                if($payload['mode']==='replace'&&$p['missing_refs'])throw new Problem(409,'Replace refused: some backup entries no longer match.');
             }
             $id = Database::id();
             $this->db->query('INSERT INTO commands (id, device_id, tenant_id, requested_by, idempotency_key, request_hash, kind, payload, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? SECOND))',
@@ -106,7 +115,7 @@ final class Commands
 
     public function checkIn(string $token, array $input, string $ip): array
     {
-        Input::keys($input, ['schema_version', 'model', 'os_version', 'app_version', 'activity_state', 'capabilities', 'storage_total', 'storage_free']);
+        Input::keys($input, ['schema_version', 'model', 'os_version', 'app_version', 'activity_state', 'capabilities', 'storage_total', 'storage_free', 'account_username']);
         Input::integer($input['schema_version'] ?? 1, 1, 1);
         $device = $this->deviceIdentity($token);
         $this->auth->limit('device-check-in', $device['id'], 20, 60);
@@ -122,10 +131,19 @@ final class Commands
         $free = isset($input['storage_free']) ? Input::integer($input['storage_free'], 0, PHP_INT_MAX) : null;
         if ($free !== null && ($total === null || $free > $total)) throw new Problem(422, 'Invalid storage snapshot.');
         $ip = filter_var($ip, FILTER_VALIDATE_IP) ? $ip : null;
-        return $this->db->transaction(function () use ($token, $device, $model, $os, $version, $activity, $caps, $total, $free, $ip): array {
+        $username=array_key_exists('account_username',$input)?Input::text($input['account_username'],'line username',256):null;
+        return $this->db->transaction(function () use ($token, $device, $model, $os, $version, $activity, $caps, $total, $free, $ip, $username): array {
             $this->db->one('SELECT id FROM devices WHERE id = ? FOR UPDATE', [$device['id']]);
             // Recheck credentials/policy after taking the delivery lock.
             $current = $this->deviceIdentity($token);
+            if($username!==null) {
+                // The activation worker already signed this HMAC account ref.
+                // Verify the candidate against it; never trust a reported label.
+                $secret=(new EnrollmentProof($this->config,new Secrets($this->config)))->bridgeSecret();
+                $ref=hash_hmac('sha256',"account-v1\n".$username,hex2bin($secret));
+                $owned=$this->db->one("SELECT a.account_ref FROM enrollment_requests r JOIN managed_accounts a ON a.account_ref=r.account_ref WHERE r.device_id=? AND r.account_ref=? AND r.key_fingerprint=? AND r.app_package=? AND r.status='approved'",[$current['id'],$ref,$current['key_fingerprint'],$current['app_package']]);
+                if($owned)$this->db->query('INSERT INTO verified_line_usernames (account_ref,username) VALUES (?,?) ON DUPLICATE KEY UPDATE username=VALUES(username),verified_at=UTC_TIMESTAMP()',[$ref,$username]);
+            }
             $this->expire($current['id']);
             $this->db->query('UPDATE devices SET model = ?, os_version = ?, app_version = ?, activity_state = ?, capabilities = ?, storage_total = ?, storage_free = ?, last_ip = ?, last_seen_at = UTC_TIMESTAMP() WHERE id = ?',
                 [$model, $os, $version, $activity, json_encode($caps, JSON_THROW_ON_ERROR), $total, $free, $ip, $current['id']]);
@@ -155,7 +173,7 @@ final class Commands
 
     public function acknowledge(string $token, string $commandId, array $input): array
     {
-        Input::keys($input, ['schema_version', 'lease_token', 'status', 'summary', 'snapshot', 'catalog']);
+        Input::keys($input, ['schema_version', 'lease_token', 'status', 'summary', 'snapshot', 'catalog', 'favourites_preview']);
         Input::integer($input['schema_version'] ?? 1, 1, 1);
         $device = $this->deviceIdentity($token);
         $status = $input['status'] ?? '';
@@ -176,6 +194,12 @@ final class Commands
             if (in_array($row['status'], ['succeeded','failed'], true) && $row['status'] === $status) return self::publicCommand($row);
             if (!in_array($row['status'], ['delivered','running'], true) || !$leaseValid) throw new Problem(409, 'Command has expired or the lease is no longer valid.');
             $result=['summary'=>$summary];
+            if($status==='succeeded'&&$row['kind']==='preview_favourites_restore'&&!array_key_exists('favourites_preview',$input))throw new Problem(422,'A recovery preview must return its match results.');
+            if(array_key_exists('favourites_preview',$input)) {
+                if($status!=='succeeded'||$row['kind']!=='preview_favourites_restore')throw new Problem(422,'Unexpected favourites preview.');
+                $service=new Favourites($this->db,$this->management,$this,$this->auth,$this->config);
+                $result['favourites_preview']=$service->storePreview($commandId,$current,$input['favourites_preview'],json_decode($row['payload'],true,16,JSON_THROW_ON_ERROR));
+            }
             if($status==='succeeded'&&in_array($row['kind'],['get_categories','get_category_layout'],true)&&!array_key_exists('catalog',$input))throw new Problem(422,'A completed category read must include its catalog.');
             if(array_key_exists('catalog',$input)) {
                 if($status!=='succeeded')throw new Problem(422,'Only completed reads can upload a category page.');

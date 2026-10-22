@@ -304,4 +304,15 @@ function enrollmentCases(array &$tests, ControlCenter\Application $app, ControlC
         same('approved',$app->enrollment->register($body($id,['panel'=>null]),'127.0.0.41')['status']);
         same('not_managed',$app->enrollment->register($body($identity($id['account']),['panel'=>null]),'127.0.0.41')['status']);
     };
+    $tests['line usernames are cryptographically bound to the activation account not a reported device label'] = function()use($app,$owner,$alpha,$identity,$register,$approve,$delivery,$proofs):void {
+        $username='verified-line-user';$ref=hash_hmac('sha256',"account-v1\n".$username,hex2bin($proofs->bridgeSecret()));
+        $r=$register($identity($ref));$device=$approve($r);$p=$app->enrollment->poll($delivery($r),'127.0.0.41');
+        $app->commands->checkIn($p['credential'],['account_username'=>'spoofed-other-line','capabilities'=>[]],'127.0.0.41');
+        same(null,$app->db->one('SELECT username FROM verified_line_usernames WHERE account_ref=?',[$ref]));
+        $app->commands->checkIn($p['credential'],['account_username'=>$username,'capabilities'=>[]],'127.0.0.41');
+        same($username,$app->management->device($alpha,$device['id'])['customer_name']);
+        $customers=$app->management->listing($alpha,'customers',['search'=>$username]);same(1,$customers['total']);same($username,$customers['items'][0]['line_username']);
+        same(1,$app->management->listing($alpha,'devices',['search'=>$username])['total']);
+        $app->management->detachReseller($owner,$device['id']);same($username,$app->management->device($owner,$device['id'])['customer_name']);problem(404,fn()=> $app->management->device($alpha,$device['id']));
+    };
 }

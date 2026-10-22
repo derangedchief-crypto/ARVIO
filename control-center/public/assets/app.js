@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-const state = { user: null, csrf: '', tenants: [], epoch: 0, deviceTab: null, layoutEditors: new Map() };
+const state = { user: null, csrf: '', tenants: [], epoch: 0, deviceTab: null, layoutEditors: new Map(), favouritesSelection: new Map() };
 const requestKeys = new Map();
 let toastTimer;
 let formCounter = 0;
@@ -54,7 +54,7 @@ function modal(title, schema, save, label = 'Save') {
   form.onsubmit = async event => { event.preventDefault(); submit.disabled = true; error.textContent = ''; try { await save(formValues(form, schema)); $('modal').close(); await route(); } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; } };
   $('modal').showModal();
 }
-function signedOut() { state.user = null; state.csrf = ''; state.tenants = []; state.deviceTab = null; state.layoutEditors.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
+function signedOut() { state.user = null; state.csrf = ''; state.tenants = []; state.deviceTab = null; state.layoutEditors.clear(); state.favouritesSelection.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
 function entryCard(title, description) { const card = el('div', null, 'entry-card'); card.append(el('span', 'E', 'brand-mark'), el('h1', title), el('p', description, 'subtle')); $('entry').replaceChildren(card); return card; }
 function loginForm() {
   const card = entryCard('Welcome back', 'Sign in to your owner or reseller workspace.'); const form = el('form');
@@ -78,7 +78,7 @@ async function enter() {
   links.forEach(([key, text]) => { const link = el('a', text); link.href = '#' + key; link.dataset.page = key; nav.append(link); });
   await route();
 }
-function tenantField() { return { key: 'tenant_id', label: 'Workspace / reseller', options: state.tenants.filter(t => t.status === 'active').map(t => [t.id, t.name]), hint: 'First page of workspaces. For others, search Resellers and choose Add customer on their row.' }; }
+function tenantField() { return { key: 'tenant_id', label: 'Workspace / reseller', options: state.tenants.filter(t => t.status === 'active').map(t => [t.id, t.name]), hint: 'First page of active workspaces. Customer/device enrollment is automatic after verified reseller linking.' }; }
 function customerForm(customer, tenant = null) {
   const schema = [...(!customer && !tenant && state.user.role === 'owner' ? [tenantField()] : []), { key: 'name', label: 'Customer name', value: customer?.name }, { key: 'external_reference', label: 'Account reference (optional)', value: customer?.external_reference, required: false, max: 128, hint: 'A customer/billing reference—not a provider password.' }, { key: 'notes', label: 'Private notes (optional)', type: 'textarea', value: customer?.notes, required: false }];
   modal(customer ? 'Edit customer' : 'Add customer' + (tenant ? ' · ' + tenant.name : ''), schema, async values => { if (tenant) values.tenant_id = tenant.id; await api(customer ? '/api/customers/' + customer.id : '/api/customers', values); toast('Customer saved.'); });
@@ -95,13 +95,13 @@ async function overview(epoch) {
   main.append(cards, panel('Recent devices', devicesTable(devices.items)), panel('One update source of truth', el('p', 'Every customer and reseller app uses the platform owner’s update channel. Resellers cannot upload APKs, change update URLs or disable mandatory updates.', 'subtle')));
 }
 async function records(resource, epoch) {
-  const main = $('main'); main.replaceChildren(heading(resource === 'devices' ? 'Devices' : 'Customers', 'Search, manage and inspect your assigned records.', resource === 'customers' ? [button('Add customer', () => customerForm(), 'primary')] : []));
+  const main = $('main'); main.replaceChildren(heading(resource === 'devices' ? 'Devices' : 'Customers', resource === 'customers' ? 'Customers are created by verified enrollment. Line usernames are verified on app check-in; refresh after the 111 app reports in.' : 'Search, manage and inspect your assigned records.', [button('Refresh', route)]));
   const box = panel(null); const filters = el('form', null, 'filters'); const search = el('input'); search.placeholder = resource === 'devices' ? 'Search device, model, customer or ID…' : 'Search customer or reference…'; search.setAttribute('aria-label', 'Search');
   filters.append(search, button('Search', () => load(1))); filters.onsubmit = e => { e.preventDefault(); load(1); }; const resultBox = el('div'); box.append(filters, resultBox); main.append(box);
   async function load(page = 1) {
     try {
       const data = await api(`/api/${resource}?page=${page}&search=${encodeURIComponent(search.value)}`); if (epoch !== state.epoch) return;
-      const content = resource === 'devices' ? devicesTable(data.items) : table(['Customer', 'Workspace', 'Reference', 'Actions'], data.items.map(c => { const actions = el('div', null, 'actions'); actions.append(button('Edit', () => customerForm(c)), button('Add device', () => deviceForm(c))); return [cellName(c.name, c.notes), c.tenant_name, c.external_reference || '—', actions]; }));
+       const content = resource === 'devices' ? devicesTable(data.items) : table(['Line username / customer', 'Workspace', 'Reference', 'Actions'], data.items.map(c => { const actions = el('div', null, 'actions'); actions.append(button('Edit', () => customerForm(c)), button('Add device', () => deviceForm(c))); const name = c.line_username || (/^Panel line [0-9]+$/.test(c.name) ? 'Username awaiting app check-in' : c.name); return [cellName(name, c.notes), c.tenant_name, c.external_reference || '—', actions]; }));
       resultBox.replaceChildren(content, pagination(data, load));
     } catch (e) { toast(e.message); }
   }
@@ -118,7 +118,7 @@ async function resellers(epoch) {
       const data = await api(`/api/tenants?page=${page}&search=${encodeURIComponent(search.value)}`); if (epoch !== state.epoch) return;
       const rows = data.items.map(t => {
         const linked = links.find(p => p.tenant_id === t.id);
-        const actions = el('div', null, 'actions'); const add = button('Add customer', () => customerForm(null, t)); add.disabled = t.status !== 'active'; actions.append(add);
+        const actions = el('div', null, 'actions');
         if (!linked) actions.append(button('Link panel reseller', () => modal('Link existing panel reseller', [{ key: 'username', label: 'Exact panel login username', value: t.name, max: 150, hint: 'The worker must verify this active account. This permanent ID link enables automatic device/customer enrollment. Existing ownership is never silently transferred.' }], async values => { await api('/api/tenants/' + t.id + '/panel-link', values); toast('Panel reseller verified and linked. Pending apps will retry with fresh ownership proofs.'); })));
         if (t.kind !== 'owner') actions.append(button('Manage', () => modal('Reseller policy', [{ key: 'status', label: 'Status', value: t.status, options: [['active', 'Active'], ['suspended', 'Suspended — signs reseller out']] }, { key: 'device_limit', label: 'Device allocation', type: 'number', value: t.device_limit }], async values => { if (values.status === 'suspended' && !confirm('Suspend this reseller and cancel pending device actions? This does not wipe customer data.')) throw new Error('No changes made.'); await api('/api/tenants/' + t.id, values); toast('Reseller policy saved.'); })));
         return [cellName(t.name, linked ? `Panel: ${linked.username} · ID ${linked.panel_id}` : 'Panel not linked · manual review'), badge(t.status), `${t.devices_used} / ${t.device_limit}`, actions];
@@ -330,6 +330,61 @@ async function queue(device, kind, payload = {}) {
   try { await api(`/api/devices/${device.id}/commands`, { kind, payload }, { 'Idempotency-Key': key }); requestKeys.delete(fingerprint); toast('Action queued—not yet executed.'); await route(); }
   catch (error) { if (error.status && error.status < 500) requestKeys.delete(fingerprint); throw error; }
 }
+async function favouritesPanel(d, body, isCurrent, reload) {
+  const box = panel('Favourites backups & recovery'); body.append(box);
+  box.append(el('p', 'Good nonempty versions are saved automatically while the managed app is open. Clearing favourites updates live status only—it never replaces a good backup. Recovery requires a version captured BEFORE the mistake.', 'subtle'));
+  const actions = el('div', null, 'actions'); const capture = button('Back up current favourites now', () => queue(d, 'backup_favourites').catch(e => toast(e.message)), 'primary'); capture.disabled = d.policy !== 'active' || !d.capabilities.includes('backup_favourites'); actions.append(capture, button('Refresh backups / results', reload)); box.append(actions);
+  if (!d.capabilities.includes('backup_favourites')) box.append(el('p', 'Update the testing app to 111 and let it check in to enable automatic backups and recovery. Existing saved server versions stay available.', 'notice'));
+  let data; try { data = await api(`/api/devices/${d.id}/favourites`); } catch (e) { box.append(el('p', e.message + ' Apply the database upgrade under Enrollments first.', 'error')); return; } if (!isCurrent()) return;
+  if (data.live.length) box.append(panel('Last app-reported favourites state', table(['Profile', 'Channels', 'Groups', 'Reported'], data.live.map(r => [r.profile_ref.slice(0, 12), r.channel_count, r.group_count, date(r.updated_at)]))));
+  if (data.commands.length) box.append(table(['Recovery action', 'Status', 'Result'], data.commands.slice(0, 4).map(c => [c.kind.replaceAll('_', ' '), badge(c.status), c.result?.summary || 'Waiting for app check-in'])));
+  const chosen = state.favouritesSelection.get(d.id) || data.items[0]?.id; if (chosen) state.favouritesSelection.set(d.id, chosen);
+  box.append(table(['Saved version', 'Favourites', 'Protection', 'Profile/source', 'Actions'], data.items.map(b => {
+    const a = el('div', null, 'actions'); a.append(button('View / recover', () => { state.favouritesSelection.set(d.id, b.id); reload(); }), button('Label / protect', () => modal('Protect favourites backup', [
+      { key: 'label', label: 'Backup label', max: 80, required: false, value: b.label },
+      { key: 'protection', label: 'Protection', value: b.protected ? 'yes' : 'no', options: [['yes', 'Protected — never auto-pruned'], ['no', 'Rolling history — may be pruned']] }
+    ], async v => { if (v.protection === 'no' && b.protected && !confirm('Unprotect this good version? It may later be pruned, but the app is not changed.')) throw new Error('No changes made.'); await api(`/api/devices/${d.id}/favourites/backups/${b.id}/protect`, { label: v.label, protected: v.protection === 'yes' }); })));
+    return [cellName(b.label || 'Saved favourites', date(b.created_at)), `${b.channel_count} channels · ${b.group_count} groups`, badge(b.protected ? 'protected' : 'rolling'), cellName(b.profile_ref.slice(0, 12), b.source_ref.slice(0, 12)), a];
+  })));
+  if (!data.items.length) box.append(el('p', 'No nonempty backup has been captured yet. This service cannot reconstruct favourites already deleted before its first capture.', 'notice'));
+  if (chosen) {
+    let backup, previewData;
+    try { [backup, previewData] = await Promise.all([api(`/api/devices/${d.id}/favourites/backups/${chosen}`), api(`/api/devices/${d.id}/favourites/backups/${chosen}/preview`)]); }
+    catch (e) { state.favouritesSelection.delete(d.id); if (isCurrent()) box.append(el('p', e.message + ' Refresh and select an available saved version.', 'error')); return; }
+    if (!isCurrent()) return;
+    const recovery = panel('Selected version — preview before restoring', el('p', `${backup.label || 'Saved version'} · ${date(backup.created_at)} · ${backup.channel_count} channels / ${backup.group_count} groups`, 'subtle'));
+    const preview = previewData.preview;
+    const request = button('Preview recovery on the app', async () => { try { await api(`/api/devices/${d.id}/favourites/backups/${chosen}/preview`, {}, { 'Idempotency-Key': uuid() }); await reload(); } catch (e) { toast(e.message); } }); request.disabled = d.policy !== 'active' || !d.capabilities.includes('preview_favourites_restore'); recovery.append(request);
+    const missing = new Set(preview?.preview.missing_refs || []);
+    if (preview) {
+      const p = preview.preview; recovery.append(el('p', `${p.matched_channels} channels + ${p.matched_groups} groups available · ${missing.size} missing · current ${p.current_channels} channels / ${p.current_groups} groups. Preview expires ${date(preview.expires_at)}.`, 'notice'));
+      const mode = el('select'); mode.setAttribute('aria-label', 'Favourites recovery mode');
+      for (const [value, label] of [['merge', 'Merge back — preserve current favourites'], ['replace', 'Replace current favourites with this complete backup']]) { const option = el('option', label); option.value = value; option.disabled = value === 'replace' && missing.size > 0; mode.append(option); }
+      const restore = button('Push favourites recovery', async () => {
+        const description = mode.value === 'replace' ? `REPLACE current favourites with this backup? A safety backup of current nonempty favourites is captured first.` : `Merge ${p.matched_channels + p.matched_groups} saved favourites back, preserving current ones? ${missing.size} unavailable entries will be skipped; the original backup stays intact.`;
+        if (!confirm(description + ' Nothing is marked restored until the app confirms.')) return;
+        try { await api(`/api/devices/${d.id}/favourites/backups/${chosen}/restore`, { preview_id: preview.command_id, mode: mode.value }, { 'Idempotency-Key': uuid() }); await reload(); } catch (e) { toast(e.message); }
+      }, 'primary'); restore.disabled = d.policy !== 'active' || !d.capabilities.includes('restore_favourites') || p.matched_channels + p.matched_groups === 0;
+      recovery.append(mode, restore, el('p', 'Restores target the same device/profile/source. Source changes, app-data resets, stale favourites or changed channel availability require a new valid preview—not fuzzy matching.', 'hint'));
+    } else recovery.append(el('p', 'Request a fresh app preview to validate profile/source and identify missing channels. Merge is the safe default; partial Replace is refused.', 'hint'));
+    const filter = el('input'); filter.placeholder = 'Filter saved favourites…'; filter.setAttribute('aria-label', 'Filter saved favourites'); const rows = el('div');
+    function draw() { const visible = backup.entries.filter(e => e.label.toLocaleLowerCase().includes(filter.value.toLocaleLowerCase())); rows.replaceChildren(table(['Saved favourite', 'Kind', 'Preview'], visible.slice(0, 50).map(e => [e.label, e.kind, preview ? (missing.has(e.ref) ? 'Missing — skipped' : 'Available') : 'Not checked yet'])), el('p', `${visible.length} matching saved items; first 50 displayed.`, 'hint')); }
+    filter.addEventListener('input', draw); recovery.append(filter, rows); draw(); box.append(recovery);
+  }
+  const recentRestore = data.commands.find(c => c.kind === 'restore_favourites' && c.status === 'succeeded' && c.finished_at && Date.now() - new Date(c.finished_at.replace(' ', 'T') + 'Z').getTime() < 120000);
+  const waitingForConfirmation = recentRestore && data.live.every(r => r.updated_at <= recentRestore.finished_at);
+  const hasPendingRecovery = data.commands.some(c => ['pending', 'delivered', 'running'].includes(c.status));
+  if (hasPendingRecovery || waitingForConfirmation) {
+    const signature = JSON.stringify(data);
+    async function poll() {
+      if (!isCurrent()) return;
+      if (!hasPendingRecovery && recentRestore && Date.now() - new Date(recentRestore.finished_at.replace(' ', 'T') + 'Z').getTime() >= 120000) return;
+      try { const next = await api(`/api/devices/${d.id}/favourites`); if (!isCurrent()) return; if (JSON.stringify(next) !== signature && !$('modal').open) { await reload(); return; } } catch (e) { if (isCurrent()) toast(e.message); }
+      if (isCurrent()) setTimeout(poll, 3000);
+    }
+    setTimeout(poll, 3000);
+  }
+}
 async function categoryPanel(d, body, isCurrent, goCommands) {
   const p = panel('Source-scoped categories'); body.append(p);
   p.append(el('p', 'Read the app’s cached Live TV categories for one active profile/source. Titles (up to 80 characters) and counts only—no playlist URLs or credentials. Titles may be redacted; row references distinguish them. This is a snapshot, not a live provider lookup.', 'subtle'));
@@ -406,6 +461,8 @@ async function devicePage(id, epoch) {
         return [c.kind.replaceAll('_', ' '), badge(c.status), c.attempts, date(c.created_at), c.result?.summary || '—', a];
       })), pagination(result, load)); };
       try { await load(); } catch (e) { toast(e.message); }
+    } else if (name === 'Favourites') {
+      await favouritesPanel(d, body, () => epoch === state.epoch && tabs.querySelector('[data-tab="Favourites"]').classList.contains('active'), () => select('Favourites'));
     } else if (name === 'Categories' && d.capabilities.includes('get_category_layout')) {
       await layoutDraftPanel(d, body, () => epoch === state.epoch && tabs.querySelector('[data-tab="Categories"]').classList.contains('active'), () => select('Commands'));
     } else if (name === 'Categories' && d.capabilities.includes('get_categories')) {

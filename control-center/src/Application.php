@@ -11,6 +11,7 @@ final class Application
     public readonly Enrollment $enrollment;
     public readonly SettingsPresets $presets;
     public readonly CategoryLayouts $layouts;
+    public readonly Favourites $favourites;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
@@ -21,6 +22,7 @@ final class Application
         $this->enrollment = new Enrollment($this->db,$config,$this->auth,$this->management,new Secrets($config));
         $this->presets=new SettingsPresets($this->db,$this->management,$this->auth,$config);
         $this->layouts=new CategoryLayouts($this->db,$this->management,$this->auth,$config);
+        $this->favourites=new Favourites($this->db,$this->management,$this->commands,$this->auth,$config);
     }
 
     public function serve(string $method, string $path): never
@@ -68,6 +70,8 @@ final class Application
             $credential=Http::bearer();$this->commands->deviceIdentity($credential);
             Http::json($this->commands->acknowledge($credential, $match[1], Http::body(2097152)));
         }
+        if($method==='POST'&&$path==='/api/device/favourites/capture') {$credential=Http::bearer();$this->commands->deviceIdentity($credential);Http::json($this->favourites->capture($credential,Http::body(2097152)));}
+        if($method==='POST'&&$path==='/api/device/favourites/context')Http::json($this->favourites->context(Http::bearer(),Http::body()));
         $token = $_COOKIE[Http::COOKIE] ?? '';
         if (!is_string($token)) throw new Problem(401, 'Please sign in.');
         $actor = $this->auth->user($token);
@@ -123,6 +127,12 @@ final class Application
         if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/detach-reseller$~D',$path,$match)) {Input::keys(Http::body(),[]);Http::json($this->management->detachReseller($actor,$match[1]));}
         if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/category-layout$~D',$path,$match))Http::json($this->layouts->device($actor,$match[1],$_GET));
         if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/category-layout$~D',$path,$match))Http::json($this->commands->enqueue($actor,$match[1],['kind'=>'apply_category_layout','payload'=>Http::body(524288)],$_SERVER['HTTP_IDEMPOTENCY_KEY']??''),201);
+        if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/favourites$~D',$path,$match))Http::json($this->favourites->listing($actor,$match[1],$_GET));
+        if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/favourites/backups/([a-f0-9]{32})$~D',$path,$match))Http::json($this->favourites->view($actor,$match[1],$match[2]));
+        if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/favourites/backups/([a-f0-9]{32})/protect$~D',$path,$match))Http::json($this->favourites->protect($actor,$match[1],$match[2],Http::body()));
+        if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/favourites/backups/([a-f0-9]{32})/preview$~D',$path,$match))Http::json($this->favourites->preview($actor,$match[1],$match[2]));
+        if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/favourites/backups/([a-f0-9]{32})/preview$~D',$path,$match)){Input::keys(Http::body(),[]);Http::json($this->favourites->queuePreview($actor,$match[1],$match[2],$_SERVER['HTTP_IDEMPOTENCY_KEY']??''),201);}
+        if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/favourites/backups/([a-f0-9]{32})/restore$~D',$path,$match))Http::json($this->favourites->queueRestore($actor,$match[1],$match[2],Http::body(),$_SERVER['HTTP_IDEMPOTENCY_KEY']??''),201);
         if (preg_match('~^/api/devices/([a-f0-9]{32})/commands$~D', $path, $match)) {
             if ($method === 'GET') Http::json($this->commands->listing($actor, $match[1], $_GET));
             if ($method === 'POST') Http::json($this->commands->enqueue($actor, $match[1], Http::body(), $_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? ''), 201);
@@ -140,7 +150,7 @@ final class Application
         $days = $this->config->number('retention_days', 90, 7, 365);
         $commands = $this->db->query("DELETE FROM commands WHERE status IN ('succeeded','failed','expired','cancelled') AND finished_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
         $events = $this->db->query("DELETE FROM audit_events WHERE created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
-        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();}
+        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();}
         return ['expired_sessions_removed' => $sessions, 'old_commands_removed' => $commands, 'old_audit_events_removed' => $events];
     }
 }

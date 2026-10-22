@@ -22,7 +22,7 @@ internal class ManagementApi {
         .callTimeout(10, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
     suspend fun control(path: String, body: JSONObject, credential: String? = null): JSONObject {
         require(path.startsWith("/api/device/") && !path.contains('?'))
-        return post("https://control.fecxbrfzku.net$path", body, credential,if(path=="/api/device/check-in")524288 else 65536)
+        return post("https://control.fecxbrfzku.net$path", body, credential,when(path){"/api/device/check-in"->524288;"/api/device/favourites/context"->2097152;else->65536})
     }
     suspend fun proof(account: ManagementAccount, installation: String, fingerprint: String, appPackage: String, challenge: String): String {
         val response = post("https://activationworker.extremeiptv.net/management/enrollment-proof", JSONObject()

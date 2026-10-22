@@ -109,6 +109,8 @@ require __DIR__.'/categories.php';
 categoryCases($tests,$app,$owner,$alpha,$beta,$tenantA,$http);
 require __DIR__.'/category-layouts.php';
 layoutCases($tests,$app,$owner,$alpha,$beta,$tenantA,$tenantB,$http,$password);
+require __DIR__.'/favourites.php';
+favouriteCases($tests,$app,$owner,$alpha,$beta,$tenantA,$http);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

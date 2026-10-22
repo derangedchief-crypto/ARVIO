@@ -5,7 +5,78 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone — 0.6.0
+## Current milestone — 0.7.0
+
+### Favourites recovery: good versions survive an accidental wipe
+
+Testing client111 captures nonempty Live TV channel/group favourites on managed
+foreground check-ins. Distinct versions are appended, not overwritten. An empty
+customer state updates live counts ONLY and can never become a replacement backup.
+The initial nonempty version per profile is protected automatically (within pin
+limits); operators can label/protect other known-good versions. Protected versions
+are never automatically pruned. Rolling versions have bounded count/retention.
+
+In a device's **Favourites** tab, view saved versions/current reported counts,
+request a manual capture, protect a version, then **Preview recovery on the app**.
+Preview checks the SAME installation/profile/source, resolves channel/category
+identities against that profile/source cache and reports unavailable entries.
+**Merge back** is default: existing favourites/order remain and missing saved ones
+are appended in their saved order. **Replace** is explicit and refused if ANY
+saved entry no longer resolves. Nothing is silently matched by a partial name.
+Current favourites or channel-availability changes after preview reject restore.
+Expired previews require a fresh one. Restores update both lists in ONE guarded
+DataStore transaction and do not change playlists, guides, visibility, player or
+update settings.
+
+Before a restore the app must successfully capture current state as a safety
+checkpoint (nonempty state gets a separate pre-restore version; empty is safely
+ignored). Queued is not restored: UI waits for app receipts, and live counts update
+on the next actual check-in/capture. Recovery is foreground/check-in based, not
+Android offline waking. Maximum1000 combined favourites per snapshot/restore.
+
+Backups are server-side AES-GCM encrypted with the existing private application.key.
+Only the device context endpoint returns original identities to THAT device token;
+browser views expose sanitized labels/opaque refs, never original IDs or ciphertext.
+Source bindings/HMACs prevent unrelated profile/source replay. Saved groups that
+contain sensitive-looking text have masked labels, but their necessary recovery
+identities remain encrypted. Preview responses use a separate short-lived table
+and command history contains only small summaries; large response bodies never
+fill the app duplicate journal.
+
+Limits:100 total backup versions/device,20 protected/device,5 protected per
+profile/source,32 live status contexts. Protected versions survive normal retention;
+unprotected versions follow the configured retention/count policy. Empty updates
+do not delete any good version. User labels/protection changes are audited.
+
+This cannot reconstruct favourites deleted BEFORE the first successful capture.
+Open111 with known-good favourites first and verify a protected server version
+before recovery testing. A different installation/cleared app data/profile/source
+is NOT guessed as an equivalent restore target. Device/profile migrations need
+their own explicit workflow; encrypted server identities are retained for future
+authorized recovery tooling rather than tied to a lost device-only cipher key.
+Automatic unchanged-state refreshes are coalesced for six hours; actual changes
+are captured at check-ins. A change-and-wipe entirely between captures cannot be
+reconstructed, and stopped/unmanaged apps do not upload backups.
+
+### Verified line usernames; automatic customer UI
+
+Device/customer lists show the verified LINE USERNAME, not the numeric `Panel line`
+placeholder.111 reports its saved login username at check-in; the backend verifies
+it against the activation worker's previously signed HMAC account reference before
+storing/displaying it. A spoofed username cannot rename another line. Existing
+records fill in on their next111 check-in (Settings -> check in now); until then
+automatic placeholders say the username is awaiting verification. No worker patch
+or panel/SQL credentials are needed. Numeric panel IDs remain internal ownership
+keys. Customer search includes verified usernames, including owner-unassigned devices.
+
+Manual Add customer buttons are removed from Customers/Resellers. Verified linked
+enrollment creates records; existing notes/reference editing is retained. Internal
+fixture/service APIs remain scoped, not public self-claim registration endpoints.
+
+Install **0.7.0 UPDATE ZIP and migrations008/009** before the111 testing APK. Preserve
+config.php/storage/application.key. Keep the control site's existing2m request limit
+from0.6.0. No new Android permission or worker change. Billing/branding, cross-device
+favourite migration, full playlist editing and advanced diagnostics remain later work.
 
 ### Organize locally, then push ONE complete layout
 

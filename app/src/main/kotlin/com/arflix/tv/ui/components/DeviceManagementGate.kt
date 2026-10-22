@@ -72,6 +72,7 @@ fun DeviceManagementStatusInfo() {
     val checkIn=LocalDeviceManagementCheckIn.current
     Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text("Provider device management · ${state.status}", color = TextSecondary, fontSize = 12.sp)
+        Text("Favourites backup · ${state.favouritesBackupStatus}",color=TextSecondary,fontSize=12.sp)
         if (state.installationId.isNotBlank()) Text("Device ID: ${state.installationId}", color = TextSecondary, fontSize = 12.sp)
         TextButton(onClick=checkIn,enabled=state.installationId.isNotBlank()) { Text("Check in / retry management now") }
     }
