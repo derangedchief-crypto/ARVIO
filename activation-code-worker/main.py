@@ -10,6 +10,8 @@ import logging
 import threading
 import time
 import hashlib
+import json
+import re
 from collections import defaultdict, deque
 from contextlib import contextmanager
 
@@ -21,7 +23,8 @@ from sshtunnel import SSHTunnelForwarder
 from starlette.concurrency import run_in_threadpool
 
 from config import settings
-from management_enrollment import AttemptLimiter, client_ip, configured, credentials_match, issue_proof
+from management_enrollment import AttemptLimiter, client_ip, configured, credentials_match, issue_proof, bridge_signature
+import hmac
 
 
 logging.basicConfig(
@@ -42,6 +45,7 @@ _attempts: dict[str, deque[float]] = defaultdict(deque)
 _attempt_lock = threading.Lock()
 _management_ips = AttemptLimiter(120, 3600)
 _management_accounts = AttemptLimiter(20, 600)
+_management_lookups = AttemptLimiter(60, 60)
 
 
 def allow_attempt(client_ip: str) -> bool:
@@ -145,10 +149,51 @@ class ManagementProofRequest(BaseModel):
     challenge_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
+@app.post('/management/reseller-lookup')
+async def management_reseller_lookup(request: Request) -> dict:
+    secret = settings.management_enrollment_secret
+    if not configured(secret, settings.management_control_origin):
+        raise HTTPException(status_code=503, detail='Management bridge is not configured.')
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > 2048:
+            raise HTTPException(status_code=413, detail='Request is too large.')
+    timestamp = request.headers.get('x-management-timestamp', '')
+    nonce = request.headers.get('x-management-nonce', '')
+    signature = request.headers.get('x-management-signature', '')
+    if (not re.fullmatch(r'[0-9]{10,12}', timestamp) or abs(int(timestamp) - int(time.time())) > 60
+        or not re.fullmatch(r'[a-f0-9]{32}', nonce) or not re.fullmatch(r'[a-f0-9]{64}', signature)
+        or not hmac.compare_digest(signature, bridge_signature(secret, 'reseller-lookup-v1', timestamp, nonce, raw))):
+        raise HTTPException(status_code=403, detail='Invalid bridge authentication.')
+    if not _management_lookups.allow('bridge'):
+        raise HTTPException(status_code=429, detail='Too many lookups.')
+    try:
+        body = json.loads(raw)
+        username = body['username']
+        if set(body) != {'username'} or not isinstance(username, str) or not 1 <= len(username) <= 150:
+            raise ValueError()
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(status_code=422, detail='Invalid reseller lookup.') from None
+    def lookup():
+        with panel_cursor() as cursor:
+            cursor.execute('SELECT id, username, status FROM users WHERE username = %s LIMIT 2', (username,))
+            return cursor.fetchall()
+    try:
+        rows = await run_in_threadpool(lookup)
+    except Exception:
+        raise HTTPException(status_code=503, detail='Panel lookup is unavailable.') from None
+    if len(rows) != 1 or rows[0]['username'] != username or str(rows[0]['status']) != '1':
+        raise HTTPException(status_code=404, detail='No unique active reseller with that exact username.')
+    reseller = {'id': str(rows[0]['id']), 'username': rows[0]['username']}
+    payload = json.dumps(reseller, separators=(',', ':'), ensure_ascii=False)
+    return {'payload': payload, 'signature': bridge_signature(secret, 'reseller-result-v1', timestamp, nonce, payload.encode())}
+
+
 @app.get("/management/health")
 def management_health() -> dict:
     enabled = configured(settings.management_enrollment_secret, settings.management_control_origin)
-    return {"enabled": enabled, "schema_version": 1}
+    return {"enabled": enabled, "schema_version": 1, "ownership_schema_version": 1}
 
 
 @app.post("/management/enrollment-proof")
@@ -172,12 +217,13 @@ async def management_proof(request: Request) -> dict:
         raise HTTPException(status_code=429, detail="Too many enrollment attempts. Try again later.")
     def lookup_account():
         with panel_cursor() as cursor:
-            # Only existing, already verified column names are used. No panel
-            # schema changes or assumption about reseller/customer-ID fields.
+            # Ownership schema verified against the uploaded Overcast auth worker:
+            # customers.member_id -> users.id. Read-only; no panel schema changes.
             cursor.execute(
-                "SELECT username, password FROM customers WHERE username = %s "
-                "AND enabled = 1 AND activated = 1 "
-                "AND (exp_date IS NULL OR exp_date = 0 OR exp_date > %s) LIMIT 2",
+                "SELECT cu.id, cu.username, cu.password, cu.member_id, u.username AS reseller_username, u.status AS reseller_status "
+                "FROM customers cu LEFT JOIN users u ON u.id = cu.member_id WHERE cu.username = %s "
+                "AND cu.enabled = 1 AND cu.activated = 1 "
+                "AND (cu.exp_date IS NULL OR cu.exp_date = 0 OR cu.exp_date > %s) LIMIT 2",
                 (body.username.strip(), int(time.time())),
             )
             return cursor.fetchall()
@@ -189,9 +235,13 @@ async def management_proof(request: Request) -> dict:
     if not credentials_match(rows, body.password):
         raise HTTPException(status_code=403, detail="Account is unavailable or credentials are invalid.")
     try:
+        row = rows[0]
+        ownership = None
+        if row.get('reseller_username') and str(row.get('reseller_status')) == '1':
+            ownership = {'customer_id': str(row['id']), 'reseller_id': str(row['member_id']), 'reseller_username': row['reseller_username']}
         proof = issue_proof(settings.management_enrollment_secret, settings.management_control_origin,
             str(rows[0]["username"]), body.installation_id, body.key_fingerprint,
-            body.app_package, body.challenge_hash)
+            body.app_package, body.challenge_hash, ownership=ownership)
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid management enrollment request.") from None
     return {"ok": True, "schema_version": 1, "proof": proof}

@@ -94,6 +94,8 @@ final class Application
         }
         if ($method === 'GET' && $path === '/api/overview') Http::json($this->management->overview($actor));
         if ($method === 'GET' && $path === '/api/tenants') Http::json($this->management->tenantListing($actor, $_GET));
+        if($method==='GET'&&$path==='/api/panel-resellers')Http::json($this->enrollment->panelLinks($actor));
+        if($method==='POST'&&preg_match('~^/api/tenants/([a-f0-9]{32})/panel-link$~D',$path,$match))Http::json($this->enrollment->linkPanelReseller($actor,$match[1],Http::body()));
         if ($method === 'POST' && $path === '/api/resellers') Http::json($this->management->createReseller($actor, Http::body()), 201);
         if ($method === 'POST' && preg_match('~^/api/tenants/([a-f0-9]{32})$~D', $path, $match)) Http::json($this->management->updateTenant($actor, $match[1], Http::body()));
         if ($method === 'GET' && $path === '/api/customers') Http::json($this->management->listing($actor, 'customers', $_GET));

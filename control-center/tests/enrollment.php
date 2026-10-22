@@ -123,4 +123,81 @@ function enrollmentCases(array &$tests, ControlCenter\Application $app, ControlC
         $response=$http->request('POST','/api/enrollments/bridge-configuration',new stdClass(),['X-CSRF-Token'=>$owner['csrf']],'enrollment-owner'); same(200,$response['status']);
         check(str_contains($response['body']['content'],'MANAGEMENT_CONTROL_ORIGIN=')); check(str_contains($response['body']['content'],'MANAGEMENT_ENROLLMENT_SECRET='));
     };
+    $bridge=static function(string $id,string $username,bool $tamper=false)use($proofs):ControlCenter\PanelBridge {
+        return new ControlCenter\PanelBridge($proofs,static function($raw,$headers)use($proofs,$id,$username,$tamper):string {
+            $h=[]; foreach($headers as $header) {[$name,$value]=explode(': ',$header,2);$h[$name]=$value;}
+            same($username,json_decode($raw,true)['username']);
+            same(ControlCenter\PanelBridge::signature($proofs->bridgeSecret(),'reseller-lookup-v1',$h['X-Management-Timestamp'],$h['X-Management-Nonce'],$raw),$h['X-Management-Signature']);
+            $payload=json_encode(['id'=>$id,'username'=>$username]);
+            return json_encode(['payload'=>$payload,'signature'=>$tamper?str_repeat('0',64):ControlCenter\PanelBridge::signature($proofs->bridgeSecret(),'reseller-result-v1',$h['X-Management-Timestamp'],$h['X-Management-Nonce'],$payload)]);
+        });
+    };
+    $newTenant=static function(string $suffix,int $limit=100)use($app,$owner,$password):array {
+        return $app->management->createReseller($owner,['company'=>'Panel '.$suffix,'name'=>'Fixture','email'=>'panel-'.$suffix.'@example.test','password'=>$password,'device_limit'=>$limit]);
+    };
+    $panelClaim=static fn(string $reseller,string $line)=>['panel'=>['customer_id'=>$line,'reseller_id'=>$reseller,'reseller_username'=>'panel-fixture']];
+    $tests['panel links require owner and signed exact reseller lookup; no name-only ownership'] = function ()use($app,$owner,$alpha,$bridge,$newTenant):void {
+        $tenant=$newTenant('link');
+        problem(403,fn()=> $app->enrollment->linkPanelReseller($alpha,$tenant['id'],['username'=>'panel-fixture'],$bridge('1001','panel-fixture')));
+        problem(503,fn()=> $app->enrollment->linkPanelReseller($owner,$tenant['id'],['username'=>'panel-fixture'],$bridge('1001','panel-fixture',true)));
+        $linked=$app->enrollment->linkPanelReseller($owner,$tenant['id'],['username'=>'panel-fixture'],$bridge('1001','panel-fixture'));
+        same('1001',$linked['panel_id']);
+        same('1001',$app->enrollment->linkPanelReseller($owner,$tenant['id'],['username'=>'panel-fixture'],$bridge('1001','panel-fixture'))['panel_id']);
+        $other=$newTenant('duplicate');problem(409,fn()=> $app->enrollment->linkPanelReseller($owner,$other['id'],['username'=>'panel-fixture'],$bridge('1001','panel-fixture')));
+        problem(409,fn()=> $app->enrollment->linkPanelReseller($owner,$tenant['id'],['username'=>'another'],$bridge('1002','another')));
+    };
+    $tests['verified linked reseller automatically gets customer and device without owner approval'] = function ()use($app,$identity,$body,$panelClaim,$delivery,$owner):void {
+        $id=$identity();$request=$app->enrollment->register($body($id,$panelClaim('1001','2001')),'127.0.0.41');
+        same('approved',$request['status']);$poll=$app->enrollment->poll($delivery($request),'127.0.0.41');
+        $device=$app->management->device($owner,$poll['device_id']);$link=$app->db->one('SELECT * FROM panel_resellers WHERE panel_id=?',['1001']);same($link['tenant_id'],$device['tenant_id']);
+        same('2001',$app->db->one('SELECT panel_id FROM panel_customers WHERE customer_id=?',[$device['customer_id']])['panel_id']);
+        $another=$identity($id['account']);$r=$app->enrollment->register($body($another,$panelClaim('1001','2001')),'127.0.0.41');
+        same('approved',$r['status']);$d=$app->enrollment->poll($delivery($r),'127.0.0.41');same($device['customer_id'],$app->management->device($owner,$d['device_id'])['customer_id']);
+    };
+    $tests['unlinked matching names and legacy proofs stay pending, not automatic'] = function ()use($app,$identity,$body,$panelClaim):void {
+        same('pending',$app->enrollment->register($body($identity(),$panelClaim('9999','2002')),'127.0.0.41')['status']);
+        same('pending',$app->enrollment->register($body($identity()),'127.0.0.41')['status']);
+    };
+    $tests['signed customer identity cannot be reused for another account reference'] = function ()use($app,$identity,$body,$panelClaim):void {
+        same('pending',$app->enrollment->register($body($identity(),$panelClaim('1001','2001')),'127.0.0.41')['status']);
+    };
+    $tests['automatic assignment never overrides rejected removed or manually cross-tenant identities'] = function ()use($app,$owner,$identity,$body,$panelClaim,$delivery,$approve):void {
+        $id=$identity();$r=$app->enrollment->register($body($id),'127.0.0.41');$app->enrollment->reject($owner,$r['request_id']);
+        same('rejected',$app->enrollment->register($body($id,$panelClaim('1001','2003')),'127.0.0.41')['status']);
+        $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1001','2004')),'127.0.0.41');$d=$app->enrollment->poll($delivery($r),'127.0.0.41');
+        $app->management->updateDevice($owner,$d['device_id'],['policy'=>'removed']);
+        same('pending',$app->enrollment->register($body($id,$panelClaim('1001','2004')),'127.0.0.41')['status']);
+        $id=$identity();$r=$app->enrollment->register($body($id),'127.0.0.41');$approve($r);
+        problem(409,fn()=> $app->enrollment->register($body($id,$panelClaim('1001','2005')),'127.0.0.41'));
+    };
+    $tests['automatic enrollment enforces allocation and reseller suspension'] = function ()use($app,$owner,$newTenant,$bridge,$identity,$body,$panelClaim,$delivery):void {
+        $t=$newTenant('limits',1);$app->enrollment->linkPanelReseller($owner,$t['id'],['username'=>'limited'],$bridge('1003','limited'));
+        $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1003','2006')),'127.0.0.41');same('approved',$r['status']);
+        same('pending',$app->enrollment->register($body($identity(),$panelClaim('1003','2007')),'127.0.0.41')['status']);
+        $app->management->updateTenant($owner,$t['id'],['status'=>'suspended','device_limit'=>10]);
+        same('pending',$app->enrollment->register($body($identity(),$panelClaim('1003','2008')),'127.0.0.41')['status']);
+    };
+    $tests['new panel link causes pending installed apps to retry with a fresh proof'] = function ()use($app,$owner,$newTenant,$bridge,$identity,$body,$panelClaim,$delivery):void {
+        $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1004','2009')),'127.0.0.41');same('pending',$r['status']);
+        $t=$newTenant('retry');$app->enrollment->linkPanelReseller($owner,$t['id'],['username'=>'retry'],$bridge('1004','retry'));
+        problem(401,fn()=> $app->enrollment->poll($delivery($r),'127.0.0.41'));
+        $again=$app->enrollment->register($body($id,$panelClaim('1004','2009')),'127.0.0.41');same('approved',$again['status']);same($r['request_id'],$again['request_id']);
+    };
+    $tests['signed panel identity is validated and no browser reseller may link ownership'] = function ()use($app,$identity,$body,$panelClaim,$http,$password):void {
+        $claim=$panelClaim('1001','2010');$claim['panel']['reseller_id']='arbitrary';problem(403,fn()=> $app->enrollment->register($body($identity(),$claim),'127.0.0.41'));
+        $login=$http->request('POST','/api/login',['email'=>'alpha@example.test','password'=>$password],[],'panel-alpha')['body'];
+        same(403,$http->request('GET','/api/panel-resellers',null,[],'panel-alpha')['status']);
+        same(403,$http->request('POST','/api/tenants/'.str_repeat('a',32).'/panel-link',['username'=>'foreign'],['X-CSRF-Token'=>$login['csrf']],'panel-alpha')['status']);
+    };
+    $tests['new reseller creation verifies and saves the permanent panel link atomically'] = function ()use($app,$owner,$config,$password,$bridge):void {
+        $management=new ControlCenter\Management($app->db,$config,$app->auth,$bridge('1005','created'));
+        $input=['company'=>'Workspace display','name'=>'Fixture','email'=>'panel-created@example.test','password'=>$password,'device_limit'=>10,'panel_username'=>'created'];
+        $tenant=$management->createReseller($owner,$input);
+        same('1005',$app->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$tenant['id']])['panel_id']);
+        $input['email']='duplicate-created@example.test';problem(409,fn()=> $management->createReseller($owner,$input));
+        same(0,(int)$app->db->query('SELECT COUNT(*) FROM users WHERE email=?',[$input['email']])->fetchColumn());
+        $management=new ControlCenter\Management($app->db,$config,$app->auth,$bridge('1006','created',true));
+        problem(503,fn()=> $management->createReseller($owner,$input));
+        same(0,(int)$app->db->query('SELECT COUNT(*) FROM users WHERE email=?',[$input['email']])->fetchColumn());
+    };
 }

@@ -39,6 +39,31 @@ final class Enrollment
         $this->auth->audit($actor,'enrollment.bridge_configuration_downloaded',null,null);
         return ['filename'=>'management-bridge.env','content'=>"MANAGEMENT_CONTROL_ORIGIN=".$this->config->origin()."\nMANAGEMENT_ENROLLMENT_SECRET=".$this->proofs->bridgeSecret()."\n"];
     }
+    public function panelLinks(array $actor): array
+    {
+        Auth::owner($actor);
+        return ['items'=>$this->db->all('SELECT panel_id,tenant_id,username,linked_at FROM panel_resellers ORDER BY linked_at DESC LIMIT 1000')];
+    }
+    public function linkPanelReseller(array $actor,string $tenantId,array $input,?PanelBridge $bridge=null): array
+    {
+        Auth::owner($actor); Input::keys($input,['username']);
+        $tenant=$this->management->tenant($actor,$tenantId);
+        $panel=($bridge??new PanelBridge($this->proofs))->reseller(Input::text($input['username']??$tenant['name'],'panel username',150));
+        return $this->db->transaction(function ()use($actor,$tenantId,$panel):array {
+            $this->management->tenant($actor,$tenantId,true);
+            $existing=$this->db->one('SELECT * FROM panel_resellers WHERE tenant_id=? OR panel_id=? OR username=? FOR UPDATE',[$tenantId,$panel['id'],$panel['username']]);
+            if($existing) {
+                if($existing['tenant_id']!==$tenantId||$existing['panel_id']!==$panel['id'])throw new Problem(409,'This workspace or panel reseller already has a different permanent link. Transfers require owner review.');
+                return $existing;
+            }
+            $this->db->query('INSERT INTO panel_resellers (panel_id,tenant_id,username,linked_by) VALUES (?,?,?,?)',[$panel['id'],$tenantId,$panel['username'],$actor['id']]);
+            // Existing 2.0.107 apps already poll pending requests. Expiring their
+            // delivery makes them obtain a fresh signed proof (no data reset/APK change).
+            $this->db->query("UPDATE enrollment_requests SET poll_expires_at=UTC_TIMESTAMP() WHERE status='pending' AND device_id IS NULL");
+            $this->auth->audit($actor,'reseller.panel_linked',$panel['id'],$tenantId);
+            return ['panel_id'=>$panel['id'],'tenant_id'=>$tenantId,'username'=>$panel['username']];
+        });
+    }
     public function challenge(array $input, string $ip): array
     {
         $enabled=$this->enabled(false);
@@ -100,6 +125,13 @@ final class Enrollment
             }
             $this->db->query('UPDATE enrollment_requests SET label=?,model=?,os_version=?,app_version=?,last_request_at=UTC_TIMESTAMP() WHERE id=?',[$label,$model,$os,$version,$row['id']]);
             if($row['status']==='approved'&&$row['device_id']) {
+                if(isset($claim['panel'])) {
+                    $binding=$this->db->one('SELECT a.tenant_id,p.reseller_id,p.panel_id FROM managed_accounts a LEFT JOIN panel_customers p ON p.account_ref=a.account_ref WHERE a.account_ref=?',[$row['account_ref']]);
+                    $linked=$this->db->one('SELECT tenant_id FROM panel_resellers WHERE panel_id=?',[$claim['panel']['reseller_id']]);
+                    if(($linked&&$binding&&$linked['tenant_id']!==$binding['tenant_id'])||($binding&&$binding['panel_id']!==null&&($binding['panel_id']!==$claim['panel']['customer_id']||$binding['reseller_id']!==$claim['panel']['reseller_id']))) {
+                        throw new Problem(409,'Verified panel ownership changed. An owner-reviewed transfer is required.');
+                    }
+                }
                 $device=$this->db->one('SELECT d.*,a.customer_id AS bound_customer FROM devices d JOIN managed_accounts a ON a.account_ref=? WHERE d.id=? FOR UPDATE',[$row['account_ref'],$row['device_id']]);
                 if($device&&$device['policy']!=='removed'&&$device['customer_id']===$device['bound_customer']&&$device['key_fingerprint']===$row['key_fingerprint']&&$device['app_package']===$row['app_package']) {
                     if($row['credential_cipher']===null||$row['confirmed_at']!==null||$row['credential_expired']) $this->mintCredential($row['id'],$device['id']);
@@ -109,6 +141,7 @@ final class Enrollment
                     $this->db->query("UPDATE enrollment_requests SET status='pending',credential_cipher=NULL,reviewed_by=NULL WHERE id=?",[$row['id']]);
                 }
             }
+            if($enabled&&isset($claim['panel'])&&$row['status']==='pending'&&$row['device_id']===null) $this->autoApprove($row,$claim['panel']);
             $this->db->query('UPDATE enrollment_challenges SET used_at=UTC_TIMESTAMP(),request_id=? WHERE nonce_hash=?',[$row['id'],$nonceHash]);
             if($row['id']===$candidate) $this->auth->audit(null,'enrollment.requested',$row['id'],null,['app_package'=>$claim['package']]);
             return $this->registrationResponse($this->db->one('SELECT * FROM enrollment_requests WHERE id=?',[$row['id']]));
@@ -118,6 +151,35 @@ final class Enrollment
     {
         return ['schema_version'=>1,'request_id'=>$row['id'],'installation_id'=>$row['installation_id'],
             'poll_token'=>$this->secrets->decrypt($row['poll_cipher']),'status'=>$row['status']];
+    }
+    /** Called only inside the proof-consuming transaction. No app ownership fields
+     * or workspace display-name comparisons are authorization. */
+    private function autoApprove(array $request,array $panel): void
+    {
+        $link=$this->db->one('SELECT * FROM panel_resellers WHERE panel_id=?',[$panel['reseller_id']]);
+        if(!$link)return;
+        $tenant=$this->db->one('SELECT * FROM tenants WHERE id=? FOR UPDATE',[$link['tenant_id']]);
+        if(!$tenant||$tenant['status']!=='active')return;
+        $used=(int)$this->db->query("SELECT COUNT(*) FROM devices WHERE tenant_id=? AND policy!='removed'",[$tenant['id']])->fetchColumn();
+        if($used>=(int)$tenant['device_limit'])return;
+        // Never resurrect removed/rejected identities or take over an existing
+        // installation/customer. Such conflicts keep the owner-review path.
+        if($this->db->one('SELECT id FROM devices WHERE installation_id=?',[$request['installation_id']]))return;
+        $account=$this->db->one('SELECT * FROM managed_accounts WHERE account_ref=? FOR UPDATE',[$request['account_ref']]);
+        $existing=$this->db->one('SELECT * FROM panel_customers WHERE panel_id=? OR account_ref=? FOR UPDATE',[$panel['customer_id'],$request['account_ref']]);
+        if($account&&$account['tenant_id']!==$tenant['id'])return;
+        if($existing&&($existing['tenant_id']!==$tenant['id']||$existing['reseller_id']!==$panel['reseller_id']||$existing['account_ref']!==$request['account_ref']||$existing['panel_id']!==$panel['customer_id']))return;
+        if($account&&$existing&&$account['customer_id']!==$existing['customer_id'])return;
+        $customerId=$account['customer_id']??$existing['customer_id']??Database::id();
+        if(!$account&&!$existing) $this->db->query("INSERT INTO customers (id,tenant_id,name,notes,external_reference) VALUES (?,?,?,'',?)",[$customerId,$tenant['id'],'Panel line '.$panel['customer_id'],'panel:'.$panel['customer_id']]);
+        if(!$existing)$this->db->query('INSERT INTO panel_customers (panel_id,account_ref,customer_id,tenant_id,reseller_id) VALUES (?,?,?,?,?)',[$panel['customer_id'],$request['account_ref'],$customerId,$tenant['id'],$panel['reseller_id']]);
+        if(!$account)$this->db->query('INSERT INTO managed_accounts (account_ref,customer_id,tenant_id,account_hint) VALUES (?,?,?,?)',[$request['account_ref'],$customerId,$tenant['id'],$request['account_hint']]);
+        $id=Database::id();
+        $this->db->query("INSERT INTO devices (id,tenant_id,customer_id,installation_id,label,notes,capabilities,model,os_version,app_version,app_package,key_fingerprint,is_test,enrolled_at) VALUES (?,?,?,?,?,'','[]',?,?,?,?,?,0,UTC_TIMESTAMP())",
+            [$id,$tenant['id'],$customerId,$request['installation_id'],$request['label'],$request['model'],$request['os_version'],$request['app_version'],$request['app_package'],$request['key_fingerprint']]);
+        $this->db->query("UPDATE enrollment_requests SET status='approved',device_id=? WHERE id=?",[$id,$request['id']]);
+        $this->mintCredential($request['id'],$id);
+        $this->auth->audit(null,'enrollment.auto_assigned',$request['id'],$tenant['id'],['device_id'=>$id,'panel_reseller_id'=>$panel['reseller_id'],'panel_customer_id'=>$panel['customer_id']]);
     }
     private function mintCredential(string $requestId, string $deviceId): void
     {

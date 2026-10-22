@@ -1,4 +1,29 @@
-# Device management 0.2.0 — validation
+# Device management 0.2.1 — validation
+
+## Automatic panel ownership update
+
+- **93 real MariaDB/service/HTTP cases passed**, zero failures. New cases verify
+  signed panel-ID ownership, automatic customer/device creation without per-device
+  approval, reuse of customer records, unlinked identities staying pending, unique
+  owner-only reseller links, atomic new-reseller linking, exact signed lookups,
+  allocation/suspension checks, rejected/removed/manual-assignment protection,
+  and pending-app fresh-proof retries. The full existing suite is included.
+- **19 worker tests passed**, including the unchanged six-digit activation route,
+  database-only ownership assertions, unique active exact-username lookup, invalid/
+  stale HMAC rejection, and Python/PHP interoperability for both ownership proofs
+  and the nonce-bound request/result signatures.
+- **10 real-browser checks passed**, including the new panel-link form's prefilled
+  username, existing tenant isolation and enrollment/command UI coverage.
+- The original 001/002 migrations and all Android/updater/playback code are unchanged.
+  Existing 2.0.107 APKs use the same opaque proof exchange; no APK release is part
+  of this update. The Android tests below are the previous 0.2.0 validation, not
+  a claim they were rerun for this PHP/Python-only change.
+- Read-only panel access uses the schema confirmed in the uploaded auth worker.
+  No supplied panel credentials, live panel lookup, deployment or real ownership
+  transfer was used as part of these local tests. Deployment verification of the
+  worker's `users` read permission and the website's outbound HTTPS remains needed.
+
+## Previous Android/enrollment baseline (0.2.0)
 
 Validated locally with PHP 8.3.6, real MariaDB 10.11.14 and an isolated Python
 environment matching the existing activation-worker requirements.

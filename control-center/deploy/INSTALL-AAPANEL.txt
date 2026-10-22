@@ -1,9 +1,36 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.2.0
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.2.1
+
+0.2.1 OWNERSHIP UPDATE
+Back up database/config.php/private storage, extract the UPDATE ZIP over the
+existing website, and open Enrollments -> Apply database upgrade. This adds the
+panel reseller/customer mapping tables; existing records/keys/config remain intact.
+Update the EXISTING activation-code worker on its SEPARATE server with the matching
+worker ZIP. Do not patch the uploaded reseller portal auth worker or the EPG worker.
+The worker reuses the bridge .env already installed; no replacement settings file
+or Nginx change is needed when /management/ already works. It needs read-only
+access to users.id/username/status and customers.id/member_id in its existing DB.
+
+In Resellers, link each EXISTING workspace to its exact PANEL LOGIN username using
+Link panel reseller. The workspace name is prefilled for convenience, but ownership
+is based on the verified permanent panel ID, not that name. For NEW workspaces,
+fill Existing panel reseller username during creation. Blank means unlinked/manual.
+The owner workspace can also be linked to its actual panel account if necessary.
+
+New verified devices automatically get a customer record and reseller assignment;
+no per-device admin approval is required for linked active workspaces with capacity.
+Unmatched identities, conflicting assignments and removed/rejected devices are not
+silently approved. Linked panel identities are unique; transfers are separate work.
+Existing 2.0.107-test APKs work without an update. After adding a link, leave a pending
+app open a few minutes for its fresh-proof retry. No reactivation/data clearing.
+
+The signed reseller lookup needs PHP cURL with normal verified HTTPS access to
+activationworker.extremeiptv.net; never disable TLS verification if it fails.
 Target: https://control.fecxbrfzku.net, aaPanel Nginx + PHP 8.3+
 
 IMPORTANT: Real enrollment requires BOTH the activation-worker bridge update and a
 management-enabled APK. Old APKs do not automatically appear. Owner approval is
-required before a new device gets its own credential. No branding or reseller
+required only for unlinked/conflicting requests; linked verified panel accounts
+receive their own device credentials automatically. No branding or reseller
 APK/update-channel controls are included.
 
 1. BACK UP any existing site/database before deploying. Use a NEW dedicated empty

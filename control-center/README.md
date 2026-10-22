@@ -5,7 +5,44 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone — 0.2.0
+## Current milestone — 0.2.1
+
+### Verified panel reseller ownership / automatic enrollment
+
+The uploaded Overcast auth worker confirms `customers.member_id -> users.id`.
+The activation worker now includes the database-read customer/reseller IDs in the
+existing signed enrollment assertion. No APK field is accepted as ownership.
+
+Upgrade the PHP website and apply migration 003 under Enrollments, then update
+the EXISTING activation worker on its separate server. The reseller portal AUTH
+worker and the EPG worker are not patched. The same bridge settings/key are reused;
+no new PHP config file, SQL access from the browser or new APK is required.
+
+As owner, use **Resellers -> Link panel reseller** for existing workspaces (including
+the owner workspace if it owns panel lines). The form defaults to the workspace
+name; enter the exact PANEL LOGIN username. For new workspaces, use the **Existing
+panel reseller username** field in Create reseller. A blank field deliberately
+creates an unlinked/manual-review workspace. The worker verifies a unique active,
+exact-case username through a signed server-to-server lookup, and the backend
+permanently stores its numeric panel ID. Names alone never authorize enrollment.
+Each panel reseller may link to only one workspace, and vice versa. Workspace or
+panel username changes do not change the stored ownership ID. Re-linking to a
+different identity is not a supported transfer operation.
+
+For linked active workspaces with capacity, new verified devices automatically
+receive a customer record (`Panel line <id>`) and a device credential. Repeated
+installations of the same panel line reuse the customer record. Unknown links,
+conflicting accounts/assignments, rejected requests, existing/removed installations,
+and exhausted/suspended workspaces are not silently approved or transferred.
+Manual owner review remains available for exceptions, not every activation.
+
+Linking a reseller expires outstanding pending deliveries so existing 2.0.107
+apps automatically obtain fresh proofs on their next polls. Keep the app open
+for a few minutes. It does not clear login, profiles, favourites, guide data or
+already-approved device credentials. Existing approved devices are not silently
+reassigned when adding a link. Transfers remain a separate owner-reviewed action;
+this does not claim instantaneous synchronization of panel ownership changes for
+all already-enrolled/offline devices.
 
 - One-time owner setup, private generated keys, password hashing, secure sessions,
   password change/session revocation, origin/CSRF enforcement and rate limiting.
@@ -24,7 +61,8 @@ delivery or acknowledgment; check-in responses identify their schema version.
 
 Management-enabled app builds obtain a short-lived account assertion from the
 existing activation worker and prove possession of an installation P-256 key.
-The control-center owner reviews each new request and selects the customer.
+Verified linked panel accounts enroll automatically as described above. The
+control-center owner reviews unmatched/conflicting requests and selects the customer.
 No reseller/customer ownership ID submitted by an APK is accepted, and no unknown
 panel columns or external panel schema changes are required. Pending requests are
 not presented as connected devices or given management credentials.

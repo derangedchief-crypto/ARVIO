@@ -1,5 +1,29 @@
 ACTIVATION WORKER — MANAGEMENT BRIDGE UPDATE
 
+OWNERSHIP UPDATE (Control Center 0.2.1)
+This patch still updates ONLY iptv-activation-worker on the separate worker server,
+NOT the uploaded reseller portal auth worker and NOT the EPG worker. It reads the
+confirmed panel relation customers.member_id -> users.id and adds signed ownership
+claims plus a bridge-authenticated reseller username lookup. No panel SQL writes
+or additional Python dependencies. Existing /activate is unchanged.
+
+If the previous bridge is already installed, reuse its existing .env settings:
+  python3 -m zipfile -e /root/Extreme-Activation-Management-Bridge-Update.zip /root/management-bridge-update
+  bash /root/management-bridge-update/update-management-bridge.sh
+
+Update the website with the 0.2.1 UPDATE ZIP and apply its database upgrade first.
+After the worker update, /management/health includes ownership_schema_version:1.
+No new Nginx block is needed if /management/ already routes to this worker.
+As control-center owner, open Resellers -> Link panel reseller and enter the exact
+panel LOGIN username (the workspace name is prefilled). For a new workspace, fill
+the Existing panel reseller username field during creation. This saves its verified
+permanent panel ID. No new APK is needed: 2.0.107-test already carries opaque proofs.
+New devices on linked lines enroll automatically. Unmatched/conflicting accounts
+stay pending; existing assignments are never silently transferred. A new link
+causes pending apps to retry with fresh proofs; leave the app open a few minutes.
+
+FIRST-TIME BRIDGE INSTALLATION (only if it is not already installed)
+
 This updates the EXISTING Python activation worker, not the aaPanel PHP website.
 No panel SQL schema changes or extra Python dependencies are introduced. Old
 /activate responses and six-digit login behavior remain unchanged. Management

@@ -4,7 +4,7 @@ namespace ControlCenter;
 
 final class Management
 {
-    public function __construct(private readonly Database $db, private readonly Config $config, private readonly Auth $auth) {}
+    public function __construct(private readonly Database $db, private readonly Config $config, private readonly Auth $auth, private readonly ?PanelBridge $panelBridge=null) {}
 
     private function scope(array $actor, string $column, array &$arguments): string
     {
@@ -40,17 +40,28 @@ final class Management
     public function createReseller(array $actor, array $input): array
     {
         Auth::owner($actor);
-        Input::keys($input, ['company', 'name', 'email', 'password', 'device_limit']);
+        Input::keys($input, ['company', 'name', 'email', 'password', 'device_limit', 'panel_username']);
         $company = Input::text($input['company'] ?? null, 'company', 120);
         $name = Input::text($input['name'] ?? null, 'name', 120);
         $email = Input::email($input['email'] ?? null);
         $hash = Auth::hashPassword(Input::password($input['password'] ?? null));
         $limit = Input::integer($input['device_limit'] ?? 100, 1, 100000);
-        return $this->db->transaction(function () use ($actor, $company, $name, $email, $hash, $limit): array {
+        $panel=null;
+        if(!empty($input['panel_username'])) {
+            $bridge=$this->panelBridge??new PanelBridge(new EnrollmentProof($this->config,new Secrets($this->config)));
+            $panel=$bridge->reseller(Input::text($input['panel_username'],'panel username',150));
+            if($this->db->one('SELECT panel_id FROM panel_resellers WHERE panel_id=? OR username=?',[$panel['id'],$panel['username']]))throw new Problem(409,'That panel reseller is already linked to a workspace.');
+        }
+        return $this->db->transaction(function () use ($actor, $company, $name, $email, $hash, $limit, $panel): array {
             $id = Database::id(); $user = Database::id();
             $this->db->query("INSERT INTO tenants (id, name, kind, device_limit) VALUES (?, ?, 'reseller', ?)", [$id, $company, $limit]);
             $this->db->query("INSERT INTO users (id, tenant_id, email, display_name, password_hash, role) VALUES (?, ?, ?, ?, ?, 'reseller')", [$user, $id, $email, $name, $hash]);
+            if($panel) {
+                $this->db->query('INSERT INTO panel_resellers (panel_id,tenant_id,username,linked_by) VALUES (?,?,?,?)',[$panel['id'],$id,$panel['username'],$actor['id']]);
+                $this->db->query("UPDATE enrollment_requests SET poll_expires_at=UTC_TIMESTAMP() WHERE status='pending' AND device_id IS NULL");
+            }
             $this->auth->audit($actor, 'reseller.created', $id, $id, ['device_limit' => $limit]);
+            if($panel)$this->auth->audit($actor,'reseller.panel_linked',$panel['id'],$id);
             return $this->tenant($actor, $id);
         });
     }

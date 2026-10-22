@@ -40,7 +40,7 @@ def _b64(data: bytes) -> str:
 
 def issue_proof(secret: str, origin: str, canonical_username: str,
                 installation_id: str, key_fingerprint: str, app_package: str,
-                challenge_hash: str, *, now: int | None = None) -> str:
+                challenge_hash: str, *, now: int | None = None, ownership: dict | None = None) -> str:
     if not configured(secret, origin):
         raise ValueError("Management enrollment is not configured")
     if not re.fullmatch(r"[a-f0-9]{32}", installation_id):
@@ -59,9 +59,23 @@ def issue_proof(secret: str, origin: str, canonical_username: str,
         "challenge": challenge_hash, "iat": issued, "exp": issued + 60,
         "jti": secrets.token_hex(16),
     }
+    if ownership is not None:
+        if set(ownership) != {'customer_id', 'reseller_id', 'reseller_username'}:
+            raise ValueError('Invalid panel ownership')
+        for field in ('customer_id', 'reseller_id'):
+            if not re.fullmatch(r'[1-9][0-9]{0,19}', str(ownership[field])):
+                raise ValueError('Invalid panel identity')
+        if not isinstance(ownership['reseller_username'], str) or not 1 <= len(ownership['reseller_username']) <= 150:
+            raise ValueError('Invalid panel username')
+        claims['panel'] = {**ownership, 'customer_id': str(ownership['customer_id']), 'reseller_id': str(ownership['reseller_id'])}
     payload = _b64(json.dumps(claims, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
     signature = hmac.new(key, b"proof-v1." + payload.encode("ascii"), hashlib.sha256).digest()
     return "ec1." + payload + "." + _b64(signature)
+
+
+def bridge_signature(secret: str, domain: str, timestamp: str, nonce: str, payload: bytes) -> str:
+    text = domain.encode() + b'\n' + timestamp.encode() + b'\n' + nonce.encode() + b'\n' + payload
+    return hmac.new(bytes.fromhex(secret), text, hashlib.sha256).hexdigest()
 
 
 def credentials_match(rows: list[dict], password: str) -> bool:

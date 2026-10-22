@@ -35,7 +35,7 @@ final class EnrollmentProof
         try { $claim=json_decode(self::decode($parts[1]),true,16,JSON_THROW_ON_ERROR); }
         catch(\JsonException) { throw new Problem(403,'Invalid enrollment proof.'); }
         if(!is_array($claim)||array_is_list($claim)) throw new Problem(403,'Invalid enrollment proof.');
-        Input::keys($claim,['v','iss','aud','sub','hint','install','key','package','challenge','iat','exp','jti']);
+        Input::keys($claim,['v','iss','aud','sub','hint','install','key','package','challenge','iat','exp','jti','panel']);
         $now ??= time();
         if(($claim['v']??null)!==1||($claim['iss']??null)!=='extreme-activation'||($claim['aud']??null)!==$this->config->origin()
             ||!is_int($claim['iat']??null)||!is_int($claim['exp']??null)||$claim['iat']>$now+30||$claim['iat']<$now-150
@@ -45,6 +45,15 @@ final class EnrollmentProof
         foreach(['sub','key','challenge'] as $field) self::hex($claim[$field]??null,64);
         self::hex($claim['install']??null,32); self::hex($claim['jti']??null,32); self::package($claim['package']??null);
         $claim['hint']=Input::text($claim['hint']??'', 'account hint',40);
+        if(isset($claim['panel'])) {
+            $panel=$claim['panel'];
+            if(!is_array($panel)) throw new Problem(403,'Invalid panel ownership.');
+            Input::keys($panel,['customer_id','reseller_id','reseller_username']);
+            foreach(['customer_id','reseller_id'] as $field) {
+                if(!is_string($panel[$field]??null)||!preg_match('/^[1-9][0-9]{0,19}$/D',$panel[$field])) throw new Problem(403,'Invalid panel ownership.');
+            }
+            Input::text($panel['reseller_username']??null,'panel username',150);
+        }
         return $claim;
     }
 

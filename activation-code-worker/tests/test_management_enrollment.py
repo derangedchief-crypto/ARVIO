@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from management_enrollment import AttemptLimiter, client_ip, configured, credentials_match, issue_proof
+from management_enrollment import AttemptLimiter, client_ip, configured, credentials_match, issue_proof, bridge_signature
 
 SECRET = '12' * 32  # Synthetic test key, never deployment configuration.
 ORIGIN = 'https://control.example.test'
@@ -89,6 +89,7 @@ class EndpointTests(unittest.TestCase):
     def setUp(self):
         self.main._management_ips = AttemptLimiter(120, 3600)
         self.main._management_accounts = AttemptLimiter(20, 600)
+        self.main._management_lookups = AttemptLimiter(60, 60)
         self.settings = patch.multiple(self.main.settings, management_enrollment_secret=SECRET, management_control_origin=ORIGIN)
         self.settings.start(); self.addCleanup(self.settings.stop)
         self.startup = patch.object(self.main, 'ensure_tunnel_and_pool')
@@ -116,7 +117,7 @@ class EndpointTests(unittest.TestCase):
             response = client.post('/management/enrollment-proof', json=self.body())
         self.assertEqual(200, response.status_code); self.assertTrue(response.json()['ok'])
         self.assertNotIn('fixture-password', response.text)
-        self.assertIn('enabled = 1 AND activated = 1', cursor.sql)
+        self.assertIn('cu.enabled = 1 AND cu.activated = 1', cursor.sql)
         self.assertNotIn('reseller_id', cursor.sql); self.assertNotIn('fixture-password', str(cursor.args))
 
     def test_bad_and_duplicate_accounts_have_the_same_generic_error(self):
@@ -145,6 +146,57 @@ class EndpointTests(unittest.TestCase):
             response = client.post('/management/enrollment-proof', json=self.body())
             self.assertEqual(503, response.status_code)
             self.assertEqual({'status': 'ok'}, client.get('/health').json())
+
+    def test_verified_line_ownership_comes_only_from_database_join(self):
+        row = {'id': 2001, 'username': 'fixture-user', 'password': 'fixture-password', 'member_id': 1001,
+               'reseller_username': 'PanelOwner', 'reseller_status': 1}
+        with self.cursor([row]) as cursor, self.TestClient(self.main.app) as client:
+            response = client.post('/management/enrollment-proof', json=self.body())
+        self.assertEqual(200, response.status_code)
+        encoded = response.json()['proof'].split('.')[1]
+        claim = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+        self.assertEqual({'customer_id': '2001', 'reseller_id': '1001', 'reseller_username': 'PanelOwner'}, claim['panel'])
+        self.assertIn('u.id = cu.member_id', cursor.sql)
+
+    def test_inactive_reseller_cannot_get_automatic_ownership_claim(self):
+        row = {'id': 2001, 'username': 'fixture-user', 'password': 'fixture-password', 'member_id': 1001,
+               'reseller_username': 'PanelOwner', 'reseller_status': 0}
+        with self.cursor([row]), self.TestClient(self.main.app) as client:
+            response = client.post('/management/enrollment-proof', json=self.body())
+        encoded = response.json()['proof'].split('.')[1]
+        claim = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+        self.assertNotIn('panel', claim)
+
+    def lookup(self, client, username='PanelOwner', signed=True, timestamp=None):
+        import time
+        raw = json.dumps({'username': username}, separators=(',', ':'))
+        timestamp = str(int(time.time())) if timestamp is None else timestamp
+        nonce = 'a' * 32
+        headers = {'Content-Type': 'application/json', 'X-Management-Timestamp': timestamp, 'X-Management-Nonce': nonce}
+        headers['X-Management-Signature'] = bridge_signature(SECRET, 'reseller-lookup-v1', timestamp, nonce, raw.encode()) if signed else '0' * 64
+        return client.post('/management/reseller-lookup', content=raw, headers=headers), timestamp, nonce
+
+    def test_reseller_lookup_needs_bridge_auth_and_rejects_stale_signatures(self):
+        with patch.object(self.main, 'panel_cursor') as cursor, self.TestClient(self.main.app) as client:
+            self.assertEqual(403, self.lookup(client, signed=False)[0].status_code)
+            self.assertEqual(403, self.lookup(client, timestamp='1000000000')[0].status_code)
+            cursor.assert_not_called()
+
+    def test_exact_active_unique_reseller_lookup_returns_nonce_bound_signature(self):
+        with self.cursor([{'id': 1001, 'username': 'PanelOwner', 'status': 1}]) as cursor, self.TestClient(self.main.app) as client:
+            response, timestamp, nonce = self.lookup(client)
+        self.assertEqual(200, response.status_code)
+        result = response.json()
+        self.assertEqual({'id': '1001', 'username': 'PanelOwner'}, json.loads(result['payload']))
+        self.assertEqual(bridge_signature(SECRET, 'reseller-result-v1', timestamp, nonce, result['payload'].encode()), result['signature'])
+        self.assertEqual(('PanelOwner',), cursor.args)
+        self.assertNotIn('password', cursor.sql)
+
+    def test_lookup_never_guesses_case_ambiguous_or_disabled_accounts(self):
+        for rows in [[], [{'id': 1, 'username': 'panelowner', 'status': 1}], [{'id': 1, 'username': 'PanelOwner', 'status': 0}],
+                     [{'id': 1, 'username': 'PanelOwner', 'status': 1}] * 2]:
+            with self.cursor(rows), self.TestClient(self.main.app) as client:
+                self.assertEqual(404, self.lookup(client)[0].status_code)
 
 
 if __name__ == '__main__':

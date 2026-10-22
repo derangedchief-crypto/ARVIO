@@ -77,9 +77,10 @@ function installationCases(array &$tests, ControlCenter\Application $app, Contro
             $tenant=$old->management->tenants($owner)[0]; $customer=$old->management->createCustomer($owner,['tenant_id'=>$tenant['id'],'name'=>'Keep customer']);
             $device=$old->management->createDevice($owner,['customer_id'=>$customer['id'],'label'=>'Keep device']); $key=$c->secret('application.key');
             copy($config->root.'/database/migrations/002_enrollment.sql',$fresh.'/database/migrations/002_enrollment.sql');
+            copy($config->root.'/database/migrations/003_panel_ownership.sql',$fresh.'/database/migrations/003_panel_ownership.sql');
             $http=new HttpFixture($fresh,$settings); $login=$http->request('POST','/api/login',['email'=>'upgrade@example.test','password'=>$password],[],'upgrade'); same(200,$login['status']);
-            same(['002_enrollment.sql'],$http->request('GET','/api/system/status',null,[],'upgrade')['body']['pending_migrations']);
-            $result=$http->request('POST','/api/system/migrate',new stdClass(),['X-CSRF-Token'=>$login['body']['csrf']],'upgrade'); same(200,$result['status']); same(['002_enrollment.sql'],$result['body']['applied']);
+            same(['002_enrollment.sql','003_panel_ownership.sql'],$http->request('GET','/api/system/status',null,[],'upgrade')['body']['pending_migrations']);
+            $result=$http->request('POST','/api/system/migrate',new stdClass(),['X-CSRF-Token'=>$login['body']['csrf']],'upgrade'); same(200,$result['status']); same(['002_enrollment.sql','003_panel_ownership.sql'],$result['body']['applied']);
             same($key,$c->secret('application.key')); same('Keep device',$old->management->device($owner,$device['id'])['label']);
             same($owner['id'],$http->request('GET','/api/me',null,[],'upgrade')['body']['user']['id']);
             same(false,$http->request('GET','/api/enrollments/settings',null,[],'upgrade')['body']['enabled']);

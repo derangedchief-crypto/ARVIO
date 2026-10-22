@@ -92,6 +92,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
 
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator('nav a[href="#resellers"]').click();
+    await page.getByRole('button', { name: 'Link panel reseller', exact: true }).first().click();
+    assert((await page.getByLabel('Exact panel login username', { exact: true }).inputValue()).length > 0);
+    await page.locator('#modal').getByRole('button', { name: 'Cancel', exact: true }).click();
+    done('owner reseller-link form defaults to workspace name and requires server verification');
     await page.getByRole('button', { name: 'Create reseller', exact: true }).click();
     const email = 'browser-' + Date.now() + '@preview.test';
     const password = 'Browser-Test-Reseller-Password-46!';
