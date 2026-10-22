@@ -8,6 +8,7 @@ final class Application
     public readonly Auth $auth;
     public readonly Management $management;
     public readonly Commands $commands;
+    public readonly Enrollment $enrollment;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
@@ -15,6 +16,7 @@ final class Application
         $this->auth = new Auth($this->db, $config, new Secrets($config));
         $this->management = new Management($this->db, $config, $this->auth);
         $this->commands = new Commands($this->db, $config, $this->auth, $this->management);
+        $this->enrollment = new Enrollment($this->db,$config,$this->auth,$this->management,new Secrets($config));
     }
 
     public function serve(string $method, string $path): never
@@ -43,8 +45,20 @@ final class Application
             unset($result['token']);
             Http::json($result);
         }
+        if($method==='POST'&&$path==='/api/device/enrollment/challenge') Http::json($this->enrollment->challenge(Http::body(),$_SERVER['REMOTE_ADDR']??''));
+        if($method==='POST'&&$path==='/api/device/enrollment/register') Http::json($this->enrollment->register(Http::body(),$_SERVER['REMOTE_ADDR']??''),201);
+        if($method==='POST'&&$path==='/api/device/enrollment/poll') Http::json($this->enrollment->poll(Http::body(),$_SERVER['REMOTE_ADDR']??''));
+        if($method==='POST'&&$path==='/api/device/enrollment/confirm') Http::json($this->enrollment->poll(Http::body(),$_SERVER['REMOTE_ADDR']??'',true));
         if ($method === 'POST' && $path === '/api/device/check-in') {
-            Http::json($this->commands->checkIn(Http::bearer(), Http::body(), $_SERVER['REMOTE_ADDR'] ?? ''));
+            $credential=Http::bearer();
+            try { Http::json($this->commands->checkIn($credential, Http::body(), $_SERVER['REMOTE_ADDR'] ?? '')); }
+            catch(Problem $error) {
+                if($error->status===401) {
+                    $notice=$this->commands->removalNotice($credential);
+                    if($notice!==null) Http::json($notice);
+                }
+                throw $error;
+            }
         }
         if ($method === 'POST' && preg_match('~^/api/device/commands/([a-f0-9]{32})/ack$~D', $path, $match)) {
             Http::json($this->commands->acknowledge(Http::bearer(), $match[1], Http::body()));
@@ -58,6 +72,18 @@ final class Application
             $this->auth->verifyCsrf($token, $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
         }
         if ($method === 'GET' && $path === '/api/me') Http::json(['user' => $actor, 'csrf' => $this->auth->csrf($token)]);
+        if($method==='GET'&&$path==='/api/system/status') { Auth::owner($actor); Http::json(['pending_migrations'=>$migrations->pending()]); }
+        if($method==='POST'&&$path==='/api/system/migrate') {
+            Auth::owner($actor); Input::keys(Http::body(),[]);
+            $applied=$migrations->apply(); $this->auth->audit($actor,'system.database_upgraded',null,null,['migrations'=>$applied]);
+            Http::json(['applied'=>$applied]);
+        }
+        if($method==='GET'&&$path==='/api/enrollments/settings') Http::json($this->enrollment->settings($actor));
+        if($method==='POST'&&$path==='/api/enrollments/settings') Http::json($this->enrollment->setEnabled($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/enrollments/bridge-configuration') { Input::keys(Http::body(),[]); Http::json($this->enrollment->bridgeConfiguration($actor)); }
+        if($method==='GET'&&$path==='/api/enrollments') Http::json($this->enrollment->listing($actor,$_GET));
+        if($method==='POST'&&preg_match('~^/api/enrollments/([a-f0-9]{32})/approve$~D',$path,$match)) Http::json($this->enrollment->approve($actor,$match[1],Http::body()));
+        if($method==='POST'&&preg_match('~^/api/enrollments/([a-f0-9]{32})/reject$~D',$path,$match)) { Input::keys(Http::body(),[]); Http::json($this->enrollment->reject($actor,$match[1])); }
         if ($method === 'POST' && $path === '/api/logout') {
             Input::keys(Http::body(), []);
             $this->auth->logout($token); Http::cookie($this->config, ''); Http::json(['ok' => true]);
@@ -94,6 +120,7 @@ final class Application
         $days = $this->config->number('retention_days', 90, 7, 365);
         $commands = $this->db->query("DELETE FROM commands WHERE status IN ('succeeded','failed','expired','cancelled') AND finished_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
         $events = $this->db->query("DELETE FROM audit_events WHERE created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
+        if((new Migrations($this->db,$this->config))->pending()===[]) $this->enrollment->maintain();
         return ['expired_sessions_removed' => $sessions, 'old_commands_removed' => $commands, 'old_audit_events_removed' => $events];
     }
 }

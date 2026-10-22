@@ -25,6 +25,28 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     done('owner login and actual dashboard rendering');
     const ownerTenant = await page.evaluate(async () => (await (await fetch('/api/tenants')).json()).items.find(t => t.kind === 'owner').id);
 
+    if (credentials.enrollment_request_id) {
+      await page.locator('nav a[href="#enrollments"]').click();
+      await page.getByRole('heading', { name: 'Device enrollments', exact: true }).waitFor();
+      const pending = page.locator('tr').filter({ hasText: 'TEST · Enrollment simulator' });
+      await pending.getByRole('button', { name: 'Approve / assign', exact: true }).waitFor();
+      await page.screenshot({ path: path.join(output, 'enrollment-review-desktop.png'), fullPage: true });
+      const downloadPromise = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download worker bridge settings', exact: true }).click();
+      const download = await downloadPromise;
+      assert.equal(download.suggestedFilename(), 'management-bridge.env');
+      const content = fs.readFileSync(await download.path(), 'utf8');
+      assert(content.includes('MANAGEMENT_CONTROL_ORIGIN=')); assert(/MANAGEMENT_ENROLLMENT_SECRET=[a-f0-9]{64}/.test(content));
+      done('owner bridge settings download is a protected file, not displayed in the DOM');
+      await pending.getByRole('button', { name: 'Approve / assign', exact: true }).click();
+      await page.getByLabel('Assign to customer', { exact: true }).selectOption(credentials.enrollment_customer_id);
+      await page.locator('#modal-form').getByRole('button', { name: 'Approve device', exact: true }).click();
+      await page.locator('#modal').waitFor({ state: 'hidden' });
+      const approved = await page.evaluate(async id => (await (await fetch('/api/enrollments?status=approved')).json()).items.find(r => r.id === id), credentials.enrollment_request_id);
+      assert(approved && approved.device_id); assert.equal(approved.credential_cipher, undefined); assert.equal(approved.poll_hash, undefined);
+      done('owner approves synthetic pending identity and assigns customer without exposing delivery credentials');
+    }
+
     await page.locator('nav a[href="#customers"]').click();
     await page.getByRole('heading', { name: 'Customers', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Add customer', exact: true }).click();
@@ -92,6 +114,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     assert.equal(await page.locator('nav a[href="#resellers"]').count(), 0);
     const denied = await page.evaluate(async tenant => (await fetch('/api/devices?tenant_id=' + tenant)).status, ownerTenant);
     assert.equal(denied, 404);
+    assert.equal(await page.evaluate(async () => (await fetch('/api/enrollments')).status), 403);
     await page.locator('nav a[href="#customers"]').click();
     await page.getByText('No records yet.', { exact: true }).waitFor();
     done('reseller login sees only its empty workspace; foreign tenant API is denied');

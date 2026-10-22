@@ -49,4 +49,10 @@ final class Migrations
             throw $error;
         }
     }
+    public function pending(): array
+    {
+        try { $done=$this->db->query('SELECT name FROM schema_migrations')->fetchAll(\PDO::FETCH_COLUMN); }
+        catch(\PDOException $e) { if(($e->errorInfo[1]??null)!==1146)throw $e; $done=[]; }
+        return array_values(array_filter(array_map('basename',glob($this->config->root.'/database/migrations/*.sql')),static fn($file)=>!in_array($file,$done,true)));
+    }
 }

@@ -175,6 +175,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var requiredUpdateController: com.arflix.tv.updater.RequiredUpdateController
 
+    @Inject
+    lateinit var deviceManagementAgent: com.arflix.tv.management.DeviceManagementAgent
+
     private var jankStats: JankStats? = null
 
     private var pendingLauncherRequest by mutableStateOf<LauncherContinueWatchingRequest?>(null)
@@ -212,6 +215,12 @@ class MainActivity : ComponentActivity() {
         }
 
         super.onCreate(savedInstanceState)
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                deviceManagementAgent.runWhileStarted()
+            }
+        }
 
         lifecycleScope.launch {
             repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
@@ -392,35 +401,40 @@ class MainActivity : ComponentActivity() {
                     val maintenance by maintenanceRepository.state.collectAsStateWithLifecycle()
                     val requiredUpdate by requiredUpdateController.state.collectAsStateWithLifecycle()
                     val updateStatus by requiredUpdateController.status.collectAsStateWithLifecycle()
-                    com.arflix.tv.ui.components.RequiredUpdateGate(
-                        state = requiredUpdate,
-                        status = updateStatus,
-                        onDownload = requiredUpdateController::download,
-                        onInstall = requiredUpdateController::install,
-                        onPermission = requiredUpdateController::openInstallPermission,
-                    ) {
-                        com.arflix.tv.ui.components.MaintenanceGate(maintenance) {
-                            ArflixApp(
-                                authRepository = authRepository.get(),
-                                profileRepository = profileRepository.get(),
-                                traktRepository = traktRepository.get(),
-                                profileManager = profileManager.get(),
-                                watchHistoryRepository = watchHistoryRepository.get(),
-                                watchlistRepository = watchlistRepository.get(),
-                                iptvRepository = iptvRepository.get(),
-                                launcherContinueWatchingRepository = launcherContinueWatchingRepository.get(),
-                                oledBlackBackground = oledBlackBackground,
-                                skipProfileSelection = skipProfileSelection,
-                                pendingLauncherRequest = pendingLauncherRequest,
-                                onConsumeLauncherRequest = { pendingLauncherRequest = null },
-                                pendingInstallPackUrl = pendingInstallPackUrl,
-                                onConsumeInstallPackUrl = { pendingInstallPackUrl = null },
-                                preloadedCategories = startupState.categories,
-                                preloadedHeroItem = startupState.heroItem,
-                                preloadedHeroLogoUrl = startupState.heroLogoUrl,
-                                preloadedLogoCache = startupState.logoCache,
-                                onExitApp = { finish() }
-                            )
+                    val deviceManagement by deviceManagementAgent.state.collectAsStateWithLifecycle()
+                    CompositionLocalProvider(com.arflix.tv.ui.components.LocalDeviceManagementState provides deviceManagement) {
+                        com.arflix.tv.ui.components.RequiredUpdateGate(
+                            state = requiredUpdate,
+                            status = updateStatus,
+                            onDownload = requiredUpdateController::download,
+                            onInstall = requiredUpdateController::install,
+                            onPermission = requiredUpdateController::openInstallPermission,
+                        ) {
+                            com.arflix.tv.ui.components.MaintenanceGate(maintenance) {
+                                com.arflix.tv.ui.components.DeviceManagementGate(deviceManagement, deviceManagementAgent::dismissMessage) {
+                                    ArflixApp(
+                                        authRepository = authRepository.get(),
+                                        profileRepository = profileRepository.get(),
+                                        traktRepository = traktRepository.get(),
+                                        profileManager = profileManager.get(),
+                                        watchHistoryRepository = watchHistoryRepository.get(),
+                                        watchlistRepository = watchlistRepository.get(),
+                                        iptvRepository = iptvRepository.get(),
+                                        launcherContinueWatchingRepository = launcherContinueWatchingRepository.get(),
+                                        oledBlackBackground = oledBlackBackground,
+                                        skipProfileSelection = skipProfileSelection,
+                                        pendingLauncherRequest = pendingLauncherRequest,
+                                        onConsumeLauncherRequest = { pendingLauncherRequest = null },
+                                        pendingInstallPackUrl = pendingInstallPackUrl,
+                                        onConsumeInstallPackUrl = { pendingInstallPackUrl = null },
+                                        preloadedCategories = startupState.categories,
+                                        preloadedHeroItem = startupState.heroItem,
+                                        preloadedHeroLogoUrl = startupState.heroLogoUrl,
+                                        preloadedLogoCache = startupState.logoCache,
+                                        onExitApp = { finish() }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -487,6 +501,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        if (::deviceManagementAgent.isInitialized) deviceManagementAgent.onInteraction()
     }
 
     override fun onDestroy() {

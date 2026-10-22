@@ -9,16 +9,19 @@ may be returned. Do not expose this service directly to clients.
 import logging
 import threading
 import time
+import hashlib
 from collections import defaultdict, deque
 from contextlib import contextmanager
 
 import mysql.connector
 import mysql.connector.pooling
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, ValidationError
 from sshtunnel import SSHTunnelForwarder
+from starlette.concurrency import run_in_threadpool
 
 from config import settings
+from management_enrollment import AttemptLimiter, client_ip, configured, credentials_match, issue_proof
 
 
 logging.basicConfig(
@@ -37,6 +40,8 @@ _tunnel_lock = threading.Lock()
 
 _attempts: dict[str, deque[float]] = defaultdict(deque)
 _attempt_lock = threading.Lock()
+_management_ips = AttemptLimiter(120, 3600)
+_management_accounts = AttemptLimiter(20, 600)
 
 
 def allow_attempt(client_ip: str) -> bool:
@@ -128,6 +133,68 @@ class ActivationResponse(BaseModel):
     username: str | None = None
     password: str | None = None
     error: str | None = None
+
+
+class ManagementProofRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=1, max_length=512)
+    installation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    key_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    app_package: str = Field(pattern=r"^com\.arvio\.tv(?:\.beta|\.test)?$")
+    challenge_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+@app.get("/management/health")
+def management_health() -> dict:
+    enabled = configured(settings.management_enrollment_secret, settings.management_control_origin)
+    return {"enabled": enabled, "schema_version": 1}
+
+
+@app.post("/management/enrollment-proof")
+async def management_proof(request: Request) -> dict:
+    if not configured(settings.management_enrollment_secret, settings.management_control_origin):
+        raise HTTPException(status_code=503, detail="Management enrollment is not configured yet.")
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > 8192:
+            raise HTTPException(status_code=413, detail="Request is too large.")
+    try:
+        body = ManagementProofRequest.model_validate_json(raw)
+    except (ValidationError, ValueError):
+        # Pydantic's default errors can echo input values, including passwords.
+        raise HTTPException(status_code=422, detail="Invalid management enrollment request.") from None
+    peer = request.client.host if request.client else "unknown"
+    ip = client_ip(peer, request.headers.get("x-real-ip"))
+    account_bucket = hashlib.sha256((ip + "\n" + body.username.strip().casefold()).encode()).hexdigest()
+    if not _management_ips.allow(ip) or not _management_accounts.allow(account_bucket):
+        raise HTTPException(status_code=429, detail="Too many enrollment attempts. Try again later.")
+    def lookup_account():
+        with panel_cursor() as cursor:
+            # Only existing, already verified column names are used. No panel
+            # schema changes or assumption about reseller/customer-ID fields.
+            cursor.execute(
+                "SELECT username, password FROM customers WHERE username = %s "
+                "AND enabled = 1 AND activated = 1 "
+                "AND (exp_date IS NULL OR exp_date = 0 OR exp_date > %s) LIMIT 2",
+                (body.username.strip(), int(time.time())),
+            )
+            return cursor.fetchall()
+    try:
+        rows = await run_in_threadpool(lookup_account)
+    except Exception:
+        log.error("Management account verification unavailable")
+        raise HTTPException(status_code=503, detail="Account verification is temporarily unavailable.") from None
+    if not credentials_match(rows, body.password):
+        raise HTTPException(status_code=403, detail="Account is unavailable or credentials are invalid.")
+    try:
+        proof = issue_proof(settings.management_enrollment_secret, settings.management_control_origin,
+            str(rows[0]["username"]), body.installation_id, body.key_fingerprint,
+            body.app_package, body.challenge_hash)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid management enrollment request.") from None
+    return {"ok": True, "schema_version": 1, "proof": proof}
 
 
 @app.get("/health")

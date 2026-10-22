@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `422`. Version name is `2.0.106`, following the actual
+Current development version code is `423`. Version name is `2.0.107`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,39 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Device-management pilot in 2.0.107 / 423
+
+Development on `reseller-control-center` adds foreground-only management through
+the owner's `control.fecxbrfzku.net` backend. The activation worker verifies saved
+provider credentials against its existing active/activated/unexpired lookup and
+issues a 60-second audience/challenge/device-key-bound assertion. No reseller ID
+is trusted from an APK and no external panel schema/unknown ID fields are assumed.
+The control-center owner approves each new device and assigns its customer.
+
+Management tokens, pending delivery, known restriction policy and a bounded
+duplicate journal are encrypted in no-backup storage with Android Keystore keys.
+Signing keys are P-256 installation/account identities, not official APK or hardware
+attestation. Profiles sharing credentials reuse a binding; different provider
+accounts are isolated. Existing customers need not clear data or reactivate.
+Unknown/outage status does not invent a restriction; known explicit restrictions
+retain their gate. Required update and global maintenance remain higher priority.
+
+Initial client capabilities are authenticated check-ins, provider messages and
+policy suspension/block/removal/restoration. Other remote buttons remain disabled
+until their handlers are implemented. Status/device IDs are read-only in Settings.
+No update-source override, app branding, hidden foreground service, cross-app
+inventory/capture, decoder change or new hold-Back handling is introduced.
+
+Local validation: 84 real MariaDB/backend/HTTP tests, 14 worker tests (including
+Python -> PHP proof interoperability), nine headless browser checks and 87 targeted
+Android JVM/Robolectric tests passed. Internal-test and Android-instrumentation
+Kotlin compiled. Keystore/device instrumentation is compile-only, not measured
+hardware behavior. Real enrollment and remote-policy restoration still need the
+owner pilot after website/worker deployment and an explicitly published test APK.
+Logs: `/tmp/opencode/management-full-stack-final-validation.log`,
+`/tmp/opencode/management-worker-final-tests.log`,
+`/tmp/opencode/management-agent-final-validation.log`.
 
 ## DTS MKV linkage repair in 2.0.106 / 422
 

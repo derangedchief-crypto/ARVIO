@@ -1,9 +1,10 @@
-EXTREME CONTROL CENTER — FOUNDATION 0.1.2
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.2.0
 Target: https://control.fecxbrfzku.net, aaPanel Nginx + PHP 8.3+
 
-IMPORTANT: This is a working backend/dashboard foundation, not a completed Android
-management agent. Existing activated apps do NOT automatically appear or obey
-commands yet. No branding or APK/update-channel controls are included.
+IMPORTANT: Real enrollment requires BOTH the activation-worker bridge update and a
+management-enabled APK. Old APKs do not automatically appear. Owner approval is
+required before a new device gets its own credential. No branding or reseller
+APK/update-channel controls are included.
 
 1. BACK UP any existing site/database before deploying. Use a NEW dedicated empty
    MariaDB 10.6+ / MySQL 8.0.16+ database and a user restricted to that database. Prefer
@@ -42,9 +43,12 @@ commands yet. No branding or APK/update-channel controls are included.
    Create your owner account with a strong unique password (14+ characters).
    No default passwords are shipped. Never put the setup key into a URL/chat.
    Setup runs checked migrations and permanently locks first-owner creation in DB.
-9. Sign in, create reseller workspaces, add customers, and provision pending
-   device records. Pending devices are labelled NOT ENROLLED, not online.
-   Secure activation/app enrollment will be integrated as the next milestone.
+9. Sign in and create reseller workspaces/customer records. For real app enrollment,
+   open Enrollments, download the worker bridge settings, deploy the separate
+   activation-worker update, and enable new enrollment after its health check.
+   Install the management-enabled testing APK and approve its pending request,
+   selecting the correct customer. Optional pre-provisioned records can be attached
+   using their record ID. Unapproved/reserved records are not online devices.
 10. Add an aaPanel cron task every minute, using your installed PHP CLI path:
     /www/server/php/83/bin/php /www/wwwroot/control.fecxbrfzku.net/cli/console.php maintenance
     CLI PHP must have the same required extensions. Do not run the development
@@ -65,6 +69,9 @@ Run migrate with the same PHP version before using new API features. Never edit
 an already applied SQL migration; checksum mismatches intentionally stop upgrades.
 If DDL fails partway, stop and review/restore the backup; don't drop/reinitialize
 tables blindly. Initial setup refuses unrelated populated databases.
+For the 0.1.x -> 0.2.0 upgrade, the OWNER can instead use Enrollments -> Apply
+database upgrade after backup. This adds enrollment tables/columns and preserves
+the existing owner/reseller sessions, customer/device records and private keys.
 
 OWNER PASSWORD RECOVERY (SERVER ACCESS REQUIRED)
 Using aaPanel File Manager, create a temporary PRIVATE file outside public/ with
@@ -98,6 +105,8 @@ must come from the exact configured origin and include a session-bound CSRF toke
 An SSL-terminating proxy must forward verified HTTPS through trusted Nginx config;
 untrusted X-Forwarded-Proto/X-Forwarded-For headers are intentionally ignored.
 
-There is no remote shell, broad device wipe, arbitrary APK URL, public device
-enrollment endpoint, test-token issuance endpoint, or reseller update source.
+There is no remote shell, broad device wipe, arbitrary APK URL, public test-token
+issuer, self-claimed reseller/customer ownership, or reseller update source.
+App check-ins are foreground-only. Offline/stopped apps cannot be awakened by this
+panel, and external players/other apps are not controlled by the app's policy gate.
 Never reuse a database password previously pasted into a chat or screenshot.

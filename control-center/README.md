@@ -5,7 +5,7 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone
+## Current milestone — 0.2.0
 
 - One-time owner setup, private generated keys, password hashing, secure sessions,
   password change/session revocation, origin/CSRF enforcement and rate limiting.
@@ -20,13 +20,47 @@ The device contract currently accepts `schema_version: 1` (omission is treated a
 version 1 for local tooling). Unsupported versions are rejected before command
 delivery or acknowledgment; check-in responses identify their schema version.
 
-**Not yet connected to customer apps.** There is deliberately no public enrollment
-endpoint before activation identity/reseller ownership is agreed. Existing apps
-must gain the management client in a later testing build; provisioning a record
-does not make an existing customer device online. Local simulations are marked as
-test devices and issuance is CLI/test-only, loopback-environment-only, never HTTP.
+### Owner-reviewed real device enrollment
 
-Playlist editing, settings profiles, category/favourite sync, diagnostic uploads
+Management-enabled app builds obtain a short-lived account assertion from the
+existing activation worker and prove possession of an installation P-256 key.
+The control-center owner reviews each new request and selects the customer.
+No reseller/customer ownership ID submitted by an APK is accepted, and no unknown
+panel columns or external panel schema changes are required. Pending requests are
+not presented as connected devices or given management credentials.
+
+After upgrading the website, open **Enrollments** as owner. Apply the versioned
+database upgrade through that page, download the worker bridge settings, deploy
+the separate source-only worker update, and enable enrollment. The worker retains
+its existing `.env`, SSH/DB settings and six-digit activation behavior. The
+website still has exactly ONE `config.php`; no extra PHP configuration is needed.
+See `activation-code-worker/MANAGEMENT-BRIDGE-UPDATE.txt` in the repository for the
+worker deployment/Nginx steps.
+
+The Android client reads existing eligible activation credentials without asking
+customers to reactivate, uses Keystore-backed signing/encrypted no-backup storage,
+and checks in only while its activity is started. Support installation IDs/status
+are visible in Settings. Profiles sharing an activated account reuse its binding;
+different accounts have isolated identities and tokens, not immutable hardware IDs.
+Device key possession is NOT official APK/hardware attestation.
+
+Already-approved account/key identities can renew credentials without another
+device slot. Renewal never clears suspension/block policy, and a removed device
+requires owner review again. A rejected enrollment does not erase/revoke the
+customer's underlying IPTV login. Owner-approved account-to-customer mappings
+cannot silently be reassigned to another reseller by a new request.
+
+Initial real-client capabilities are `request_checkin` and `show_message`, plus
+authenticated policy suspension/block/removal and restoration. Cached known
+restrictions persist encrypted; an unknown/outage response does not invent one.
+The message/deduplication journal is committed atomically. Unsupported remote
+actions stay disabled instead of being falsely acknowledged as executed.
+
+Older APKs do not gain these capabilities without an update. Provisioning a record
+alone does not make an app online. Local simulations remain explicitly marked TEST
+and their credential issuer remains CLI/test-only, loopback-only, never HTTP.
+
+Playlist/EPG refresh handlers, playlist editing, settings profiles, category/favourite sync, diagnostic uploads
 and screenshots are later milestones. Their dashboard tabs explicitly show that
 they are not available. Android permission/OEM limitations still apply. Rebranding,
 launcher icons/names and branded APK generation are deferred. Every customer and
@@ -55,9 +89,8 @@ user-owned directory. It does not need sudo, a Docker socket or system installs:
 
 ```sh
 bash control-center/dev/bootstrap-ubuntu.sh
-bash control-center/dev/start-db.sh
-# In another terminal, while that PRIVATE Unix-socket-only DB is running:
-bash control-center/dev/php.sh control-center/tests/run.php
+python3 control-center/dev/run-integration.py
+# This starts a NEW private socket-only DB for the run and stops it afterward.
 node --check control-center/public/assets/app.js
 python3 control-center/tools/package.py
 ```

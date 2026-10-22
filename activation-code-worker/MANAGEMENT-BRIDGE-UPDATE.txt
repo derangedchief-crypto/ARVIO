@@ -1,0 +1,59 @@
+ACTIVATION WORKER — MANAGEMENT BRIDGE UPDATE
+
+This updates the EXISTING Python activation worker, not the aaPanel PHP website.
+No panel SQL schema changes or extra Python dependencies are introduced. Old
+/activate responses and six-digit login behavior remain unchanged. Management
+proofs are unavailable until its optional bridge settings have been configured.
+
+1. Upload the Control Center 0.2.0 UPDATE ZIP to the existing site. It omits your
+   config.php and preserves private storage. Sign in as owner -> Enrollments ->
+   Apply database upgrade after taking the indicated backup.
+2. On that page click Download worker bridge settings. It produces management-bridge.env.
+3. Upload this worker update ZIP to the ACTUAL activation-worker server and extract
+   it into a separate folder, for example /root/management-bridge-update.
+   Upload the downloaded management-bridge.env there too.
+4. From that folder run:
+   sudo bash update-management-bridge.sh ./management-bridge.env
+   The script backs up its exact changed files, merges ONLY the two management
+   fields into /opt/iptv-activation-worker/.env, preserves DB/SSH settings and venv,
+   restarts iptv-activation-worker, and checks its existing /health endpoint.
+   If settings were already appended manually, the script can run without an argument.
+5. In the EXISTING Nginx server block for activationworker.extremeiptv.net, add this
+   location if /management/ is not already proxied to the activation worker:
+
+   location /management/ {
+       client_max_body_size 8k;
+       proxy_pass http://127.0.0.1:9092;
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+       proxy_read_timeout 20s;
+   }
+
+   Preserve the current certificate, /activate and /epg/ routes. Do not replace
+   the whole server block or proxy /management/ to the EPG worker on port 9093.
+6. Verify https://activationworker.extremeiptv.net/management/health returns
+   enabled:true. Enable new enrollment on the control-center Enrollments page.
+7. Install the approved management-enabled testing APK. Existing activated apps
+   recover their saved provider login automatically; customers do not need to
+   clear data, sign out or re-enter activation codes. The owner reviews pending
+   requests and selects the corresponding customer/workspace. The app receives
+   its own credential after approval and begins reporting real check-ins.
+
+The app's P-256 key proves installation-key possession, NOT official APK attestation
+or immutable hardware identity. Package/model fields are not trusted reseller IDs.
+The worker signs an opaque account reference using ONLY the existing active,
+activated, unexpired username/password lookup. Tenant/customer ownership is assigned
+in the control center by the owner, never inferred from unconfirmed panel columns.
+
+RENEWAL AND POLICY
+Already-approved account/key/installation tuples can renew their own credential
+without another device slot. Renewal cannot clear suspension/block policy. Removed
+devices require owner review again. Pausing new enrollment does not invalidate
+existing device credentials or stop the legacy activation endpoint.
+
+Keep the original control-center application.key backup: the bridge key/account
+reference namespace is derived from it. Replacing that master key is not a routine
+key rotation and requires a planned data/identity migration.
+
+For multiple worker processes, configure edge/Nginx throttling for an aggregate
+limit; the bounded in-process enrollment limiter is additional protection.

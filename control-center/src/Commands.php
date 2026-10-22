@@ -120,7 +120,7 @@ final class Commands
                     $deliveries[] = ['id' => $row['id'], 'kind' => $row['kind'], 'payload' => json_decode($row['payload'], false, 16, JSON_THROW_ON_ERROR), 'lease_token' => $lease, 'expires_at' => $row['expires_at']];
                 }
             }
-            return ['schema_version' => 1, 'policy' => $policy, 'heartbeat_seconds' => $this->config->number('heartbeat_seconds', 60, 15, 300), 'commands' => $deliveries,
+            return ['schema_version' => 1, 'device_id'=>$current['id'], 'policy' => $policy, 'heartbeat_seconds' => $this->config->number('heartbeat_seconds', 60, 15, 300), 'commands' => $deliveries,
                 'update_policy' => ['managed_by' => 'platform_owner', 'source' => 'existing_central_channel']];
         });
     }
@@ -151,6 +151,16 @@ final class Commands
             if ($status !== 'running') $this->auth->audit(null, 'command.' . $status, $commandId, $current['tenant_id'], ['device_id' => $current['id'], 'kind' => $row['kind']]);
             return self::publicCommand($this->db->one('SELECT * FROM commands WHERE id = ?', [$commandId]));
         });
+    }
+    /** A previously issued, known credential may read only its removal policy,
+     * never commands/data. This is not an authentication failure guessed by APKs. */
+    public function removalNotice(string $token): ?array
+    {
+        if(!preg_match('/^[a-f0-9]{64}$/D',$token))return null;
+        $row=$this->db->one("SELECT d.id FROM device_credentials k JOIN devices d ON d.id=k.device_id WHERE k.token_hash=? AND d.policy='removed'",[hash('sha256',$token)]);
+        if(!$row)return null;
+        $this->auth->limit('removed-device-policy',$row['id'],20,60);
+        return ['schema_version'=>1,'device_id'=>$row['id'],'policy'=>'removed','commands'=>[],'heartbeat_seconds'=>60];
     }
 
     /** No production HTTP enrollment endpoint exists until the activation/tenant

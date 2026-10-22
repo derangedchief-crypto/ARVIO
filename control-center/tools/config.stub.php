@@ -6,7 +6,7 @@ return [
     'environment' => 'production',
     'origin' => 'https://control.fecxbrfzku.net',
     'database' => [
-        'dsn' => 'mysql:host=inflexaservers.com;port=3306;dbname=sql_control_fecxbrfzku_net;charset=utf8mb4',
+        'dsn' => 'mysql:host=localhost;port=3306;dbname=sql_control_fecxbrfzku_net;charset=utf8mb4',
         'username' => 'sql_control_fecxbrfzku_net',
         'password' => '',
         // For remote MySQL, point to the provider's CA certificate when required.

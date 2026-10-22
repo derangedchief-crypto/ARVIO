@@ -17,6 +17,9 @@ def _require(name: str) -> str:
 
 
 class Settings:
+    # Optional: old activation continues unchanged when management is not enabled.
+    management_enrollment_secret = os.getenv("MANAGEMENT_ENROLLMENT_SECRET", "")
+    management_control_origin = os.getenv("MANAGEMENT_CONTROL_ORIGIN", "")
     ssh_host = _require("PANEL_SSH_HOST")
     ssh_port = int(os.getenv("PANEL_SSH_PORT", "22"))
     ssh_username = _require("PANEL_SSH_USERNAME")

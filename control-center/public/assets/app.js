@@ -73,7 +73,7 @@ async function enter() {
   $('entry').replaceChildren(); $('entry').hidden = true; $('shell').hidden = false; $('account-name').textContent = state.user.display_name;
   $('workspace-name').textContent = state.user.role === 'owner' ? 'Owner workspace · all resellers' : state.tenants[0]?.name || 'Reseller workspace';
   const nav = $('navigation'); nav.replaceChildren();
-  const links = [['overview', 'Overview'], ['devices', 'Devices'], ['customers', 'Customers'], ...(state.user.role === 'owner' ? [['resellers', 'Resellers']] : []), ['audit', 'Activity log']];
+  const links = [['overview', 'Overview'], ['devices', 'Devices'], ['customers', 'Customers'], ...(state.user.role === 'owner' ? [['resellers', 'Resellers'], ['enrollments', 'Enrollments']] : []), ['audit', 'Activity log']];
   links.forEach(([key, text]) => { const link = el('a', text); link.href = '#' + key; link.dataset.page = key; nav.append(link); });
   await route();
 }
@@ -89,7 +89,7 @@ function devicesTable(items) { return table(['Device', 'Customer / reseller', 'P
 async function overview(epoch) {
   const [stats, devices] = await Promise.all([api('/api/overview'), api('/api/devices')]); if (epoch !== state.epoch) return;
   const main = $('main'); main.replaceChildren(heading('Operations overview', 'Your customers and devices, in one workspace.', [button('Refresh', route)]));
-  main.append(el('p', 'App enrollment integration is the next stage. Existing activations are not automatically imported. Any local simulator is explicitly labelled as a test device.', 'notice'));
+  main.append(el('p', 'Management-enabled app builds request enrollment after activation. The owner reviews and assigns each new device under Enrollments. Older app builds are not automatically imported. Local simulators remain labelled TEST.', 'notice'));
   const cards = el('div', null, 'stats'); [['Managed devices', stats.total, `${stats.not_enrolled} awaiting enrollment`], ['Recently connected', stats.connected, 'App check-ins, not device power state'], ['Customers', stats.customers, 'Visible to your account only'], ['Queued / in progress', stats.pending_commands, 'Delivery is not confirmation of execution']].forEach(([label, count, note]) => { const card = el('div', null, 'stat'); card.append(el('div', label, 'stat-label'), el('strong', count), el('span', note)); cards.append(card); });
   main.append(cards, panel('Recent devices', devicesTable(devices.items)), panel('One update source of truth', el('p', 'Every customer and reseller app uses the platform owner’s update channel. Resellers cannot upload APKs, change update URLs or disable mandatory updates.', 'subtle')));
 }
@@ -133,7 +133,7 @@ async function devicePage(id, epoch) {
   const d = await api('/api/devices/' + id); if (epoch !== state.epoch) return;
   const main = $('main'); main.replaceChildren(); const back = el('a', '← All devices', 'back-link'); back.href = '#devices'; main.append(back, heading(d.label, d.customer_name + ' · ' + d.tenant_name, [button('Refresh', route), badge(d.presence)]));
   if (d.is_test) main.append(el('p', 'LOCAL TEST SIMULATOR — not a real customer device.', 'notice warning'));
-  if (!d.enrolled_at) main.append(el('p', 'Pending enrollment. The app client/activation bridge has not been connected yet; no remote action is available for this record.', 'notice'));
+  if (!d.enrolled_at) main.append(el('p', 'Reserved device record awaiting approved enrollment. It is not an online app connection. The owner can attach a verified enrollment request using this record ID.', 'notice'));
   const tabs = el('div', null, 'tabs'); const body = el('div'); main.append(tabs, body);
   const names = ['Overview', 'Playlists', 'Settings', 'Categories', 'Favourites', 'Notifications', 'Logs', 'Commands'];
   for (const name of names) { const b = button(name, () => select(name)); b.dataset.tab = name; tabs.append(b); }
@@ -163,6 +163,87 @@ async function audit(epoch) {
   const load = async (page = 1) => { const result = await api('/api/audit?page=' + page); if (epoch !== state.epoch) return; box.replaceChildren(table(['Time', 'Action', 'Record', 'Details'], result.items.map(r => [date(r.created_at), r.action, el('span', r.resource_id || '—', 'mono'), r.metadata])), pagination(result, load)); };
   await load();
 }
+function downloadText(filename, content) {
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
+  const a = el('a'); a.href = url; a.download = filename; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function approveEnrollment(request) {
+  const initial = await api('/api/customers');
+  if (!initial.items.length) { toast('Create a customer record first, then approve this enrollment.'); return; }
+  const options = initial.items.map(c => [c.id, c.name + ' · ' + c.tenant_name]);
+  modal('Approve verified device', [
+    { key: 'customer_search', label: 'Find customer / account reference', required: false, hint: 'Search by customer name or your account reference. Ownership is assigned by you, not by the app.' },
+    { key: 'customer_id', label: 'Assign to customer', options },
+    { key: 'label', label: 'Device nickname', value: request.label },
+    { key: 'device_id', label: 'Existing reserved device ID (optional)', required: false, max: 32, hint: 'Leave blank for a new device, or paste a matching pending record ID. Device allocations are enforced.' }
+  ], async values => {
+    delete values.customer_search;
+    if (!values.device_id) delete values.device_id;
+    await api('/api/enrollments/' + request.id + '/approve', values);
+    toast('Approved. The app receives its own credential on its next check-in.');
+  }, 'Approve device');
+  const form = $('modal-form'); const input = form.elements.namedItem('customer_search'); const select = form.elements.namedItem('customer_id');
+  let generation = 0; let timer;
+  input.addEventListener('input', () => {
+    clearTimeout(timer); const current = ++generation;
+    timer = setTimeout(async () => {
+      try {
+        const result = await api('/api/customers?search=' + encodeURIComponent(input.value));
+        if (current !== generation || !select.isConnected) return;
+        select.replaceChildren();
+        for (const c of result.items) { const option = el('option', c.name + ' · ' + c.tenant_name); option.value = c.id; select.append(option); }
+        if (!result.items.length) { const option = el('option', 'No matching customers'); option.value = ''; select.append(option); }
+      } catch (e) { toast(e.message); }
+    }, 300);
+  });
+}
+async function enrollments(epoch) {
+  const main = $('main'); main.replaceChildren(heading('Device enrollments', 'Verify the account, approve the device, then assign it to the correct customer.'));
+  const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
+  if (system.pending_migrations.length) {
+    main.append(panel('Database upgrade required', el('p', 'This release adds enrollment tables without replacing existing accounts, devices or configuration. Back up the database and private storage before upgrading.', 'subtle'),
+      button('Apply database upgrade', async () => {
+        if (!confirm('Have you backed up the control-center database, config.php and private storage? Apply the versioned database upgrade now?')) return;
+        try { await api('/api/system/migrate', {}); toast('Database upgraded.'); await route(); } catch (e) { toast(e.message); }
+      }, 'primary')));
+    return;
+  }
+  const settings = await api('/api/enrollments/settings'); if (epoch !== state.epoch) return;
+  const actions = el('div', null, 'actions');
+  actions.append(button('Download worker bridge settings', async () => {
+    try { const file = await api('/api/enrollments/bridge-configuration', {}); downloadText(file.filename, file.content); toast('Append these settings to the activation worker’s existing .env, then restart that worker after updating its code.'); }
+    catch (e) { toast(e.message); }
+  }), button(settings.enabled ? 'Pause new enrollment' : 'Enable new enrollment', async () => {
+    if (!confirm(settings.enabled ? 'Pause new enrollment? Existing enrolled devices continue to check in.' : 'Have you updated the activation worker and added its downloaded bridge settings? Enable owner-reviewed enrollment?')) return;
+    try { await api('/api/enrollments/settings', { enabled: !settings.enabled }); await route(); } catch (e) { toast(e.message); }
+  }, settings.enabled ? '' : 'primary'));
+  main.append(panel('Activation bridge', el('p', 'The existing activation worker verifies active customer logins and issues a short-lived assertion. The app also proves possession of its own device key. No signing secret is embedded in APKs, and resellers cannot claim unassigned accounts.', 'subtle'),
+    el('p', settings.enabled ? 'New enrollment is enabled. Every new device still requires owner approval.' : 'New enrollment is paused. Configure the worker bridge before enabling it.', 'notice'), actions));
+  const box = panel('Requests'); const filters = el('form', null, 'filters'); const status = el('select'); status.setAttribute('aria-label', 'Enrollment status');
+  for (const value of ['pending', 'approved', 'rejected']) { const option = el('option', value[0].toUpperCase() + value.slice(1)); option.value = value; status.append(option); }
+  filters.append(status, button('Refresh requests', () => load(1))); filters.onsubmit = e => { e.preventDefault(); load(1); }; status.addEventListener('change', () => load(1));
+  const results = el('div'); box.append(filters, results); main.append(box);
+  async function load(page = 1) {
+    try {
+      const data = await api(`/api/enrollments?page=${page}&status=${status.value}`); if (epoch !== state.epoch) return;
+      const rows = data.items.map(r => {
+        const a = el('div', null, 'actions');
+        if (r.status !== 'approved') {
+          a.append(button('Approve / assign', () => approveEnrollment(r).catch(e => toast(e.message))));
+          if (r.status === 'pending') a.append(button('Reject', async () => {
+            if (!confirm('Reject this management enrollment request? This does not erase the app’s saved data or change its IPTV activation.')) return;
+            try { await api('/api/enrollments/' + r.id + '/reject', {}); await load(page); } catch (e) { toast(e.message); }
+          }, 'danger'));
+        } else if (r.device_id) a.append(button('View device', () => { location.hash = 'device/' + r.device_id; }));
+        return [cellName(r.label, r.installation_id), cellName(r.model || 'App-reported device', r.os_version), r.account_hint, cellName(r.app_version, r.app_package), badge(r.status), date(r.last_request_at), a];
+      });
+      const roster = table(['Device / installation', 'Reported details', 'Verified account', 'App build', 'Review', 'Last request', 'Actions'], rows);
+      roster.classList.add('enrollment-table');
+      results.replaceChildren(roster, pagination(data, load));
+    } catch (e) { toast(e.message); }
+  }
+  await load();
+}
 async function route() {
   if (!state.user) return; const epoch = ++state.epoch; const hash = location.hash.slice(1) || 'overview'; const section = hash.startsWith('device/') ? 'devices' : hash;
   document.querySelectorAll('#navigation a').forEach(a => a.classList.toggle('active', a.dataset.page === section));
@@ -171,6 +252,7 @@ async function route() {
     else if (hash === 'devices' || hash === 'customers') await records(hash, epoch);
     else if (hash === 'resellers' && state.user.role === 'owner') await resellers(epoch);
     else if (hash === 'audit') await audit(epoch);
+    else if (hash === 'enrollments' && state.user.role === 'owner') await enrollments(epoch);
     else if (/^device\/[a-f0-9]{32}$/.test(hash)) await devicePage(hash.split('/')[1], epoch);
     else location.hash = 'overview';
   } catch (e) { if (epoch === state.epoch) { $('main').replaceChildren(panel('Unable to load this view', el('p', e.message, 'error'), button('Retry', route))); } }

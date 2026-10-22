@@ -101,6 +101,8 @@ require __DIR__ . '/operations.php';
 operationalCases($tests,$app,$config,$server,$name,$socket,$dbUser,$fixture,$password,$owner,$alpha,$tenantA,$makeDevice,$enrolled,$snapshot);
 require __DIR__ . '/installation.php';
 installationCases($tests,$app,$config,$server,$name,$fixture,$password,$owner);
+require __DIR__ . '/enrollment.php';
+enrollmentCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA,$tenantB,$makeCustomer,$http,$password);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

@@ -4264,6 +4264,7 @@ private fun MobileSettingsMainPage(
                     isFocused = false,
                     onClick = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) }
                 )
+                com.arflix.tv.ui.components.DeviceManagementStatusInfo()
                 MobileSettingsRow(
                     icon = Icons.Default.Security,
                     title = stringResource(R.string.settings_privacy_data_title),
@@ -6140,6 +6141,7 @@ private fun GeneralSettings(
             onClick = onAutoPlayMinQualityClick,
             modifier = Modifier.settingsFocusSlot(12)
         )
+
         Spacer(modifier = Modifier.height(10.dp))
         SettingsToggleRow(
             title = stringResource(R.string.trailer_auto_play),
@@ -9188,6 +9190,8 @@ private fun AccountsSettings(
             },
             modifier = Modifier.settingsFocusSlot(12)
         )
+
+        com.arflix.tv.ui.components.DeviceManagementStatusInfo()
 
         Spacer(modifier = Modifier.height(16.dp))
 

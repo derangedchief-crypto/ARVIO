@@ -1,47 +1,42 @@
-# Backend foundation 0.1.2 — validation
+# Device management 0.2.0 — validation
 
-The foundation baseline was validated locally on Linux with PHP 8.3.6 and real
-MariaDB 10.11.14. The config.php-only 0.1.1 change is additionally checked by
-`tests/config.php`, PHP/JS syntax checks and the install/update ZIP tests. The
-database and browser suites below are the prior foundation baseline, not a claim
-that stopped local services were restarted/retested for this filename change.
+Validated locally with PHP 8.3.6, real MariaDB 10.11.14 and an isolated Python
+environment matching the existing activation-worker requirements.
 
-0.1.2 additionally checks 12 safe connection-error classifications, including
-proof that synthetic usernames/passwords/hostnames in driver messages do not
-appear in public diagnostics. PHP/JS syntax and install/update ZIP checks pass.
-No connection to the user's live SQL server or use of their supplied password is
-part of these checks. The update improves diagnosis; it does not start/configure
-the live MySQL service or claim to repair its underlying connection failure.
+- **84 passing backend/database/HTTP cases**, zero failures. Includes prior auth,
+  CSRF/tenant isolation, leases/idempotency, backup/restore and retention checks,
+  plus account assertions, device-key possession, replay/audience/expiry checks,
+  owner-only approval, identity/account binding, encrypted credential delivery,
+  renewal without an extra device slot, and retained suspension/removal policy.
+- A real 0.1-schema -> 0.2 migration test preserves existing owner sessions, records,
+  and encryption keys. The original applied 001 migration is byte-for-byte unchanged.
+- **14 passing activation-worker tests** cover original activation compatibility,
+  active-account credential checks, generic failures without password echoes,
+  bounded throttling, Python-issued assertions verified by actual PHP code, and
+  merging only the two bridge fields while preserving the worker's existing `.env`.
+- **9 passing real-browser checks** include protected bridge-file download and
+  owner approval/assignment, as well as reseller isolation, literal hostile-text
+  rendering, command history, unsupported controls and mobile layout.
+- **87 passing targeted Android JVM/Robolectric tests** include protocol/account
+  scoping, signatures, bounded duplicate journals, expiry, policy/message UI,
+  activation, updater/relaunch, live output and DTS/DV regressions. Internal-test
+  and Android-instrumentation Kotlin compilation passed.
+- The native ManagementVault instrumentation smoke test is COMPILE-ONLY here.
+  Android Keystore behavior, real package updates and physical-device enrollment
+  have not been executed locally and remain part of the owner-device pilot.
+- PHP/JS/installer syntax and install/update ZIP checks pass. Update ZIPs omit
+  config.php and initialized storage; worker packages contain source only.
 
-- **67 passing backend/database/HTTP cases**, zero failures: setup locking, typed
-  input, authentication/CSRF/origin checks, tenant/resource isolation, private-file
-  protection, rate limits, device policy, credential revocation, queue capabilities,
-  leases/retries/expiry, schema-version rejection, idempotency, redaction/encryption and retention.
-- Two-process concurrency exercises enforce device allocations and deduplicate
-  simultaneous command requests against actual InnoDB transactions.
-- Native MariaDB dump/restore into a separate generated test database verifies
-  schema, records, migration checksums and decryption with the original private key.
-- Missing encryption keys fail closed instead of being silently regenerated.
-  Filesystem-authorized owner recovery revokes sessions without deleting data.
-- **7 passing real-browser checks** with Playwright 1.64.1 / Chromium: owner and
-  reseller login, hostile customer text rendered literally, pending enrollment,
-  unsupported controls, actual queue visibility, scoped APIs and mobile layout.
-  No uncaught JavaScript errors. Desktop and 390px-wide screenshots inspected.
-- PHP, JavaScript and shell syntax checks pass. The ZIP is deterministic, its
-  manifest matches contents, private/test files are excluded, and extracting it
-  using the update ZIP over an initialized local copy preserves config.php and
-  encryption keys. The full install ZIP ships exactly one application config.php
-  with a blank password; no example/local config files are shipped.
+The database/browser validation starts a NEW private socket-only local DB and
+temporary HTTP server for the test run and stops both afterward. It does not
+restart the previous user-stopped preview services or contact live customer DBs.
+Preview records and cryptographic issuer fixtures are explicitly synthetic.
 
-This is **not** a claim of completed Android device management or production fleet
-capacity. Devices in preview screenshots are explicitly synthetic test simulators.
-No live aaPanel site/database was contacted or deployed, and no supplied database
-password was used. Production MySQL 8 compatibility, remote SQL certificate/TLS
-handshake, real host permissions/cron and load capacity still require deployment
-verification. Local MariaDB results are not represented as tests on those systems.
+This is not a claim of completed remote management or fleet capacity. Real worker
+deployment/Nginx routing, APK Keystore operation, check-in/policy/message behavior,
+host permissions and capacity still need a controlled owner-device pilot. No live
+activation service or customer release was modified by these tests.
 
-Existing APKs, activation, maintenance, app updates, fast live playback and original
-Back handling are unchanged. App enrollment/ownership integration, configuration
-sync and diagnostic/screenshot permissions remain subsequent plan stages. No
-custom branding, reseller APK pipeline or reseller-controlled update channel is
-included.
+The fast live engine, original Back handlers, entitlement selection and central
+update source remain unchanged. Branding and advanced remote refresh/settings/
+playlists/diagnostic/screenshot capabilities remain deferred or subsequent stages.
