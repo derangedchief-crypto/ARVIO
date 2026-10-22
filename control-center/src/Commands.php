@@ -4,12 +4,18 @@ namespace ControlCenter;
 
 final class Commands
 {
-    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app'];
+    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app', 'set_settings'];
     public function __construct(private readonly Database $db, private readonly Config $config, private readonly Auth $auth, private readonly Management $management) {}
 
     private static function payload(string $kind, mixed $payload): array
     {
         if (!is_array($payload) || array_is_list($payload) && $payload !== []) throw new Problem(422, 'Invalid command payload.');
+        if($kind==='set_settings') {
+            Input::keys($payload,['profile_ref','expected_revision','sort_order']);
+            EnrollmentProof::hex($payload['profile_ref']??null,64);EnrollmentProof::hex($payload['expected_revision']??null,64);
+            if(!in_array($payload['sort_order']??null,['provider','number','name'],true))throw new Problem(422,'Unsupported channel sorting.');
+            return $payload;
+        }
         if ($kind === 'show_message') {
             Input::keys($payload, ['message', 'priority', 'duration_seconds']);
             $message = Input::text($payload['message'] ?? null, 'message', 1000);
@@ -65,6 +71,20 @@ final class Commands
         $total = (int) $this->db->query('SELECT COUNT(*) FROM commands WHERE device_id = ?', [$deviceId])->fetchColumn();
         $rows = $this->db->all("SELECT * FROM commands WHERE device_id = ? ORDER BY created_at DESC, id DESC LIMIT 25 OFFSET $offset", [$deviceId]);
         return ['items' => array_map(self::publicCommand(...), $rows), 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total];
+    }
+    public function cancel(array $actor,string $deviceId,string $commandId): array
+    {
+        return $this->db->transaction(function()use($actor,$deviceId,$commandId):array {
+            $device=$this->management->device($actor,$deviceId,true);$this->expire($deviceId);
+            $row=$this->db->one('SELECT * FROM commands WHERE id=? AND device_id=? FOR UPDATE',[Input::id($commandId),$deviceId]);
+            if(!$row)throw new Problem(404,'Record not found.');
+            if($actor['role']!=='owner'&&$row['requested_by']!==$actor['id'])throw new Problem(403,'Only the requesting user or owner may cancel this command.');
+            if($row['status']==='cancelled')return self::publicCommand($row);
+            if(!in_array($row['status'],['pending','delivered'],true))throw new Problem(409,'This action is already running or finished; it cannot be recalled.');
+            $this->db->query("UPDATE commands SET status='cancelled',finished_at=UTC_TIMESTAMP(),lease_hash=NULL,lease_until=NULL WHERE id=?",[$commandId]);
+            $this->auth->audit($actor,'command.cancelled',$commandId,$device['tenant_id'],['device_id'=>$deviceId]);
+            return self::publicCommand($this->db->one('SELECT * FROM commands WHERE id=?',[$commandId]));
+        });
     }
     public function expire(?string $deviceId = null): void
     {
@@ -148,7 +168,7 @@ final class Commands
             if (in_array($row['status'], ['succeeded','failed'], true) && $row['status'] === $status) return self::publicCommand($row);
             if (!in_array($row['status'], ['delivered','running'], true) || !$leaseValid) throw new Problem(409, 'Command has expired or the lease is no longer valid.');
             $result=['summary'=>$summary];
-            if($status==='succeeded'&&in_array($row['kind'],['get_settings','get_diagnostics'],true)&&!array_key_exists('snapshot',$input))throw new Problem(422,'A completed snapshot command must include its typed snapshot.');
+            if($status==='succeeded'&&in_array($row['kind'],['get_settings','get_diagnostics','set_settings'],true)&&!array_key_exists('snapshot',$input))throw new Problem(422,'A completed snapshot command must include its typed snapshot.');
             if(array_key_exists('snapshot',$input)) {
                 if($status!=='succeeded')throw new Problem(422,'Only completed snapshot commands can upload a snapshot.');
                 $result['snapshot']=CommandSnapshots::validate($row['kind'],$input['snapshot']);

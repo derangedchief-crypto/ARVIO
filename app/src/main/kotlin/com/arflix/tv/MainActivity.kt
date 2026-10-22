@@ -402,7 +402,8 @@ class MainActivity : ComponentActivity() {
                     val requiredUpdate by requiredUpdateController.state.collectAsStateWithLifecycle()
                     val updateStatus by requiredUpdateController.status.collectAsStateWithLifecycle()
                     val deviceManagement by deviceManagementAgent.state.collectAsStateWithLifecycle()
-                    CompositionLocalProvider(com.arflix.tv.ui.components.LocalDeviceManagementState provides deviceManagement) {
+                    CompositionLocalProvider(com.arflix.tv.ui.components.LocalDeviceManagementState provides deviceManagement,
+                        com.arflix.tv.ui.components.LocalDeviceManagementCheckIn provides deviceManagementAgent::checkInNow) {
                         com.arflix.tv.ui.components.RequiredUpdateGate(
                             state = requiredUpdate,
                             status = updateStatus,

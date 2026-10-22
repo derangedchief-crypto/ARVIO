@@ -103,6 +103,8 @@ require __DIR__ . '/installation.php';
 installationCases($tests,$app,$config,$server,$name,$fixture,$password,$owner);
 require __DIR__ . '/enrollment.php';
 enrollmentCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA,$tenantB,$makeCustomer,$http,$password);
+require __DIR__.'/settings-presets.php';
+settingsCases($tests,$app,$owner,$alpha,$beta,$tenantA,$tenantB,$http,$password);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

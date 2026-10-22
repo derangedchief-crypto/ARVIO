@@ -20,20 +20,32 @@ function enrollmentCases(array &$tests, ControlCenter\Application $app, ControlC
     };
     $body=static function (array $id,array $claims=[]) use($app,$token):array {
         $nonce=$app->enrollment->challenge(['installation_id'=>$id['install'],'key_fingerprint'=>$id['key'],'app_package'=>'com.arvio.tv.test'],'127.0.0.41')['challenge'];
+        $claims=array_replace(['panel'=>['customer_id'=>(string)(hexdec(substr($id['account'],0,14))+1),'reseller_id'=>'9001','reseller_username'=>'fixture-alpha']],$claims);
         $proof=$token($id,$nonce,$claims);
         openssl_sign(ControlCenter\EnrollmentProof::signingText($nonce,$proof,$id['install'],'com.arvio.tv.test',$id['key']),$signature,$id['private'],OPENSSL_ALGO_SHA256);
         return ['challenge'=>$nonce,'proof'=>$proof,'public_key'=>$id['public'],'signature'=>base64_encode($signature),'label'=>'TEST signed fixture','model'=>'Synthetic device','os_version'=>'Test','app_version'=>'test'];
     };
-    $register=static fn(array $id)=>$app->enrollment->register($body($id),'127.0.0.41');
+    // Exercise the exceptional/manual-review path using an admitted reseller at
+    // allocation capacity, NOT an unverified legacy assertion. Restore capacity
+    // before the owner approves. Normal auto-assignment tests call register directly.
+    $register=static function(array $id)use($app,$body,$tenantA,$alpha,$makeCustomer):array {
+        $limit=(int)$app->db->query('SELECT device_limit FROM tenants WHERE id=?',[$tenantA['id']])->fetchColumn();
+        $used=(int)$app->db->query("SELECT COUNT(*) FROM devices WHERE tenant_id=? AND policy!='removed'",[$tenantA['id']])->fetchColumn();
+        if($used===0){$c=$makeCustomer($alpha,$tenantA['id']);$app->management->createDevice($alpha,['customer_id'=>$c['id'],'label'=>'TEST capacity fixture']);$used=1;}
+        $app->db->query('UPDATE tenants SET device_limit=? WHERE id=?',[$used,$tenantA['id']]);
+        try{return $app->enrollment->register($body($id),'127.0.0.41');}
+        finally{$app->db->query('UPDATE tenants SET device_limit=? WHERE id=?',[$limit,$tenantA['id']]);}
+    };
     $delivery=static fn(array $r)=>['request_id'=>$r['request_id'],'poll_token'=>$r['poll_token']];
     $approve=static function (array $r,?array $customer=null) use($app,$owner,$alpha,$tenantA,$makeCustomer):array {
         $customer??=$makeCustomer($alpha,$tenantA['id']);
         return $app->enrollment->approve($owner,$r['request_id'],['customer_id'=>$customer['id']]);
     };
-    $tests['new enrollment is paused until owner enables it'] = function () use($app,$owner):void {
+    $tests['new enrollment is paused until owner enables it'] = function () use($app,$owner,$tenantA,$tenantB):void {
         same(false,$app->enrollment->settings($owner)['enabled']);
         problem(503,fn()=> $app->enrollment->challenge(['installation_id'=>str_repeat('a',32),'key_fingerprint'=>str_repeat('b',64),'app_package'=>'com.arvio.tv.test'],'127.0.0.41'));
         $app->enrollment->setEnabled($owner,['enabled'=>true]);
+        $app->db->query('INSERT INTO panel_resellers (panel_id,tenant_id,username,linked_by) VALUES (?,?,?,?),(?,?,?,?)',['9001',$tenantA['id'],'fixture-alpha',$owner['id'],'9002',$tenantB['id'],'fixture-beta',$owner['id']]);
     };
     $tests['only owner can enable enrollment, review requests or download bridge configuration'] = function () use($app,$alpha):void {
         problem(403,fn()=> $app->enrollment->settings($alpha)); problem(403,fn()=> $app->enrollment->setEnabled($alpha,['enabled'=>true]));
@@ -154,20 +166,22 @@ function enrollmentCases(array &$tests, ControlCenter\Application $app, ControlC
         $another=$identity($id['account']);$r=$app->enrollment->register($body($another,$panelClaim('1001','2001')),'127.0.0.41');
         same('approved',$r['status']);$d=$app->enrollment->poll($delivery($r),'127.0.0.41');same($device['customer_id'],$app->management->device($owner,$d['device_id'])['customer_id']);
     };
-    $tests['unlinked matching names and legacy proofs stay pending, not automatic'] = function ()use($app,$identity,$body,$panelClaim):void {
-        same('pending',$app->enrollment->register($body($identity(),$panelClaim('9999','2002')),'127.0.0.41')['status']);
-        same('pending',$app->enrollment->register($body($identity()),'127.0.0.41')['status']);
+    $tests['unlinked names and legacy proofs create no permanent enrollment or customer/device record'] = function ()use($app,$identity,$body,$panelClaim):void {
+        $before=[];foreach(['devices','customers','enrollment_requests','enrollment_proofs','audit_events'] as $table)$before[$table]=(int)$app->db->query("SELECT COUNT(*) FROM $table")->fetchColumn();
+        $result=$app->enrollment->register($body($identity(),$panelClaim('9999','2002')),'127.0.0.41');same('not_managed',$result['status']);check(!isset($result['request_id'],$result['poll_token']));
+        same('not_managed',$app->enrollment->register($body($identity(),['panel'=>null]),'127.0.0.41')['status']);
+        foreach($before as $table=>$count)same($count,(int)$app->db->query("SELECT COUNT(*) FROM $table")->fetchColumn());
     };
     $tests['signed customer identity cannot be reused for another account reference'] = function ()use($app,$identity,$body,$panelClaim):void {
         same('pending',$app->enrollment->register($body($identity(),$panelClaim('1001','2001')),'127.0.0.41')['status']);
     };
-    $tests['automatic assignment never overrides rejected removed or manually cross-tenant identities'] = function ()use($app,$owner,$identity,$body,$panelClaim,$delivery,$approve):void {
-        $id=$identity();$r=$app->enrollment->register($body($id),'127.0.0.41');$app->enrollment->reject($owner,$r['request_id']);
+    $tests['automatic assignment never overrides rejected removed or manually cross-tenant identities'] = function ()use($app,$owner,$identity,$body,$panelClaim,$delivery,$approve,$register):void {
+        $id=$identity();$r=$register($id);$app->enrollment->reject($owner,$r['request_id']);
         same('rejected',$app->enrollment->register($body($id,$panelClaim('1001','2003')),'127.0.0.41')['status']);
         $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1001','2004')),'127.0.0.41');$d=$app->enrollment->poll($delivery($r),'127.0.0.41');
         $app->management->updateDevice($owner,$d['device_id'],['policy'=>'removed']);
         same('pending',$app->enrollment->register($body($id,$panelClaim('1001','2004')),'127.0.0.41')['status']);
-        $id=$identity();$r=$app->enrollment->register($body($id),'127.0.0.41');$approve($r);
+        $id=$identity();$r=$register($id);$approve($r);
         problem(409,fn()=> $app->enrollment->register($body($id,$panelClaim('1001','2005')),'127.0.0.41'));
     };
     $tests['automatic enrollment enforces allocation and reseller suspension'] = function ()use($app,$owner,$newTenant,$bridge,$identity,$body,$panelClaim,$delivery):void {
@@ -175,13 +189,13 @@ function enrollmentCases(array &$tests, ControlCenter\Application $app, ControlC
         $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1003','2006')),'127.0.0.41');same('approved',$r['status']);
         same('pending',$app->enrollment->register($body($identity(),$panelClaim('1003','2007')),'127.0.0.41')['status']);
         $app->management->updateTenant($owner,$t['id'],['status'=>'suspended','device_limit'=>10]);
-        same('pending',$app->enrollment->register($body($identity(),$panelClaim('1003','2008')),'127.0.0.41')['status']);
+        same('not_managed',$app->enrollment->register($body($identity(),$panelClaim('1003','2008')),'127.0.0.41')['status']);
     };
-    $tests['new panel link causes pending installed apps to retry with a fresh proof'] = function ()use($app,$owner,$newTenant,$bridge,$identity,$body,$panelClaim,$delivery):void {
-        $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1004','2009')),'127.0.0.41');same('pending',$r['status']);
-        $t=$newTenant('retry');$app->enrollment->linkPanelReseller($owner,$t['id'],['username'=>'retry'],$bridge('1004','retry'));
-        problem(401,fn()=> $app->enrollment->poll($delivery($r),'127.0.0.41'));
-        $again=$app->enrollment->register($body($id,$panelClaim('1004','2009')),'127.0.0.41');same('approved',$again['status']);same($r['request_id'],$again['request_id']);
+    $tests['a previously ignored device can enroll after its reseller is created and linked'] = function ()use($app,$owner,$newTenant,$bridge,$identity,$body,$panelClaim,$delivery):void {
+        $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1004','2009')),'127.0.0.41');same('not_managed',$r['status']);
+        $t=$newTenant('retry');same('not_managed',$app->enrollment->register($body($id,$panelClaim('1004','2009')),'127.0.0.41')['status']);
+        $app->enrollment->linkPanelReseller($owner,$t['id'],['username'=>'retry'],$bridge('1004','retry'));
+        $again=$app->enrollment->register($body($id,$panelClaim('1004','2009')),'127.0.0.41');same('approved',$again['status']);check(isset($again['request_id']));
     };
     $tests['signed panel identity is validated and no browser reseller may link ownership'] = function ()use($app,$identity,$body,$panelClaim,$http,$password):void {
         $claim=$panelClaim('1001','2010');$claim['panel']['reseller_id']='arbitrary';problem(403,fn()=> $app->enrollment->register($body($identity(),$claim),'127.0.0.41'));
@@ -265,5 +279,29 @@ function enrollmentCases(array &$tests, ControlCenter\Application $app, ControlC
         $response=$http->request('POST',$path,new stdClass(),['X-CSRF-Token'=>$o['csrf']],'detach-owner');same(200,$response['status']);same('active',$response['body']['policy']);same(true,$response['body']['reseller_detached']);
         same(404,$http->request('GET','/api/devices/'.$device['id'],null,[],'detach-alpha')['status']);
         same(404,$http->request('GET','/api/devices/'.$device['id'].'/commands',null,[],'detach-alpha')['status']);
+    };
+    $tests['unmatched HTTP enrollment returns ignored status without a request or audit record'] = function ()use($app,$identity,$body,$panelClaim,$http):void {
+        $id=$identity();$input=$body($id,array_replace($panelClaim('999991','888881'),['aud'=>$http->origin]));$before=(int)$app->db->query('SELECT COUNT(*) FROM audit_events')->fetchColumn();
+        $response=$http->request('POST','/api/device/enrollment/register',$input);
+        same(200,$response['status']);same('not_managed',$response['body']['status']);same(3600,$response['body']['retry_after_seconds']);
+        check(!isset($response['body']['request_id'],$response['body']['poll_token']));
+        same(0,(int)$app->db->query('SELECT COUNT(*) FROM enrollment_requests WHERE installation_id=?',[$id['install']])->fetchColumn());
+        same(0,(int)$app->db->query('SELECT COUNT(*) FROM enrollment_challenges WHERE nonce_hash=?',[hash('sha256',$input['challenge'])])->fetchColumn());
+        same($before,(int)$app->db->query('SELECT COUNT(*) FROM audit_events')->fetchColumn());
+    };
+    $tests['legacy unassigned requests disappear and are pruned without deleting approved inventory'] = function ()use($app,$owner,$register,$identity,$delivery,$approve):void {
+        $r=$register($identity());$before=$app->enrollment->listing($owner,['status'=>'pending'])['total'];$app->db->query('UPDATE enrollment_requests SET panel_reseller_id=NULL,poll_expires_at=UTC_TIMESTAMP() WHERE id=?',[$r['request_id']]);
+        $rows=$app->enrollment->listing($owner,['status'=>'pending']);same($before-1,$rows['total']);check(!in_array($r['request_id'],array_column($rows['items'],'id'),true));
+        problem(401,fn()=> $app->enrollment->poll($delivery($r),'127.0.0.41'));
+        $kept=$register($identity());$d=$approve($kept);$app->db->query('UPDATE enrollment_requests SET panel_reseller_id=NULL WHERE id=?',[$kept['request_id']]);
+        $app->enrollment->maintain();
+        same(null,$app->db->one('SELECT id FROM enrollment_requests WHERE id=?',[$r['request_id']]));
+        same($d['id'],$app->management->device($owner,$d['id'])['id']);check($app->db->one('SELECT id FROM enrollment_requests WHERE id=?',[$kept['request_id']])!==null);
+    };
+    $tests['owner-held unassigned device can renew but does not admit another unlinked installation'] = function ()use($app,$owner,$identity,$body,$panelClaim,$delivery):void {
+        $id=$identity();$r=$app->enrollment->register($body($id,$panelClaim('1001','2111')),'127.0.0.41');$p=$app->enrollment->poll($delivery($r),'127.0.0.41');$app->enrollment->poll($delivery($r),'127.0.0.41',true);
+        $app->management->detachReseller($owner,$p['device_id']);
+        same('approved',$app->enrollment->register($body($id,['panel'=>null]),'127.0.0.41')['status']);
+        same('not_managed',$app->enrollment->register($body($identity($id['account']),['panel'=>null]),'127.0.0.41')['status']);
     };
 }

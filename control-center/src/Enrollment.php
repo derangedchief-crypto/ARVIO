@@ -107,6 +107,15 @@ final class Enrollment
             $nonceHash=hash('sha256',$nonce);
             $challenge=$this->db->one('SELECT * FROM enrollment_challenges WHERE nonce_hash=? AND expires_at>UTC_TIMESTAMP() FOR UPDATE',[$nonceHash]);
             if(!$challenge||$challenge['installation_id']!==$claim['install']||$challenge['key_fingerprint']!==$claim['key']||$challenge['app_package']!==$claim['package']) throw new Problem(403,'Enrollment challenge expired or does not match.');
+            $known=$this->db->one('SELECT d.reseller_detached,t.kind FROM enrollment_requests r JOIN devices d ON d.id=r.device_id JOIN tenants t ON t.id=d.tenant_id WHERE r.installation_id=? AND r.key_fingerprint=? AND r.account_ref=? AND r.app_package=?',[$claim['install'],$claim['key'],$claim['sub'],$claim['package']]);
+            $ownerManaged=$known&&($known['reseller_detached']||$known['kind']==='owner');
+            $linked=isset($claim['panel'])?$this->db->one("SELECT p.tenant_id FROM panel_resellers p JOIN tenants t ON t.id=p.tenant_id WHERE p.panel_id=? AND t.status='active'",[$claim['panel']['reseller_id']]):null;
+            if(!$ownerManaged&&!$linked) {
+                // Not an invitation queue. Non-member devices never create a
+                // request/customer/device, poll token, proof journal or audit row.
+                $this->db->query('DELETE FROM enrollment_challenges WHERE nonce_hash=?',[$nonceHash]);
+                return ['schema_version'=>1,'status'=>'not_managed','installation_id'=>$claim['install'],'retry_after_seconds'=>3600];
+            }
             if($challenge['used_at']!==null) {
                 $used=$this->db->one('SELECT nonce_hash FROM enrollment_proofs WHERE proof_id=?',[$claim['jti']]);
                 if(!$used||$used['nonce_hash']!==$nonceHash||!$challenge['request_id']) throw new Problem(409,'Enrollment challenge was already used. Request another challenge.');
@@ -124,6 +133,7 @@ final class Enrollment
                 $this->db->query('UPDATE enrollment_requests SET poll_hash=?,poll_cipher=?,poll_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 7 DAY),confirmed_at=NULL WHERE id=?',[hash('sha256',$poll),$this->secrets->encrypt($poll),$row['id']]);
             }
             $this->db->query('UPDATE enrollment_requests SET label=?,model=?,os_version=?,app_version=?,last_request_at=UTC_TIMESTAMP() WHERE id=?',[$label,$model,$os,$version,$row['id']]);
+            if($linked)$this->db->query('UPDATE enrollment_requests SET panel_reseller_id=?,panel_customer_id=? WHERE id=?',[$claim['panel']['reseller_id'],$claim['panel']['customer_id'],$row['id']]);
             if($row['status']==='approved'&&$row['device_id']) {
                 $detached=$this->db->one('SELECT reseller_detached FROM devices WHERE id=?',[$row['device_id']]);
                 if(isset($claim['panel'])&&empty($detached['reseller_detached'])) {
@@ -219,8 +229,9 @@ final class Enrollment
         Auth::owner($actor); $this->enabled(false);
         Input::keys($input,['page','status']); $page=Input::page($input['page']??1); $offset=($page-1)*25;
         $status=$input['status']??'pending'; if(!in_array($status,['pending','approved','rejected'],true)) throw new Problem(422,'Invalid enrollment status.');
-        $total=(int)$this->db->query('SELECT COUNT(*) FROM enrollment_requests WHERE status=?',[$status])->fetchColumn();
-        $rows=$this->db->all("SELECT id,installation_id,key_fingerprint,account_hint,app_package,label,model,os_version,app_version,status,device_id,created_at,last_request_at,confirmed_at FROM enrollment_requests WHERE status=? ORDER BY last_request_at DESC,id LIMIT 25 OFFSET $offset",[$status]);
+        $visible="(device_id IS NOT NULL OR EXISTS (SELECT 1 FROM panel_resellers p JOIN tenants t ON t.id=p.tenant_id WHERE p.panel_id=enrollment_requests.panel_reseller_id AND t.status='active'))";
+        $total=(int)$this->db->query("SELECT COUNT(*) FROM enrollment_requests WHERE status=? AND $visible",[$status])->fetchColumn();
+        $rows=$this->db->all("SELECT id,installation_id,key_fingerprint,account_hint,app_package,label,model,os_version,app_version,status,device_id,panel_reseller_id,created_at,last_request_at,confirmed_at FROM enrollment_requests WHERE status=? AND $visible ORDER BY last_request_at DESC,id LIMIT 25 OFFSET $offset",[$status]);
         return ['items'=>$rows,'page'=>$page,'pages'=>max(1,(int)ceil($total/25)),'total'=>$total];
     }
     public function approve(array $actor, string $id, array $input): array
@@ -237,6 +248,7 @@ final class Enrollment
             }
             $tenant=$this->management->tenant($actor,$customer['tenant_id'],true);
             if($tenant['status']!=='active') throw new Problem(409,'This reseller is suspended.');
+            if(!$row['device_id']&&!$this->db->one('SELECT panel_id FROM panel_resellers WHERE panel_id=? AND tenant_id=?',[$row['panel_reseller_id'],$tenant['id']]))throw new Problem(409,'Only requests from a verified linked reseller can be approved in that workspace.');
             $binding=$this->db->one('SELECT * FROM managed_accounts WHERE account_ref=? FOR UPDATE',[$row['account_ref']]);
             if($binding&&$binding['customer_id']!==$customer['id']) throw new Problem(409,'This verified account is assigned to another customer. An owner-reviewed transfer is required.');
             if(!$binding) $this->db->query('INSERT INTO managed_accounts (account_ref,customer_id,tenant_id,account_hint) VALUES (?,?,?,?)',[$row['account_ref'],$customer['id'],$tenant['id'],$row['account_hint']]);
@@ -276,7 +288,8 @@ final class Enrollment
     }
     public function maintain(): void
     {
-        $this->db->query('DELETE FROM enrollment_challenges WHERE expires_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 DAY) LIMIT 1000');
+        $this->db->query('DELETE FROM enrollment_challenges WHERE expires_at<=UTC_TIMESTAMP() LIMIT 1000');
+        $this->db->query('DELETE FROM enrollment_requests WHERE device_id IS NULL AND panel_reseller_id IS NULL AND poll_expires_at<=UTC_TIMESTAMP() LIMIT 1000');
         $this->db->query('DELETE FROM enrollment_proofs WHERE created_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 DAY) LIMIT 1000');
         $this->db->query('UPDATE enrollment_requests SET poll_cipher=NULL,credential_cipher=NULL WHERE poll_expires_at<=UTC_TIMESTAMP() AND (poll_cipher IS NOT NULL OR credential_cipher IS NOT NULL)');
         $days=$this->config->number('retention_days',90,7,365);

@@ -76,12 +76,10 @@ function installationCases(array &$tests, ControlCenter\Application $app, Contro
             $owner=$old->auth->bootstrap($c->secret('setup.key'),['name'=>'Upgrade owner','email'=>'upgrade@example.test','password'=>$password]);
             $tenant=$old->management->tenants($owner)[0]; $customer=$old->management->createCustomer($owner,['tenant_id'=>$tenant['id'],'name'=>'Keep customer']);
             $device=$old->management->createDevice($owner,['customer_id'=>$customer['id'],'label'=>'Keep device']); $key=$c->secret('application.key');
-            copy($config->root.'/database/migrations/002_enrollment.sql',$fresh.'/database/migrations/002_enrollment.sql');
-            copy($config->root.'/database/migrations/003_panel_ownership.sql',$fresh.'/database/migrations/003_panel_ownership.sql');
-            copy($config->root.'/database/migrations/004_unassigned_devices.sql',$fresh.'/database/migrations/004_unassigned_devices.sql');
+            $expected=[];foreach(glob($config->root.'/database/migrations/*.sql') as $migration)if(basename($migration)!=='001_foundation.sql'){$expected[]=basename($migration);copy($migration,$fresh.'/database/migrations/'.basename($migration));}
             $http=new HttpFixture($fresh,$settings); $login=$http->request('POST','/api/login',['email'=>'upgrade@example.test','password'=>$password],[],'upgrade'); same(200,$login['status']);
-            same(['002_enrollment.sql','003_panel_ownership.sql','004_unassigned_devices.sql'],$http->request('GET','/api/system/status',null,[],'upgrade')['body']['pending_migrations']);
-            $result=$http->request('POST','/api/system/migrate',new stdClass(),['X-CSRF-Token'=>$login['body']['csrf']],'upgrade'); same(200,$result['status']); same(['002_enrollment.sql','003_panel_ownership.sql','004_unassigned_devices.sql'],$result['body']['applied']);
+            same($expected,$http->request('GET','/api/system/status',null,[],'upgrade')['body']['pending_migrations']);
+            $result=$http->request('POST','/api/system/migrate',new stdClass(),['X-CSRF-Token'=>$login['body']['csrf']],'upgrade'); same(200,$result['status']); same($expected,$result['body']['applied']);
             same($key,$c->secret('application.key')); same('Keep device',$old->management->device($owner,$device['id'])['label']);
             same($owner['id'],$http->request('GET','/api/me',null,[],'upgrade')['body']['user']['id']);
             same(false,$http->request('GET','/api/enrollments/settings',null,[],'upgrade')['body']['enabled']);

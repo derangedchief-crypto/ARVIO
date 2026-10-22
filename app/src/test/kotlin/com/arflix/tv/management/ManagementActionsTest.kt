@@ -12,6 +12,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -71,5 +72,35 @@ class ManagementActionsTest {
         coEvery { repository.loadSnapshot(any(), any(), any(), any(), any(), any(), any(), any()) } throws IllegalStateException("private-password https://provider.test/token")
         val receipt = actions.execute("command", "refresh_playlist", account.scope)
         assertEquals("failed", receipt.status); assertFalse(receipt.summary.contains("private-password")); assertFalse(receipt.summary.contains("https://"))
+    }
+    @Test fun remoteSortingUsesCompareAndSetAndReturnsTheUpdatedRevision() = runTest {
+        val actions=actions();val current=MutableStateFlow(config)
+        every { repository.observeConfig() } returns current
+        every { repository.observeFavoriteChannels() } returns flowOf(emptyList())
+        every { repository.observeFavoriteGroups() } returns flowOf(emptyList())
+        coEvery { repository.compareAndSetManagedSortOrder("profile-one","provider","name",any()) } coAnswers {
+            assertTrue(arg<(com.arflix.tv.data.repository.IptvConfig)->Boolean>(3)(config))
+            current.value=config.copy(sortOrder="name");true
+        }
+        val profile=managementHash("profile-one")
+        val result=actions.execute("command","set_settings",account.scope,mapOf("profile_ref" to profile,"expected_revision" to managementSettingsRevision(profile,account.scope,"provider"),"sort_order" to "name"))
+        assertEquals("succeeded",result.status)
+        assertEquals("name",result.snapshot!!["sort_order"])
+        assertEquals(managementSettingsRevision(profile,account.scope,"name"),result.snapshot["settings_revision"])
+        coVerify(exactly=0) { repository.savePlaylists(any()) }
+    }
+    @Test fun staleWrongProfileAndUnsupportedSettingsNeverCallTheWriteMethod() = runTest {
+        val actions=actions();val profile=managementHash("profile-one")
+        val valid=mapOf("profile_ref" to profile,"expected_revision" to managementSettingsRevision(profile,account.scope,"provider"),"sort_order" to "name")
+        for(payload in listOf(valid+mapOf("profile_ref" to managementHash("other")),valid+mapOf("expected_revision" to "0".repeat(64)),valid+mapOf("update_url" to "https://forbidden.example"))) {
+            assertEquals("failed",actions.execute("command","set_settings",account.scope,payload).status)
+        }
+        coVerify(exactly=0) { repository.compareAndSetManagedSortOrder(any(),any(),any(),any()) }
+    }
+    @Test fun compareAndSetConflictReturnsFailureInsteadOfClaimingAnAppliedSetting() = runTest {
+        val actions=actions();val profile=managementHash("profile-one")
+        coEvery { repository.compareAndSetManagedSortOrder(any(),any(),any(),any()) } returns false
+        val result=actions.execute("command","set_settings",account.scope,mapOf("profile_ref" to profile,"expected_revision" to managementSettingsRevision(profile,account.scope,"provider"),"sort_order" to "name"))
+        assertEquals("failed",result.status);assertNull(result.snapshot)
     }
 }

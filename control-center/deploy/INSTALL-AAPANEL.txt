@@ -1,4 +1,30 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.3.0
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.4.0
+
+0.4.0 UPDATE — LINKED RESELLERS ONLY + SETTINGS CONTROLS
+Back up the database, config.php and private storage. Extract the UPDATE ZIP over
+the current website; Enrollments -> Apply database upgrade adds migrations005/006.
+Existing private configuration, keys, customers and approved devices stay intact.
+The 0.3.0 update alone does not contain this new admission/settings logic.
+
+Only an owner-created AND verified linked reseller admits NEW devices. Unmatched
+panel resellers return not_managed and create NO request/customer/device/audit
+record. Legacy never-assigned deliveries expire and disappear from review; cron
+prunes those unverified orphan requests. Intentional owner-held/unassigned and
+previously approved inventory is preserved, not deleted by this update.
+
+The app still activates/watches normally without this management service. 108
+retries admission hourly in foreground and adds Settings -> Check in / retry
+management now for use after linking. No new worker patch is required when the
+existing ownership bridge is installed (public health ownership_schema_version:1).
+
+New108 functions: revision-guarded CHANNEL SORTING only, named workspace presets
+applied explicitly from the device Settings tab, and cancellation of queued
+commands by their requester/owner. Running work cannot be recalled. Request a
+fresh Settings snapshot before editing/applying. Local changes/profile switches
+cause a safe conflict. Preset edits do not automatically push to devices.
+Install0.4.0 BEFORE publishing/installing the combined108 testing APK; the APK has
+not been published as part of preparing these server files. This is not a payment
+processor or complete billing/subscription-expiry implementation.
 
 0.3.0 UPDATE
 Back up database, config.php and private storage. Extract the UPDATE ZIP over the
@@ -33,7 +59,7 @@ access to users.id/username/status and customers.id/member_id in its existing DB
 In Resellers, link each EXISTING workspace to its exact PANEL LOGIN username using
 Link panel reseller. The workspace name is prefilled for convenience, but ownership
 is based on the verified permanent panel ID, not that name. For NEW workspaces,
-fill Existing panel reseller username during creation. Blank means unlinked/manual.
+fill Existing panel reseller username during creation. Blank means no new device admission.
 The owner workspace can also be linked to its actual panel account if necessary.
 
 New verified devices automatically get a customer record and reseller assignment;
@@ -49,7 +75,7 @@ Target: https://control.fecxbrfzku.net, aaPanel Nginx + PHP 8.3+
 
 IMPORTANT: Real enrollment requires BOTH the activation-worker bridge update and a
 management-enabled APK. Old APKs do not automatically appear. Owner approval is
-required only for unlinked/conflicting requests; linked verified panel accounts
+required only for admitted conflicts/allocation exceptions; linked verified panel accounts
 receive their own device credentials automatically. No branding or reseller
 APK/update-channel controls are included.
 
@@ -93,8 +119,8 @@ APK/update-channel controls are included.
 9. Sign in and create reseller workspaces/customer records. For real app enrollment,
    open Enrollments, download the worker bridge settings, deploy the separate
    activation-worker update, and enable new enrollment after its health check.
-   Install the management-enabled testing APK and approve its pending request,
-   selecting the correct customer. Optional pre-provisioned records can be attached
+   Install the management-enabled testing APK. Linked admitted accounts normally
+   enroll automatically; review only admitted exceptions. Optional pre-provisioned records can be attached
    using their record ID. Unapproved/reserved records are not online devices.
 10. Add an aaPanel cron task every minute, using your installed PHP CLI path:
     /www/server/php/83/bin/php /www/wwwroot/control.fecxbrfzku.net/cli/console.php maintenance

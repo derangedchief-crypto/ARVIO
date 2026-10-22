@@ -9,6 +9,23 @@ import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 
 class ManagementProtocolTest {
+    @Test fun managedSortRevisionBindsProfileAccountAndCurrentValue() {
+        val profile=managementHash("profile")
+        val revision=managementSettingsRevision(profile,"account","provider")
+        assertNotEquals(revision,managementSettingsRevision(profile,"other-account","provider"))
+        assertNotEquals(revision,managementSettingsRevision(managementHash("other-profile"),"account","provider"))
+        assertNotEquals(revision,managementSettingsRevision(profile,"account","name"))
+        val payload=mapOf("profile_ref" to profile,"expected_revision" to revision,"sort_order" to "name")
+        assertTrue(validManagedSortPayload(payload))
+        assertFalse(validManagedSortPayload(payload+mapOf("update_url" to "https://forbidden.example")))
+        assertFalse(validManagedSortPayload(payload+mapOf("sort_order" to "arbitrary")))
+    }
+    @Test fun unmanagedRetryStateNeverInventsAServiceRestriction() {
+        val session=ManagementSession("a".repeat(64),"b".repeat(32),unmanagedUntilMs=123456789)
+        val restored=com.google.gson.Gson().fromJson(com.google.gson.Gson().toJson(session),ManagementSession::class.java)
+        assertEquals(session.unmanagedUntilMs,restored.unmanagedUntilMs)
+        assertFalse(DeviceManagementState(false,status="Device management is not enabled for this reseller").restricted)
+    }
     @Test fun savingFirstActivatedLineDoesNotRestartTheColdStartGate() {
         val initial = DeviceManagementState()
         assertTrue(preparingManagementAccount(initial, false).checkingLocalState)

@@ -5,6 +5,7 @@ import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.material3.Text
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -27,6 +28,14 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class DeviceManagementGateTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun settingsCanExplicitlyRetryManagementWithoutChangingActivation() {
+        var retries=0
+        compose.setContent {
+            CompositionLocalProvider(LocalDeviceManagementState provides DeviceManagementState(false,"fixture-installation",status="Not managed"),LocalDeviceManagementCheckIn provides { retries++ }) { DeviceManagementStatusInfo() }
+        }
+        compose.onNodeWithText("Check in / retry management now").performClick()
+        compose.runOnIdle { assertEquals(1,retries) }
+    }
     @Test fun unpairedOrUnavailableControlCenterDoesNotBecomeAnActivationGate() {
         compose.setContent { DeviceManagementGate(DeviceManagementState(false, status = "Offline"), {}) { Text("Normal app") } }
         compose.onNodeWithText("Normal app").assertExists()

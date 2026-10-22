@@ -35,7 +35,12 @@ internal fun enrollmentSigningText(nonce: String, proof: String, install: String
     "ECENROLL1\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint"
 
 internal val MANAGEMENT_POLICIES = setOf("active", "suspended", "blocked", "removed")
-internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics")
+internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings")
+internal fun managementSettingsRevision(profileRef: String, accountScope: String, sortOrder: String): String =
+    managementHash("ECSET1\n$profileRef\n$accountScope\n$sortOrder")
+
+internal fun validManagedSortPayload(payload: Map<String,String>): Boolean = payload.keys == setOf("profile_ref", "expected_revision", "sort_order") &&
+    payload["profile_ref"]!!.matches(Regex("[a-f0-9]{64}")) && payload["expected_revision"]!!.matches(Regex("[a-f0-9]{64}")) && payload["sort_order"] in listOf("provider", "number", "name")
 
 @Keep
 data class ManagementMessage(val id: String, val text: String, val expiresAtMs: Long)
@@ -74,6 +79,7 @@ internal data class ManagementSession(
     val policy: String? = null,
     val message: ManagementMessage? = null,
     val receipts: List<CommandReceipt> = emptyList(),
+    val unmanagedUntilMs: Long = 0,
 ) {
     override fun toString() = "ManagementSession([redacted])"
 }

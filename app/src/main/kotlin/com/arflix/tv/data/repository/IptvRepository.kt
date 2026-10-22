@@ -983,6 +983,19 @@ class IptvRepository @Inject constructor(
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save iptv sort order")
     }
 
+    suspend fun compareAndSetManagedSortOrder(profileId: String, expected: String, requested: String, accountMatches: (IptvConfig) -> Boolean): Boolean {
+        require(profileId.isNotBlank())
+        var applied = false
+        context.settingsDataStore.edit { prefs ->
+            val playlists = decodePlaylists(prefs[playlistsKeyFor(profileId)].orEmpty())
+            val legacy = normalizeStoredIptvUrl(decryptConfigValue(prefs[m3uUrlKeyFor(profileId)].orEmpty()))
+            val config = IptvConfig(m3uUrl = playlists.firstOrNull()?.m3uUrl ?: legacy, playlists = playlists)
+            applied = compareManagedSort(prefs, sortOrderKeyFor(profileId), profileManager.getProfileIdSync() == profileId, accountMatches(config), expected, requested)
+        }
+        if (applied) invalidationBus.markDirty(CloudSyncScope.IPTV, profileId, "managed iptv sort order")
+        return applied
+    }
+
     /**
      * Accept common Xtream Codes inputs and convert to a canonical M3U URL.
      *

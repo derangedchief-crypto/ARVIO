@@ -30,6 +30,7 @@ import com.arflix.tv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 
 val LocalDeviceManagementState = staticCompositionLocalOf { DeviceManagementState(checkingLocalState = false) }
+val LocalDeviceManagementCheckIn = staticCompositionLocalOf<() -> Unit> { {} }
 
 /** Like maintenance, restriction replaces navigation so internal players dispose.
  * Unknown/offline enrollment is informational, not a new activation requirement. */
@@ -68,8 +69,10 @@ fun DeviceManagementGate(state: DeviceManagementState, onDismissMessage: (String
 @Composable
 fun DeviceManagementStatusInfo() {
     val state = LocalDeviceManagementState.current
+    val checkIn=LocalDeviceManagementCheckIn.current
     Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text("Provider device management · ${state.status}", color = TextSecondary, fontSize = 12.sp)
         if (state.installationId.isNotBlank()) Text("Device ID: ${state.installationId}", color = TextSecondary, fontSize = 12.sp)
+        TextButton(onClick=checkIn,enabled=state.installationId.isNotBlank()) { Text("Check in / retry management now") }
     }
 }

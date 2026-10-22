@@ -9,6 +9,7 @@ final class Application
     public readonly Management $management;
     public readonly Commands $commands;
     public readonly Enrollment $enrollment;
+    public readonly SettingsPresets $presets;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
@@ -17,6 +18,7 @@ final class Application
         $this->management = new Management($this->db, $config, $this->auth);
         $this->commands = new Commands($this->db, $config, $this->auth, $this->management);
         $this->enrollment = new Enrollment($this->db,$config,$this->auth,$this->management,new Secrets($config));
+        $this->presets=new SettingsPresets($this->db,$this->management,$this->auth,$config);
     }
 
     public function serve(string $method, string $path): never
@@ -46,7 +48,7 @@ final class Application
             Http::json($result);
         }
         if($method==='POST'&&$path==='/api/device/enrollment/challenge') Http::json($this->enrollment->challenge(Http::body(),$_SERVER['REMOTE_ADDR']??''));
-        if($method==='POST'&&$path==='/api/device/enrollment/register') Http::json($this->enrollment->register(Http::body(),$_SERVER['REMOTE_ADDR']??''),201);
+        if($method==='POST'&&$path==='/api/device/enrollment/register') { $result=$this->enrollment->register(Http::body(),$_SERVER['REMOTE_ADDR']??'');Http::json($result,$result['status']==='not_managed'?200:201); }
         if($method==='POST'&&$path==='/api/device/enrollment/poll') Http::json($this->enrollment->poll(Http::body(),$_SERVER['REMOTE_ADDR']??''));
         if($method==='POST'&&$path==='/api/device/enrollment/confirm') Http::json($this->enrollment->poll(Http::body(),$_SERVER['REMOTE_ADDR']??'',true));
         if ($method === 'POST' && $path === '/api/device/check-in') {
@@ -93,6 +95,10 @@ final class Application
             Http::cookie($this->config, ''); Http::json(['ok' => true]);
         }
         if ($method === 'GET' && $path === '/api/overview') Http::json($this->management->overview($actor));
+        if($method==='GET'&&$path==='/api/settings-presets')Http::json($this->presets->listing($actor,$_GET));
+        if($method==='POST'&&$path==='/api/settings-presets')Http::json($this->presets->create($actor,Http::body()),201);
+        if($method==='POST'&&preg_match('~^/api/settings-presets/([a-f0-9]{32})$~D',$path,$match))Http::json($this->presets->change($actor,$match[1],Http::body()));
+        if($method==='POST'&&preg_match('~^/api/settings-presets/([a-f0-9]{32})/archive$~D',$path,$match))Http::json($this->presets->change($actor,$match[1],Http::body(),true));
         if ($method === 'GET' && $path === '/api/tenants') Http::json($this->management->tenantListing($actor, $_GET));
         if($method==='GET'&&$path==='/api/panel-resellers')Http::json($this->enrollment->panelLinks($actor));
         if($method==='POST'&&preg_match('~^/api/tenants/([a-f0-9]{32})/panel-link$~D',$path,$match))Http::json($this->enrollment->linkPanelReseller($actor,$match[1],Http::body()));
@@ -111,6 +117,7 @@ final class Application
             if ($method === 'GET') Http::json($this->commands->listing($actor, $match[1], $_GET));
             if ($method === 'POST') Http::json($this->commands->enqueue($actor, $match[1], Http::body(), $_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? ''), 201);
         }
+        if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/commands/([a-f0-9]{32})/cancel$~D',$path,$match)){Input::keys(Http::body(),[]);Http::json($this->commands->cancel($actor,$match[1],$match[2]));}
         if ($method === 'GET' && $path === '/api/audit') Http::json($this->management->audit($actor, $_GET));
         throw new Problem(404, 'Record not found.');
     }
@@ -123,7 +130,7 @@ final class Application
         $days = $this->config->number('retention_days', 90, 7, 365);
         $commands = $this->db->query("DELETE FROM commands WHERE status IN ('succeeded','failed','expired','cancelled') AND finished_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
         $events = $this->db->query("DELETE FROM audit_events WHERE created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
-        if((new Migrations($this->db,$this->config))->pending()===[]) $this->enrollment->maintain();
+        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();}
         return ['expired_sessions_removed' => $sessions, 'old_commands_removed' => $commands, 'old_audit_events_removed' => $events];
     }
 }

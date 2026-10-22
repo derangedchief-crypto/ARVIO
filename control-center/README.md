@@ -5,7 +5,59 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone — 0.3.0
+## Current milestone — 0.4.0
+
+### Linked-reseller admission only (future paid-service boundary)
+
+An outside panel reseller does NOT automatically get a place in this service.
+The owner must create the control-center workspace AND verify/link its panel
+reseller ID first. A valid app login from any other reseller returns `not_managed`:
+no pending request, customer, device, poll token, proof journal or per-device audit
+entry is created. Matching display names and legacy proofs without verified
+ownership cannot bypass this rule. This is an owner-controlled admission boundary,
+NOT implemented billing, payment collection or subscription-expiry enforcement.
+
+The app's IPTV activation/viewing is unchanged. The management agent backs off for
+an hour while foreground, persists that backoff across restarts, and allows
+**Settings -> Check in / retry management now** after an owner links the reseller.
+Older 107 clients still cannot create unmatched rows, but do not understand the
+new quiet status/backoff as well as 108. Temporary challenge/rate-limit security
+state is bounded/expired; it is not a device/customer discovery list.
+
+Migration 005 expires legacy never-assigned enrollment deliveries. Unverified
+legacy requests are hidden and cron prunes them; existing approved records,
+customer/device data and audit history are preserved. Owner-approved/unassigned
+devices remain intentional owner inventory and can renew their own credentials.
+They do not grant a new unknown installation admission. Only admitted reseller
+ownership/allocation exceptions enter the review queue. Creating a workspace
+without linking it is deliberately insufficient.
+
+### More management functions
+
+- **Remote channel sorting:** request a fresh Settings snapshot, then choose
+  provider order / channel number / channel name. The command targets its hashed
+  active-profile reference and expected settings revision. The app checks the
+  source account and compare-and-sets that profile's sort key inside one DataStore
+  edit. A profile/account/local-sort change rejects the update instead of silently
+  overwriting another profile. Credentials, playlists, favourites, guide caches,
+  decoders and update settings are not writable through this allowlist.
+- **Settings presets:** create/edit/archive named channel-sorting presets under
+  the workspace-scoped Settings presets page. Up to 100 active presets per
+  workspace; list/search/pagination and normal archive retention are provided.
+  Saving/editing a preset does NOT push anything. Apply one explicitly from a
+  device's Settings tab after obtaining a fresh revision-bearing snapshot.
+- **Cancel queued commands:** the requesting user or owner may cancel a pending
+  or delivered command. A foreign reseller/user cannot cancel another user's
+  command. Cancelled leases cannot upload results/start via the 108 preflight.
+  Running/finished actions cannot be recalled, and already-started work is not
+  claimed to be reversible.
+
+0.4.0 retains the 0.3.0 unassignment and 108 first-activation fixes below. Install
+the **0.4.0 website UPDATE ZIP** and apply migrations 005/006 under Enrollments
+before the combined centrally signed 108 testing APK. The existing ownership
+worker bridge is compatible; no additional worker update is needed. Presets
+currently configure sorting ONLY; full playlist editing/category/favourite sync,
+log uploads/screenshots and billing remain separate later increments.
 
 ### Unassign reseller without blocking the app
 
@@ -74,7 +126,7 @@ As owner, use **Resellers -> Link panel reseller** for existing workspaces (incl
 the owner workspace if it owns panel lines). The form defaults to the workspace
 name; enter the exact PANEL LOGIN username. For new workspaces, use the **Existing
 panel reseller username** field in Create reseller. A blank field deliberately
-creates an unlinked/manual-review workspace. The worker verifies a unique active,
+creates an unlinked workspace that cannot admit new app devices. The worker verifies a unique active,
 exact-case username through a signed server-to-server lookup, and the backend
 permanently stores its numeric panel ID. Names alone never authorize enrollment.
 Each panel reseller may link to only one workspace, and vice versa. Workspace or
@@ -83,10 +135,10 @@ different identity is not a supported transfer operation.
 
 For linked active workspaces with capacity, new verified devices automatically
 receive a customer record (`Panel line <id>`) and a device credential. Repeated
-installations of the same panel line reuse the customer record. Unknown links,
-conflicting accounts/assignments, rejected requests, existing/removed installations,
-and exhausted/suspended workspaces are not silently approved or transferred.
-Manual owner review remains available for exceptions, not every activation.
+installations of the same panel line reuse the customer record. Unknown/unlinked
+resellers are ignored, not queued for review. Conflicting admitted assignments,
+rejected requests and existing/removed installations are not silently transferred
+or resurrected. Allocation exceptions from admitted resellers may require review.
 
 Linking a reseller expires outstanding pending deliveries so existing 2.0.107
 apps automatically obtain fresh proofs on their next polls. Keep the app open
@@ -114,7 +166,8 @@ delivery or acknowledgment; check-in responses identify their schema version.
 Management-enabled app builds obtain a short-lived account assertion from the
 existing activation worker and prove possession of an installation P-256 key.
 Verified linked panel accounts enroll automatically as described above. The
-control-center owner reviews unmatched/conflicting requests and selects the customer.
+control-center owner reviews admitted conflicts and allocation exceptions, not
+devices from outside/unlinked resellers.
 No reseller/customer ownership ID submitted by an APK is accepted, and no unknown
 panel columns or external panel schema changes are required. Pending requests are
 not presented as connected devices or given management credentials.

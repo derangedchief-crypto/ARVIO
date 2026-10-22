@@ -1,6 +1,39 @@
-# Device management 0.3.0 — validation
+# Device management 0.4.0 — validation
 
-## Unassignment, first-activation lifetime and next remote actions
+## Linked-only admission and more controls
+
+- **107 real MariaDB/service/HTTP cases passed**, zero failures. New admission
+  checks prove missing/unlinked/suspended/legacy-proof resellers create no request,
+  customer/device, proof journal or per-device audit row. A created-but-unlinked
+  workspace is insufficient; linking permits a fresh proof later. HTTP ignore
+  responses are200 with no request/poll credential. Legacy unclaimed rows are hidden,
+  expired/pruned while approved inventory is retained. Owner-unassigned renewal
+  does not grant new unknown installations an owner exception.
+- Server tests cover closed profile/revision settings payloads, updated typed
+  receipts, preset tenant isolation/CSRF/edit/archive/quota/retention, cancellation
+  requester/owner permissions, invalidated delivery leases and truthful rejection
+  of running/finished recall. The complete previous DB/HTTP suite is included.
+- **14 headless browser checks passed** including real preset creation with literal
+  hostile text, applying a revision-bound preset as a QUEUED action, actual queued
+  cancellation, existing unassignment, scoped reseller reads and mobile layout.
+  Preset/setting screenshots use explicitly SYNTHETIC simulator response fixtures;
+  they are not represented as real Android data or executed settings writes.
+- **105 Android JVM/Robolectric cases passed**, zero failures. The atomic mutable-
+  preference helper changes only the selected sort key and rejects stale/profile/
+  account guards. Executor cases check revision/profile validation, compare-and-set
+  conflict results, updated snapshot revisions and no source writes. Tests also
+  cover persisted ignore-state serialization, manual retry UI, original first-code
+  lifetime fix, updater/relaunch, activation and live/codec regressions.
+- Internal-test and Android-instrumentation Kotlin compilation passed. Real Android
+  DataStore/Keystore operation, manual retry, sort UI updates and fresh-device code
+  entry still require the combined108 pilot. Tests do not assert live hardware
+  performance, fleet capacity or implemented billing/payment processing.
+- Applied migrations001–004 are unchanged;005/006 add linked request metadata and
+  workspace presets. The worker source, updater source/workflows and live engine/
+  Back handlers are unchanged. Public worker health reported ownership_schema_version1
+  via a read-only check; no live SQL/worker deployment/customer action was executed.
+
+## Previous unassignment/action increment (0.3.0)
 
 - **98 real MariaDB/service/HTTP cases passed**, zero failures. Covers owner-only
   CSRF-protected detachment, composite-FK command history migration, cancellation

@@ -554,6 +554,22 @@ merely to refresh or retry it.
 
 ## Management follow-up in 2.0.108 / 424
 
+The combined UNPUBLISHED108 increment also uses control-center0.4.0 admission:
+unmatched panel resellers return not_managed before any pending/customer/device
+record is created. New108 handles this quiet non-error state with persisted hourly
+foreground backoff and a Settings manual check-in/retry button. No activation
+credentials are erased and no management restriction is invented for a nonmember.
+Known owner-held devices remain intentional inventory, not unknown discovery.
+
+Additional capability set_settings writes only provider/name/number channel sort
+order. It requires a fresh snapshot's profile reference/revision, validates account
+identity, and compares/writes the explicit profile key within DataStore.edit.
+Cloud dirty tracking is retained; source URLs, guide/favourite data, player engine
+and updater settings are not edited. UI offers workspace-scoped named sort presets
+and cancellation of queued commands; running actions are explicitly not recalled.
+Website0.4.0 migrations must precede publishing108 via the unchanged testing
+workflow. Latest actually signed testing build remains107 until that publication.
+
 Fix the first-activation navigation reset: preparing the management identity after
 the playlist is saved must not switch an already-running app back into the
 cold-start loading gate. The former true -> false transition disposed NavHost,

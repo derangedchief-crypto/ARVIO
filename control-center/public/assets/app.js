@@ -73,7 +73,7 @@ async function enter() {
   $('entry').replaceChildren(); $('entry').hidden = true; $('shell').hidden = false; $('account-name').textContent = state.user.display_name;
   $('workspace-name').textContent = state.user.role === 'owner' ? 'Owner workspace · all resellers' : state.tenants[0]?.name || 'Reseller workspace';
   const nav = $('navigation'); nav.replaceChildren();
-  const links = [['overview', 'Overview'], ['devices', 'Devices'], ['customers', 'Customers'], ...(state.user.role === 'owner' ? [['resellers', 'Resellers'], ['enrollments', 'Enrollments']] : []), ['audit', 'Activity log']];
+  const links = [['overview', 'Overview'], ['devices', 'Devices'], ['customers', 'Customers'], ['presets', 'Settings presets'], ...(state.user.role === 'owner' ? [['resellers', 'Resellers'], ['enrollments', 'Enrollments']] : []), ['audit', 'Activity log']];
   links.forEach(([key, text]) => { const link = el('a', text); link.href = '#' + key; link.dataset.page = key; nav.append(link); });
   await route();
 }
@@ -89,7 +89,7 @@ function devicesTable(items) { return table(['Device', 'Customer / reseller', 'P
 async function overview(epoch) {
   const [stats, devices] = await Promise.all([api('/api/overview'), api('/api/devices')]); if (epoch !== state.epoch) return;
   const main = $('main'); main.replaceChildren(heading('Operations overview', 'Your customers and devices, in one workspace.', [button('Refresh', route)]));
-  main.append(el('p', 'Management-enabled apps enroll automatically when their verified panel reseller is linked. Unmatched requests appear under Enrollments for review. Older app builds are not automatically imported. Local simulators remain labelled TEST.', 'notice'));
+  main.append(el('p', 'Only devices from created, verified linked resellers enter this service. Unmatched resellers are quietly ignored: no pending device or customer is created. Existing owner-managed/unassigned inventory is retained. Local simulators remain labelled TEST.', 'notice'));
   const cards = el('div', null, 'stats'); [['Managed devices', stats.total, `${stats.not_enrolled} awaiting enrollment`], ['Recently connected', stats.connected, 'App check-ins, not device power state'], ['Customers', stats.customers, 'Visible to your account only'], ['Queued / in progress', stats.pending_commands, 'Delivery is not confirmation of execution']].forEach(([label, count, note]) => { const card = el('div', null, 'stat'); card.append(el('div', label, 'stat-label'), el('strong', count), el('span', note)); cards.append(card); });
   main.append(cards, panel('Recent devices', devicesTable(devices.items)), panel('One update source of truth', el('p', 'Every customer and reseller app uses the platform owner’s update channel. Resellers cannot upload APKs, change update URLs or disable mandatory updates.', 'subtle')));
 }
@@ -128,6 +128,30 @@ async function resellers(epoch) {
   await load();
 }
 function detailRows(entries) { const dl = el('dl', null, 'detail-grid'); entries.forEach(([name, value]) => dl.append(el('dt', name), el('dd', value ?? 'Not reported'))); return dl; }
+const sortOptions = [['provider', 'Provider order'], ['number', 'Channel number'], ['name', 'Channel name (A–Z)']];
+function presetForm(preset = null) {
+  modal(preset ? 'Edit settings preset' : 'Create settings preset', [
+    ...(!preset && state.user.role === 'owner' ? [tenantField()] : []),
+    { key: 'name', label: 'Preset name', max: 80, value: preset?.name || '' },
+    { key: 'sort_order', label: 'Channel sorting', options: sortOptions, value: preset?.sort_order || 'provider', hint: 'This preset changes channel sorting only. It never changes playlists, credentials, playback engines or app updates.' }
+  ], async values => { await api(preset ? '/api/settings-presets/' + preset.id : '/api/settings-presets', values); toast('Preset saved. Devices are unchanged until you explicitly apply it from their Settings tab.'); });
+}
+async function presetsPage(epoch) {
+  const main = $('main'); main.replaceChildren(heading('Settings presets', 'Workspace-scoped channel-sorting presets. Saving a preset does not push it to devices.', [button('Create preset', () => presetForm(), 'primary')]));
+  const box = panel(null); const filters = el('form', null, 'filters'); const search = el('input'); search.placeholder = 'Search preset name…'; search.setAttribute('aria-label', 'Search presets'); filters.append(search, button('Search', () => load(1))); filters.onsubmit = e => { e.preventDefault(); load(1); }; const results = el('div'); box.append(filters, results); main.append(box);
+  async function load(page = 1) {
+    try {
+      const data = await api(`/api/settings-presets?page=${page}&search=${encodeURIComponent(search.value)}`); if (epoch !== state.epoch) return;
+      results.replaceChildren(table(['Preset', 'Workspace', 'Channel sorting', 'Updated', 'Actions'], data.items.map(p => {
+        const a = el('div', null, 'actions'); a.append(button('Edit', () => presetForm(p)), button('Archive', async () => {
+          if (!confirm('Archive this preset? Existing device settings and queued actions are unchanged.')) return;
+          try { await api('/api/settings-presets/' + p.id + '/archive', {}); await load(page); } catch (e) { toast(e.message); }
+        })); return [p.name, p.tenant_name, sortOptions.find(([key]) => key === p.sort_order)?.[1] || p.sort_order, date(p.updated_at), a];
+      })), pagination(data, load));
+    } catch (e) { toast(e.message); }
+  }
+  await load();
+}
 async function queue(device, kind, payload = {}) {
   if (['clear_cache', 'restart_app'].includes(kind) && !confirm('Request this app action? It may interrupt playback and can only run when the app is connected. Clear cache must preserve login, favourites and saved guides.')) return;
   const fingerprint = JSON.stringify([device.id, kind, payload]); const key = requestKeys.get(fingerprint) || uuid(); requestKeys.set(fingerprint, key);
@@ -160,7 +184,14 @@ async function devicePage(id, epoch) {
       body.append(panel('Private notes & management policy', el('p', d.notes || 'No notes yet.', 'notes'), policyActions));
     } else if (name === 'Commands') {
       const p = panel('Command history'); body.append(p);
-      const load = async (page = 1) => { const result = await api(`/api/devices/${id}/commands?page=${page}`); if (epoch !== state.epoch || !tabs.querySelector('[data-tab="Commands"]').classList.contains('active')) return; p.replaceChildren(el('h2', 'Command history'), table(['Action', 'Status', 'Attempts', 'Requested', 'Result'], result.items.map(c => [c.kind.replaceAll('_', ' '), badge(c.status), c.attempts, date(c.created_at), c.result?.summary || '—'])), pagination(result, load)); };
+      const load = async (page = 1) => { const result = await api(`/api/devices/${id}/commands?page=${page}`); if (epoch !== state.epoch || !tabs.querySelector('[data-tab="Commands"]').classList.contains('active')) return; p.replaceChildren(el('h2', 'Command history'), table(['Action', 'Status', 'Attempts', 'Requested', 'Result', 'Cancel queued action'], result.items.map(c => {
+        const a = el('div');
+        if (['pending', 'delivered'].includes(c.status) && (state.user.role === 'owner' || c.requested_by === state.user.id)) a.append(button('Cancel', async () => {
+          if (!confirm('Cancel this queued action? An operation already running cannot be recalled.')) return;
+          try { await api(`/api/devices/${id}/commands/${c.id}/cancel`, {}); await load(page); } catch (e) { toast(e.message); }
+        }));
+        return [c.kind.replaceAll('_', ' '), badge(c.status), c.attempts, date(c.created_at), c.result?.summary || '—', a];
+      })), pagination(result, load)); };
       try { await load(); } catch (e) { toast(e.message); }
     } else if ((name === 'Settings' || name === 'Logs') && d.capabilities.includes(name === 'Settings' ? 'get_settings' : 'get_diagnostics')) {
       const kind = name === 'Settings' ? 'get_settings' : 'get_diagnostics';
@@ -168,9 +199,22 @@ async function devicePage(id, epoch) {
       const request = button('Request fresh snapshot', () => queue(d, kind).catch(e => toast(e.message)), 'primary'); request.disabled = d.policy !== 'active'; p.append(request, el('p', 'The app must be open to respond. This snapshot reports one active profile at execution time, not every profile. Refresh this tab after the next app check-in.', 'hint'));
       try {
         const commands = await api(`/api/devices/${id}/commands`); if (epoch !== state.epoch || !tabs.querySelector(`[data-tab="${name}"]`).classList.contains('active')) return;
-        const latest = commands.items.find(c => c.kind === kind && c.status === 'succeeded' && c.result?.snapshot);
+        const latest = commands.items.filter(c => (kind === 'get_settings' ? ['get_settings', 'set_settings'].includes(c.kind) : c.kind === kind) && c.status === 'succeeded' && c.result?.snapshot).sort((a, b) => String(b.finished_at).localeCompare(String(a.finished_at)))[0];
         if (latest) p.append(el('p', 'Snapshot received: ' + date(latest.finished_at), 'subtle'), detailRows(Object.entries(latest.result.snapshot).map(([key, value]) => [key.replaceAll('_', ' '), String(value)])));
         else p.append(el('p', 'No successful snapshot in the latest command-history page. Nothing has been fetched until you request it.', 'subtle'));
+        if (name === 'Settings' && d.capabilities.includes('set_settings')) {
+          const snapshot = latest?.result.snapshot;
+          if (!snapshot?.settings_revision) { p.append(el('p', 'Request a fresh settings snapshot before editing. Updates target its profile and reject a changed local sort order.', 'hint')); }
+          else {
+            const applySort = sort_order => queue(d, 'set_settings', { profile_ref: snapshot.profile_ref, expected_revision: snapshot.settings_revision, sort_order });
+            const edit = button('Change channel sorting', () => modal('Change device channel sorting', [{ key: 'sort_order', label: 'Channel sorting', options: sortOptions, value: snapshot.sort_order }], v => applySort(v.sort_order), 'Queue settings update')); edit.disabled = d.policy !== 'active'; p.append(edit);
+            const saved = await api('/api/settings-presets?tenant_id=' + encodeURIComponent(d.tenant_id));
+            if (epoch !== state.epoch || !tabs.querySelector('[data-tab="Settings"]').classList.contains('active')) return;
+            if (saved.items.length) {
+              const apply = button('Apply saved preset', () => modal('Apply channel-sorting preset', [{ key: 'preset_id', label: 'Preset', options: saved.items.map(s => [s.id, s.name]), hint: 'First 25 active presets for this workspace. Applying uses the latest displayed profile/revision; local changes cause a safe conflict.' }], v => applySort(saved.items.find(s => s.id === v.preset_id).sort_order), 'Queue preset application')); apply.disabled = d.policy !== 'active'; p.append(apply);
+            }
+          }
+        }
       } catch (e) { toast(e.message); }
     } else if (name === 'Playlists' && d.capabilities.includes('refresh_playlist')) {
       const actions = el('div', null, 'actions');
@@ -224,7 +268,7 @@ async function approveEnrollment(request) {
   });
 }
 async function enrollments(epoch) {
-  const main = $('main'); main.replaceChildren(heading('Device enrollments', 'Linked verified panel accounts enroll automatically. Review unmatched requests and ownership exceptions here.'));
+  const main = $('main'); main.replaceChildren(heading('Device enrollments', 'Only created, verified linked resellers are admitted. This list contains admitted ownership/allocation exceptions—not unmatched reseller devices.'));
   const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
   if (system.pending_migrations.length) {
     main.append(panel('Database upgrade required', el('p', 'This release applies versioned schema changes without replacing existing accounts, devices or configuration. Back up the database and private storage before upgrading.', 'subtle'),
@@ -244,7 +288,7 @@ async function enrollments(epoch) {
     try { await api('/api/enrollments/settings', { enabled: !settings.enabled }); await route(); } catch (e) { toast(e.message); }
   }, settings.enabled ? '' : 'primary'));
   main.append(panel('Activation bridge', el('p', 'The existing activation worker verifies active customer logins and issues a short-lived assertion. The app also proves possession of its own device key. No signing secret is embedded in APKs, and resellers cannot claim unassigned accounts.', 'subtle'),
-    el('p', settings.enabled ? 'New enrollment is enabled. Devices from verified linked panel resellers are assigned automatically. Unmatched identities and ownership conflicts require review.' : 'New enrollment is paused. Configure the worker bridge before enabling it.', 'notice'), actions));
+    el('p', settings.enabled ? 'New enrollment is enabled for created and linked resellers only. Unmatched resellers create no pending/device/customer record. Admitted ownership or allocation conflicts may require review.' : 'New enrollment is paused. Configure the worker bridge before enabling it.', 'notice'), actions));
   const box = panel('Requests'); const filters = el('form', null, 'filters'); const status = el('select'); status.setAttribute('aria-label', 'Enrollment status');
   for (const value of ['pending', 'approved', 'rejected']) { const option = el('option', value[0].toUpperCase() + value.slice(1)); option.value = value; status.append(option); }
   filters.append(status, button('Refresh requests', () => load(1))); filters.onsubmit = e => { e.preventDefault(); load(1); }; status.addEventListener('change', () => load(1));
@@ -278,6 +322,7 @@ async function route() {
     else if (hash === 'devices' || hash === 'customers') await records(hash, epoch);
     else if (hash === 'resellers' && state.user.role === 'owner') await resellers(epoch);
     else if (hash === 'audit') await audit(epoch);
+    else if (hash === 'presets') await presetsPage(epoch);
     else if (hash === 'enrollments' && state.user.role === 'owner') await enrollments(epoch);
     else if (/^device\/[a-f0-9]{32}$/.test(hash)) await devicePage(hash.split('/')[1], epoch);
     else location.hash = 'overview';

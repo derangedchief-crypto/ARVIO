@@ -13,18 +13,26 @@ import kotlinx.coroutines.withTimeout
 /** Explicit app operations only. No URLs, credentials, source labels, profile names,
  * free-form errors/logs, favourite values or update controls leave the device. */
 internal class ManagementActions(private val context: Context, private val repository: IptvRepository, private val profiles: ProfileManager) {
-    suspend fun execute(id: String, kind: String, accountScope: String): CommandReceipt {
+    suspend fun execute(id: String, kind: String, accountScope: String, payload: Map<String,String> = emptyMap()): CommandReceipt {
         val profile = profiles.getProfileId()
         suspend fun eligible(): Boolean = profiles.getProfileId() == profile && managementAccount(repository.observeConfig().first())?.scope == accountScope
         if (!eligible()) return CommandReceipt(id, "failed", "Active profile/account changed; action not applied")
         return try {
+            if (kind == "set_settings") {
+                if (!validManagedSortPayload(payload) || payload["profile_ref"] != managementHash(profile)) return CommandReceipt(id, "failed", "Settings target does not match the active profile")
+                val before = repository.observeConfig().first().sortOrder
+                if (payload["expected_revision"] != managementSettingsRevision(managementHash(profile), accountScope, before)) return CommandReceipt(id, "failed", "Settings changed locally; request a fresh snapshot first")
+                val applied = repository.compareAndSetManagedSortOrder(profile, before, payload.getValue("sort_order")) { managementAccount(it)?.scope == accountScope }
+                if (!applied) return CommandReceipt(id, "failed", "Profile, source account or sort order changed; request a fresh snapshot")
+            }
             val receipt = when (kind) {
-                "get_settings" -> {
+                "get_settings", "set_settings" -> {
                     val config = repository.observeConfig().first()
                     val playlists = if (config.playlists.isEmpty()) if (config.m3uUrl.isBlank()) 0 else 1 else config.playlists.size
                     val enabled = if (config.playlists.isEmpty()) playlists else config.playlists.count { it.enabled }
-                    CommandReceipt(id, "succeeded", "Read-only active-profile settings snapshot", mapOf(
+                    CommandReceipt(id, "succeeded", if (kind == "set_settings") "Channel sorting updated for the selected profile; other settings unchanged" else "Read-only active-profile settings snapshot", mapOf(
                         "schema_version" to "1", "profile_ref" to managementHash(profile), "sort_order" to config.sortOrder,
+                        "settings_revision" to managementSettingsRevision(managementHash(profile), accountScope, config.sortOrder),
                         "playlist_count" to playlists.toString(), "enabled_playlist_count" to enabled.toString(),
                         "portal_count" to config.stalkerPortals.size.toString(),
                         "favourite_channel_count" to repository.observeFavoriteChannels().first().size.toString(),
@@ -50,7 +58,7 @@ internal class ManagementActions(private val context: Context, private val repos
                 }
                 else -> CommandReceipt(id, "failed", "Unsupported action")
             }
-            if (eligible()) receipt else CommandReceipt(id, "failed", "Active profile/account changed during action; no snapshot published")
+            if (eligible()) receipt else CommandReceipt(id, "failed", "Active profile/account changed during action; any settings write remained scoped to the original profile; no snapshot published")
         } catch (cancelled: kotlinx.coroutines.TimeoutCancellationException) {
             CommandReceipt(id, "failed", "Action timed out; saved configuration and guide were not cleared")
         } catch (cancelled: CancellationException) { throw cancelled }

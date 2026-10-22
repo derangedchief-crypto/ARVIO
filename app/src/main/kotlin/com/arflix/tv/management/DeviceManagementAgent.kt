@@ -26,6 +26,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -50,6 +52,7 @@ class DeviceManagementAgent @Inject constructor(
     private val api = ManagementApi()
     private val mutation = Mutex()
     private val runner = Mutex()
+    private val wake = Channel<Unit>(Channel.CONFLATED)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(DeviceManagementState())
     val state = _state.asStateFlow()
@@ -62,6 +65,15 @@ class DeviceManagementAgent @Inject constructor(
     @Volatile private var active: Active? = null
 
     fun onInteraction() { lastInteraction = SystemClock.elapsedRealtime() }
+    fun checkInNow() {
+        val current=active ?: return
+        scope.launch {
+            try { change(current) { it.copy(unmanagedUntilMs = 0) }; wake.trySend(Unit) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { current.status="Management retry state could not be saved";publish(current) }
+        }
+    }
+    private suspend fun waitForNextCheckIn(milliseconds: Long) { withTimeoutOrNull(milliseconds) { wake.receive() } }
     fun dismissMessage(id: String) {
         val current = active ?: return
         scope.launch {
@@ -132,7 +144,7 @@ class DeviceManagementAgent @Inject constructor(
                         try {
                             cycle(current)
                             failures = 0
-                            delay((current.heartbeat.coerceIn(15, 300) * 1000L) + Random.nextLong(0, 5000))
+                            waitForNextCheckIn((current.heartbeat.coerceIn(15, 300) * 1000L) + Random.nextLong(0, 5000))
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (error: Exception) {
                             failures = (failures + 1).coerceAtMost(5)
@@ -141,7 +153,7 @@ class DeviceManagementAgent @Inject constructor(
                             }
                             current.status = if (current.session.policy in setOf("suspended", "blocked", "removed")) "Waiting for provider policy check" else "Control center unavailable — app activation is unchanged"
                             publish(current)
-                            delay((10_000L shl (failures - 1)).coerceAtMost(300_000) + Random.nextLong(0, 3000))
+                            waitForNextCheckIn((10_000L shl (failures - 1)).coerceAtMost(300_000) + Random.nextLong(0, 3000))
                         }
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
@@ -165,9 +177,16 @@ class DeviceManagementAgent @Inject constructor(
             .put("label", "${Build.MANUFACTURER} ${Build.MODEL}".take(120)).put("model", Build.MODEL.take(120))
             .put("os_version", "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})").put("app_version", BuildConfig.VERSION_NAME))
         require(result.getInt("schema_version") == 1 && result.getString("installation_id") == session.installationId)
+        if (result.optString("status") == "not_managed") {
+            change(current) { it.copy(requestId = null, pollToken = null, unmanagedUntilMs = System.currentTimeMillis() + result.optInt("retry_after_seconds", 3600).coerceIn(300, 86400) * 1000L) }
+            current.status = "Device management is not enabled for this reseller"
+            current.heartbeat = 300
+            publish(current)
+            return
+        }
         val id = result.getString("request_id").also { require(it.matches(Regex("[a-f0-9]{32}"))) }
         val token = result.getString("poll_token").also { require(it.matches(Regex("[a-f0-9]{64}"))) }
-        change(current) { it.copy(requestId = id, pollToken = token) }
+        change(current) { it.copy(requestId = id, pollToken = token, unmanagedUntilMs = 0) }
     }
     private fun delivery(session: ManagementSession) = JSONObject().put("schema_version", 1).put("request_id", session.requestId).put("poll_token", session.pollToken)
     private suspend fun poll(current: Active) {
@@ -206,7 +225,11 @@ class DeviceManagementAgent @Inject constructor(
     private suspend fun cycle(current: Active) {
         val session = current.session
         if (session.credential == null) {
+            if (session.pollToken == null && session.unmanagedUntilMs - System.currentTimeMillis() in 1..86400_000L) {
+                current.status = "Device management is not enabled for this reseller"; current.heartbeat = 300; publish(current); return
+            }
             if (session.pollToken == null) enroll(current)
+            if (current.session.pollToken == null) return
             poll(current)
             if (current.session.credential == null) return
         }
@@ -245,13 +268,14 @@ class DeviceManagementAgent @Inject constructor(
             val payload = command.optJSONObject("payload") ?: JSONObject()
             val item = ManagementCommand(id, kind, runCatching { parseManagementTime(command.getString("expires_at")) }.getOrDefault(0),
                 payload.optString("message", ""), payload.optInt("duration_seconds", 0))
-            if (kind in listOf("refresh_playlist", "reload_epg", "get_settings", "get_diagnostics") && item.expiresAtMs > System.currentTimeMillis()) {
+            if (kind in listOf("refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings") && item.expiresAtMs > System.currentTimeMillis()) {
                 beginCommand(current, id, lease)
                 // Persist an interrupted-operation receipt BEFORE side effects. A
                 // process/network retry cannot silently start an expensive job twice.
                 val interrupted = CommandReceipt(id, "failed", "Action interrupted; request a new command to retry safely")
                 change(current) { it.copy(receipts = (it.receipts + interrupted).takeLast(512)) }
-                val executed = ManagementActions(context, repository.get(), profiles).execute(id, kind, current.account.scope)
+                val settings = if (kind == "set_settings") payload.keys().asSequence().associateWith { key -> (payload.opt(key) as? String).orEmpty() } else emptyMap()
+                val executed = ManagementActions(context, repository.get(), profiles).execute(id, kind, current.account.scope, settings)
                 change(current) { it.copy(receipts = it.receipts.map { old -> if (old.id == id) executed else old }) }
                 acknowledge(current, lease, executed)
                 return
