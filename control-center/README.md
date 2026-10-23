@@ -5,7 +5,51 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current development milestone — 0.11.0
+## Current development milestone — 0.12.0
+
+### Trial plan approvals, reseller defaults and follow-up contacts
+
+Migration015 adds **Trials & contacts**. The owner explicitly refreshes a READ-ONLY
+trial catalog from the separate iptv-auth-worker extension, approves a limited subset
+for a verified reseller, then that reseller chooses one default. Catalog responses
+are scoped to its actual panel reseller ID and include duration, credit cost, groups,
+connection limits and a worker-generated revision fingerprint. Approval/default saves
+are version guarded; changed prices/limits or admin approval require explicit review.
+Disabling still works with stale metadata. These actions do NOT create panel accounts.
+
+The worker checks the approved fingerprint again under the owner/package write locks,
+and checks actual created limits after native panel registration. Read-only status
+lookups are bound to the original provisioning operation and owner, expose no account
+credentials and distinguish conversion to a non-trial line from proof of payment.
+Source revisions prevent delayed status replies from overwriting newer confirmations.
+
+Contacts from a confirmed trusted worker receipt are stored as encrypted, resource/
+tenant-bound first-name/phone envelopes. Lists mask phone numbers; the owning reseller
+can open details and explicitly call the number, including after the trial expires.
+Phone numbers remain unverified; no SMS/OTP or automated messaging. Original trial expiry
+is retained when a later panel status reports conversion. Full contact reads are audited
+without logging name/phone. An already-created receipt is not discarded merely because
+offers were subsequently suspended; it grants no device-control or viewing permission.
+
+Default local contact retention is90 days after known trial expiry, or creation while
+expiry is unknown, owner-configurable via trial_contact_retention_days (7–365). The UI
+shows the deadline. Removing/expiring local PII retains minimal eligibility history and
+never resets trial usage or restores erased PII on receipt replay. This does NOT remove
+IPTV panel notes or govern independent panel/backups retention. Adjust the local policy
+before deployment to match the desired follow-up period.
+
+Configure the separate connection in the EXISTING private config.php (no second config):
+trial_worker.base_url and trial_worker.shared_secret. This key is separate from the
+activation-worker/portal key, stays server-side and is blank/disabled by default. The
+worker extension also needs its matching private environment and original durable state.
+
+**App offers remain OFF.** Policy configuration and contact read/status/redaction routes
+are authenticated management tools, not a public provisioning API. Trusted branded-install
+validation, the native activation trial form/handoff, central builder/publication and
+brand-only update version allocation still need completion. No worker/site deployment or
+new APK publication is implied. Regular testing113 remains the published storage test.
+
+## Previous development increment — 0.11.0
 
 ### Self-service app brand preparation (not yet end-to-end APK/trial automation)
 

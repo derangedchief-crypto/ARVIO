@@ -17,6 +17,8 @@ final class Application
     public readonly Support $support;
     public readonly DeviceProfiles $deviceProfiles;
     public readonly AppBrands $appBrands;
+    public readonly TrialPolicies $trialPolicies;
+    public readonly TrialContacts $trialContacts;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
@@ -33,6 +35,8 @@ final class Application
         $this->support=new Support($this->db,$this->management,$this->commands,$this->auth,$config);
         $this->deviceProfiles=new DeviceProfiles($this->db,$this->management,$this->commands,$this->auth);
         $this->appBrands=new AppBrands($this->db,$this->management,$this->auth);
+        $trialWorker=new TrialWorker($config);$this->trialPolicies=new TrialPolicies($this->db,$this->management,$this->auth,$trialWorker);
+        $this->trialContacts=new TrialContacts($this->db,$this->management,$this->auth,new Secrets($config),$config,$trialWorker);
     }
 
     public function serve(string $method, string $path): never
@@ -123,6 +127,14 @@ final class Application
         if($method==='GET'&&preg_match('~^/api/app-brand/assets/([a-f0-9]{32})$~D',$path,$m)){$image=$this->appBrands->image($actor,$m[1]);header('Content-Type: '.$image['mime']);echo $image['image'];exit;}
         if($method==='POST'&&$path==='/api/app-brand/builds')Http::json($this->appBrands->requestBuild($actor,Http::body()),201);
         if($method==='POST'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/cancel$~D',$path,$m))Http::json($this->appBrands->cancelBuild($actor,$m[1],Http::body()));
+        if($method==='GET'&&$path==='/api/trial-policy')Http::json($this->trialPolicies->get($actor,$_GET));
+        if($method==='POST'&&$path==='/api/trial-policy/catalog')Http::json($this->trialPolicies->refresh($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/trial-policy/grants')Http::json($this->trialPolicies->grant($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/trial-policy/default')Http::json($this->trialPolicies->setDefault($actor,Http::body()));
+        if($method==='GET'&&$path==='/api/trial-contacts')Http::json($this->trialContacts->listing($actor,$_GET));
+        if($method==='GET'&&preg_match('~^/api/trial-contacts/([a-f0-9]{32})$~D',$path,$m))Http::json($this->trialContacts->detail($actor,$m[1]));
+        if($method==='POST'&&preg_match('~^/api/trial-contacts/([a-f0-9]{32})/redact$~D',$path,$m))Http::json($this->trialContacts->redact($actor,$m[1],Http::body()));
+        if($method==='POST'&&preg_match('~^/api/trial-contacts/([a-f0-9]{32})/refresh$~D',$path,$m))Http::json($this->trialContacts->refresh($actor,$m[1],Http::body()));
         if($method==='GET'&&$path==='/api/device-profiles')Http::json($this->deviceProfiles->listing($actor,$_GET));
         if($method==='POST'&&$path==='/api/device-profiles')Http::json($this->deviceProfiles->save($actor,null,Http::body()),201);
         if($method==='GET'&&preg_match('~^/api/device-profiles/([a-f0-9]{32})$~D',$path,$m))Http::json($this->deviceProfiles->get($actor,$m[1]));
@@ -193,7 +205,7 @@ final class Application
         $days = $this->config->number('retention_days', 90, 7, 365);
         $commands = $this->db->query("DELETE FROM commands WHERE status IN ('succeeded','failed','expired','cancelled') AND finished_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
         $events = $this->db->query("DELETE FROM audit_events WHERE created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
-        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();$this->sources->maintain();$this->preferences->maintain();$this->support->maintain();$this->deviceProfiles->maintain();$this->appBrands->maintain();}
+        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();$this->sources->maintain();$this->preferences->maintain();$this->support->maintain();$this->deviceProfiles->maintain();$this->appBrands->maintain();$this->trialContacts->maintain();}
         return ['expired_sessions_removed' => $sessions, 'old_commands_removed' => $commands, 'old_audit_events_removed' => $events];
     }
 }

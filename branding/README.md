@@ -49,8 +49,9 @@ missing centrally managed signing, rather than falling back to a debug key.
   update metadata still need implementation before distribution.
 - Trusted branded-install policy suitable for sideload TV devices; merely reporting
   a package/signing hash or extracting an embedded secret is NOT authentication.
-- Trial admin allowlists/defaults, structured contact retention/detail UI, protected
-  single-operation activation result delivery and the activation-screen integration.
+- Trial admin allowlists/defaults and structured contact views are implemented in
+  website0.12. Still needed: trusted branded-install session, public provisioning
+  broker, protected single-operation result delivery and activation-screen integration.
 
 No automatically enabled trial checkbox is shipped ahead of these backend/native
 capabilities. A user-visible name is not a panel username, authorization or ownership.

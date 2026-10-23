@@ -19,4 +19,12 @@ return [
     'offline_after_seconds' => 180,
     'command_lease_seconds' => 90,
     'retention_days' => 90,
+    // Separate iptv-auth-worker extension, NOT the activation worker/portal secret.
+    // Blank disables worker reads. This does not enable public app trial offers.
+    'trial_worker' => [
+        'base_url' => 'https://resellerworker.extremeiptv.net',
+        'shared_secret' => '',
+    ],
+    // Contact details only; minimal eligibility history is kept separately.
+    'trial_contact_retention_days' => 90,
 ];

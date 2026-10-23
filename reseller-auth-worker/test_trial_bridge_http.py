@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from test_branded_trials import module, Panel, request
+from test_branded_trials import module, Panel, request, PLAN
 
 
 class BridgeHttpTest(unittest.TestCase):
@@ -31,6 +31,13 @@ class BridgeHttpTest(unittest.TestCase):
         with patch.dict(os.environ,{'BRANDED_TRIAL_SHARED_SECRET':'','BRANDED_TRIAL_STATE_DIR':''}):
             app=FastAPI();module.install_trial_routes(app,{})
         with TestClient(app) as client:self.assertEqual(503,client.post('/branded-trials/provision',json=request()).status_code)
+    def test_catalog_and_status_use_distinct_read_only_signature_domains(self):
+        stamp=str(int(time.time()));body=json.dumps({'reseller_id':'101'}).encode();headers={'X-Trial-Timestamp':stamp,'X-Trial-Signature':module.signature(self.secret,stamp,body,'branded-trial-plans-v1')}
+        with patch.object(module.ExistingPanelAdapter,'catalog',return_value={'reseller_id':'101','plans':[module.plan_document(PLAN)]}):
+            response=self.client.post('/branded-trials/plans',content=body,headers=headers);self.assertEqual(200,response.status_code)
+        self.assertEqual(401,self.client.post('/branded-trials/provision',content=body,headers=headers).status_code);self.assertEqual(0,self.panel.creates)
+        self.send();body=json.dumps({'reseller_id':'101','operation_id':'a'*32}).encode();headers['X-Trial-Signature']=module.signature(self.secret,stamp,body,'branded-trial-status-v1')
+        response=self.client.post('/branded-trials/status',content=body,headers=headers);self.assertEqual(200,response.status_code);self.assertNotIn('account',response.json());self.assertEqual(1,self.panel.creates)
 
 
 if __name__=='__main__':unittest.main()

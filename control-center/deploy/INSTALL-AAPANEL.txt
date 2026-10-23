@@ -1,4 +1,23 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.11.0 (BRAND PREPARATION)
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.12.0 (TRIAL POLICY / CONTACTS)
+
+0.12.0 DEVELOPMENT INCREMENT
+Apply migration015 after earlier migrations, including014. Trials & contacts adds
+owner-approved worker trial plans, reseller default selection and protected follow-up
+contact details. Changed plan costs/limits require review; saves create NO accounts.
+Contacts are encrypted, numbers masked in lists and available in authorized details
+after expiry. Default local retention90 days is owner-configurable (7–365 days).
+Removing local contacts never resets eligibility and does not remove panel notes.
+
+The separate iptv-auth-worker extension needs matching private configuration before
+catalog/status reads work. Add trial_worker settings to your EXISTING config.php;
+do not copy secrets into APKs or change the activation worker for these endpoints.
+Blank configuration fails closed. This website package does not install that worker.
+
+App trial offers remain OFF: trusted branded-install verification and native trial
+activation/handoff, plus full central build/publication/versioning, remain unfinished.
+Testing113 storage APK is separate and unchanged. No live trial/panel writes occur
+from catalog refresh, policy/default saves or contact status refresh.
+
 
 0.11.0 DEVELOPMENT FOUNDATION
 Apply migration014 (and older pending migrations) after extracting the UPDATE ZIP.

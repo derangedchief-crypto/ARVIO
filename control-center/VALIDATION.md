@@ -1,4 +1,30 @@
-# Device management 0.11.0 development foundation — validation
+# Device management 0.12.0 trial policy/contact layer — validation
+
+## Trial policy/contact increment
+
+Real-DB/HTTP cases exercise signed scoped worker catalog parsing, owner-only grants,
+approved reseller defaults, price/limit revision changes, stale admin/default writes,
+disabling stale policies, encrypted resource/tenant-bound contacts, phone masking,
+post-expiry access, guarded status updates, preserved original trial expiry, delayed
+status responses, scoped read/removal, retention and non-restoration of erased PII.
+Catalog/policy/contact operations are asserted never to call worker provisioning.
+
+Browser cases use an isolated synthetic reseller to check owner approvals, rejected
+stale default drafts, permitted choices, full contact/dial link after expiry, masked
+lists, mobile layout, explicit redaction and no phone storage. Delayed detail responses
+must not replace a newer unrelated dialog or revive phone data after navigation.
+
+Worker offline cases cover domain-separated catalog/status/provision signatures,
+read-only scoped status, metadata fingerprints and actual created limits, including
+quoted numeric panel bouquet IDs. No real worker/panel connection or live line creation.
+Native app and published testing113 are unchanged by this increment. App offers stay off.
+
+Verified local results: **168 DB/service/HTTP checks,36 browser workflows and31
+offline worker/HTTP checks passed**, with zero failures/browser errors. Package
+configuration/key preservation and syntax checks also pass. All panel adapters,
+catalogs and trial receipts in tests are synthetic; no live trial or note was written.
+
+## Previous increment — 0.11.0
 
 ## Self-service brand registry / storage / worker preparation
 

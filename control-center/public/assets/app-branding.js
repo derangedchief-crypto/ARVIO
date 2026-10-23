@@ -22,7 +22,7 @@
       builds.append(request,table(['Brand version','Status','Requested','Actions'],data.builds.map(j=>{const actions=el('div');if(j.state==='waiting_builder')actions.append(button('Cancel queued build',async()=>{if(!confirm('Cancel this unstarted build? The saved app brand stays intact.'))return;await api('/api/app-brand/builds/'+j.id+'/cancel',{});if(epoch===state.epoch)await route();}));return[j.brand_version,j.state==='waiting_builder'?'Waiting for central builder':j.state,date(j.created_at),actions];})));
       const details=el('details',null,'advanced-details');details.append(el('summary','App identity'),detailRows([['Package',brand.package_name],['Saved brand version',brand.version]]));builds.append(details);main.append(builds);
     }
-    main.append(panel('Reseller trials',el('p','Trial creation is not enabled yet. The worker safety, device/customer eligibility and activation integration must be completed before this brand can offer trials.','hint')));
+    main.append(panel('Reseller trials',el('p','Prepare admin-approved defaults and manage follow-up contacts in Trials & contacts. App trial offers remain off until trusted installation and activation integration are validated.','hint'),button('Open trials & contacts',()=>{location.hash='trials/'+tenant;})));
   }
   root.AppBranding={render,isDirty:()=>[...drafts.values()].some(d=>d?.dirty),clear:()=>drafts.clear()};
 })(window);

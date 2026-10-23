@@ -11,17 +11,18 @@ from unittest.mock import Mock
 
 spec = importlib.util.spec_from_file_location('branded_trials',Path(__file__).with_name('branded_trials.py'))
 module = importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+PLAN={'id':7,'package_name':'24-hour trial','type':1,'credits':'0','duration':24,'duration_period':'hours','bouquets':'[10,20]','max_connections':1}
 
 
 def request(**changes):
     value={'operation_id':'a'*32,'brand_id':'b'*32,'reseller_id':'101','device_ref':'c'*64,
-        'package_id':7,'first_name':'Test Customer','phone':'+15551234567'}
+        'package_id':7,'plan_fingerprint':module.plan_document(PLAN)['fingerprint'],'first_name':'Test Customer','phone':'+15551234567'}
     value.update(changes);return value
 
 
 class Panel:
     def __init__(self):
-        self.rows={};self.creates=0;self.refreshes=0;self.ready=True;self.mode='ok';self.allowed=True
+        self.rows={};self.creates=0;self.refreshes=0;self.ready=True;self.mode='ok';self.allowed=True;self.state='active'
     def check(self,spec):
         if not self.allowed:raise module.TrialRejected('Unavailable')
     def create(self,spec):
@@ -34,6 +35,7 @@ class Panel:
     def find(self,spec):return self.rows.get(spec['operation_id'])
     def refresh(self,line):self.refreshes+=1;return self.ready
     def result(self,spec,line):return {'activation_code':'SYNTHETIC','username':'test','password':'fixture'}
+    def line_status(self,line,reseller):return {'state':self.state,'expires_at':int(time.time())+3600}
 
 
 class TrialLedgerTest(unittest.TestCase):
@@ -89,6 +91,10 @@ class TrialLedgerTest(unittest.TestCase):
         self.service.request(request());(self.root/'identity.key').unlink()
         with self.assertRaises(module.TrialRejected):self.service.request(request(operation_id='d'*32))
         self.assertEqual(1,self.panel.creates)
+    def test_status_is_scoped_read_only_and_does_not_return_credentials(self):
+        self.service.request(request());self.panel.state='converted';r=self.service.status({'operation_id':'a'*32,'reseller_id':'101'})
+        self.assertEqual('converted',r['state']);self.assertIn('checked_at_us',r);self.assertNotIn('account',r);self.assertNotIn('phone',r);self.assertEqual(1,self.panel.creates);self.assertEqual(1,self.panel.refreshes)
+        with self.assertRaises(module.TrialRejected):self.service.status({'operation_id':'a'*32,'reseller_id':'102'})
 
 
 class PlanValidationTest(unittest.TestCase):
@@ -116,7 +122,7 @@ class PlanValidationTest(unittest.TestCase):
         @contextlib.contextmanager
         def cursor(**kwargs):yield cur,conn
         owner={'id':101,'username':'TEST','credits':'5','status':1}
-        plan={'id':7,'type':1,'credits':'0','duration':24,'duration_period':'hours','bouquets':'[10,20]','max_connections':1}
+        plan=dict(PLAN)
         cur.fetchone.side_effect=[owner,plan,None];cur.fetchall.return_value=[]
         credit=Mock();worker={'panel_db_cursor':cursor,'_reseller_package_scope':lambda c,n:(1,None),'_package_allowed':lambda *a:True,
             '_utcnow':lambda:datetime.datetime.now(datetime.timezone.utc),'_add_duration':lambda now,value,period:now+datetime.timedelta(hours=value),'_set_credits':credit}
@@ -133,15 +139,42 @@ class PlanValidationTest(unittest.TestCase):
     def test_single_line_result_rejects_wrong_owner_even_if_a_driver_returns_it(self):
         adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=None;cur.fetchone.return_value={'id':999,'member_id':102,'package_id':7,'is_trial':1,'enabled':1,'reseller_notes':adapter.notes(request())}
         with self.assertRaises(module.TrialRejected):adapter.result(request(),'999')
+    def result_row(self,adapter):
+        return {'id':999,'member_id':101,'package_id':7,'is_trial':1,'enabled':1,'exp_date':int(time.time())+3600,'reseller_notes':adapter.notes(request()),'bouquet':'[10,20]','max_connections':1,'duration':24,'duration_period':'hours','duration_value':0,'username':'TEST','password':'SYNTHETIC','activation_code':'123456'}
+    def test_result_confirms_actual_created_limits_and_returns_only_single_account(self):
+        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=[self.result_row(adapter),dict(PLAN)]
+        result=adapter.result(request(),'999');self.assertEqual({'username','password','activation_code','exp_date'},set(result))
+    def test_result_rejects_native_panel_overgrant_instead_of_delivering_wrong_limits(self):
+        for changes in [{'max_connections':2},{'bouquet':'[10,20,999]'}]:
+            adapter,cur,conn,credit=self.adapter();row=self.result_row(adapter);row.update(changes);cur.fetchone.side_effect=[row,dict(PLAN)]
+            with self.assertRaises(module.TrialRejected):adapter.result(request(),'999')
+    def test_metadata_normalizes_numeric_panel_ids_and_rejects_fractional_or_unbounded_values(self):
+        self.assertEqual(module.plan_document(PLAN)['fingerprint'],module.plan_document(dict(PLAN,bouquets='["10","20"]'))['fingerprint'])
+        for changes in [{'duration_value':'1.5'},{'credits':'0.0000000001'},{'bouquets':'[true]'}]:
+            with self.assertRaises(module.TrialRejected):module.plan_document(dict(PLAN,**changes))
+    def test_expired_prepared_line_is_not_reported_as_usable_on_retry(self):
+        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=None;cur.fetchone.return_value={'id':999,'member_id':101,'package_id':7,'is_trial':1,'enabled':1,'exp_date':int(time.time())-100,'reseller_notes':adapter.notes(request())}
+        with self.assertRaises(module.TrialRejected):adapter.result(request(),'999')
+    def test_status_reports_conversion_without_claiming_payment_or_exposing_credentials(self):
+        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=None;cur.fetchone.return_value={'id':999,'member_id':101,'is_trial':0,'enabled':1,'exp_date':int(time.time())+100}
+        self.assertEqual('converted',adapter.line_status('999','101')['state']);cur.fetchone.return_value=None;self.assertEqual('unavailable',adapter.line_status('999','101')['state'])
     def test_adapter_requires_active_reseller_and_enabled_trial_plan_with_nonnegative_price(self):
         worker={'_reseller_package_scope':lambda cur,name:(1,None),'_package_allowed':lambda plan,group,overrides:True}
         adapter=module.ExistingPanelAdapter(worker)
         owner={'id':101,'username':'TEST','credits':'5','status':1}
-        plan={'id':7,'type':1,'credits':'0','duration':24,'duration_period':'hours'}
+        plan=dict(PLAN)
         for changed_owner,changed_plan in [(dict(owner,status=0),plan),(owner,None),(owner,dict(plan,type=0)),(owner,dict(plan,credits='-1')),(owner,dict(plan,duration=0))]:
             cur=Mock();cur.fetchone.side_effect=[changed_owner,changed_plan]
             with self.assertRaises(module.TrialRejected):adapter.owner_plan(cur,request())
         cur=Mock();cur.fetchone.side_effect=[owner,plan];self.assertEqual(0,adapter.owner_plan(cur,request())[2])
+    def test_price_or_duration_change_invalidates_approved_plan_fingerprint(self):
+        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=[{'id':101,'username':'TEST','credits':'5','status':1},dict(PLAN,credits='1')]
+        with self.assertRaises(module.TrialRejected):adapter.owner_plan(cur,request())
+        cur.fetchone.side_effect=[{'id':101,'username':'TEST','credits':'5','status':1},dict(PLAN,duration=48)]
+        with self.assertRaises(module.TrialRejected):adapter.owner_plan(cur,request())
+    def test_trial_catalog_is_reseller_scoped_read_only_and_returns_revision(self):
+        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=None;cur.fetchone.return_value={'id':101,'username':'TEST','status':1};cur.fetchall.return_value=[dict(PLAN)]
+        data=adapter.catalog('101');self.assertEqual('101',data['reseller_id']);self.assertEqual(module.plan_document(PLAN)['fingerprint'],data['plans'][0]['fingerprint']);conn.rollback.assert_called_once();conn.commit.assert_not_called()
     def test_bridge_signature_is_domain_separated_and_covers_body_and_timestamp(self):
         secret='a'*64;raw=b'{"operation_id":"test"}'
         self.assertNotEqual(module.signature(secret,'123',raw),module.signature(secret,'124',raw))

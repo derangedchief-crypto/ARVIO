@@ -56,19 +56,43 @@ key/ledger files0600 and preserved. Update systemd writable paths if sandboxing
 requires it. Missing config fails closed503. Do not enable any of this live yet.
 
 POST `/branded-trials/provision` with only: operation_id (32 hex), brand_id (32 hex),
-verified panel reseller_id, recognized device_ref (64 hex), package_id, first_name,
+verified panel reseller_id, recognized device_ref (64 hex), package_id, plan_fingerprint
+(64 hex from the worker catalog), first_name,
 phone (`+` and country code). HMAC covers EXACT raw JSON bytes:
 `branded-trial-v1\n<TIMESTAMP>\n<RAW_BODY>`, headers `X-Trial-Timestamp`,
 `X-Trial-Signature`. The privileged control server must enforce current admin
 allowlist/default and trusted brand/device membership before signing. The public
 APK must NEVER have this signing key or choose its own reseller/package identity.
 
+### Read-only policy/status integration
+
+POST `/branded-trials/plans` with ONLY reseller_id, signed using domain
+`branded-trial-plans-v1`. Returns current enabled/activated TRIAL packages allowed by
+that reseller's group/overrides, with actual credit cost, duration, groups, connection
+limit and canonical metadata fingerprint (including legacy duration_value). Numeric
+panel bouquet IDs are normalized whether stored as JSON numbers or digit strings.
+No line or financial write occurs. The creation boundary rechecks the fingerprint
+under row locks and refuses silently changed plans. Actual line limits are checked
+after native registration before delivering a prepared result.
+
+POST `/branded-trials/status` with ONLY operation_id and reseller_id, signed using
+domain `branded-trial-status-v1`. The private ledger supplies the line ID; clients
+cannot substitute a line. Returns owner-scoped state, expiry and source checked_at_us,
+never phone/account credentials. Converted means no longer marked trial, NOT payment
+verification. Missing/transferred rows are unavailable, not healthy/active. Contact
+refresh does not replay the native customer-save action or create/renew a line.
+
+The source control-center0.12 TrialWorker bridge uses these read-only endpoints for
+admin plan refresh and explicit contact status reads. Configure the matching separate
+key in its sole private config.php. It still exposes NO public trial creation API.
+
 ## Remaining integration
 
 The control server currently exposes **no public trial-creation route** and branding
-page reports trial creation disabled. Admin-approved plans/defaults, protected
-structured contact records/detail views, a verified branded-device policy and native
-activation UI/result delivery remain to implement. Do not call this end-to-end ready.
+page reports trial creation disabled. Website0.12 implements admin plan/default settings,
+protected structured contacts/detail views and read-only panel status integration.
+A trusted branded-device session, public provisioning broker and native activation
+UI/result delivery remain unfinished. Do not call this end-to-end ready.
 Do not infer that a typed phone proves a person or that a reported device hash is
 hardware attestation. No live panel writes/tests, deployment or APK publication here.
 

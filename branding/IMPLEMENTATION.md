@@ -1,4 +1,31 @@
-# Storage and reseller branding — first development increment
+# Storage, reseller branding and trials — development progress
+
+## Second increment: policy and contact layer (website0.12 / migration015)
+
+Implemented owner approval of a worker-verified trial-plan subset, reseller default
+selection, immutable plan-revision checks and stale-draft review. Read-only catalog
+and status requests use separate signature domains and cannot create/renew accounts.
+The worker rechecks approved metadata under locks and verifies actual created limits.
+Numeric panel bouquet strings/numbers normalize to the same approved rights.
+
+The control system now has encrypted, record/tenant-bound contact records and a
+Trials & contacts screen: masked lists, authorized full-number/dial links after
+expiry, explicit panel-status refresh, original trial expiry on conversion, private
+view audits and deliberate local contact removal. Replays cannot restore removed
+PII or reset eligibility. Default local contact retention90 days is owner-configurable
+(7–365); panel notes remain separate. Late detail responses cannot replace unrelated
+dialogs; drafts/PII are cleared at sign-out. No verification/SMS/automated outreach.
+
+Validated in local service/browser tests; worker cases are offline/mocked. No live
+panel writes/deployment or new APK publication in this increment. Published regular
+testing113 remains the storage test, source367cb04. Native trial activation, trusted
+branded-install validation and full builder/version/publication integration remain
+unfinished, so app offers stay OFF and no public provisioning endpoint is exposed.
+Check results:168 DB/service/HTTP cases,36 browser workflows and31 worker/HTTP cases
+passed. Native139-test/storage baseline belongs to the first increment and was not
+rerun or republished for these website/worker-only changes.
+
+## First increment
 
 ## Implemented and locally validated
 
@@ -55,10 +82,10 @@ savings, first-tune latency or a successfully provisioned live IPTV trial.
 3. A validated trusted-install policy for the sideload devices. A public brand ID,
    reported package/hash or APK-wide secret is NOT proof of app authenticity. One-brand
    enforcement prevents extra identities through our system, not external APK resale.
-4. Admin-approved trial-plan choices, reseller default policy, structured protected
-   contact records/follow-up detail UI, native first-name/phone trial form and secure
-   single-operation activation handoff. Contact notes work in the worker extension;
-   the end-to-end control-system contact view and app flow are not implemented yet.
+4. Admin-approved trial plans/defaults and protected contact/follow-up UI are now
+   implemented in0.12 above. Still pending: native first-name/phone form, validated
+   branded-install session and secure single-operation activation handoff/provisioning
+   broker. Contact receipt ingestion is internal-only, not an unauthenticated API.
 5. Authorized real-panel pilot, including pending/started expiry semantics, package
    charges, registration repair and trial-to-paid contact/history retention.
 

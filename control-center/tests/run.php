@@ -127,6 +127,8 @@ require __DIR__.'/device-profiles.php';
 deviceProfileCases($tests,$app,$owner,$alpha,$beta,$tenantA,$tenantB,$http);
 require __DIR__.'/app-brands.php';
 appBrandCases($tests,$app,$owner,$alpha,$beta,$tenantA,$tenantB,$http,$password);
+require __DIR__.'/trials.php';
+trialCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA,$tenantB,$http,$password);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

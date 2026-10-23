@@ -38,6 +38,7 @@ body.nav-open #bottom-nav{visibility:hidden}
   #main{padding-bottom:32px}.workspace header{border-bottom:1px solid var(--border)}
 }
 @media(prefers-reduced-motion:reduce){.sidebar{transition:none}}
+.trial-option{display:flex;align-items:center;gap:12px;padding:12px 0;color:var(--text)}.trial-option input[type=checkbox]{width:24px;height:24px;min-height:24px;flex:none;margin:0}.trial-option .cell-sub{margin-top:4px}.contact-call{display:inline-flex;padding:12px 16px;min-height:44px;background:var(--accent-soft);color:var(--accent);border-radius:9px;margin:12px 10px 12px 0}
 /* Compact device directory: one toolbar, five columns, details on demand. */
 .fleet-page .page-heading{align-items:center;margin-bottom:28px}.fleet-count{color:var(--muted);font-size:14px;margin:8px 0 0}
 .fleet-filters{display:flex;align-items:center;gap:12px;margin:0 0 25px}.fleet-filters input{flex:1;min-width:0;max-width:700px}.fleet-filters select{width:190px;min-height:46px}.fleet-filters button{min-height:46px;padding-inline:23px}
