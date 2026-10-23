@@ -111,7 +111,7 @@ fun CrashReportScreen(
 
     val formattedReport = remember(crashId, sentryLink, crashMsg, crashVersion, timeString) {
         """
-        **🚨 Extreme TV Crash Report**
+        **🚨 ${com.arflix.tv.branding.AppBrand.name} Crash Report**
         **Crash ID:** `$crashId`
         **Sentry Link:** $sentryLink
         **Version:** $crashVersion
@@ -141,7 +141,7 @@ fun CrashReportScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
-                text = "⚠️ Extreme TV Encountered an Error",
+                text = "⚠️ ${com.arflix.tv.branding.AppBrand.name} Encountered an Error",
                 color = Color.White,
                 fontSize = if (isTv) 26.sp else 22.sp,
                 fontWeight = FontWeight.Bold,
@@ -220,7 +220,7 @@ fun CrashReportScreen(
                     Button(
                         onClick = {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("Extreme TV Crash Report", formattedReport)
+                            val clip = ClipData.newPlainText("${com.arflix.tv.branding.AppBrand.name} Crash Report", formattedReport)
                             clipboard.setPrimaryClip(clip)
                             Toast.makeText(context, "Crash details copied! Opening Discord...", Toast.LENGTH_LONG).show()
 
@@ -255,7 +255,7 @@ fun CrashReportScreen(
                             }
                         )
                 ) {
-                    Text("Restart Extreme TV", color = Color.Black, fontWeight = FontWeight.Bold)
+                    Text("Restart ${com.arflix.tv.branding.AppBrand.name}", color = Color.Black, fontWeight = FontWeight.Bold)
                 }
             }
         }

@@ -526,7 +526,7 @@ object DiscordRpcManager {
                 startTime = startTime / 1_000,
                 endTime = 0L,
                 largeImage = largeImage,
-                largeText = "Extreme TV"
+                largeText = com.arflix.tv.branding.AppBrand.name
             )
         }
     }

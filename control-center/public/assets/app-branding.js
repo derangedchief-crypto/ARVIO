@@ -1,0 +1,28 @@
+(function(root){
+  'use strict';
+  const drafts=new Map();
+  async function render(epoch,hint){
+    const main=$('main');main.replaceChildren(heading('My app brand','One branded app identity per reseller. Change your name and images without creating another app. Colours and updates remain platform-controlled.'));
+    if(hint){const selected=await api('/api/tenants/'+hint);if(epoch!==state.epoch)return;if(!state.tenants.some(t=>t.id===selected.id))state.tenants.push(selected);drafts.set('workspace',selected.id);}
+    const tenant=state.user.role==='owner'?(drafts.get('workspace')||state.tenants.find(t=>t.kind==='reseller'&&t.status==='active')?.id):state.user.tenant_id;
+    if(state.user.role==='owner'){const select=el('select');select.setAttribute('aria-label','Brand workspace');for(const t of state.tenants.filter(t=>t.status==='active'&&t.kind==='reseller')){const o=el('option',t.name);o.value=t.id;select.append(o);}select.value=tenant||'';select.onchange=()=>{drafts.set('workspace',select.value);if(hint)location.hash='branding';else route();};main.append(select);}
+    if(!tenant){main.append(panel('No reseller workspace',el('p','Create and verify a reseller workspace first.')));return;}
+    let data;try{data=await api('/api/app-brand?tenant_id='+tenant);}catch(e){if(epoch===state.epoch)main.append(panel('Workspace not ready for branding',el('p',e.message,'hint')));return;}if(epoch!==state.epoch)return;const brand=data.brand;let draft=drafts.get(tenant);
+    if(!draft||!draft.dirty){draft={name:brand?.name||'',expected_version:brand?.version||0,loading_asset:brand?.loading_asset||'',logo_asset:brand?.logo_asset||'',icon_asset:brand?.icon_asset||'',dirty:false};drafts.set(tenant,draft);}
+    const box=panel(brand?'Edit your existing app brand':'Set up your app brand');const name=el('input');name.maxLength=60;name.value=draft.name;name.setAttribute('aria-label','Branded app name');name.oninput=()=>{draft.name=name.value;draft.dirty=true;};box.append(el('label','App name / replacement for Extreme TV'),name,el('p','Used for the launcher name and visible app-brand text. Package identity is fixed by the system.','hint'));
+    for(const[key,title]of [['loading_asset','Loading image'],['logo_asset','In-app logo / TV banner'],['icon_asset','Launcher icon']]){
+      const row=el('section',null,'brand-image-row');const upload=el('input');upload.type='file';upload.accept='image/png,image/jpeg,image/webp';upload.setAttribute('aria-label',title);const preview=el('img');preview.alt=title+' preview';preview.style.cssText='display:block;max-width:180px;max-height:100px;object-fit:contain;margin:12px 0';preview.hidden=!draft[key];if(draft[key])preview.src='/api/app-brand/assets/'+draft[key];
+      upload.onchange=async()=>{const file=upload.files?.[0];if(!file)return;if(file.size>1024*1024){toast('Choose an image up to 1 MB.');upload.value='';return;}upload.disabled=true;try{const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));const saved=await api('/api/app-brand/assets',{tenant_id:tenant,image:btoa(binary)});if(epoch!==state.epoch)return;draft[key]=saved.id;draft.dirty=true;preview.src='/api/app-brand/assets/'+saved.id;preview.hidden=false;toast('Image uploaded to your draft; save the brand to use it.');}catch(e){toast(e.message);}finally{upload.disabled=false;upload.value='';}};
+      row.append(el('h3',title),preview,upload);box.append(row);
+    }
+    box.append(button('Save brand',async()=>{await api('/api/app-brand',{tenant_id:tenant,name:draft.name,expected_version:draft.expected_version,loading_asset:draft.loading_asset,logo_asset:draft.logo_asset,icon_asset:draft.icon_asset});drafts.delete(tenant);toast('Brand saved. Existing app identity retained. No APK was built or installed.');if(epoch===state.epoch)await route();},'primary'),el('p','PNG, JPEG or WebP, up to 1 MB each. Required launcher sizes are generated centrally.','hint'));main.append(box);
+    if(brand){
+      const builds=panel('Builds',el('p','A request pins this saved version for the central builder. Waiting does not mean an APK exists. Editing a name/image does not change a queued version.','hint'));
+      const request=button('Request build of saved version',async()=>{if(draft.dirty)throw new Error('Save or discard your draft before requesting a build.');await api('/api/app-brand/builds',{tenant_id:tenant,expected_version:brand.version});toast('Queued for central build preparation. No APK has been published.');if(epoch===state.epoch)await route();});request.disabled=!brand.enabled;
+      builds.append(request,table(['Brand version','Status','Requested','Actions'],data.builds.map(j=>{const actions=el('div');if(j.state==='waiting_builder')actions.append(button('Cancel queued build',async()=>{if(!confirm('Cancel this unstarted build? The saved app brand stays intact.'))return;await api('/api/app-brand/builds/'+j.id+'/cancel',{});if(epoch===state.epoch)await route();}));return[j.brand_version,j.state==='waiting_builder'?'Waiting for central builder':j.state,date(j.created_at),actions];})));
+      const details=el('details',null,'advanced-details');details.append(el('summary','App identity'),detailRows([['Package',brand.package_name],['Saved brand version',brand.version]]));builds.append(details);main.append(builds);
+    }
+    main.append(panel('Reseller trials',el('p','Trial creation is not enabled yet. The worker safety, device/customer eligibility and activation integration must be completed before this brand can offer trials.','hint')));
+  }
+  root.AppBranding={render,isDirty:()=>[...drafts.values()].some(d=>d?.dirty),clear:()=>drafts.clear()};
+})(window);

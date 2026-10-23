@@ -346,6 +346,12 @@ function enrollmentCases(array &$tests, ControlCenter\Application $app, ControlC
         same('approved',$app->enrollment->register($body($id,['panel'=>null]),'127.0.0.41')['status']);
         same('not_managed',$app->enrollment->register($body($identity($id['account']),['panel'=>null]),'127.0.0.41')['status']);
     };
+    $tests['new-device setup is assigned once after verified admission and never for unmatched attempts'] = function()use($app,$alpha,$tenantA,$identity,$body,$delivery,$register,$approve):void {
+        $profile=$app->deviceProfiles->save($alpha,null,['name'=>'TEST admitted default','prebuffer_seconds'=>'2']);$revision=(int)($app->deviceProfiles->policy($alpha,$tenantA['id'])['policy']['revision']??0);$app->deviceProfiles->setPolicy($alpha,['profile_id'=>$profile['id'],'profile_version'=>1,'enabled'=>true,'expected_revision'=>$revision]);
+        $id=$identity();$r=$app->enrollment->register($body($id),'127.0.0.41');same('approved',$r['status']);$p=$app->enrollment->poll($delivery($r),'127.0.0.41');$jobs=$app->deviceProfiles->jobs($alpha,['device_id'=>$p['device_id']]);same(1,$jobs['total']);same(1,(int)$jobs['items'][0]['profile_version']);
+        $app->enrollment->register($body($id),'127.0.0.41');same(1,$app->deviceProfiles->jobs($alpha,['device_id'=>$p['device_id']])['total']);$manual=$register($identity());$approved=$approve($manual);same(1,$app->deviceProfiles->jobs($alpha,['device_id'=>$approved['id']])['total']);$before=(int)$app->db->query('SELECT COUNT(*) FROM device_setup_jobs')->fetchColumn();same('not_managed',$app->enrollment->register($body($identity(),['panel'=>null]),'127.0.0.41')['status']);same($before,(int)$app->db->query('SELECT COUNT(*) FROM device_setup_jobs')->fetchColumn());
+        $app->deviceProfiles->setPolicy($alpha,['profile_id'=>$profile['id'],'profile_version'=>1,'enabled'=>false,'expected_revision'=>$revision+1]);same('paused',$app->deviceProfiles->detail($alpha,$jobs['items'][0]['id'])['status']);
+    };
     $tests['line usernames are cryptographically bound to the activation account not a reported device label'] = function()use($app,$owner,$alpha,$identity,$register,$approve,$delivery,$proofs):void {
         $username='verified-line-user';$ref=hash_hmac('sha256',"account-v1\n".$username,hex2bin($proofs->bridgeSecret()));
         $r=$register($identity($ref));$device=$approve($r);$p=$app->enrollment->poll($delivery($r),'127.0.0.41');

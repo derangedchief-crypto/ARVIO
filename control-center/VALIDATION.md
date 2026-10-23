@@ -1,4 +1,106 @@
-# Device management 0.9.0 — validation
+# Device management 0.11.0 development foundation — validation
+
+## Self-service brand registry / storage / worker preparation
+
+New real-DB cases cover the unique reseller identity and stable package, optimistic
+versions, verified-link enforcement, scoped images, forbidden signing/update/package
+inputs, immutable pinned build exports, pending-build deduplication and cancellation,
+suspended workspace refusal, image validation and HTTP authentication/CSRF/isolation.
+Browser coverage uses an independent verified reseller to exercise actual self-service
+uploads/save/build-request/revision workflows without relaxing production rate limits.
+Device command polling also stops permanently when its view token changes, preventing
+old watchers from resuming when the user reopens a section.
+
+Android catalogue compression/legacy migration/storage counters and selected updater,
+management/guide/source regressions are tested locally. Resource generation validates
+images/text/identity and all launcher/banner densities, including actual branded
+resource/Kotlin compilation and missing-signing negative checks. These are NOT APK
+publication, a real hardware storage reduction benchmark or a branded update pilot.
+
+Offline auth-worker tests cover server signatures/body bounds, concurrent/repeated
+requests, scoped trial eligibility, preserved contact notes, post-commit uncertainty,
+same-line registration repair and missing-key fail-closed behaviour. No panel connection
+or live account creation was performed. Trial policy/contact UI and native activation
+integration remain disabled/unfinished, not a successful end-to-end trial result.
+
+First increment verified: **159 backend/HTTP checks,35 browser workflows,139 selected
+native tests,6 brand-resource tests and22 offline trial-worker/HTTP tests passed**.
+Default internal-test/instrumentation Kotlin and sample branded resource/Kotlin
+compilation passed, as did negative signing/distribution and package-preservation
+checks. Browser scenarios respect the unchanged production actor request budget.
+See source `branding/IMPLEMENTATION.md` for explicit unfinished work and pilot limits.
+
+## Previous milestone — 0.10.3
+
+## Consistent sidebar theme
+
+The0.10.3 menu uses shared palette variables instead of fixed charcoal/red colours.
+Browser assertions compare the actual sidebar surface and active row foreground/
+background to the site's palette in BOTH light and dark modes. Prior responsive,
+keyboard/drawer, device-management and tenant-isolation workflows remain covered.
+No backend/native changes; the153-check backend baseline below is unchanged.
+0.10.3 browser validation: **34 workflows passed, zero browser errors**. Actual
+light/dark menu colours were checked against shared theme variables; delivery
+config/key-preservation checks also passed.
+
+## Cleaner device directory
+
+0.10.2 reduces the directory to five columns, with a real scoped matching count,
+existing server-side app-access filtering and a confirmed compatible playlist-refresh
+shortcut. Browser coverage exercises search/count/filter results alongside all prior
+device workflows, mobile cards, responsive widths, navigation and tenant isolation.
+The existing search query now compares ASCII IDs in UTF-8 so Unicode labels do not
+cause a collation failure; a real-DB regression checks Unicode names, ID searches
+and tenant isolation. No native changes or additional migration beyond013.
+
+Combined0.10.2 validation: **153 database/HTTP checks and33 browser workflows
+passed**, zero failures/browser errors. All6 draft-helper tests and delivery
+config/key-preservation checks passed. Actual screenshots are
+`test-results/clean-devices-desktop-dark.png` and `test-results/clean-devices-mobile.png`.
+Data/protocol drivers are synthetic; no live deployment or physical-device pilot.
+
+## Grouped portal menu
+
+0.10.1 adds the requested reference-style charcoal grouped sidebar, direct setup
+links and red active selection, with a mobile drawer instead of duplicate bottom
+navigation. Browser validation checks section grouping, one active/current row,
+visible setup links, drawer width/scrolling, Escape/focus restoration and responsive
+content. Owner-only entries remain absent for resellers. Backend code is unchanged
+from the152-check0.10 baseline below; no new migration or native capability.
+
+0.10.1 browser run: **32 workflows passed, zero browser errors**. Actual desktop
+and phone screenshots are `test-results/portal-menu-desktop.png` and
+`test-results/portal-menu-mobile.png`. Delivery/config/key-preservation checks pass.
+
+## Task-based rebuild / new-device setup profiles
+
+The0.10 release gates cover the five-section workspace, friendly Playback controls,
+one-click read/result tracking, role-based More/administration, scoped customer ->
+device discovery and the Library maker/settings/recipe/default-policy flows.
+
+New real-DB cases exercise immutable versions/policy pins, new-admission-only
+creation (including first verified owner review), no unmatched-attempt jobs,
+no renewal/check-in reapplication, explicit existing-device selection, every
+required receipt, multi-stage preference/sort/buffer/layout/final confirmation,
+preserved explicit overrides/target-only groups, missing-name notes, ambiguous/
+unsafe/all-hidden refusal, local conflict stopping, unassignment cancellation,
+paused expiry, retention, nested transaction rollback and scoped action tracking.
+
+Browser workflows retain the existing sorting/layout/template/favourites/source/
+support/CSRF/auth/isolation checks, adapted to the new actual navigation (not hidden
+legacy controls). Added checks demonstrate one Load action without manual refresh,
+maker saves without native commands, explicit default activation without selecting
+existing devices and template edits not changing pinned recipes. Responsive checks
+cover320–1440px and source/private input cleanup. Native app code is unchanged;
+automation reuses the existing112 operations, not a new arbitrary control channel.
+
+Final combined local run: **152 database/HTTP checks and31 browser workflows passed**,
+with zero failures/browser errors. All6 draft-helper tests,42 PHP syntax checks and
+delivery ZIP/config/key-preservation checks passed. Android/worker/workflow code is
+unchanged. Local protocol drivers are synthetic, not a real automatic customer-device
+setup or TV playback pilot. No live website deployment or APK publication was performed.
+
+## Previous visual milestone — 0.9.0
 
 ## Mobile / modern visual increment
 

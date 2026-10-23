@@ -17,6 +17,12 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         names = archive.namelist()
         assert 'public/index.php' in names and 'database/migrations/001_foundation.sql' in names
         assert 'deploy/INSTALL-AAPANEL.txt' in names and 'cli/console.php' in names
+        assert 'database/migrations/013_device_setup_profiles.sql' in names
+        assert 'src/DeviceProfiles.php' in names
+        assert 'src/AppBrands.php' in names and 'database/migrations/014_reseller_app_brands.sql' in names
+        for asset in ['device-workspace.js', 'workspace-library.js', 'workspace.css', 'app-branding.js']:
+            assert 'public/assets/' + asset in names
+            assert ('/assets/' + asset).encode() in archive.read('public/index.html')
         assert not any(name.startswith(('tests/', 'dev/', 'test-results/', 'dist/')) for name in names)
         assert 'config.local.php' not in names
         assert 'config.example.php' not in names

@@ -182,7 +182,7 @@ fun LoginScreen(
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "Extreme TV",
+                    text = com.arflix.tv.branding.AppBrand.name,
                     fontSize = 64.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 8.sp,

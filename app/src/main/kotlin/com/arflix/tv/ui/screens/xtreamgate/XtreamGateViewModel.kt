@@ -106,7 +106,7 @@ class XtreamGateViewModel @Inject constructor(
                 val combined = "$XTREAM_GATE_HOST_URL $username $password"
                 val entry = IptvPlaylistEntry(
                     id = "list_1",
-                    name = "Extreme TV Network",
+                    name = com.arflix.tv.branding.AppBrand.text("Extreme TV Network"),
                     m3uUrl = combined,
                     epgUrl = combined,
                     enabled = true,

@@ -1,4 +1,74 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.9.0
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.11.0 (BRAND PREPARATION)
+
+0.11.0 DEVELOPMENT FOUNDATION
+Apply migration014 (and older pending migrations) after extracting the UPDATE ZIP.
+My app -> My app brand allows one persistent name/loading/logo/icon identity per
+verified reseller. Edits reuse its package. Image uploads are private,1 MB each.
+Build requests pin inputs and show Waiting for central builder; no APK is created
+by the website. Requester/owner can cancel unstarted work. No signing keys or update
+URLs are reseller-controlled. See source branding/README.md for owner preparation.
+
+Automatic builder pickup/publication, branded enrollment/update pilot and trial UI/
+policy/contact integration are not finished. Trial creation remains disabled.
+Do NOT assume this website ZIP reduces Android storage: the separate native113
+development changes need a later authorized testing APK and real-device profiling.
+No worker changes, live trial creation or APK publication happen by extracting it.
+config.php/private storage/keys remain preserved; existing2m limits are sufficient.
+
+
+0.10.3 MATCHING MENU THEME
+Sidebar, active rows, icons, borders and mobile close button now follow the site's
+shared light/dark theme and blue accent; fixed charcoal/red colours are removed.
+Grouped menu layout and functionality stay unchanged. Includes all previous updates.
+No additional migration beyond013. Configuration/storage preserved; no APK required.
+
+0.10.2 CLEANER DEVICES DIRECTORY
+Compact Device / Customer / App access / Connection / Actions list, real filtered
+count, search and access filters (including revoked enrollments), compact phone cards.
+Playlist refresh icon confirms before queuing; View opens the full workspace.
+No one-tap block/delete, invented activation codes or unsupported broadcast actions.
+Includes the grouped sidebar and complete0.10 rebuild. No migration beyond013.
+
+0.10.1 MENU UPDATE
+Grouped charcoal sidebar with icons, section headings and red active selection.
+Permanent on desktop; scrollable slide-out menu with dimmed backdrop on phones.
+Direct links to existing layouts/settings/device profiles/defaults/template maker.
+Owner-only administration remains owner-only. No unsupported reference-menu tools.
+This ZIP includes the complete0.10 rebuild. No additional migration beyond013;
+configuration and private storage are preserved. No Android/worker update needed.
+
+0.10.0 UPDATE — TASK-BASED SITE / TEMPLATE MAKER / NEW-DEVICE DEFAULTS
+Back up database/site/config.php/private storage, then extract the UPDATE ZIP.
+Apply migration013 via More -> Enrollments & website upgrades. Older pending
+migrations must also be applied when skipping releases. Existing config.php and
+initialized private storage/keys are excluded and preserved. No new PHP extension,
+worker installation, service port, Android permission or APK for this increment.
+Use app112 for the complete existing command capabilities. Existing2m limits remain.
+
+Grouped sidebar links replace the old scattered navigation and top/bottom menus.
+Device sections: Summary, Playback, Channels & favourites, Playlists & guide,
+Help & activity. Playback -> Load device settings -> choose -> Send change;
+results arrive in place. Queued is not applied. The app must be open.
+
+Library -> Channel & playlist layouts -> Create layout is the template maker.
+Save never pushes to a device automatically. Library -> Device profiles bundles
+pinned layout/settings versions, sorting and an optional Live TV buffer.
+Library -> New-device defaults explicitly enables one recipe for FUTURE VERIFIED
+admissions in that workspace. Existing devices are NOT automatically selected.
+Template/profile edits do not silently change policies or pinned pending jobs.
+No copied credentials/favourites, update controls or hidden capture/restart defaults.
+
+Automatic setup waits for supported app/catalogue reads, uses revision-guarded
+leased operations and confirms individual results/readback. Local/source/profile
+conflicts or ambiguous matches stop for review. Extra groups are kept; all-hidden
+results are refused. Jobs expire in48h; catalogue reads have bounded retries.
+Turning defaults off pauses unstarted stages, not already-applied/running effects.
+An explicit existing-device apply is separate. Reseller removal stops outstanding
+setup while ordinary app viewing remains active as before.
+
+Keep the EXISTING maintenance cron (same PHP as site). It now advances setup jobs
+as well as retention. No activation-worker changes on its separate server.
+Owner-device pilot still required; local/synthetic tests are not hardware proof.
 
 0.9.0 UPDATE — MOBILE / MODERN THEME (WEBSITE ONLY)
 Back up site/database/private storage, then extract the UPDATE ZIP over the site.

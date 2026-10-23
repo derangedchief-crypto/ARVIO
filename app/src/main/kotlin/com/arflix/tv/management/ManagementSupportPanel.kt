@@ -23,7 +23,7 @@ internal class ManagementSupportPanel(context: android.content.Context) : View(c
         super.onDraw(canvas);canvas.drawColor(Color.rgb(20,24,32))
         canvas.save();val scale=minOf(width/512f,height/288f);canvas.scale(scale,scale)
         val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.WHITE;textSize=22f }
-        val lines=listOf("Extreme TV — private support panel","App: ${BuildConfig.VERSION_NAME.take(40)}","Android SDK: ${Build.VERSION.SDK_INT}","App-only capture with customer consent","No account details or stream image included")
+        val lines=listOf("${com.arflix.tv.branding.AppBrand.name} — private support panel","App: ${BuildConfig.VERSION_NAME.take(40)}","Android SDK: ${Build.VERSION.SDK_INT}","App-only capture with customer consent","No account details or stream image included")
         lines.forEachIndexed { index,line->canvas.drawText(line,20f,42f+index*44f,paint) }
         canvas.restore()
     }

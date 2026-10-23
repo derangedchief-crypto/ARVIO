@@ -24,6 +24,24 @@ val includeX86Abis = providers.gradleProperty("includeX86Abis")
     .orNull
     ?.toBooleanStrictOrNull() == true
 
+// Owner-prepared inputs, never reseller-supplied Gradle/source/signing overrides.
+val brandDirectory = providers.gradleProperty("brandDirectory").orNull?.let { file(it) }
+val brandProperties = brandDirectory?.let { directory ->
+    Properties().apply { directory.resolve("brand.properties").reader(Charsets.UTF_8).use { load(it) } }
+}
+val brandId = brandProperties?.getProperty("brand_id") ?: ""
+val brandName = brandProperties?.getProperty("brand_name") ?: "Extreme TV"
+val platformVersionName = "2.0.113"
+val platformVersionCode = 429
+if (brandDirectory != null) {
+    require(brandId.matches(Regex("[a-f0-9]{32}"))) { "Invalid brand identity" }
+    require(brandProperties!!.stringPropertyNames() == setOf("brand_id", "brand_name", "package_name", "app_version", "app_version_code")) { "Unexpected brand settings" }
+    require(brandProperties.getProperty("app_version") == platformVersionName && brandProperties.getProperty("app_version_code") == platformVersionCode.toString()) { "Brand job targets a different platform release; use the matching source version" }
+    require(brandProperties.getProperty("package_name") == "com.extreme.brand.b$brandId") { "Brand package mismatch" }
+    require(brandName.length in 1..60 && brandName.matches(Regex("[\\p{L}\\p{N}][\\p{L}\\p{N} .&’'()+,\\-]*"))) { "Invalid brand name" }
+    require(brandDirectory.resolve("res").isDirectory) { "Prepare brand resources first" }
+}
+
 android {
     namespace = "com.arflix.tv"
     compileSdk = 37
@@ -32,7 +50,7 @@ android {
     flavorDimensions += "distribution"
 
     defaultConfig {
-        applicationId = "com.arvio.tv"
+        applicationId = if (brandDirectory == null) "com.arvio.tv" else "com.extreme.brand.b$brandId"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The replacement IPTV stack is OwnTV Core, whose streaming, EPG and
         // dual-engine playback implementation supports Android 8/API 26+.
@@ -40,11 +58,14 @@ android {
         // longer receive this distribution.
         minSdk = 26
         targetSdk = 36
-        versionCode = 428
-        versionName = "2.0.112"
+        // Keep literals for the existing centrally signed publication workflows.
+        versionCode = 429
+        versionName = "2.0.113"
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("String", "UPDATE_RELEASE_TAG", "\"\"")
+        buildConfigField("String", "BRAND_ID", "\"$brandId\"")
+        buildConfigField("String", "BRAND_NAME", "\"$brandName\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
         // Was capped to control managed-Supabase usage costs. Self-hosted has no
         // per-request billing, so full realtime sync is safe to run at full strength.
@@ -251,6 +272,11 @@ android {
         getByName("staging") {
             res.setSrcDirs(emptyList<String>())
         }
+        if (brandDirectory != null) {
+            listOf("debug", "release", "staging", "internalTest").forEach { buildType ->
+                getByName(buildType).res.setSrcDirs(listOf(brandDirectory.resolve("res")))
+            }
+        }
     }
 
     buildFeatures {
@@ -285,6 +311,25 @@ android {
 
     baselineProfile {
         mergeIntoMain = true
+    }
+}
+
+check(android.defaultConfig.versionName == platformVersionName && android.defaultConfig.versionCode == platformVersionCode) { "Platform build identity mismatch" }
+if (brandDirectory != null) {
+    android.buildTypes.configureEach {
+        // Every brand is served by OUR repo/channel. Never fall back to a generic APK.
+        buildConfigField("String", "UPDATE_RELEASE_TAG", "\"brand-$brandId${if (name == "internalTest" || name == "debug") "-testing" else ""}\"")
+    }
+    tasks.configureEach {
+        if (name.matches(Regex("prePlay(?:Debug|Release|Staging|InternalTest)Build")) || name == "preSideloadStagingBuild") {
+            doFirst { error("Branded distribution supports SideloadRelease and isolated SideloadInternalTest only; no Play or beta channel fallback.") }
+        }
+        if (name.matches(Regex("pre(?:Play|Sideload)(?:Release|Staging|InternalTest)Build"))) {
+            doFirst {
+                val signing = android.signingConfigs.getByName("release")
+                check(signing.storeFile?.isFile == true) { "Branded distributable builds require centrally managed release signing; debug fallback is forbidden." }
+            }
+        }
     }
 }
 

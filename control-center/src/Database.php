@@ -7,6 +7,7 @@ use PDO;
 final class Database
 {
     public readonly PDO $pdo;
+    private int $savepoint = 0;
 
     public function __construct(Config $config)
     {
@@ -95,6 +96,11 @@ final class Database
     public function all(string $sql, array $arguments = []): array { return $this->query($sql, $arguments)->fetchAll(); }
     public function transaction(callable $work): mixed
     {
+        if($this->pdo->inTransaction()) {
+            $name='cc_nested_'.(++$this->savepoint);$this->pdo->exec("SAVEPOINT $name");
+            try {$result=$work();$this->pdo->exec("RELEASE SAVEPOINT $name");return $result;}
+            catch(\Throwable $error){$this->pdo->exec("ROLLBACK TO SAVEPOINT $name");$this->pdo->exec("RELEASE SAVEPOINT $name");throw $error;}
+        }
         $this->pdo->beginTransaction();
         try { $result = $work(); $this->pdo->commit(); return $result; }
         catch (\Throwable $error) { if ($this->pdo->inTransaction()) $this->pdo->rollBack(); throw $error; }

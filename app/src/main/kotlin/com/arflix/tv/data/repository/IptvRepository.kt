@@ -6273,41 +6273,25 @@ class IptvRepository @Inject constructor(
         File(xtreamDiskCacheDir(), "series_${xtreamDiskCacheHash(creds)}.json")
 
     private fun <T> readDiskCache(file: File, type: Type): XtreamDiskCache<T>? {
-        val parentExists = file.parentFile?.exists() == true
-        val parentFiles = runCatching { file.parentFile?.listFiles()?.map { it.name } }.getOrNull()
-        if (!file.exists()) {
-            System.err.println("[VOD-Cache] Disk cache file not found: ${file.absolutePath} (parent exists=$parentExists, parent files=$parentFiles)")
-            return null
-        }
-        val sizeKb = file.length() / 1024
-        System.err.println("[VOD-Cache] Reading disk cache: ${file.name} (${sizeKb}KB)")
+        if (!file.exists()) return null
         return runCatching {
-            file.bufferedReader(StandardCharsets.UTF_8).use { reader ->
+            com.arflix.tv.util.CatalogueDiskFile.read(file) { reader ->
                 gson.fromJson<XtreamDiskCache<T>>(reader, type)
+            }.also { saved ->
+                if (saved != null) runCatching { com.arflix.tv.util.CatalogueDiskFile.compactLegacy(file) }
             }
-        }.onFailure { e ->
-            System.err.println("[VOD-Cache] Failed to read disk cache: ${file.name}: ${e.message}")
+        }.onFailure {
+            System.err.println("[VOD-Cache] Saved catalogue could not be read")
         }.getOrNull()
     }
 
     private fun <T> writeDiskCache(file: File, savedAtMs: Long, items: List<T>) {
         runCatching {
-            file.parentFile?.mkdirs()
-            val tmpFile = File(file.parentFile, "${file.name}.tmp")
-            java.io.FileOutputStream(tmpFile).use { fos ->
-                java.io.BufferedWriter(java.io.OutputStreamWriter(fos, StandardCharsets.UTF_8)).use { writer ->
-                    gson.toJson(XtreamDiskCache(savedAtMs, items), writer)
-                    writer.flush()
-                }
-                runCatching { fos.fd.sync() }  // Best-effort flush to disk; may fail on emulator
+            com.arflix.tv.util.CatalogueDiskFile.write(file) { writer ->
+                gson.toJson(XtreamDiskCache(savedAtMs, items), writer)
             }
-            if (!tmpFile.renameTo(file)) {
-                tmpFile.copyTo(file, overwrite = true)
-                tmpFile.delete()
-            }
-            System.err.println("[VOD-Cache] Wrote disk cache: ${file.name} (${file.length() / 1024}KB), exists=${file.exists()}")
-        }.onFailure { e ->
-            System.err.println("[VOD-Cache] Failed to write disk cache: ${file.name}: ${e.message}")
+        }.onFailure {
+            System.err.println("[VOD-Cache] Catalogue cache unchanged after a failed save")
         }
     }
 

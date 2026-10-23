@@ -182,6 +182,7 @@ final class Management
             // Cascading the composite FK preserves command history while removing
             // ALL former reseller access. Device tokens/login are not erased.
             $this->db->query("UPDATE devices SET tenant_id=?,customer_id=?,reseller_detached=1,policy='active' WHERE id=?",[$owner['id'],$customer['id'],$id]);
+            DeviceProfiles::assignmentChanged($this->db,$id);
             // An older client may already have re-requested enrollment after
             // seeing "removed". Restore ONLY this record's previously bound key,
             // not arbitrary pending installations. Polling then requests a fresh
@@ -207,7 +208,7 @@ final class Management
 
     public function listing(array $actor, string $resource, array $input): array
     {
-        Input::keys($input, ['page', 'search', 'tenant_id', 'policy']);
+        Input::keys($input, array_merge(['page','search','tenant_id','policy'],$resource==='devices'?['customer_id']:[]));
         $page = Input::page($input['page'] ?? 1);
         $offset = ($page - 1) * 25;
         $args = [];
@@ -218,6 +219,7 @@ final class Management
         }
         $search = Input::text($input['search'] ?? '', 'search', 120, false);
         if ($resource === 'devices') {
+            if(isset($input['customer_id'])){$customer=$this->customer($actor,Input::id($input['customer_id']));$scope.=' AND r.customer_id=?';$args[]=$customer['id'];}
             if (isset($input['policy']) && $input['policy'] !== '') {
                 if (!in_array($input['policy'], ['active','suspended','blocked','removed'], true)) throw new Problem(422, 'Invalid policy filter.');
                 $scope .= ' AND r.policy = ?'; $args[] = $input['policy'];
@@ -226,7 +228,7 @@ final class Management
             $line=$this->deviceUsernameSql('r');
             $fields = "r.*, TIMESTAMPDIFF(SECOND, r.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, COALESCE($line,c.name) AS customer_name, $line AS line_username, t.name AS tenant_name";
             if ($search !== '') {
-                $scope .= " AND (LOCATE(?, r.label) > 0 OR LOCATE(?, c.name) > 0 OR LOCATE(?, r.id) > 0 OR LOCATE(?, COALESCE(r.model,'')) > 0 OR LOCATE(?,COALESCE($line,''))>0)";
+                $scope .= " AND (LOCATE(?, r.label) > 0 OR LOCATE(?, c.name) > 0 OR LOCATE(?, CONVERT(r.id USING utf8mb4)) > 0 OR LOCATE(?, COALESCE(r.model,'')) > 0 OR LOCATE(?,COALESCE($line,''))>0)";
                 array_push($args, $search, $search, $search, $search, $search);
             }
         } elseif ($resource === 'customers') {

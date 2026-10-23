@@ -41,8 +41,16 @@ try {
             unset($password);
             echo "Owner password reset. All owner sessions were revoked.\n";
             break;
+        case 'brand-export':
+            if(count($argv)!==4)throw new RuntimeException('Usage: php cli/console.php brand-export BUILD_ID PRIVATE_OUTPUT_FILE');
+            $app=new Application($config);$bundle=$app->appBrands->export($argv[2]);$mask=umask(0077);
+            try{$handle=fopen($argv[3],'x');}finally{umask($mask);}
+            if(!$handle)throw new RuntimeException('Choose a new private output file.');
+            try{$body=json_encode($bundle,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);if(fwrite($handle,$body)!==strlen($body))throw new RuntimeException('Could not fully export build inputs.');}finally{fclose($handle);}
+            echo "Pinned brand inputs exported. No APK built or published.\n";
+            break;
         default:
-            echo "Usage: php cli/console.php preflight|migrate|maintenance|recover-owner\n";
+            echo "Usage: php cli/console.php preflight|migrate|maintenance|recover-owner|brand-export\n";
     }
 } catch (Throwable $error) {
     // Database exceptions can contain SQL/customer identifiers: do not echo them.

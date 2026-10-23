@@ -75,5 +75,6 @@ fun DeviceManagementStatusInfo() {
         Text("Favourites backup · ${state.favouritesBackupStatus}",color=TextSecondary,fontSize=12.sp)
         if (state.installationId.isNotBlank()) Text("Device ID: ${state.installationId}", color = TextSecondary, fontSize = 12.sp)
         TextButton(onClick=checkIn,enabled=state.installationId.isNotBlank()) { Text("Check in / retry management now") }
+        StorageUsageButton()
     }
 }

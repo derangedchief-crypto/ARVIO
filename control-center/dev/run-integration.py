@@ -13,7 +13,7 @@ import argparse
 import shutil
 
 repository = Path(__file__).resolve().parents[2]
-parser = argparse.ArgumentParser(); parser.add_argument('--browser', action='store_true'); parser.add_argument('--keep-db', action='store_true'); args = parser.parse_args()
+parser = argparse.ArgumentParser(); parser.add_argument('--browser', action='store_true'); parser.add_argument('--browser-only', action='store_true', help='UI development only: skip service tests; release validation uses --browser'); parser.add_argument('--keep-db', action='store_true'); args = parser.parse_args()
 state = Path(tempfile.mkdtemp(prefix='control-enrollment-tests-', dir='/tmp/opencode'))
 state.chmod(0o700)
 environment = {**os.environ, 'CONTROL_DEV_DIR': str(state), 'CONTROL_TEST_SOCKET': str(state / 'database.sock')}
@@ -35,8 +35,8 @@ with (state / 'startup.log').open('wb') as log:
                 probe.close()
         else:
             raise SystemExit(f'Local DB did not become ready; see {state}/startup.log')
-        result = subprocess.run(['bash', 'control-center/dev/php.sh', 'control-center/tests/run.php'], cwd=repository, env=environment)
-        if result.returncode == 0 and args.browser:
+        result = subprocess.CompletedProcess([],0) if args.browser_only else subprocess.run(['bash', 'control-center/dev/php.sh', 'control-center/tests/run.php'], cwd=repository, env=environment)
+        if result.returncode == 0 and (args.browser or args.browser_only):
             probe = socket.socket(); probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]; probe.close()
             preview_env = {**environment, 'CONTROL_PREVIEW_PORT': str(port)}
             seeded = subprocess.run(['bash', 'control-center/dev/php.sh', 'control-center/dev/demo.php'], cwd=repository, env=preview_env, text=True, capture_output=True)

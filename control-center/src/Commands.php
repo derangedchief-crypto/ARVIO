@@ -101,6 +101,9 @@ final class Commands
         $rows = $this->db->all("SELECT * FROM commands WHERE device_id = ? ORDER BY created_at DESC, id DESC LIMIT 25 OFFSET $offset", [$deviceId]);
         return ['items' => array_map(self::publicCommand(...), $rows), 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total];
     }
+    public function get(array $actor,string $deviceId,string $id):array {
+        $this->management->device($actor,$deviceId);$this->expire($deviceId);$row=$this->db->one('SELECT * FROM commands WHERE id=? AND device_id=?',[Input::id($id),$deviceId]);if(!$row)throw new Problem(404,'Action not found.');return self::publicCommand($row);
+    }
     public function cancel(array $actor,string $deviceId,string $commandId): array
     {
         return $this->db->transaction(function()use($actor,$deviceId,$commandId):array {

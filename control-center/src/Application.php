@@ -15,6 +15,8 @@ final class Application
     public readonly Sources $sources;
     public readonly Preferences $preferences;
     public readonly Support $support;
+    public readonly DeviceProfiles $deviceProfiles;
+    public readonly AppBrands $appBrands;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
@@ -29,6 +31,8 @@ final class Application
         $this->sources=new Sources($this->db,$this->management,$this->commands,$this->auth,$config);
         $this->preferences=new Preferences($this->db,$this->management,$this->commands,$this->auth);
         $this->support=new Support($this->db,$this->management,$this->commands,$this->auth,$config);
+        $this->deviceProfiles=new DeviceProfiles($this->db,$this->management,$this->commands,$this->auth);
+        $this->appBrands=new AppBrands($this->db,$this->management,$this->auth);
     }
 
     public function serve(string $method, string $path): never
@@ -63,7 +67,7 @@ final class Application
         if($method==='POST'&&$path==='/api/device/enrollment/confirm') Http::json($this->enrollment->poll(Http::body(),$_SERVER['REMOTE_ADDR']??'',true));
         if ($method === 'POST' && $path === '/api/device/check-in') {
             $credential=Http::bearer();
-            try { Http::json($this->commands->checkIn($credential, Http::body(), $_SERVER['REMOTE_ADDR'] ?? '')); }
+            try { $result=$this->commands->checkIn($credential, Http::body(), $_SERVER['REMOTE_ADDR'] ?? '');$this->deviceProfiles->tickDevice($result['device_id']);if($this->deviceProfiles->pending($result['device_id']))$result['heartbeat_seconds']=min($result['heartbeat_seconds'],15);Http::json($result); }
             catch(Problem $error) {
                 if($error->status===401) {
                     $notice=$this->commands->removalNotice($credential);
@@ -74,7 +78,7 @@ final class Application
         }
         if ($method === 'POST' && preg_match('~^/api/device/commands/([a-f0-9]{32})/ack$~D', $path, $match)) {
             $credential=Http::bearer();$this->commands->deviceIdentity($credential);
-            Http::json($this->commands->acknowledge($credential, $match[1], Http::body(2097152)));
+            $result=$this->commands->acknowledge($credential, $match[1], Http::body(2097152));$this->deviceProfiles->afterCommand($result['device_id'],$match[1]);Http::json($result);
         }
         if($method==='POST'&&$path==='/api/device/favourites/capture') {$credential=Http::bearer();$this->commands->deviceIdentity($credential);Http::json($this->favourites->capture($credential,Http::body(2097152)));}
         if($method==='POST'&&$path==='/api/device/favourites/context')Http::json($this->favourites->context(Http::bearer(),Http::body()));
@@ -113,6 +117,23 @@ final class Application
             Http::cookie($this->config, ''); Http::json(['ok' => true]);
         }
         if ($method === 'GET' && $path === '/api/overview') Http::json($this->management->overview($actor));
+        if($method==='GET'&&$path==='/api/app-brand')Http::json($this->appBrands->get($actor,$_GET));
+        if($method==='POST'&&$path==='/api/app-brand')Http::json($this->appBrands->save($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/app-brand/assets')Http::json($this->appBrands->upload($actor,Http::body(1500000)),201);
+        if($method==='GET'&&preg_match('~^/api/app-brand/assets/([a-f0-9]{32})$~D',$path,$m)){$image=$this->appBrands->image($actor,$m[1]);header('Content-Type: '.$image['mime']);echo $image['image'];exit;}
+        if($method==='POST'&&$path==='/api/app-brand/builds')Http::json($this->appBrands->requestBuild($actor,Http::body()),201);
+        if($method==='POST'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/cancel$~D',$path,$m))Http::json($this->appBrands->cancelBuild($actor,$m[1],Http::body()));
+        if($method==='GET'&&$path==='/api/device-profiles')Http::json($this->deviceProfiles->listing($actor,$_GET));
+        if($method==='POST'&&$path==='/api/device-profiles')Http::json($this->deviceProfiles->save($actor,null,Http::body()),201);
+        if($method==='GET'&&preg_match('~^/api/device-profiles/([a-f0-9]{32})$~D',$path,$m))Http::json($this->deviceProfiles->get($actor,$m[1]));
+        if($method==='POST'&&preg_match('~^/api/device-profiles/([a-f0-9]{32})$~D',$path,$m))Http::json($this->deviceProfiles->save($actor,$m[1],Http::body()));
+        if($method==='GET'&&$path==='/api/device-defaults')Http::json($this->deviceProfiles->policy($actor,Input::id($_GET['tenant_id']??$actor['tenant_id'])));
+        if($method==='POST'&&$path==='/api/device-defaults')Http::json($this->deviceProfiles->setPolicy($actor,Http::body()));
+        if($method==='GET'&&$path==='/api/device-setups')Http::json($this->deviceProfiles->jobs($actor,$_GET));
+        if($method==='GET'&&preg_match('~^/api/device-setups/([a-f0-9]{32})$~D',$path,$m))Http::json($this->deviceProfiles->detail($actor,$m[1]));
+        if($method==='POST'&&preg_match('~^/api/device-setups/([a-f0-9]{32})$~D',$path,$m))Http::json($this->deviceProfiles->control($actor,$m[1],Http::body()));
+        if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/setup$~D',$path,$m))Http::json($this->deviceProfiles->applyExisting($actor,$m[1],Http::body(),$_SERVER['HTTP_IDEMPOTENCY_KEY']??''),201);
+        if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/commands/([a-f0-9]{32})$~D',$path,$m))Http::json($this->commands->get($actor,$m[1],$m[2]));
         if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/support$~D',$path,$m))Http::json($this->support->listing($actor,$m[1]));
         if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/support/([a-f0-9]{32})/download$~D',$path,$m)){$file=$this->support->download($actor,$m[1],$m[2]);header('Content-Type: '.$file['mime']);header('Content-Disposition: attachment; filename="'.$file['filename'].'"');echo $file['body'];exit;}
         if($method==='GET'&&$path==='/api/preference-profiles')Http::json($this->preferences->profiles($actor,$_GET));
@@ -133,6 +154,7 @@ final class Application
         if($method==='POST'&&preg_match('~^/api/category-layout-templates/([a-f0-9]{32})$~D',$path,$match))Http::json($this->layouts->change($actor,$match[1],Http::body(2097152)));
         if($method==='POST'&&preg_match('~^/api/category-layout-templates/([a-f0-9]{32})/archive$~D',$path,$match))Http::json($this->layouts->change($actor,$match[1],Http::body(),true));
         if ($method === 'GET' && $path === '/api/tenants') Http::json($this->management->tenantListing($actor, $_GET));
+        if($method==='GET'&&preg_match('~^/api/tenants/([a-f0-9]{32})$~D',$path,$m))Http::json($this->management->tenant($actor,$m[1]));
         if($method==='GET'&&$path==='/api/panel-resellers')Http::json($this->enrollment->panelLinks($actor));
         if($method==='POST'&&preg_match('~^/api/tenants/([a-f0-9]{32})/panel-link$~D',$path,$match))Http::json($this->enrollment->linkPanelReseller($actor,$match[1],Http::body()));
         if ($method === 'POST' && $path === '/api/resellers') Http::json($this->management->createReseller($actor, Http::body()), 201);
@@ -171,7 +193,7 @@ final class Application
         $days = $this->config->number('retention_days', 90, 7, 365);
         $commands = $this->db->query("DELETE FROM commands WHERE status IN ('succeeded','failed','expired','cancelled') AND finished_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
         $events = $this->db->query("DELETE FROM audit_events WHERE created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
-        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();$this->sources->maintain();$this->preferences->maintain();$this->support->maintain();}
+        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();$this->sources->maintain();$this->preferences->maintain();$this->support->maintain();$this->deviceProfiles->maintain();$this->appBrands->maintain();}
         return ['expired_sessions_removed' => $sessions, 'old_commands_removed' => $commands, 'old_audit_events_removed' => $events];
     }
 }

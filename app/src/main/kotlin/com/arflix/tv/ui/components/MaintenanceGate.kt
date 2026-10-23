@@ -28,7 +28,7 @@ fun MaintenanceGate(state: MaintenanceState, content: @Composable () -> Unit) {
         Column(Modifier.widthIn(max = 620.dp).padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Text(if (state.active) "Under maintenance" else "Connecting to Extreme Hub",
+            Text(if (state.active) "Under maintenance" else com.arflix.tv.branding.AppBrand.text("Connecting to Extreme Hub"),
                 color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             if (state.active) {
                 Text(state.message, color = Color(0xFFD5DBE5), fontSize = 18.sp, textAlign = TextAlign.Center)

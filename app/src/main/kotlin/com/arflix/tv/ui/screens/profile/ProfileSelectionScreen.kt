@@ -227,7 +227,7 @@ fun ProfileSelectionScreen(
             ) {
                 // Title
                 Text(
-                    text = "Extreme TV",
+                    text = com.arflix.tv.branding.AppBrand.name,
                     fontSize = 32.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White,

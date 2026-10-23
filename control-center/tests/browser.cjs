@@ -16,6 +16,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
   const errors = []; const checks = [];
   page.on('pageerror', error => errors.push(error.message));
   const done = name => { checks.push(name); console.log('PASS', name); };
+  async function navigate(section,workspaceId=null){if(['resellers','enrollments','audit'].includes(section)){await page.locator('#navigation a[href="#more"]').click();await page.locator('#main a[href="#'+section+'"]').click();}else if(section==='presets'){await page.locator('#navigation a[href="#library"]').click();if(workspaceId)await page.getByLabel('Library workspace',{exact:true}).selectOption(workspaceId);await page.locator('#main a[href="#library/settings"]').click();}else await page.locator('#navigation a[href="#'+section+'"]').click();}
+  async function expand(title){const summary=page.locator('summary').filter({hasText:title}).first();await summary.waitFor();if(!await summary.evaluate(n=>n.parentElement.open))await summary.click();}
+  async function tab(name){const mapped={Overview:'Summary',Settings:'Playback',Categories:'Channels & favourites',Favourites:'Channels & favourites',Playlists:'Playlists & guide',Logs:'Help & activity',Commands:'Help & activity'};if(page.viewportSize().width<=900)await page.getByLabel('Device section',{exact:true}).selectOption(mapped[name]||name);else await page.getByRole('button',{name:mapped[name]||name,exact:true}).first().click();if(name==='Favourites'||name==='Categories'){const b=page.getByRole('button',{name:name==='Favourites'?'Favourites & recovery':'Channel layout',exact:true});await b.waitFor();if(!((await b.getAttribute('class'))||'').includes('active'))await b.click();}if(name==='Logs')await expand('App diagnostics & technical details');}
   try {
     await page.goto(base);
     await page.getByLabel('Email address').fill(credentials.email);
@@ -27,7 +30,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     const ownerTenant = await page.evaluate(async () => (await (await fetch('/api/tenants')).json()).items.find(t => t.kind === 'owner').id);
 
     if (credentials.enrollment_request_id) {
-      await page.locator('nav a[href="#enrollments"]').click();
+      await navigate('enrollments');
       await page.getByRole('heading', { name: 'Device enrollments', exact: true }).waitFor();
       const pending = page.locator('tr').filter({ hasText: 'TEST · Enrollment simulator' });
       await pending.getByRole('button', { name: 'Approve / assign', exact: true }).waitFor();
@@ -55,7 +58,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
       done('verified line username replaces numeric panel label through the signed-account check-in binding');
     }
 
-    await page.locator('nav a[href="#customers"]').click();
+    await navigate('customers');
     await page.getByRole('heading', { name: 'Customers', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Add customer', exact: true }).count(), 0);
     const malicious = 'TEST ' + Date.now() + ' <img src=x onerror="window.__injected=1">';
@@ -68,41 +71,52 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     done('customer values render as text, not injected HTML');
     done('Customers page has no manual Add customer action');
 
-    await page.locator('tr').filter({ hasText: malicious }).getByRole('button', { name: 'Add device', exact: true }).click();
     const pendingLabel = 'TEST · Pending ' + Date.now();
-    await page.getByLabel('Device nickname', { exact: true }).fill(pendingLabel);
-    await page.locator('#modal-form').getByRole('button', { name: 'Save', exact: true }).click();
-    await page.locator('#modal').waitFor({ state: 'hidden' });
-    await page.locator('nav a[href="#devices"]').click();
+    const pendingSeed=await page.evaluate(async({name,label})=>{const me=await(await fetch('/api/me')).json();const rows=await(await fetch('/api/customers?search='+encodeURIComponent(name))).json();return(await fetch('/api/devices',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:JSON.stringify({customer_id:rows.items[0].id,label})})).status;},{name:malicious,label:pendingLabel});assert.equal(pendingSeed,201);
+    await navigate('devices');
+    await page.locator('.device-records thead th').first().waitFor({state:'attached'});
+    assert.equal(await page.locator('.device-records thead th').count(),5);
+    const filteredResponse=page.waitForResponse(r=>r.url().includes('/api/devices?')&&r.url().includes('policy=blocked'));
+    await page.getByLabel('App access filter',{exact:true}).selectOption('blocked');const filtered=await(await filteredResponse).json();assert(filtered.items.every(d=>d.policy==='blocked'));
+    await page.getByLabel('App access filter',{exact:true}).selectOption('');
+    await page.getByLabel('Search',{exact:true}).fill(pendingLabel);await page.getByRole('button',{name:'Search',exact:true}).click();
+    await page.locator('.fleet-count').filter({hasText:'1 matching device'}).waitFor();
+    assert.equal(await page.locator('.device-records tbody tr[data-device-id]').count(),1);
+    await page.getByLabel('Search',{exact:true}).fill('');await page.getByRole('button',{name:'Search',exact:true}).click();
+    await page.locator('.fleet-count').filter({hasText:/^\d+ devices$/}).waitFor();
+    const beforeRowRefresh=await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id);
+    page.once('dialog',dialog=>dialog.dismiss());await page.locator(`tr[data-device-id="${credentials.device_id}"] .fleet-actions button`).first().click();
+    assert.equal(await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id),beforeRowRefresh);
+    await page.screenshot({path:path.join(output,'clean-devices-desktop.png'),fullPage:false});
+    done('compact device directory has five clear columns, a real matching count and server-scoped app-access filtering');
     await page.locator('tr').filter({ hasText: pendingLabel }).getByRole('button', { name: 'View →' }).click();
-    await page.getByRole('heading', { name: pendingLabel, exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Refresh playlist', exact: true }).isDisabled(), true);
-    await page.getByRole('button', { name: 'Logs', exact: true }).click();
-    await page.getByText('Not available in the backend foundation yet.', { exact: false }).waitFor();
+    await page.getByRole('heading', { name: malicious, exact: true }).waitFor();
+    await tab('Settings');assert.equal(await page.getByRole('button',{name:'Load device settings',exact:true}).isDisabled(),true);
+    await page.getByText('Awaiting verified enrollment; device actions are not available yet.',{exact:true}).waitFor();
     done('pending enrollment and unsupported features are represented honestly');
 
-    await page.locator('nav a[href="#devices"]').click();
-    await page.locator('tr').filter({ hasText: credentials.device_id }).getByRole('button', { name: 'View →' }).click();
-    await page.getByText('LOCAL TEST SIMULATOR — not a real customer device.', { exact: true }).waitFor();
+    await navigate('devices');
+    await page.locator(`tr[data-device-id="${credentials.device_id}"]`).getByRole('button', { name: 'View →' }).click();
+    await page.getByText('LOCAL TEST SIMULATOR — illustrative, not a customer connection.', { exact: true }).waitFor();
+    await tab('Playlists');
     await page.getByRole('button', { name: 'Refresh playlist', exact: true }).click();
-    await page.getByText('Action queued—not yet executed.', { exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Commands', exact: true }).click();
-    await page.getByRole('heading', { name: 'Command history', exact: true }).waitFor();
+    await page.locator('#action-status').filter({hasText:/Waiting for the app|Request sent/}).waitFor();
+    await tab('Commands');
+    await page.getByRole('heading', { name: 'Recent actions', exact: true }).waitFor();
     await page.getByText('refresh playlist', { exact: true }).first().waitFor();
     assert(await page.locator('tbody .badge.pending').count() > 0);
     await page.screenshot({ path: path.join(output, 'device-commands-desktop.png'), fullPage: true });
     done('command is queued and shown pending, never faked as executed');
 
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('heading', { name: 'Read-only active-profile settings', exact: true }).waitFor();
-    await page.getByText('Snapshot received:', { exact: false }).waitFor();
-    await page.getByRole('button', { name: 'Change channel sorting', exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Logs', exact: true }).click();
-    await page.getByRole('heading', { name: 'Redacted app diagnostics — no logs or screenshots', exact: true }).waitFor();
-    await page.getByText('it does not prove a playlist or stream works', { exact: false }).waitFor();
+    await tab('Settings');
+    await page.getByRole('heading', { name: 'Playback', exact: true }).waitFor();
+    await page.getByText('Reported ', { exact: false }).first().waitFor();
+    await page.getByRole('button', { name: 'Send sorting change', exact: true }).waitFor();
+    await tab('Logs');
+    await page.getByRole('button',{name:'Load app diagnostics',exact:true}).waitFor();
     done('settings and diagnostics require requested app snapshots, not fabricated live data');
-    await page.locator('nav a[href="#presets"]').click();
-    await page.getByRole('button', { name: 'Create preset', exact: true }).click();
+    await navigate('presets',ownerTenant);
+    await page.getByRole('button', { name: 'Create sorting preset', exact: true }).click();
     const presetName = 'TEST preset <img src=x onerror="window.__presetInjected=1">';
     await page.getByLabel('Workspace / reseller', { exact: true }).selectOption(ownerTenant);
     await page.getByLabel('Preset name', { exact: true }).fill(presetName);
@@ -112,23 +126,24 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     assert.equal(await page.evaluate(() => window.__presetInjected), undefined);
     await page.screenshot({ path: path.join(output, 'settings-presets-desktop.png'), fullPage: true });
     done('workspace-scoped settings preset saves and its hostile name remains literal text');
-    await page.locator('nav a[href="#devices"]').click();
-    await page.locator('tr').filter({ hasText: credentials.device_id }).getByRole('button', { name: 'View →' }).click();
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('button', { name: 'Apply saved preset', exact: true }).click();
-    await page.locator('#modal-form').getByRole('button', { name: 'Queue preset application', exact: true }).click();
+    await navigate('devices');
+    await page.locator(`tr[data-device-id="${credentials.device_id}"]`).getByRole('button', { name: 'View →' }).click();
+    await tab('Settings');
+    await page.getByRole('button', { name: 'Use saved sorting preset', exact: true }).click();
+    await page.getByLabel('Sorting preset',{exact:true}).selectOption({label:presetName});
+    await page.locator('#modal-form').getByRole('button', { name: 'Use in this draft', exact: true }).click();
     await page.locator('#modal').waitFor({ state: 'hidden' });
-    await page.getByRole('button', { name: 'Commands', exact: true }).click();
-    const settingsRow = page.locator('tr').filter({ hasText: 'set settings' });
+    await page.getByRole('button',{name:'Send sorting change',exact:true}).click();await tab('Commands');
+    const settingsRow = page.locator('tr').filter({ hasText: 'Change channel sorting' });
     await settingsRow.locator('.badge.pending').waitFor();
     const queuedSettings = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).items.find(c => c.kind === 'set_settings'), credentials.device_id);
     assert.equal(queuedSettings.payload.sort_order, 'number'); assert.equal(queuedSettings.result, null);
     assert(/^[a-f0-9]{64}$/.test(queuedSettings.payload.expected_revision));
     page.once('dialog', dialog => dialog.accept());
     await settingsRow.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await page.locator('tr').filter({ hasText: 'set settings' }).locator('.badge.cancelled').waitFor();
+    await page.locator('tr').filter({ hasText: 'Change channel sorting' }).locator('.badge.cancelled').waitFor();
     done('preset application queues a revision-bound setting and queued cancellation is real');
-    await page.getByRole('button', { name: 'Categories', exact: true }).click();
+    await tab('Categories');
     await page.getByRole('heading', { name: 'Organize entire playlist/category layout', exact: true }).waitFor();
     const categoryName = 'TEST <img src=x onerror="window.__categoryInjected=1">';
     await page.getByText(categoryName, { exact: true }).waitFor();
@@ -195,9 +210,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByText('Whole layout applied and confirmed by a fresh app read.', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Push entire layout once', exact: true }).isDisabled(), true);
     done('many browser edits push as ONE atomic command; only a real successful receipt/read clears the draft (synthetic driver)');
-    await page.locator('nav a[href="#devices"]').click();
-    await page.locator('tr').filter({ hasText: credentials.layout_target_id }).getByRole('button', { name: 'View →' }).click();
-    await page.getByRole('button', { name: 'Categories', exact: true }).click();
+    await navigate('devices');
+    await page.locator(`tr[data-device-id="${credentials.layout_target_id}"]`).getByRole('button', { name: 'View →' }).click();
+    await tab('Categories');
     const targetBefore = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).total, credentials.layout_target_id);
     await page.getByRole('button', { name: 'Preview / apply saved layout template', exact: true }).click();
     await page.getByText('58 exact matches', { exact: false }).waitFor();
@@ -206,9 +221,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     assert.equal(await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).total, credentials.layout_target_id), targetBefore);
     await page.locator('.layout-draft tbody tr').first().getByText('TEST Category 60', { exact: true }).waitFor();
     done('cross-device template preview maps exact names to target refs, preserves extras and remains LOCAL until push');
-    await page.locator('nav a[href="#devices"]').click();
-    await page.locator('tr').filter({ hasText: credentials.device_id }).getByRole('button', { name: 'View →' }).click();
-    await page.getByRole('button', { name: 'Favourites', exact: true }).click();
+    await navigate('devices');
+    await page.locator(`tr[data-device-id="${credentials.device_id}"]`).getByRole('button', { name: 'View →' }).click();
+    await tab('Favourites');
     await page.getByRole('heading', { name: 'Favourites backups & recovery', exact: true }).waitFor();
     const recoveryBefore = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/favourites')).json()), credentials.device_id);
     assert.equal(recoveryBefore.total, 1); assert.equal(recoveryBefore.live[0].channel_count, 0); assert.equal(recoveryBefore.items[0].channel_count, 2); assert.equal(recoveryBefore.items[0].group_count, 1); assert(recoveryBefore.items[0].protected);
@@ -230,37 +245,31 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByRole('heading', { name: 'Last app-reported favourites state', exact: true }).waitFor();
     const afterRecovery = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/favourites')).json()), credentials.device_id); assert.equal(afterRecovery.total, 1); assert.equal(afterRecovery.live[0].channel_count, 2);
     done('empty customer state preserves a protected good favourites version; preview/merge recovery waits for receipts and fresh app reporting (synthetic driver)');
-    await page.getByRole('button', { name: 'Logs', exact: true }).click();
-    await page.getByRole('button', { name: 'Request fresh snapshot', exact: true }).click();
+    await tab('Logs');
+    await page.getByRole('button', { name: 'Load app diagnostics', exact: true }).click();
     const diagnosticsDelivery = await syntheticDelivery('get_diagnostics');
     const diagnosticsSnapshot = { schema_version: '1', profile_ref: 'a'.repeat(64), app_package: 'com.arvio.tv.test', app_version: '2.0.112-test', sdk: '36', storage_total: '1000', storage_free: '900', channel_count: '4000', guide_state: 'idle', diagnostics_version: '2', heap_used: '100', heap_limit: '200', memory_state: 'low', network_state: 'permission_denied', network_transport: 'unknown', network_metered: 'unknown' };
     assert.equal((await ack(diagnosticsDelivery, { snapshot: diagnosticsSnapshot })).status, 200);
-    await page.getByRole('button', { name: 'Overview', exact: true }).click();
-    await page.getByRole('button', { name: 'Logs', exact: true }).click();
+    await tab('Overview');
+    await tab('Logs');
     await page.getByText('permission_denied', { exact: true }).waitFor();
     await page.getByText('heap used', { exact: true }).waitFor();
-    await page.getByText('it does not prove a playlist or stream works', { exact: false }).waitFor();
+    await page.getByText('does not prove a playlist or stream works', { exact: false }).waitFor();
     done('extended redacted diagnostics display denied network status and heap counters only after a leased receipt (synthetic driver)');
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('button', { name: 'Adjust Live TV pre-buffer', exact: true }).click();
-    assert.equal(await page.getByLabel('Pre-buffer amount', { exact: true }).inputValue(), '0');
-    await page.getByLabel('Pre-buffer amount', { exact: true }).selectOption('5');
-    page.once('dialog', dialog => dialog.accept());
-    await page.locator('#modal-form').getByRole('button', { name: 'Queue pre-buffer setting', exact: true }).click();
-    await page.locator('#modal').waitFor({ state: 'hidden' });
+    await tab('Settings');
+    assert.equal(await page.getByLabel('Live TV buffer', { exact: true }).inputValue(), '0');
+    await page.getByLabel('Live TV buffer', { exact: true }).selectOption('5');
+    await page.getByRole('button', { name: 'Send buffer change', exact: true }).click();
     const bufferDelivery = await syntheticDelivery('set_live_buffer');
     assert.equal(bufferDelivery.payload.prebuffer_seconds, '5');
     const pendingBuffer = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).items.find(c => c.kind === 'set_live_buffer'), credentials.device_id);
     assert.equal(pendingBuffer.result, null);
     const bufferSnapshot = { schema_version: '1', profile_ref: bufferDelivery.payload.profile_ref, settings_revision: 'b'.repeat(64), sort_order: 'provider', playlist_count: '1', enabled_playlist_count: '1', portal_count: '0', favourite_channel_count: '0', favourite_group_count: '0', live_prebuffer_seconds: '5', live_buffer_revision: 'c'.repeat(64) };
     assert.equal((await ack(bufferDelivery, { snapshot: bufferSnapshot })).status, 200);
-    await page.getByRole('button', { name: 'Overview', exact: true }).click();
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('button', { name: 'Adjust Live TV pre-buffer', exact: true }).click();
-    assert.equal(await page.getByLabel('Pre-buffer amount', { exact: true }).inputValue(), '5');
-    await page.locator('#modal-form').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByText('Buffer saved on device. Change channels to use it.',{exact:true}).waitFor();
+    assert.equal(await page.getByLabel('Live TV buffer', { exact: true }).inputValue(), '5');
     done('device Live TV pre-buffer defaults Off, queues a bounded revision-guarded setting and displays saved amount after receipt (synthetic driver)');
-    await page.getByRole('button',{name:'Playlists',exact:true}).click();
+    await tab('Playlists');
     await page.getByRole('heading',{name:'Playlist sources — local draft and one guarded push',exact:true}).waitFor();
     const sourceCommandsBefore=await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id);
     await page.locator('tr').filter({hasText:'TEST Main source'}).getByRole('button',{name:'Edit',exact:true}).click();
@@ -295,7 +304,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByRole('button',{name:'Push reviewed source replacement',exact:true}).waitFor();
     await page.getByRole('button',{name:'Cancel preview (re-enter secret replacements to edit again)',exact:true}).click();
     done('whole source edits stay local, canonical credentials stay protected, write-only replacements are encrypted and one push requires safety/confirmation; rollback is previewed (synthetic driver)');
-    await page.locator('nav a[href="#presets"]').click();
+    await navigate('presets',ownerTenant);
     await page.getByRole('button',{name:'Create broader settings profile',exact:true}).click();
     await page.getByLabel('Workspace / reseller',{exact:true}).selectOption(ownerTenant);
     await page.getByLabel('Settings profile name',{exact:true}).fill('TEST Browser broad profile');
@@ -303,8 +312,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.locator('#modal-form').getByRole('button',{name:'Save profile — do not push',exact:true}).click();
     await page.getByText('TEST Browser broad profile',{exact:true}).waitFor();
     const broadProfile=await page.evaluate(async()=>(await(await fetch('/api/preference-profiles?search=TEST%20Browser%20broad%20profile')).json()).items[0]);
-    await page.locator('nav a[href="#devices"]').click();await page.locator('tr').filter({hasText:credentials.device_id}).getByRole('button',{name:'View →'}).click();
-    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await navigate('devices');await page.locator(`tr[data-device-id="${credentials.device_id}"]`).getByRole('button',{name:'View →'}).click();
+    await tab('Settings');await expand('Movie & series preferences, saved profiles and overrides');
     await page.getByLabel('Base settings profile',{exact:true}).selectOption(broadProfile.id);
     await page.getByLabel('Override clock_format',{exact:true}).selectOption('12h');
     await page.getByRole('button',{name:'Preview effective settings changes',exact:true}).click();
@@ -319,7 +328,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByRole('button',{name:'Refresh expanded settings results',exact:true}).click();
     assert.equal(await page.getByLabel('Override clock_format',{exact:true}).inputValue(),'12h');
     done('versioned broader settings profile is saved without auto-push; explicit device/profile override wins after preview and matching receipt (synthetic driver)');
-    await page.getByRole('button',{name:'Logs',exact:true}).click();
+    await tab('Logs');
     await page.getByRole('button',{name:'Request redacted support bundle',exact:true}).click();const supportDelivery=await syntheticDelivery('get_support_bundle');
     const supportUploaded=await page.evaluate(async({token,c,snapshot})=>(await fetch('/api/device/support/upload',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({command_id:c.id,lease_token:c.lease_token,kind:'bundle',profile_ref:snapshot.profile_ref,document:{schema_version:1,profile_ref:snapshot.profile_ref,snapshot,events:[{code:'LIVE_RECOVERY',at_ms:Date.now()}]}})})).status,{token:credentials.synthetic_device_token,c:supportDelivery,snapshot:diagnosticsSnapshot});assert.equal(supportUploaded,200);assert.equal((await ack(supportDelivery,{})).status,200);
     await page.getByRole('button',{name:'Refresh private support results',exact:true}).click();
@@ -327,10 +336,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Request consented support-panel image',exact:true}).click();const panelDelivery=await syntheticDelivery('capture_app_screen');assert.equal((await ack(panelDelivery,{status:'failed',summary:'TEST synthetic customer declined — no image uploaded'})).status,200);
     await page.getByRole('button',{name:'Refresh private support results',exact:true}).click();assert.equal(await page.getByRole('link',{name:'Download consented panel PNG',exact:true}).count(),0);
     done('redacted private support export is session-authorized and a declined panel request produces no image link (synthetic driver)');
-    await page.getByRole('button', { name: 'Overview', exact: true }).click();
+    await tab('Overview');await expand('Manage app access & assignment');
     page.once('dialog', dialog => dialog.accept());
     await page.getByRole('button', { name: 'Remove from reseller — keep app working', exact: true }).click();
-    await page.getByText('UNASSIGNED — owner-managed only.', { exact: false }).waitFor();
+    await page.getByText('Unassigned — owner-managed. Removing the reseller did not block the app.', { exact: true }).waitFor();
     const unassigned = await page.evaluate(async id => (await (await fetch('/api/devices/' + id)).json()), credentials.device_id);
     assert.equal(unassigned.reseller_detached, true); assert.equal(unassigned.policy, 'active');
     await page.screenshot({ path: path.join(output, 'device-unassigned-desktop.png'), fullPage: true });
@@ -338,12 +347,22 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button',{name:'Open navigation',exact:true}).click();
-    await page.locator('nav a[href="#overview"]').click();
+    await navigate('overview');
     await page.getByRole('heading', { name: 'Operations overview', exact: true }).waitFor();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Mobile page overflow');
     await page.screenshot({ path: path.join(output, 'overview-mobile.png'), fullPage: true });
     await page.getByRole('button',{name:'Open navigation',exact:true}).click();
     assert.equal(await page.locator('#workspace').evaluate(n=>n.inert),true);
+    assert.equal(await page.locator('#navigation .nav-group-title').count(),7);
+    assert.equal(await page.locator('#navigation a.active').count(),1);
+    assert.equal(await page.locator('#navigation a[aria-current="page"]').getAttribute('href'),'#overview');
+    assert.equal(await page.locator('#navigation a[href="#library/defaults"]').isVisible(),true);
+    const drawer=await page.locator('#sidebar').boundingBox();assert(drawer.width<390&&drawer.width>=280);
+    await page.locator('#sidebar').evaluate(async node=>{await Promise.all(node.getAnimations().map(a=>a.finished));});
+    await page.screenshot({path:path.join(output,'portal-menu-mobile.png'),fullPage:false});
+    await page.locator('#sidebar').evaluate(node=>{node.scrollTop=node.scrollHeight;});
+    assert.equal(await page.locator('#navigation a[href="#more"]').evaluate(node=>{const r=node.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;}),true);
+    await page.locator('#sidebar').evaluate(node=>{node.scrollTop=0;});
     await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.activeElement.id),'nav-toggle');
     assert.equal(await page.locator('#workspace').evaluate(n=>n.inert),false);
     await page.getByRole('button',{name:'Open navigation',exact:true}).click();
@@ -353,25 +372,81 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     assert.equal(await page.locator('.mobile-records table').first().evaluate(n=>getComputedStyle(n).display),'block');
     assert(await page.getByRole('button',{name:'View →',exact:true}).first().isVisible());
     await page.screenshot({path:path.join(output,'devices-mobile-modern.png'),fullPage:true});
-    await page.locator('tr').filter({hasText:credentials.device_id}).getByRole('button',{name:'View →'}).click();
-    await page.getByRole('button',{name:'Settings',exact:true}).click();
-    await page.getByRole('button',{name:'Adjust Live TV pre-buffer',exact:true}).waitFor();
-    await page.getByRole('button',{name:'Adjust Live TV pre-buffer',exact:true}).click();
+    await page.screenshot({path:path.join(output,'clean-devices-mobile.png'),fullPage:true});
+    await page.locator(`tr[data-device-id="${credentials.device_id}"]`).getByRole('button',{name:'View →'}).click();
+    await tab('Settings');
+    await page.getByLabel('Live TV buffer',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Send message',exact:true}).click();
     const modalBounds=await page.locator('#modal').boundingBox();assert(modalBounds.x>=0&&modalBounds.x+modalBounds.width<=390);
     assert((await page.locator('#modal-form button').first().boundingBox()).height>=44);
     await page.locator('#modal-form').getByRole('button',{name:'Cancel',exact:true}).click();
     done('mobile drawer supports Escape/focus restoration; device records become readable cards and editor dialogs keep touch-sized actions');
+    if(await page.evaluate(()=>document.documentElement.dataset.theme)==='light')await page.getByRole('button',{name:'Switch to dark theme',exact:true}).click();
     await page.getByRole('button',{name:'Switch to light theme',exact:true}).click();
     assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
+    async function menuMatchesTheme(){const colors=await page.evaluate(()=>{const probe=document.createElement('span');probe.style.cssText='background:var(--panel);color:var(--accent);border-color:var(--accent-soft)';document.body.append(probe);const expected=getComputedStyle(probe),sidebar=getComputedStyle(document.getElementById('sidebar')),active=getComputedStyle(document.querySelector('#navigation a.active'));const result=[sidebar.backgroundColor,expected.backgroundColor,active.color,expected.color,active.backgroundColor,expected.borderTopColor];probe.remove();return result;});assert.equal(colors[0],colors[1]);assert.equal(colors[2],colors[3]);assert.equal(colors[4],colors[5]);}
+    await menuMatchesTheme();
     const themePage=await page.context().newPage();await themePage.goto(base);await themePage.getByRole('heading',{name:'Operations overview',exact:true}).waitFor();assert.equal(await themePage.evaluate(()=>document.documentElement.dataset.theme),'light');await themePage.close();
     await page.screenshot({path:path.join(output,'device-settings-mobile-light.png'),fullPage:false});
     for(const width of [320,390,768,1024,1440]){await page.setViewportSize({width,height:950});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false,`Page overflows at ${width}px`);}
     await page.getByRole('button',{name:'Switch to dark theme',exact:true}).click();
+    await menuMatchesTheme();
+    done('menu surfaces and active highlights match the shared site palette in both light and dark themes');
+    await page.screenshot({path:path.join(output,'portal-menu-desktop.png'),fullPage:false});
+    done('grouped portal sidebar has direct setup links, one active row and a scrollable accessible mobile drawer');
     done('light/dark appearance persists without customer data; active settings remain usable from 320px to desktop without page overflow');
     done('mobile overview has no horizontal page overflow');
 
+    await page.setViewportSize({width:1440,height:1000});await navigate('devices');await page.locator(`tr[data-device-id="${credentials.device_id}"]`).waitFor();await page.screenshot({path:path.join(output,'clean-devices-desktop-dark.png'),fullPage:false});await page.locator(`tr[data-device-id="${credentials.device_id}"]`).getByRole('button',{name:'View →'}).click();await tab('Settings');
+    const acceptDiscard=d=>d.accept();page.on('dialog',acceptDiscard);await page.getByRole('button',{name:'Load device settings',exact:true}).click();page.off('dialog',acceptDiscard);const guidedRead=await syntheticDelivery('get_settings');assert.equal((await ack(guidedRead,{snapshot:bufferSnapshot})).status,200);
+    await page.getByText('Settings received. Choose a value and send your change.',{exact:true}).waitFor();assert.equal(await page.getByLabel('Live TV buffer',{exact:true}).inputValue(),'5');
+    done('guided Playback read completes in place after one Load action, without manual refresh or a separate command page');
+
+    await page.locator('#navigation a[href="#library"]').click();await page.getByLabel('Library workspace',{exact:true}).selectOption(ownerTenant);
+    const beforeLibraryActions=await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id);
+    await page.getByRole('button',{name:'Create layout',exact:true}).click();await page.getByLabel('Layout name',{exact:true}).fill('TEST new workspace layout');
+    await page.getByRole('button',{name:'Add category rules',exact:true}).click();await page.getByLabel('Category names — one per line',{exact:true}).fill('News\nSports');await page.locator('#modal-form').getByRole('button',{name:'Save',exact:true}).click();await page.locator('#modal').waitFor({state:'hidden'});
+    await page.getByRole('button',{name:'Save layout',exact:true}).click();await page.getByText('Layout saved. Devices and pinned default profiles were not changed.',{exact:true}).waitFor();
+    const makerLayout=await page.evaluate(async tenant=>(await(await fetch('/api/category-layout-templates?tenant_id='+tenant+'&search=TEST%20new%20workspace%20layout')).json()).items[0],ownerTenant);assert.equal(Number(makerLayout.version),1);
+    assert.equal(await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id),beforeLibraryActions);
+    await page.screenshot({path:path.join(output,'task-workspace-layout-maker.png'),fullPage:true});await page.setViewportSize({width:390,height:950});await page.locator('.sidebar').waitFor({state:'hidden'});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);assert.equal(await page.locator('.mobile-records table').first().evaluate(n=>getComputedStyle(n).display),'block');await page.screenshot({path:path.join(output,'task-workspace-layout-maker-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1000});done('discoverable Library maker creates exact-name reusable layouts without sending device commands');
+
+    await page.locator('#main a[href="#library/profiles"]').click();await page.getByRole('button',{name:'Create device profile',exact:true}).click();await page.getByLabel('Device profile name',{exact:true}).fill('TEST new-device recipe');await page.getByLabel('Channel & playlist layout',{exact:true}).selectOption(makerLayout.id+'@1');await page.getByLabel('Compatible player/UI settings profile',{exact:true}).selectOption(broadProfile.id+'@1');await page.getByLabel('Live TV buffer — all profiles on the device',{exact:true}).selectOption('2');await page.locator('#modal-form').getByRole('button',{name:'Save profile — do not apply',exact:true}).click();await page.locator('#modal').waitFor({state:'hidden'});
+    const recipe=await page.evaluate(async tenant=>(await(await fetch('/api/device-profiles?tenant_id='+tenant+'&search=TEST%20new-device%20recipe')).json()).items[0],ownerTenant);assert.equal(recipe.definition.layout.version,1);assert.equal(recipe.definition.prebuffer_seconds,'2');
+    await page.locator('#main a[href="#library/defaults"]').click();await page.getByLabel('Default device profile',{exact:true}).selectOption(recipe.id+'@1');await page.getByLabel('Use for newly managed devices',{exact:true}).check();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Review & save default',exact:true}).click();
+    await page.waitForFunction(async tenant=>(await(await fetch('/api/device-defaults?tenant_id='+tenant)).json()).policy?.enabled===1,ownerTenant);
+    await page.getByText('Currently enabled:',{exact:false}).waitFor();
+    const existingSetups=await page.evaluate(async id=>(await(await fetch('/api/device-setups?device_id='+id)).json()).total,credentials.device_id);assert.equal(existingSetups,0);
+    await page.screenshot({path:path.join(output,'task-workspace-new-device-defaults.png'),fullPage:true});
+    await page.evaluate(id=>{location.hash='library/layout/'+id;},makerLayout.id);await page.getByLabel('Position of Sports',{exact:true}).fill('1');await page.getByLabel('Position of Sports',{exact:true}).press('Tab');await page.getByRole('button',{name:'Save layout',exact:true}).click();
+    await page.waitForFunction(async id=>(await(await fetch('/api/category-layout-templates/'+id)).json()).version===2,makerLayout.id);
+    const pinnedRecipe=await page.evaluate(async id=>await(await fetch('/api/device-profiles/'+id)).json(),recipe.id);assert.equal(pinnedRecipe.definition.layout.version,1);assert.equal(pinnedRecipe.definition.layout.entries[0].name,'News');
+    await page.locator('#main a[href="#library/defaults"]').click();await page.getByLabel('Use for newly managed devices',{exact:true}).uncheck();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Review & save default',exact:true}).click();
+    done('reseller defaults use an explicitly enabled version-pinned recipe, do not touch existing devices and do not silently follow template edits');
+
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.locator('nav a[href="#resellers"]').click();
+    {
+    // A separate verified reseller/session models the actual self-service role and
+    // keeps independent scenarios within each actor's production request budget.
+    const brandContext=await browser.newContext({viewport:{width:1440,height:1000}});const page=await brandContext.newPage();const ownerTenant=credentials.brand_tenant_id;
+    page.on('pageerror',error=>errors.push(error.message));await page.goto(base);await page.getByLabel('Email address').fill(credentials.brand_email);await page.getByLabel('Password',{exact:true}).fill(credentials.brand_password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('heading',{name:'Operations overview',exact:true}).waitFor();
+    await page.locator('#navigation a[href="#branding"]').click();
+    await page.getByLabel('Branded app name',{exact:true}).fill('TEST North TV');
+    const brandImage=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jSuoAAAAASUVORK5CYII=','base64');
+    for(const field of ['Loading image','In-app logo / TV banner','Launcher icon']){const uploaded=page.waitForResponse(r=>r.url().endsWith('/api/app-brand/assets')&&r.request().method()==='POST');await page.getByLabel(field,{exact:true}).setInputFiles({name:'test.png',mimeType:'image/png',buffer:brandImage});assert.equal((await uploaded).status(),201);await page.getByAltText(field+' preview',{exact:true}).waitFor();}
+    await page.getByRole('button',{name:'Save brand',exact:true}).click();await page.getByRole('heading',{name:'Edit your existing app brand',exact:true}).waitFor();
+    const savedBrand=await page.evaluate(async t=>(await(await fetch('/api/app-brand?tenant_id='+t)).json()).brand,ownerTenant);
+    const buildResponse=page.waitForResponse(r=>r.url().endsWith('/api/app-brand/builds')&&r.request().method()==='POST',{timeout:10000});await page.getByRole('button',{name:'Request build of saved version',exact:true}).click();let buildReply;try{buildReply=await buildResponse;}catch(e){console.log('Brand action status:',await page.locator('#toast').textContent());throw e;}assert.equal(buildReply.status(),201,await buildReply.text());await page.getByText('Waiting for central builder',{exact:true}).waitFor();
+    await page.getByLabel('Branded app name',{exact:true}).fill('TEST Renamed North');await page.getByRole('button',{name:'Save brand',exact:true}).click();await page.waitForFunction(async t=>(await(await fetch('/api/app-brand?tenant_id='+t)).json()).brand.version===2,ownerTenant);
+    const changedBrand=await page.evaluate(async t=>(await(await fetch('/api/app-brand?tenant_id='+t)).json()),ownerTenant);assert.equal(changedBrand.brand.id,savedBrand.id);assert.equal(changedBrand.brand.package_name,savedBrand.package_name);assert.equal(changedBrand.builds[0].brand_version,1);assert.equal(changedBrand.trial_creation_enabled,false);
+    await page.screenshot({path:path.join(output,'app-brand-self-service-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:950});await page.locator('.sidebar').waitFor({state:'hidden'});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);await page.screenshot({path:path.join(output,'app-brand-self-service-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1000});
+    done('self-service branding uploads scoped artwork, updates one stable app identity and pins an honest waiting build without enabling trials');
+    await brandContext.close();
+    }
+    // The preceding synthetic suite compresses hundreds of requests into a minute.
+    // Respect the unchanged 300/min actor budget before the independent admin cases.
+    await page.waitForTimeout(61000);
+    await navigate('resellers');
     await page.getByRole('button', { name: 'Link panel reseller', exact: true }).first().click();
     assert((await page.getByLabel('Exact panel login username', { exact: true }).inputValue()).length > 0);
     await page.locator('#modal').getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -396,12 +471,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByLabel('Password', { exact: true }).fill(password);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.getByRole('heading', { name: 'Operations overview', exact: true }).waitFor();
-    assert.equal(await page.locator('nav a[href="#resellers"]').count(), 0);
+    await navigate('more');assert.equal(await page.locator('#main a[href="#resellers"]').count(), 0);
     const denied = await page.evaluate(async tenant => (await fetch('/api/devices?tenant_id=' + tenant)).status, ownerTenant);
     assert.equal(denied, 404);
     assert.equal(await page.evaluate(async () => (await fetch('/api/enrollments')).status), 403);
     assert.equal(await page.evaluate(async tenant => (await fetch('/api/settings-presets?tenant_id=' + tenant)).status, ownerTenant), 404);
-    await page.locator('nav a[href="#customers"]').click();
+    await navigate('customers');
     await page.getByText('No records yet.', { exact: true }).waitFor();
     done('reseller login sees only its empty workspace; foreign tenant API is denied');
     assert.deepEqual(errors, []);

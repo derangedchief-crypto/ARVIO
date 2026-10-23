@@ -5,7 +5,174 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone — 0.9.0
+## Current development milestone — 0.11.0
+
+### Self-service app brand preparation (not yet end-to-end APK/trial automation)
+
+Migration014 adds **My app -> My app brand**. Each active, verified linked reseller
+has ONE persistent app identity. Upload a loading image, in-app logo and launcher
+icon (PNG/JPEG/WebP,1 MB each) and set the replacement app name; colours are unchanged.
+Editing always reuses its package/brand identity. No reseller clone/delete/transfer,
+arbitrary package/update URL, signing-key export or downstream branding interface.
+The platform's unbranded owner app is separate from reseller brand records.
+
+Saving does NOT build or install an APK. Request build pins immutable image hashes,
+brand version and the platform-controlled app version. It currently shows **Waiting
+for central builder**, not Ready. Repeated requests deduplicate; only one build can
+be pending per brand. The requester/owner can cancel unstarted work. An owner can
+export a pinned job using `php cli/console.php brand-export BUILD_ID PRIVATE_NEW_FILE`.
+Owner Resellers rows link directly to a workspace's brand editor. Assets remain
+authenticated/private; orphan uploads are retained1 day and limited100/workspace.
+Initialized config, DB, private storage and encryption keys are preserved by updates.
+
+`branding/prepare.py` in the source repository creates all density/banner/icon/loading
+resources and localized brand strings from that export, re-encoding uploads and
+rejecting tampered package/image identities. Branded Gradle inputs use OUR repository
+and brand-specific production/testing update tags; distributable builds refuse debug
+signing fallback. Sample branded resource/Kotlin compilation is covered locally.
+See `branding/README.md` for completed pieces and remaining builder/enrollment/update
+integration. No reseller-branded APK is claimed ready or published by this increment.
+
+**Trials stay disabled.** The separately tested `reseller-auth-worker` extension in
+the source repository prepares restricted/idempotent worker operations with contact
+notes, eligibility history and post-commit repair. It is not deployed or connected
+to a public app trial route. Admin trial-plan/default UI, structured contact display,
+trusted branded-device policy and the native activation flow remain unfinished.
+
+Android development113 separately adds Settings -> Storage usage (read-only fixed
+component counters) and atomic compressed VOD/series catalogue caching, preserving
+legacy files, saved timestamps, TTL and offline fallback. A website ZIP cannot apply
+these native changes. No app-data/guide/favourites purge, playback-engine change or
+APK publication happens by installing this website ZIP. Regular113 testing publication
+has been separately authorized. Physical fresh-install/sync storage savings
+and speed still need an owner-device pilot; do not claim the reported1.55 GB is fixed.
+
+## Previous milestone — 0.10.3
+
+### Consistent menu theme
+
+The grouped sidebar now uses the SAME shared light/dark palette as the website:
+white/ink in light mode, matching navy surfaces in dark mode, and blue active rows,
+hover/focus states and icons. The reference screenshot's fixed charcoal/red colours
+are removed, including the separate dark Devices palette. Menu grouping, responsive
+drawer and all workflows are unchanged. Asset versions are bumped to refresh caches.
+No new migration, backend change or APK required for this styling fix.
+
+### Cleaner Devices directory
+
+The Devices screen now follows the user's cleaner reference: a real scoped device
+count, one search/access-filter toolbar and a compact five-column table (Device,
+Customer, App access, Connection, Actions). Model/app version and last check-in are
+secondary text instead of separate columns. Username chips identify the customer;
+technical identifiers remain in device details. Phones show compact readable cards.
+
+App access filters use the existing authenticated server query, including an explicit
+Revoked enrollments view; connection is still separate and means app check-ins only.
+Counts reflect the current search/filter/customer scope, not a fabricated quota.
+The row refresh icon requires confirmation and queues only the existing supported
+playlist-refresh operation. Disabled states explain incompatible/inactive enrollment.
+View opens the full device workspace. No one-tap block/delete, invented welcome/
+broadcast tools or automatic device actions were added to copy the example screen.
+
+0.10.2 includes0.10.1's grouped menu and the complete0.10 rebuild. No new migration
+beyond013, no Android/worker changes and no live deployment.
+Device search also converts stored ASCII IDs to UTF-8 for comparison, preventing
+Unicode customer/device search terms from causing a database collation failure.
+
+### Grouped portal menu
+
+The user's reference menu replaces0.10's horizontal navigation: a theme-matched sidebar,
+muted section labels, outline icons and a blue active-page highlight. Desktop keeps
+the sidebar visible; phones use a scrollable slide-out drawer over a dimmed page.
+Escape/backdrop/link selection close it; keyboard focus is contained and restored.
+The duplicate phone bottom bar is removed. Main content keeps its light/dark theme.
+
+Sections are **Overview**, **My clients**, **Device setup**, **Playlist editor**,
+owner-only **User management**, and **Workspace**. Layouts/playlists, settings
+profiles, device profiles, new-device defaults and the template maker have direct
+links. Only real existing features appear: no placeholder VPN, VOD, referral or
+sub-reseller functionality is implied by matching the reference menu style.
+
+The0.10.1 UPDATE includes the complete0.10 rebuild below. No new migration beyond013,
+no Android/worker changes and no live deployment. Update preserves config/storage.
+
+### Task-based workspace rebuild and real new-device defaults
+
+This is the approved structural rebuild, not another0.9 reskin. Light-first
+blue/ink appearance (matching dark mode), now with the grouped portal sidebar
+described above. Customers lead to their scoped devices by
+verified line username. Raw IDs/capability maps live under Technical details.
+
+Each device has FIVE sections: **Summary**, **Playback**, **Channels & favourites**,
+**Playlists & guide**, **Help & activity**. Messages, access policy, source actions,
+support and queued-action history remain available but have a clear home. Owner
+administration is under **More**; reseller permissions are unchanged.
+
+Playback has inline buffer/sort controls. **Load device settings** explicitly asks
+the app, watches THAT action and updates the same screen—no manual page refresh
+or unrelated command page. Drafts are marked unsent. Success follows the real app
+receipt; stale/conflicting/expired/offline work is not called applied. Queued work
+cannot wake a stopped app. Switching views/signing out stops stale UI updates.
+Live buffer scope/timing and compatible-player language settings remain distinct.
+
+**Library -> Channel & playlist layouts -> Create layout** opens the maker. Add
+safe exact category names, set order/visibility, import a device catalogue, preview
+matching against reported metadata, or save an organized device draft as a layout.
+Template edits are local until Save; saving a template sends NO device command.
+Actual device application still requires a fresh guarded source/profile revision.
+Keep target-only groups; ambiguous/unsafe matching needs review, never fuzzy IDs.
+
+**Library -> Device profiles** combines a pinned layout version, optional broader
+settings profile, sorting and device-wide Live TV buffer. These are configuration
+recipes, not newly created Android/customer app profiles. Source passwords/URLs,
+favourites cloning, update/signing controls, entitlements, blocking/revocation,
+screenshots and restarts are NOT default-profile fields.
+
+**Library -> New-device defaults** explicitly assigns ONE versioned recipe to
+future devices admitted through a verified reseller link. Existing inventory is
+not selected. A first verified owner-reviewed admission can also qualify; credential
+renewals/check-ins/unassignment do not reapply it. Editing a layout/settings/recipe
+does NOT change an existing policy or a pending assignment's pinned versions.
+Enable/revise the policy explicitly for future admissions. Owner Resellers rows
+link directly to that workspace's defaults, including workspaces beyond page one.
+
+Migration013 adds immutable recipe versions, policies and staged setup jobs. The
+backend uses EXISTING112 app operations—no new APK, worker patch or permission.
+Stages read settings/catalogue first, bind the first eligible active profile/source,
+then send supported changes through existing leases/idempotency/CAS, and confirm
+the final layout read-back. Existing explicit preference overrides are preserved.
+New-device setup is not globally atomic: show individual confirmed stages and
+partial/waiting/review results. Complete means every required stage confirmed.
+
+No-match/ambiguous/unsafe names, source/profile changes, native revision conflicts
+or a layout that would hide every category stop for review. Missing safe template
+names are listed as notes; target-only categories retain visibility/order. Catalogue
+reads retry at most3 times with60/300/900-second backoff. Jobs expire after48 hours;
+unsupported/closed apps wait without blocking normal viewing. Successful, failed,
+expired and cancelled stages are not silently replayed with fresh revisions.
+
+Disabling defaults pauses unstarted automatic stages and stops future assignments;
+already-running/applied work cannot be recalled/undone by that switch. Use explicit
+review/cancel/resume controls. Existing-device application is separately confirmed,
+requires active enrolled access and starts fresh guarded stages. Only its requester
+or owner controls a manual job; workspace default-policy controls remain tenant-scoped.
+Removing reseller assignment cancels outstanding setups without blocking viewing.
+
+Setup progression runs from check-ins, acknowledgments and the EXISTING maintenance
+cron; no new daemon/port. Publisher/workspace access is rechecked. Progression owns
+a short READ COMMITTED transaction with device/job locks and nested command
+savepoints; disabling/cancelling reloads the current locked job before cancelling
+tracked pending commands. Immutable recipe versions remain pinned by policies/jobs;
+unreferenced versions older than the latest20 may be pruned. Manual terminal job
+history follows90-day retention; admission assignments retain their one-time marker.
+
+**Upgrade:** back up, extract the0.10 UPDATE ZIP, then **More -> Enrollments & website
+upgrades -> Apply database upgrade013**. Apply older pending migrations too when
+skipping earlier releases. Keep config.php/storage/application.key and the existing
+2m limits/required PHP extensions. App112 is already supported; no APK publication
+or live deployment is implied. Run the owner-device pilot before broad rollout.
+
+## Previous visual milestone — 0.9.0
 
 ### Mobile-first visual refresh (website only)
 

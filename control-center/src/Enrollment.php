@@ -190,6 +190,7 @@ final class Enrollment
             [$id,$tenant['id'],$customerId,$request['installation_id'],$request['label'],$request['model'],$request['os_version'],$request['app_version'],$request['app_package'],$request['key_fingerprint']]);
         $this->db->query("UPDATE enrollment_requests SET status='approved',device_id=? WHERE id=?",[$id,$request['id']]);
         $this->mintCredential($request['id'],$id);
+        $setup=DeviceProfiles::admit($this->db,$id);if($setup)$this->auth->audit(null,'setup.default_assigned',$setup,$tenant['id'],['device_id'=>$id]);
         $this->auth->audit(null,'enrollment.auto_assigned',$request['id'],$tenant['id'],['device_id'=>$id,'panel_reseller_id'=>$panel['reseller_id'],'panel_customer_id'=>$panel['customer_id']]);
     }
     private function mintCredential(string $requestId, string $deviceId): void
@@ -270,6 +271,7 @@ final class Enrollment
                 [$row['installation_id'],$row['key_fingerprint'],$row['app_package'],$label,$row['model'],$row['os_version'],$row['app_version'],$policy,$deviceId]);
             $this->db->query("UPDATE enrollment_requests SET status='approved',device_id=?,reviewed_by=? WHERE id=?",[$deviceId,$actor['id'],$id]);
             $this->mintCredential($id,$deviceId);
+            if((!$existing||$existing['enrolled_at']===null)&&$this->db->one('SELECT panel_id FROM panel_resellers WHERE panel_id=? AND tenant_id=?',[$row['panel_reseller_id'],$tenant['id']])){$setup=DeviceProfiles::admit($this->db,$deviceId);if($setup)$this->auth->audit(null,'setup.default_assigned',$setup,$tenant['id'],['device_id'=>$deviceId]);}
             $this->auth->audit($actor,'enrollment.approved',$id,$tenant['id'],['device_id'=>$deviceId]);
             return $this->management->device($actor,$deviceId);
         });

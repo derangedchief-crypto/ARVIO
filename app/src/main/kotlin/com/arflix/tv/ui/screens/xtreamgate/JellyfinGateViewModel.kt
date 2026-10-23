@@ -62,7 +62,7 @@ class JellyfinGateViewModel @Inject constructor(
                 JELLYFIN_GATE_SERVER_URL,
                 username,
                 password,
-                "Extreme TV Network"
+                com.arflix.tv.branding.AppBrand.text("Extreme TV Network")
             )
             result.onSuccess {
                 // Connecting alone doesn't make anything show up on Home — the same

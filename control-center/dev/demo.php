@@ -91,6 +91,8 @@ foreach([0,3] as $which) {
 // This is not evidence that a real activation worker or Android device connected.
 $app->enrollment->setEnabled($owner,['enabled'=>true]);
 $app->db->query('INSERT INTO panel_resellers (panel_id,tenant_id,username,linked_by) VALUES (?,?,?,?)',['700001',$ownerTenant['id'],'SYNTHETIC-preview-owner',$owner['id']]);
+$brandPassword=bin2hex(random_bytes(20));$brandTenant=$app->management->createReseller($owner,['company'=>'TEST branded reseller','name'=>'TEST brand operator','email'=>'brand@preview.test','password'=>$brandPassword,'device_limit'=>5]);
+$app->db->query('INSERT INTO panel_resellers (panel_id,tenant_id,username,linked_by) VALUES (?,?,?,?)',['700002',$brandTenant['id'],'SYNTHETIC-brand-reseller',$owner['id']]);
 $private=openssl_pkey_new(['private_key_type'=>OPENSSL_KEYTYPE_EC,'curve_name'=>'prime256v1']);
 $public=preg_replace('~-----[^\n]+-----|\s~','',openssl_pkey_get_details($private)['key']);
 $fingerprint=hash('sha256',base64_decode($public)); $install=ControlCenter\Database::id();
@@ -109,6 +111,6 @@ $app->db->query('UPDATE tenants SET device_limit=? WHERE id=?',[max(1,$used),$ow
 $request=$app->enrollment->register(['challenge'=>$challenge,'proof'=>$proof,'public_key'=>$public,'signature'=>base64_encode($signature),'label'=>'TEST · Enrollment simulator','model'=>'SYNTHETIC ENROLLMENT FIXTURE','os_version'=>'Not a real Android device','app_version'=>'test-simulator'],'127.0.0.1');
 $app->db->query('UPDATE tenants SET device_limit=100 WHERE id=?',[$ownerTenant['id']]);
 $target=$app->db->one('SELECT id FROM customers WHERE tenant_id=? ORDER BY created_at,id LIMIT 1',[$ownerTenant['id']]);
-file_put_contents($base.'/preview-credentials.json',json_encode(['email'=>'owner@preview.test','password'=>$password,'device_id'=>$bindings[0]['id'],'database'=>$name,
+file_put_contents($base.'/preview-credentials.json',json_encode(['email'=>'owner@preview.test','password'=>$password,'brand_email'=>'brand@preview.test','brand_password'=>$brandPassword,'brand_tenant_id'=>$brandTenant['id'],'device_id'=>$bindings[0]['id'],'database'=>$name,
     'enrollment_request_id'=>$request['request_id'],'enrollment_customer_id'=>$target['id'],'synthetic_enrollment_poll_token'=>$request['poll_token'],'synthetic_line_username'=>$syntheticLineUsername,'layout_target_id'=>$bindings[3]['id'],'synthetic_device_token'=>$bindings[0]['token'],'synthetic_favourites_backup_id'=>$favouriteSaved['backup_id']],JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR));
 echo $base,"\n";

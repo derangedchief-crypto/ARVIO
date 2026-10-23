@@ -85,7 +85,7 @@ fun ArvioLoadingScreen(
         ) {
             Image(
                 painter = painterResource(id = R.drawable.arvio_loading_logo),
-                contentDescription = "Extreme TV",
+                contentDescription = com.arflix.tv.branding.AppBrand.name,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxWidth(0.58f)

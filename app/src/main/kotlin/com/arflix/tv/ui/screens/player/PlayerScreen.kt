@@ -1631,7 +1631,7 @@ fun PlayerScreen(
                 ""
             }
             com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.updatePlayback(
-                title = titleVal ?: "Extreme TV",
+                title = titleVal ?: com.arflix.tv.branding.AppBrand.name,
                 subtitle = subtitleVal,
                 isPlaying = isPlaying,
                 progressMs = currentPosition,
@@ -2274,7 +2274,7 @@ fun PlayerScreen(
                 ""
             }
             com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.updatePlayback(
-                title = titleVal ?: "Extreme TV",
+                title = titleVal ?: com.arflix.tv.branding.AppBrand.name,
                 subtitle = subtitleVal,
                 isPlaying = isPlaying,
                 progressMs = currentPosition,

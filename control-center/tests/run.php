@@ -64,6 +64,10 @@ $tests['rate limiting rejects excess attempts'] = function () use ($app): void {
 $tests['resellers cannot create resellers or read other tenant details'] = function () use ($app, $alpha, $tenantB): void { problem(403, fn() => $app->management->createReseller($alpha, [])); problem(404, fn() => $app->management->tenant($alpha, $tenantB['id'])); same(1, count($app->management->tenants($alpha))); };
 $makeCustomer = fn(array $actor, string $tenant) => $app->management->createCustomer($actor, ['tenant_id'=>$tenant,'name'=>'Customer ' . bin2hex(random_bytes(3)), 'notes'=>'Private notes']);
 $makeDevice = function (array $actor, string $tenant) use ($app, $makeCustomer): array { $customer = $makeCustomer($actor, $tenant); return $app->management->createDevice($actor, ['customer_id'=>$customer['id'], 'label'=>'Living room']); };
+$tests['device search supports Unicode labels alongside ASCII IDs without crossing tenants'] = function()use($app,$alpha,$beta,$tenantA,$makeCustomer):void {
+    $c=$makeCustomer($alpha,$tenantA['id']);$label='TEST · Télévision 日本語';$d=$app->management->createDevice($alpha,['customer_id'=>$c['id'],'label'=>$label]);
+    same(1,$app->management->listing($alpha,'devices',['search'=>$label])['total']);same(1,$app->management->listing($alpha,'devices',['search'=>$d['id']])['total']);same(0,$app->management->listing($beta,'devices',['search'=>$label])['total']);
+};
 $snapshot = ['model'=>'LOCAL TEST SIMULATOR','os_version'=>'Synthetic','app_version'=>'test-client','activity_state'=>'active','capabilities'=>Commands::KINDS,'storage_total'=>100000,'storage_free'=>40000];
 $enrolled = function (array $actor, string $tenant) use ($app, $owner, $makeDevice, $snapshot): array { $device = $makeDevice($actor, $tenant); $token = $app->commands->issueTestCredential($owner, $device['id']); $app->commands->checkIn($token, $snapshot, '127.0.0.1'); return [$app->management->device($actor,$device['id']), $token]; };
 $tests['customer and device tenant boundaries are enforced'] = function () use ($app, $alpha, $beta, $tenantA, $makeCustomer): void { $customer = $makeCustomer($alpha, $tenantA['id']); problem(404, fn() => $app->management->customer($beta, $customer['id'])); problem(404, fn() => $app->management->updateCustomer($beta, $customer['id'], ['notes'=>'stolen'])); problem(404, fn() => $app->management->createDevice($beta, ['customer_id'=>$customer['id'],'label'=>'intruder'])); };
@@ -119,6 +123,10 @@ require __DIR__.'/support.php';
 supportCases($tests,$app,$owner,$alpha,$beta,$tenantA);
 require __DIR__.'/advanced-http.php';
 advancedHttpCases($tests,$app,$owner,$alpha,$tenantA,$http);
+require __DIR__.'/device-profiles.php';
+deviceProfileCases($tests,$app,$owner,$alpha,$beta,$tenantA,$tenantB,$http);
+require __DIR__.'/app-brands.php';
+appBrandCases($tests,$app,$owner,$alpha,$beta,$tenantA,$tenantB,$http,$password);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

@@ -3395,8 +3395,8 @@ class SettingsViewModel @Inject constructor(
             if (!ensureCloudSyncSession()) {
                 _uiState.value = _uiState.value.copy(
                     isForceCloudSyncing = false,
-                    lastCloudSyncStatus = "Cloud session expired. Reconnect Extreme TV Cloud, then sync again.",
-                    toastMessage = "Reconnect Extreme TV Cloud to sync",
+                    lastCloudSyncStatus = com.arflix.tv.branding.AppBrand.text("Cloud session expired. Reconnect Extreme TV Cloud, then sync again."),
+                    toastMessage = com.arflix.tv.branding.AppBrand.text("Reconnect Extreme TV Cloud to sync"),
                     toastType = ToastType.INFO
                 )
                 return@launch

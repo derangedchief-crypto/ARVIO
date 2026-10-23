@@ -235,12 +235,12 @@ object AppTranslations {
         if (text.isBlank()) return text
         val locale = appLocale(languageTag)
         val language = locale.language.lowercase(Locale.US)
-        if (language == "en") return text
+        if (language == "en") return com.arflix.tv.branding.AppBrand.text(text)
 
         val normalized = text.trim().replace("â€¢", "•")
-        val table = localeKeys(locale).firstNotNullOfOrNull { translations[it] } ?: return text
-        translateDynamic(normalized, table)?.let { return it }
-        return table[normalized] ?: text
+        val table = localeKeys(locale).firstNotNullOfOrNull { translations[it] } ?: return com.arflix.tv.branding.AppBrand.text(text)
+        translateDynamic(normalized, table)?.let { return com.arflix.tv.branding.AppBrand.text(it) }
+        return com.arflix.tv.branding.AppBrand.text(table[normalized] ?: text)
     }
 
     private fun localeKeys(locale: Locale): List<String> {
