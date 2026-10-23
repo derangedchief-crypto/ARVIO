@@ -124,4 +124,46 @@ class OwnTvLiveTunerTest {
         assertEquals("https://provider.test/live3.ts", engines.exoUrl)
         tuner.stop()
     }
+    @Test fun prebufferChoiceIsCarriedToFastEngineAndMpvWithoutChangingRouting() = runTest {
+        val engines = Engines()
+        var seconds = 5
+        val tuner = OwnTvLiveTuner(backgroundScope, engines, prebufferSeconds = { seconds }, nowMs = { testScheduler.currentTime })
+        tuner.play("https://provider.test/live.ts", emptyMap(), "Channel", false, null)
+        runCurrent()
+        assertEquals(5, engines.opened.single().second.prerollSecs)
+        seconds = 10
+        runCurrent()
+        assertEquals(1, engines.opened.size) // Saving a preference cannot restart active playback.
+        engines.failed.complete("unsupported decoder")
+        runCurrent(); advanceTimeBy(2_000); runCurrent()
+        assertEquals(5, engines.fallback!!.second.prerollSecs) // Same tune, same choice during fallback.
+        tuner.play("https://provider.test/next.ts", emptyMap(), "Next", false, null)
+        runCurrent()
+        assertEquals(10, engines.opened.last().second.prerollSecs)
+        tuner.stop()
+    }
+    @Test fun failedPreferenceReadsKeepOffAndStoppedPendingReadsCannotStartVideo() = runTest {
+        val engines = Engines()
+        val pending = CompletableDeferred<Int>()
+        val tuner = OwnTvLiveTuner(backgroundScope, engines, prebufferSeconds = { pending.await() }, nowMs = { testScheduler.currentTime })
+        tuner.play("https://provider.test/live.ts", emptyMap(), "Channel", false, null)
+        runCurrent(); tuner.stop(); pending.complete(10); runCurrent()
+        assertTrue(engines.opened.isEmpty())
+        val unavailable = OwnTvLiveTuner(backgroundScope, engines, prebufferSeconds = { error("private setting error") }, nowMs = { testScheduler.currentTime })
+        unavailable.play("https://provider.test/next.ts", emptyMap(), "Next", false, null)
+        runCurrent()
+        assertEquals(0, engines.opened.single().second.prerollSecs)
+        unavailable.stop()
+    }
+    @Test fun invalidOrTimedOutPreferenceReadsCannotInventUnsafePreroll() = runTest {
+        val engines = Engines()
+        val invalid = OwnTvLiveTuner(backgroundScope, engines, prebufferSeconds = { 999 }, nowMs = { testScheduler.currentTime })
+        invalid.play("https://provider.test/invalid.ts", emptyMap(), "Channel", false, null)
+        runCurrent(); assertEquals(0, engines.opened.single().second.prerollSecs); invalid.stop()
+        val slow = OwnTvLiveTuner(backgroundScope, engines, prebufferSeconds = { CompletableDeferred<Int>().await() }, nowMs = { testScheduler.currentTime })
+        slow.play("https://provider.test/slow.ts", emptyMap(), "Channel", false, null)
+        runCurrent(); advanceTimeBy(2_000); runCurrent()
+        assertEquals(0, engines.opened.last().second.prerollSecs)
+        slow.stop()
+    }
 }

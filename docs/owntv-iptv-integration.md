@@ -67,7 +67,7 @@ remaining checks or represented as a complete migration of OwnTV's entire app.
 
 ## Release version
 
-Current development version code is `427`. Version name is `2.0.111`, following the actual
+Current development version code is `428`. Version name is `2.0.112`, following the actual
 activation branch's `2.0.074` format. `2.0.0.75` would sort **below** `2.0.074`
 with ARVIO's numeric-component comparator and would not be offered as an update.
 
@@ -551,6 +551,47 @@ downloads, and full-width progress alongside saved programme rows. First-ever
 installs still need source data, and no client can invent listings a provider
 does not publish; the guarantee here is not discarding usable saved guide data
 merely to refresh or retry it.
+
+## Live pre-buffer / redacted runtime diagnostics in 2.0.112 / 428
+
+Combined managed-controls completion also adds cache-owner API clearing (images/
+HTTP only), consumed-once foreground activity/task reopen (not process reboot),
+encrypted private source drafts/safety checkpoints/atomic guarded replacement and
+read-back, explicit compatible source rollback, and versioned base settings profiles
+with device/profile overrides. Canonical activation URL/credentials stay protected.
+Source edits preserve disk guide/favourite history and existing IPTV Cloud behavior.
+
+Managed preference overlays are stripped from Cloud exports; incoming Cloud edits
+update underlying values and restore the overlay in the SAME transaction. Reset
+preserves newer local edits. Only fixed allowlisted actual app preferences can be
+written, never updater/credentials/entitlements/decoder settings.
+
+Support uses bounded fixed-code event history and typed counters, never raw logs/
+exceptions. Optional per-request customer consent captures a dedicated512x288 safe
+app support panel, not current pages, private forms, stream video or other apps.
+No new permission or MediaProjection. Stop/expiry/profile/account/updater changes
+refuse capture; duplicate delivery never re-prompts. Private server artifact limits
+and authenticated/audited downloads apply. Website0.8 migrations010–012 and PHP zlib
+precede112 publication; worker untouched. Physical pilot remains outstanding.
+
+Management set_live_buffer selects0/2/5/10 seconds, installation-local and never
+Cloud-synced. Fresh profile/account/revision guard plus DataStore compare-and-set;
+no source/guide/favourite writes. Each new standard Live TV request reads it once,
+then passes SourceEntity.livePrerollSecs through the existing LiveTuneController
+to both the fast Media3 engine and mpv fallback. Off remains0 byte-for-byte with
+the previous source setting. No global engine setting changes or mid-stream
+rebuild observer; applies next tune only. DRM/catch-up/VOD unchanged. Existing
+heap bounds, recovery ladders, codecs and original Back are retained. Never claim
+buffer target reached from a command receipt; physical pilot remains necessary.
+
+Requested diagnostics add fixed network/memory enums and app-heap counters using
+existing permissions. No provider probes, SSIDs, addresses, file/process inventory,
+raw logs or exception messages. Unsupported services/denied permissions are explicit,
+not healthy defaults. VPN is reported ahead of its underlying transport. Android
+network validation is not provider reachability. Existing active-profile/account
+revalidation, leased commands and snapshot retention/isolation remain in use.
+Website0.8.0/migrations010–012 precede112;111/basic diagnostics remain valid.
+No worker patch or activation/favourites/updater changes.112 is not yet published.
 
 ## Favourites recovery / line usernames in 2.0.111 / 427
 

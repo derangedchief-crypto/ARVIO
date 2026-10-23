@@ -2148,7 +2148,7 @@ fun LiveTvScreen(
     // OwnTV's libmpv engine is a compatibility rung, not a second permanent
     // decoder. It is only activated after Media3 exhausts its controlled
     // recovery, then reuses the same visible PlayerView surface.
-    val ownTvMpvFallback = remember(context) { OwnTvMpvFallback(context) }
+    val ownTvMpvFallback = remember(context) { OwnTvMpvFallback(context, prebufferSeconds = { viewModel.iptvRepository.livePrebufferSeconds() }) }
     var usingOwnTvMpvFallback by remember { mutableStateOf(false) }
 
     DisposableEffect(exoPlayer, ownTvMpvFallback) {

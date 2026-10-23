@@ -8,6 +8,7 @@ import android.util.Base64
 import com.arflix.tv.BuildConfig
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.ProfileManager
+import com.arflix.tv.data.repository.validManagedSourceConfig
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -117,6 +119,7 @@ class DeviceManagementAgent @Inject constructor(
                 delay(15_000); true
             }.collectLatest { account ->
                 if (account == null) {
+                    ManagementEvents.unbind()
                     mutation.withLock { active = null; _state.value = DeviceManagementState(false, status = "No eligible activation account") }
                     return@collectLatest
                 }
@@ -124,6 +127,7 @@ class DeviceManagementAgent @Inject constructor(
                     val sameAccount = active?.account?.scope == account.scope
                     val previous = _state.value
                     active = null
+                    ManagementEvents.unbind()
                     _state.value = preparingManagementAccount(previous, sameAccount)
                     if (sameAccount) previous.policy else null
                 }
@@ -255,10 +259,12 @@ class DeviceManagementAgent @Inject constructor(
         current.status = if (policy == "active") "Connected to provider control center" else "Provider policy: $policy"
         change(current) { it.copy(policy = policy, message = if (policy == "active") it.message else null) }
         if (policy == "removed") {
+            ManagementEvents.unbind()
             change(current) { it.copy(credential = null, requestId = null, pollToken = null) }
             return
         }
-        if (policy != "active") return
+        if (policy != "active") { ManagementEvents.unbind();return }
+        ManagementEvents.bind(context,current.account.scope)
         try { captureFavourites(current,"automatic",false) } catch(cancelled: CancellationException){throw cancelled} catch(_: Exception){current.favouritesStatus="Backup unavailable; existing server backups retained";publish(current)}
         val commands = response.getJSONArray("commands")
         require(commands.length() <= 5)
@@ -269,6 +275,95 @@ class DeviceManagementAgent @Inject constructor(
         val lease = command.getString("lease_token").also { require(it.matches(Regex("[a-f0-9]{64}"))) }
         val kind = command.getString("kind")
         val prior = current.session.receipts.firstOrNull { it.id == id }
+        if(kind in listOf("get_support_bundle","capture_app_screen")) {
+            if(prior!=null){acknowledge(current,lease,prior);return}
+            val expires=parseManagementTime(command.getString("expires_at"));require(expires>System.currentTimeMillis())
+            beginCommand(current,id,lease)
+            change(current){it.copy(receipts=(it.receipts+CommandReceipt(id,"failed","Support request interrupted; no automatic replay or repeated consent prompt")).takeLast(512))}
+            val result=try {
+                val profile=profiles.getProfileId()
+                fun eligible():Boolean = active===current&&current.session.policy=="active"&&profiles.getProfileIdSync()==profile&&expires>System.currentTimeMillis()
+                val body=JSONObject().put("command_id",id).put("lease_token",lease).put("profile_ref",managementHash(profile))
+                if(kind=="capture_app_screen") {
+                    val image=withTimeoutOrNull(20_000){ManagementForeground.capture(minOf(expires,System.currentTimeMillis()+20_000),::eligible)}
+                    require(image!=null&&eligible()&&image.size<=131072)
+                    body.put("kind","panel").put("consented",true).put("png_base64",Base64.encodeToString(image,Base64.NO_WRAP))
+                } else {
+                    val receipt=ManagementActions(context,repository.get(),profiles,current.session.catalogSecret.orEmpty()).execute(id,"get_diagnostics",current.account.scope)
+                    require(receipt.status=="succeeded"&&receipt.snapshot!=null&&eligible())
+                    body.put("kind","bundle").put("document",JSONObject().put("schema_version",1).put("profile_ref",managementHash(profile)).put("snapshot",JSONObject(receipt.snapshot)).put("events",ManagementEvents.export(current.account.scope)))
+                }
+                require(eligible()&&managementAccount(repository.get().observeConfig().first())?.scope==current.account.scope)
+                api.control("/api/device/support/upload",body,current.session.credential)
+                CommandReceipt(id,"succeeded",if(kind=="capture_app_screen")"Customer-consented safe support-panel image saved privately; TV video, current page and account screens excluded" else "Private redacted support bundle saved; fixed-code device events only, not raw logs or provider reachability proof")
+            } catch(cancelled: CancellationException){throw cancelled}catch(_: Exception){CommandReceipt(id,"failed",if(kind=="capture_app_screen")"Panel capture declined, expired, unavailable or target changed; no successful image upload confirmed" else "Support bundle unavailable; no successful upload confirmed")}
+            change(current){it.copy(receipts=it.receipts.map { old->if(old.id==id)result else old })}
+            acknowledge(current,lease,result);return
+        }
+        if (kind in listOf("get_preferences","apply_preferences")) {
+            if(prior!=null){acknowledge(current,lease,prior);return}
+            require(parseManagementTime(command.getString("expires_at"))>System.currentTimeMillis())
+            beginCommand(current,id,lease)
+            change(current){it.copy(receipts=(it.receipts+CommandReceipt(id,"failed","Settings action interrupted; read fresh effective settings before retrying")).takeLast(512))}
+            val result=try {
+                withTimeoutOrNull(15_000) {
+                    val profile=profiles.getProfileId()
+                    val matches: (com.arflix.tv.data.repository.IptvConfig)->Boolean={managementAccount(it)?.scope==current.account.scope}
+                    val before=repository.get().readManagedPreferenceState(profile,matches)
+                    val initial=managedPreferencesDocument(current.session.catalogSecret.orEmpty(),profile,current.account.scope,before)
+                    if(kind=="apply_preferences") {
+                        val ctx=api.control("/api/device/preferences/context",JSONObject().put("command_id",id).put("lease_token",lease),current.session.credential)
+                        require(ctx.getString("profile_ref")==initial.profile_ref&&ctx.getString("expected_revision")==initial.revision)
+                        val target=ctx.getJSONObject("target")
+                        fun values(key: String):Map<String,String> {val obj=target.getJSONObject(key);return obj.keys().asSequence().associateWith { obj.getString(it) }}
+                        require(repository.get().compareAndSetManagedPreferenceState(profile,before,values("base_values"),values("overrides"),target.getString("base_preset_id"),target.getInt("base_version"),matches))
+                    }
+                    val after=managedPreferencesDocument(current.session.catalogSecret.orEmpty(),profile,current.account.scope,repository.get().readManagedPreferenceState(profile,matches))
+                    api.control("/api/device/preferences/capture",JSONObject().put("command_id",id).put("lease_token",lease).put("document",JSONObject(Gson().toJson(after))),current.session.credential)
+                    CommandReceipt(id,"succeeded",if(kind=="get_preferences")"Fresh effective profile settings and value origins captured" else "Device/profile settings atomically applied and read back; unrelated values and central update policy untouched")
+                } ?: CommandReceipt(id,"failed","Settings action timed out; read fresh effective settings to verify actual state")
+            }catch(cancelled: CancellationException){throw cancelled}catch(_: Exception){CommandReceipt(id,"failed","Settings action unavailable or stale; read fresh effective settings to verify actual state")}
+            change(current){it.copy(receipts=it.receipts.map { old->if(old.id==id)result else old })}
+            acknowledge(current,lease,result);return
+        }
+        if (kind in listOf("get_sources", "apply_sources")) {
+            if (prior != null) { acknowledge(current, lease, prior); return }
+            require(parseManagementTime(command.getString("expires_at")) > System.currentTimeMillis())
+            beginCommand(current, id, lease)
+            change(current) { it.copy(receipts = (it.receipts + CommandReceipt(id,"failed","Source action interrupted; read fresh sources before retrying")).takeLast(512)) }
+            val result = try {
+                withTimeoutOrNull(30_000) {
+                    val profile = profiles.getProfileId()
+                    val accountMatches: (com.arflix.tv.data.repository.IptvConfig) -> Boolean = { managementAccount(it)?.scope == current.account.scope }
+                    suspend fun snapshot(): ManagedSourceSnapshot {
+                        val config = repository.get().readManagedSources(profile, accountMatches)
+                        return ManagedSourceSnapshot(profile_ref = managementHash(profile), revision = managedSourcesRevision(current.session.catalogSecret.orEmpty(), managementHash(profile), config), config = config)
+                    }
+                    suspend fun upload(doc: ManagedSourceSnapshot, reason: String) {
+                        api.control("/api/device/sources/capture", JSONObject().put("command_id",id).put("lease_token",lease).put("reason",reason)
+                            .put("snapshot",JSONObject(Gson().toJson(doc))), current.session.credential)
+                    }
+                    val before = snapshot()
+                    if (kind == "get_sources") upload(before,"read") else {
+                        val ctx = api.control("/api/device/sources/context",JSONObject().put("command_id",id).put("lease_token",lease),current.session.credential)
+                        require(ctx.getString("profile_ref") == before.profile_ref && ctx.getString("expected_revision") == before.revision)
+                        val original = Gson().fromJson(ctx.getJSONObject("before").toString(), com.arflix.tv.data.repository.IptvConfig::class.java)
+                        val target = Gson().fromJson(ctx.getJSONObject("target").toString(), com.arflix.tv.data.repository.IptvConfig::class.java)
+                        val restoreCheckpoint=ctx.optBoolean("restore_checkpoint",false)
+                        require(original == before.config && validManagedSourceConfig(original,target,restoreCheckpoint))
+                        if(!repository.get().isStableManagedSourceTarget(target))return@withTimeoutOrNull CommandReceipt(id,"failed","Source input needs local normalization; no changes applied. Use canonical M3U/xmltv URLs and URL-safe Xtream credentials, then preview again.")
+                        // The server must retain a safety preimage BEFORE the one atomic write.
+                        upload(before,"pre_apply")
+                        require(repository.get().compareAndSetManagedSources(profile,original,target,restoreCheckpoint,accountMatches))
+                        upload(snapshot(),"confirmation")
+                    }
+                    CommandReceipt(id,"succeeded",if(kind=="get_sources") "Fresh source configuration saved privately; browser receives masked metadata only" else "Source configuration atomically saved and read back; retained guides/favourites kept. Provider health is not confirmed.")
+                } ?: CommandReceipt(id,"failed","Source action timed out; read fresh sources to verify actual state. Safety history retained.")
+            } catch(cancelled: CancellationException) {throw cancelled}
+            catch(_: Exception) {CommandReceipt(id,"failed","Source action unavailable or stale; read fresh sources to verify actual state. No credentials disclosed.")}
+            change(current) { it.copy(receipts = it.receipts.map { old -> if(old.id==id)result else old }) }
+            acknowledge(current,lease,result);return
+        }
         if(kind in listOf("backup_favourites","preview_favourites_restore","restore_favourites")) {
             if(prior!=null && !(kind=="preview_favourites_restore" && prior.status=="succeeded")) {acknowledge(current,lease,prior);return}
             beginCommand(current,id,lease)
@@ -305,13 +400,31 @@ class DeviceManagementAgent @Inject constructor(
             val payload = command.optJSONObject("payload") ?: JSONObject()
             val item = ManagementCommand(id, kind, runCatching { parseManagementTime(command.getString("expires_at")) }.getOrDefault(0),
                 payload.optString("message", ""), payload.optInt("duration_seconds", 0))
-            if (kind in listOf("refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories", "get_category_layout", "apply_category_layout") && item.expiresAtMs > System.currentTimeMillis()) {
+            if (kind == "restart_app" && item.expiresAtMs > System.currentTimeMillis()) {
+                beginCommand(current, id, lease)
+                val now = System.currentTimeMillis()
+                val eligible = active === current && current.session.policy == "active" &&
+                    managementAccount(repository.get().observeConfig().first())?.scope == current.account.scope &&
+                    now - current.session.lastReopenAtMs >= 300_000 && ManagementForeground.eligible()
+                val result = CommandReceipt(id, if (eligible) "succeeded" else "failed", if (eligible)
+                    "Foreground app-screen reopen requested after receipt; not a process/device reboot or guarantee. If the app pauses or acknowledgment is lost, no retry is performed."
+                    else "Reopen unavailable: app must be resumed, updates idle and no reopen within five minutes")
+                // Consumed BEFORE network acknowledgment/effect. Duplicate delivery only
+                // re-ACKs this receipt; never arms or replays a disruptive operation.
+                change(current) { it.copy(receipts = (it.receipts + result).takeLast(512), lastReopenAtMs = if (eligible) now else it.lastReopenAtMs) }
+                acknowledge(current, lease, result)
+                if(eligible)ManagementEvents.record(ManagementEventCode.REOPEN_REQUESTED)
+                if (eligible && active === current && item.expiresAtMs > System.currentTimeMillis() &&
+                    managementAccount(repository.get().observeConfig().first())?.scope == current.account.scope) ManagementForeground.reopen()
+                return
+            }
+            if (kind in listOf("refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "set_live_buffer", "clear_cache", "get_categories", "set_categories", "get_category_layout", "apply_category_layout") && item.expiresAtMs > System.currentTimeMillis()) {
                 beginCommand(current, id, lease)
                 // Persist an interrupted-operation receipt BEFORE side effects. A
                 // process/network retry cannot silently start an expensive job twice.
                 val interrupted = CommandReceipt(id, "failed", "Action interrupted; request a new command to retry safely")
                 change(current) { it.copy(receipts = (it.receipts + interrupted).takeLast(512)) }
-                val settings = if (kind in listOf("set_settings","get_categories","set_categories","get_category_layout","apply_category_layout")) payload.keys().asSequence().associateWith { key ->
+                val settings = if (kind in listOf("set_settings","set_live_buffer","get_categories","set_categories","get_category_layout","apply_category_layout")) payload.keys().asSequence().associateWith { key ->
                     val value=payload.opt(key);if(value is String || (kind!="set_settings" && key=="page" && value is Int) || (kind=="apply_category_layout" && ((key in listOf("order","hidden") && value is JSONArray)||(key=="provider_order" && value is Boolean))))value.toString() else ""
                 } else emptyMap()
                 val executed = ManagementActions(context, repository.get(), profiles,current.session.catalogSecret.orEmpty()).execute(id, kind, current.account.scope, settings)
@@ -336,6 +449,7 @@ class DeviceManagementAgent @Inject constructor(
         receipt.catalog?.let { body.put("catalog",it.json()) }
         receipt.favouritesPreview?.let { body.put("favourites_preview",it.json()) }
         api.control("/api/device/commands/${receipt.id}/ack", body, current.session.credential)
+        ManagementEvents.record(if(receipt.status=="succeeded")ManagementEventCode.RECEIPT_SUCCEEDED else ManagementEventCode.RECEIPT_FAILED)
     }
     private suspend fun beginCommand(current: Active, id: String, lease: String) {
         // Revalidate the lease/current policy immediately before starting. A
@@ -344,6 +458,7 @@ class DeviceManagementAgent @Inject constructor(
         // be recalled atomically by a web request.
         api.control("/api/device/commands/$id/ack", JSONObject().put("schema_version", 1).put("lease_token", lease)
             .put("status", "running").put("summary", "App accepted the current command lease"), current.session.credential)
+        ManagementEvents.record(ManagementEventCode.COMMAND_ACCEPTED)
     }
     private fun newInstallation() = UUID.randomUUID().toString().replace("-", "")
     private suspend fun captureFavourites(current: Active,reason: String,force: Boolean): JSONObject? {

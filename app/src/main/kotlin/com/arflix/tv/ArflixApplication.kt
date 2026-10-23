@@ -282,6 +282,16 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         runCatching { imageLoader.memoryCache?.clear() }
     }
 
+    /** Safe owner APIs, including a loader replaced after a DNS change. */
+    fun clearManagedImageCaches() {
+        var failure: Exception? = null
+        listOfNotNull(appImageLoader, imageLoader).distinct().forEach { loader ->
+            try { loader.memoryCache?.clear(); loader.diskCache?.clear() }
+            catch (error: Exception) { failure = error }
+        }
+        failure?.let { throw it }
+    }
+
     private fun isLowRamDevice(): Boolean {
         val activityManager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager
         return activityManager?.isLowRamDevice == true

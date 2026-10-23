@@ -602,9 +602,10 @@ class CloudSyncRepository @Inject constructor(
      * This replaces the SettingsViewModel version and does NOT reference any UI state.
      */
     suspend fun buildCloudSnapshotJson(): String {
-        val prefs = context.settingsDataStore.data.first()
+        val rawPreferences = context.settingsDataStore.data.first()
         val root = JSONObject()
         val profiles = profileRepository.getProfiles()
+        val prefs = withoutManagedPreferenceOverlays(rawPreferences,profileManager,profiles.map { it.id } + profileManager.getProfileIdSync())
         val globalDnsProvider = prefs[globalDnsProviderKey] ?: prefs[dnsProviderKey()] ?: "system"
 
         // Per-profile settings
@@ -1296,6 +1297,7 @@ class CloudSyncRepository @Inject constructor(
             if (settingsByProfile.isNotEmpty()) {
                 context.settingsDataStore.edit { prefs ->
                     settingsByProfile.forEach { (profileId, state) ->
+                        val managedOverlay = beforeManagedPreferenceCloudImport(prefs,profileManager,profileId)
                         val defaultSubtitleKey = defaultSubtitleKeyFor(profileId)
                         val subtitleUpdatedAtKey = subtitleSettingsUpdatedAtKeyFor(profileId)
                         val localSubtitle = prefs[defaultSubtitleKey]?.trim().orEmpty()
@@ -1368,12 +1370,14 @@ class CloudSyncRepository @Inject constructor(
                         prefs[autoPlaySingleSourceKeyFor(profileId)] = state.autoPlaySingleSource
                         prefs[autoPlayMinQualityKeyFor(profileId)] = normalizeAutoPlayMinQuality(state.autoPlayMinQuality)
                         prefs[includeSpecialsKeyFor(profileId)] = state.includeSpecials
+                        afterManagedPreferenceCloudImport(prefs,profileManager,profileId,managedOverlay)
                     }
                 }
             }
         } ?: run {
             // Legacy fallback: single-profile settings
             context.settingsDataStore.edit { prefs ->
+                val managedOverlay = beforeManagedPreferenceCloudImport(prefs,profileManager,activeProfileId)
                 val defaultSubtitleKey = defaultSubtitleKeyFor(activeProfileId)
                 val subtitleUpdatedAtKey = subtitleSettingsUpdatedAtKeyFor(activeProfileId)
                 val localSubtitle = prefs[defaultSubtitleKey]?.trim().orEmpty()
@@ -1408,6 +1412,7 @@ class CloudSyncRepository @Inject constructor(
                 root.optString("subtitleUsageJson", "").let { usage ->
                     if (usage.isBlank()) prefs.remove(subtitleUsageKeyFor(activeProfileId)) else prefs[subtitleUsageKeyFor(activeProfileId)] = usage
                 }
+                afterManagedPreferenceCloudImport(prefs,profileManager,activeProfileId,managedOverlay)
             }
         }
         homeServerConnectionsToImport.forEach { (profileId, json) ->

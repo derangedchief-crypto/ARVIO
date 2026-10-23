@@ -217,6 +217,34 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         lifecycleScope.launch {
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+                val activity = this@MainActivity
+                val host = object : com.arflix.tv.management.ManagementForegroundHost {
+                    override fun canReopen(): Boolean = !activity.isFinishing && !activity.isDestroyed &&
+                        activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) &&
+                        !requiredUpdateController.state.value.blocksApp &&
+                        requiredUpdateController.status.value !is com.arflix.tv.updater.UpdateStatus.Downloading &&
+                        requiredUpdateController.status.value !is com.arflix.tv.updater.UpdateStatus.ReadyToInstall &&
+                        requiredUpdateController.status.value !is com.arflix.tv.updater.UpdateStatus.Installing
+                    override fun reopen(): Boolean {
+                        if (!canReopen()) return false
+                        activity.startActivity(android.content.Intent(activity, MainActivity::class.java)
+                            .setAction(android.content.Intent.ACTION_MAIN)
+                            .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK))
+                        activity.finish()
+                        return true
+                    }
+                    override suspend fun captureSupportPanel(expiresAtMs: Long,eligible: ()->Boolean): ByteArray? =
+                        com.arflix.tv.management.requestManagementSupportPanel(activity,expiresAtMs,eligible)
+                }
+                com.arflix.tv.management.ManagementForeground.bind(host)
+                try { kotlinx.coroutines.awaitCancellation() }
+                finally { com.arflix.tv.management.ManagementForeground.unbind(host) }
+            }
+        }
+
+        lifecycleScope.launch {
             repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
                 deviceManagementAgent.runWhileStarted()
             }

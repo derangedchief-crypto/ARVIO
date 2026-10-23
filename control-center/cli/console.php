@@ -12,7 +12,7 @@ try {
     switch ($argv[1] ?? 'help') {
         case 'preflight':
             if (PHP_VERSION_ID < 80300) throw new RuntimeException('PHP 8.3+ is required');
-            foreach (['pdo_mysql','mbstring','openssl','fileinfo','curl'] as $extension) {
+            foreach (['pdo_mysql','mbstring','openssl','fileinfo','curl','zlib'] as $extension) {
                 if (!extension_loaded($extension)) throw new RuntimeException("Enable PHP extension: $extension");
             }
             if (!is_dir($config->root . '/storage') || !is_writable($config->root . '/storage')) throw new RuntimeException('Make storage/ writable by the website user');

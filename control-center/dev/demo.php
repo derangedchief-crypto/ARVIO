@@ -54,7 +54,17 @@ $app->db->query('UPDATE devices SET last_seen_at=DATE_SUB(UTC_TIMESTAMP(),INTERV
 $settingsCommand=$app->commands->enqueue($owner,$bindings[0]['id'],['kind'=>'get_settings'],bin2hex(random_bytes(16)));
 $settingsLease=$app->commands->checkIn($bindings[0]['token'],$snapshot,'127.0.0.1')['commands'][0];
 $app->commands->acknowledge($bindings[0]['token'],$settingsCommand['id'],['status'=>'succeeded','lease_token'=>$settingsLease['lease_token'],'summary'=>'TEST SYNTHETIC SETTINGS SNAPSHOT — not from Android',
-    'snapshot'=>['schema_version'=>'1','profile_ref'=>hash('sha256','SYNTHETIC PROFILE'),'settings_revision'=>hash('sha256','SYNTHETIC SETTINGS'),'sort_order'=>'provider','playlist_count'=>'1','enabled_playlist_count'=>'1','portal_count'=>'0','favourite_channel_count'=>'0','favourite_group_count'=>'0']]);
+    'snapshot'=>['schema_version'=>'1','profile_ref'=>hash('sha256','SYNTHETIC PROFILE'),'settings_revision'=>hash('sha256','SYNTHETIC SETTINGS'),'sort_order'=>'provider','playlist_count'=>'1','enabled_playlist_count'=>'1','portal_count'=>'0','favourite_channel_count'=>'0','favourite_group_count'=>'0','live_prebuffer_seconds'=>'0','live_buffer_revision'=>hash('sha256','SYNTHETIC BUFFER')]]);
+$sourceCommand=$app->commands->enqueue($owner,$bindings[0]['id'],['kind'=>'get_sources'],bin2hex(random_bytes(16)));
+$sourceLease=$app->commands->checkIn($bindings[0]['token'],$snapshot,'127.0.0.1')['commands'][0];
+$demoSourceUrl='https://synthetic.invalid/get.php?username=syntheticUser&password=synthetic-only';
+$app->sources->capture($bindings[0]['token'],['command_id'=>$sourceCommand['id'],'lease_token'=>$sourceLease['lease_token'],'reason'=>'read','snapshot'=>['schema_version'=>1,'profile_ref'=>hash('sha256','SYNTHETIC PROFILE'),'revision'=>hash('sha256','SYNTHETIC SOURCE CONFIG'),'config'=>['m3uUrl'=>$demoSourceUrl,'epgUrl'=>'','playlists'=>[['id'=>'list_1','name'=>'TEST Main source','m3uUrl'=>$demoSourceUrl,'epgUrl'=>'','enabled'=>true,'epgUrls'=>[]]],'stalkerPortals'=>[],'sortOrder'=>'provider']]]);
+$app->commands->acknowledge($bindings[0]['token'],$sourceCommand['id'],['status'=>'succeeded','lease_token'=>$sourceLease['lease_token'],'summary'=>'SYNTHETIC SOURCE READ — not Android']);
+$preferenceCommand=$app->commands->enqueue($owner,$bindings[0]['id'],['kind'=>'get_preferences'],bin2hex(random_bytes(16)));
+$preferenceLease=$app->commands->checkIn($bindings[0]['token'],$snapshot,'127.0.0.1')['commands'][0];
+$preferenceValues=[];$preferenceOrigins=[];foreach(ControlCenter\Preferences::RULES as $key=>$choices){$preferenceValues[$key]=$choices[0];$preferenceOrigins[$key]='local';}
+$app->preferences->capture($bindings[0]['token'],['command_id'=>$preferenceCommand['id'],'lease_token'=>$preferenceLease['lease_token'],'document'=>['schema_version'=>1,'profile_ref'=>hash('sha256','SYNTHETIC PROFILE'),'revision'=>hash('sha256','SYNTHETIC PREFERENCES'),'values'=>$preferenceValues,'origins'=>$preferenceOrigins,'base_values'=>[],'overrides'=>[],'base_preset_id'=>'','base_version'=>0]]);
+$app->commands->acknowledge($bindings[0]['token'],$preferenceCommand['id'],['status'=>'succeeded','lease_token'=>$preferenceLease['lease_token'],'summary'=>'SYNTHETIC PREFERENCE READ — not Android']);
 $categoryCommand=$app->commands->enqueue($owner,$bindings[0]['id'],['kind'=>'get_categories'],bin2hex(random_bytes(16)));
 $categoryLease=$app->commands->checkIn($bindings[0]['token'],$snapshot,'127.0.0.1')['commands'][0];
 $categorySource=hash('sha256','SYNTHETIC CATEGORY SOURCE');

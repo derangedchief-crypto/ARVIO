@@ -5,7 +5,182 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone — 0.7.0
+## Current milestone — 0.8.0
+
+### Complete managed-control increment (testing client112; not published yet)
+
+**Install the website update and migrations010–012 BEFORE112.** Upgrading from0.6
+also requires prior008/009. PHP **zlib** is now checked by CLI preflight and required
+for bounded PNG validation; all other existing PHP requirements remain. Keep the
+control site's existing2m request limit. No worker patch or Android permission is
+added. Preserve config.php/private storage/application.key and database backups.
+
+**Clear expendable cache** invokes only Coil image memory/disk and ordinary OkHttp
+response-cache owner APIs. No directory traversal, source/catalog/guide purge,
+credential/profile/favourite/history/enrollment reset, update-file deletion or
+playback-buffer clearing. Partial failures are reported per cache class. New
+requests may refill caches immediately.
+
+**Restart app** means a best-effort foreground **app-screen/task reopen**, NOT a
+process kill, Android reboot or ability to wake a stopped app. It requires a resumed
+MainActivity, idle updater and five-minute cooldown. The encrypted duplicate journal
+is committed before acknowledgment/effect; lost acknowledgments and repeated
+deliveries never replay the reopen. The receipt says REQUESTED, not proof of a
+successful relaunch. Activation/maintenance/required-update gates run normally.
+
+**Playlists -> source editor** reads a private profile checkpoint, builds one local
+draft and previews one atomic complete-source push. Add/edit supplementary M3U,
+Xtream and Stalker sources, rename/reorder within each source type, enable/disable,
+replace guide preferences and remove sources. Existing native limits remain3 M3U/
+Xtream playlists and3 Stalker portals. The verified activation source must remain
+first with the same identity/URL/credentials; account transfer requires verified
+activation. Its label, guide preferences and enabled state are editable explicitly.
+At least one M3U/Xtream source must stay enabled: this editor does not override the
+app's existing all-disabled legacy fallback. Use canonical M3U/xmltv URLs; edits
+that the existing local parser would rewrite are refused BEFORE mutation. The
+Xtream replacement form accepts URL-safe credentials, not reserved characters.
+
+URLs, Xtream credentials and MACs are write-only browser replacements. Only safe
+labels/counts/opaque refs are returned. Full snapshots/preview targets are encrypted
+server-side; command history contains an opaque draft ID, never source secrets.
+Device-only context access requires that device's current command lease. The app
+requires a successful pre-apply safety checkpoint, fresh profile/account/source
+revision and one DataStore compare-and-set, then a captured read-back before success.
+Stale/conflicting work fails rather than overwriting newer local configuration.
+
+Source history supports explicit previewed rollback within compatible profile/
+activation identity. Original legacy storage shape is retained in checkpoints so
+rollback need not force a representation migration. Up to10 initial profile
+checkpoints are protected;50 rolling versions (plus any active-preview bases) are
+retained for90 days. At most10 previews/device, expiring in10 minutes. Existing
+guides/favourites/history are not purged; source changes can invalidate the old
+favourites recovery context, so restore the compatible source checkpoint before
+using that old favourites version. No guessed source migration. Profile source
+changes follow the app's EXISTING IPTV Cloud-sync behavior when enabled; this is
+not a server-side provider fetch, entitlement grant or provider-health check.
+Changing a supplementary source URL/credentials/MAC allocates a NEW source identity,
+so old channel-ID collisions cannot silently turn saved favourites/categories into
+unrelated channels. Existing IDs are restored only through explicit checkpoint
+rollback, never guessed by source labels. Labels containing known credentials are
+masked; changing credentials/topology while keeping a private label requires a new
+nonsensitive label rather than leaking the old secret through a preview.
+
+**Broader settings profiles** are versioned workspace templates under Settings
+presets. Supported fields: preferred audio/subtitle language (listed choices),
+subtitle size, clock format, autoplay-next, loading stats, spoiler blur, scrolling,
+trailer autoplay and bounded volume boost. Default/local custom values are preserved;
+unsupported local labels are represented as local_custom, not uploaded as free text.
+Buffer, sort and category controls remain in their dedicated sections. No arbitrary
+preference keys, URL/DNS injection, decoder override, update switch or entitlement
+field is accepted.
+
+Read effective settings in the device Settings tab, select an optional base profile,
+edit individual explicit device/profile overrides, preview effective changes/origins,
+then push one guarded policy. Overrides win over base values. Template edits never
+auto-push. Clearing management restores the underlying local/Cloud choice only if
+the managed value has not since been edited locally. Unrelated values are untouched.
+Policy and values commit in ONE DataStore edit. Device overlays are stripped from
+Cloud exports, and imports update their underlying choices while preserving the
+overlay in the SAME import transaction; other installations do not inherit overrides.
+UI/audio observers may apply immediately; there is no forced player restart.
+
+Typed inventory (all fields below are **device/profile** scoped; no forced restart).
+Language/subtitle/player fields use the app's existing compatible/VOD player
+consumers, NOT the embedded Live TV engine's independent audio/subtitle settings.
+
+| Field | Type / permitted values | Unset consumer default | Application timing / effect |
+|---|---|---|---|
+| default_audio_language | enum: Auto (Original), English/French/Spanish/German/Italian/Portuguese | Auto (Original) | Next compatible player settings load; no live-engine reconfiguration |
+| default_subtitle | enum: Off or the listed languages | Off | Next compatible player/subtitle settings load |
+| subtitle_size | enum: Small/Medium/Large | Medium | Existing subtitle renderer settings read |
+| clock_format | enum: 12h/24h | 24h | Existing clock/UI observers/settings read |
+| auto_play_next | boolean | true | Compatible player settings read / next episode boundary |
+| show_loading_stats | boolean | true | Existing compatible player UI settings read |
+| spoiler_blur | boolean | false | Home/detail settings refresh |
+| smooth_scrolling | boolean | false in Home | Home settings refresh; legacy Settings UI has a different unset display default, so explicit managed values remove that ambiguity without changing defaults |
+| trailer_auto_play | boolean | false | Home/trailer lifecycle; may start/stop trailers through normal UI behavior |
+| volume_boost_db | bounded enum: 0/3/6 dB | 0 | Compatible player settings read; changes sound level, possible clipping |
+
+Existing unsupported custom local values are not rewritten by a read. The separate
+Live TV pre-buffer is **device-wide**, defaults Off and applies only at the next
+standard live tune. Arbitrary URL/DNS/decoder/update/entitlement fields are not
+part of this settings inventory. A stored/read-back value is not hardware proof
+that a particular active screen/player has consumed it yet.
+
+**Advanced support** adds private fixed-code event exports for live tune/recovery,
+guide refresh and management receipts, plus typed network/memory diagnostics.
+History is limited to128 events/seven days per locally bound managed account;
+no raw logcat, exception strings, URLs, headers, channel/profile names or credentials.
+Event timestamps are device-reported and events cover the device/account across
+profiles; the diagnostic snapshot itself identifies the active profile by opaque ref.
+Logging failures never interrupt playback/guide work. Stopped apps cannot collect
+continuous history and requests still require foreground check-ins.
+
+Optional **customer-consented support-panel images** capture ONLY a dedicated safe
+app panel showing app/Android version—not the current app page, TV video, sensitive
+forms, other apps or a full-device screenshot. Every request requires one-time
+foreground consent within20 seconds; decline/expiry/profile/account/background/
+updater changes refuse capture/upload. Duplicate deliveries never re-prompt. No
+MediaProjection/accessibility/overlay/capture permission is added. This deliberately
+does NOT promise screenshots of protected video or arbitrary app pages.
+
+Support bundles/PNGs are encrypted in private database storage, not served from
+public files. Every download requires the current tenant session and is audited.
+No public links or remote URL fetching. Limits:4 uploads/minute/device,15 artifacts/
+device,7-day expiry,128 event codes,32KiB JSON,128KiB PNG,512x288 pixels/static8-bit
+PNG, bounded zlib decode and no animation/text/trailing-data chunks. Source/settings/
+support mutation APIs enforce CSRF and ownership; device uploads require live leases.
+Physical owner-device pilot remains required; synthetic receipts are not proof of
+TV buffering improvement, storage behavior or OEM activity reopening.
+
+### Per-device Live TV pre-buffer (testing client112)
+
+Settings -> request a fresh snapshot -> **Adjust Live TV pre-buffer**. Choices are
+**Off (existing fast-start default), 2, 5 or 10 seconds**. Try2 first. This is the
+amount of video requested before playback/recovery, not a guaranteed countdown.
+More pre-buffer can cushion brief bandwidth dips; it cannot repair sustained low
+throughput, missing provider data, a bad codec or server faults, and can increase
+startup/live delay. Existing engine heap caps/recovery guards remain in force;
+high-bitrate streams may not reach the requested amount.
+
+This is an installation-local setting, shared by that device's profiles; it is
+NOT a playlist/source change and is excluded from Cloud sync/source signatures.
+Commands require a fresh settings revision and the same active profile/account
+at execution. One DataStore compare-and-set writes ONLY the device buffer key.
+The existing OwnTV fast Media3 engine and mpv fallback receive the same per-tune
+pre-roll through their supported SourceEntity/LiveRequest fields. No dependency
+upgrade, decoder changes, byte-cap override, global engine-setting observer or
+new player path. Off remains0 exactly as before.
+
+Changes apply on the NEXT standard live channel tune; they do not rebuild or
+interrupt a playing stream. Same-tune retries/fallback retain that tune's choice.
+Catch-up, DRM-specific adapter and movies/series are unchanged. A missing/failed
+local preference read falls back to Off; reads are bounded and a cancelled/stopped
+tune cannot later start itself. Saving/receipt means stored for a later tune,
+not proof that this amount was buffered or that customer buffering is cured.
+No forced retune/restart or live deployment is performed by saving this setting.
+
+### Expanded redacted diagnostics (testing client112)
+
+The device Logs tab can request a fresh diagnostics snapshot through the existing
+leased command queue. Client112 adds app heap used/limit, Android low-memory state,
+active network validation state, transport class (VPN/Ethernet/Wi-Fi/cellular/other)
+and metered status. Fixed enums/counters only: no SSIDs, IP/interface addresses,
+provider probes, process inventories, file scans, exception text or raw logs.
+Unknown, unavailable and permission-denied states are not reported as healthy.
+Android network validation is NOT proof that any provider/stream is reachable.
+This is a one-time requested observation, not continuous telemetry.
+
+No new permission or worker patch is needed. The basic network/memory fields need
+no schema change; the combined controls above require migrations010–012. Existing111/basic
+diagnostics stay supported. Install website0.8.0 before testing112 so its strictly
+validated extended receipt is understood. Previous0.7 migrations008/009 still
+apply if upgrading from0.6. Updates preserve config.php/storage/application.key.
+Raw crash/logcat collection, arbitrary-page/full-device screenshots and branding
+remain unsupported/deferred. The diagnostics collection does not change player, activation, guides, favourites
+or updates. The separate optional pre-buffer above changes only per-tune pre-roll.
+
+## Previous milestone — 0.7.0
 
 ### Favourites recovery: good versions survive an accidental wipe
 

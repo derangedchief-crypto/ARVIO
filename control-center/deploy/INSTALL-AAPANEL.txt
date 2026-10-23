@@ -1,4 +1,58 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.7.0
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.8.0
+
+0.8.0 UPDATE — LIVE PRE-BUFFER + REDACTED NETWORK / MEMORY DIAGNOSTICS
+This combined update also includes safe cache clearing, foreground screen reopening,
+profile source drafts/checkpoints/rollback, versioned broader settings profiles with
+device overrides, and private support exports/consented safe-panel images.
+Apply NEW migrations010/011/012 under Enrollments. From0.6 also apply008/009.
+Enable PHP zlib (web AND CLI/preflight) for bounded PNG validation. Keep2m request
+limits. Install website/migrations BEFORE112. No activation-worker patch or new
+Android permission; config.php/storage/application.key are preserved.
+
+Clear cache is image/ordinary HTTP only, never all cacheDir or login/guide/update
+data. Restart is best-effort foreground APP-SCREEN reopening, not a process/device
+reboot; updater must be idle, cooldown5 minutes, duplicate/lost-ACK requests do not
+replay it. Do not interpret a requested receipt as proof of relaunch.
+
+Playlists: read a fresh private source snapshot, build local edits, preview, then
+confirm ONE full guarded push. Verified activation source stays first and its URL/
+credentials are protected. Supplementary M3U/Xtream/Stalker secrets are write-only.
+Safety checkpoint before mutation; fresh readback before success. Source edits
+follow existing profile IPTV Cloud sync. Guides/favourites history are preserved,
+but changed sources can invalidate old recovery contexts; use compatible source
+checkpoint rollback rather than guessing a migration.
+
+Broader settings: create versioned base profiles under Settings presets; device
+Settings -> Read expanded effective settings -> choose base/overrides -> Preview
+-> Push. Overrides are installation/profile-local, take precedence and do not leak
+through Cloud. Reset does not overwrite newer local changes. Audio/UI observers
+can apply immediately; no generic credential/update/entitlement/decoder switches.
+
+Support exports are fixed codes + typed counters, not raw logs. Images require
+customer consent every time and show ONLY a dedicated safe support panel, NOT TV
+video/current pages/account forms/other apps. Requests expire; no hidden capture.
+Encrypted private artifacts:7 days,15/device; authorized/audited downloads only.
+No device pilot is claimed from synthetic browser/JVM tests.
+Back up database/config.php/private storage, then extract the UPDATE ZIP over the
+site. Apply010/011/012; no worker patch. If coming
+from0.6, also apply the prior008/009 upgrade under Enrollments.
+Install website0.8.0 BEFORE112 testing. Existing111 remains supported.
+Logs -> Request fresh snapshot reports app heap, Android low-memory state, active
+network transport/validation and metered status using existing app permissions.
+Android validated network is not proof a provider/stream works. Unknown and denied
+values stay explicit. No Wi-Fi names/IP addresses/raw logs/screenshots collected.
+The app must be open; queued is not a successful diagnostic receipt.
+
+Settings -> Request fresh snapshot -> Adjust Live TV pre-buffer (app112).
+Off preserves today's fast startup; options2/5/10 request that much video before
+playback/recovery. Try2 first. More can help brief connection dips but adds start/
+live delay and cannot cure sustained slow bandwidth/provider faults. Engine memory
+limits remain; the amount is not guaranteed at high bitrates.
+Device-local/shared by its profiles, not Cloud-synced. Fresh revision/account/profile
+guards reject stale changes. The current stream is not interrupted: applies to the
+NEXT standard live channel tune on the fast engine or mpv fallback. DRM, catch-up,
+movies and decoder selection are unchanged. Receipt means setting saved, not proof
+buffering is cured. No automatic restart/retune. Website0.8.0 precedes112 publication.
 
 0.7.0 UPDATE — FAVOURITES RECOVERY + VERIFIED LINE USERNAMES
 Back up database/config.php/private storage (especially application.key), extract

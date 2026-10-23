@@ -371,6 +371,11 @@ object OkHttpProvider {
         }
     }
 
+    /** Does not create/close clients, touch playback caches or remove any files by path. */
+    fun clearExpendableHttpResponses() {
+        synchronized(clientLock) { appHttpCache?.evictAll() }
+    }
+
     /** Resolve bootstrap IPs safely - IPv6 may fail on some devices/emulators */
     private fun safeResolve(vararg addresses: String): List<InetAddress> {
         return addresses.mapNotNull { addr ->

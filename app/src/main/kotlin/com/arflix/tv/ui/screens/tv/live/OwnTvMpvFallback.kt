@@ -63,12 +63,12 @@ internal object OwnTvIptvRuntime {
  * LiveTuneController owns routing, watch/retry ladders and engine handovers.
  * The old adapter name is retained for callers; it no longer means mpv-only live.
  */
-internal class OwnTvMpvFallback(context: Context) {
+internal class OwnTvMpvFallback(context: Context, prebufferSeconds: suspend () -> Int = { 0 }) {
     private val engine = OwnTvIptvRuntime.player(context)
     private val liveEngine = OwnTvIptvRuntime.livePlayer(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val surfaceEngine = MutableStateFlow(OwnTvSurfaceEngine.NONE)
-    private val tuner = OwnTvLiveTuner(scope, EnginePair(liveEngine, engine), onEngineStarted = { fast ->
+    private val tuner = OwnTvLiveTuner(scope, EnginePair(liveEngine, engine), prebufferSeconds = prebufferSeconds, onEngineStarted = { fast ->
         selectSurfaceEngine(if (fast) OwnTvSurfaceEngine.FAST_LIVE else OwnTvSurfaceEngine.MPV)
     })
     val playing = combine(surfaceEngine, engine.isPlaying, liveEngine.isPlaying) { owner, mpv, fast ->

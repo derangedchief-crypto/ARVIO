@@ -35,7 +35,14 @@ internal fun enrollmentSigningText(nonce: String, proof: String, install: String
     "ECENROLL1\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint"
 
 internal val MANAGEMENT_POLICIES = setOf("active", "suspended", "blocked", "removed")
-internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories", "get_category_layout", "apply_category_layout", "backup_favourites", "preview_favourites_restore", "restore_favourites")
+internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories", "get_category_layout", "apply_category_layout", "backup_favourites", "preview_favourites_restore", "restore_favourites", "set_live_buffer", "clear_cache", "restart_app", "get_sources", "apply_sources", "get_preferences", "apply_preferences", "get_support_bundle", "capture_app_screen")
+internal fun managementLiveBufferRevision(profileRef: String, accountScope: String, seconds: Int): String =
+    managementHash("device-live-buffer-v1\n$profileRef\n$accountScope\n$seconds")
+internal fun validManagedLiveBufferPayload(payload: Map<String, String>): Boolean =
+    payload.keys == setOf("profile_ref", "expected_revision", "prebuffer_seconds") &&
+        payload["profile_ref"]?.matches(Regex("[a-f0-9]{64}")) == true &&
+        payload["expected_revision"]?.matches(Regex("[a-f0-9]{64}")) == true &&
+        payload["prebuffer_seconds"] in listOf("0", "2", "5", "10")
 internal fun managementSettingsRevision(profileRef: String, accountScope: String, sortOrder: String): String =
     managementHash("ECSET1\n$profileRef\n$accountScope\n$sortOrder")
 
@@ -85,6 +92,7 @@ internal data class ManagementSession(
     val unmanagedUntilMs: Long = 0,
     val catalogSecret: String? = null,
     val favouritesSync: Map<String,String>? = null,
+    val lastReopenAtMs: Long = 0,
 ) {
     override fun toString() = "ManagementSession([redacted])"
 }

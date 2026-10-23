@@ -4,15 +4,29 @@ namespace ControlCenter;
 
 final class Commands
 {
-    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app', 'set_settings', 'get_categories', 'set_categories', 'get_category_layout', 'apply_category_layout', 'backup_favourites', 'preview_favourites_restore', 'restore_favourites'];
+    public const KINDS = ['refresh_playlist', 'reload_epg', 'request_checkin', 'get_settings', 'clear_cache', 'get_diagnostics', 'show_message', 'restart_app', 'set_settings', 'get_categories', 'set_categories', 'get_category_layout', 'apply_category_layout', 'backup_favourites', 'preview_favourites_restore', 'restore_favourites', 'set_live_buffer', 'get_sources', 'apply_sources', 'get_preferences', 'apply_preferences', 'get_support_bundle', 'capture_app_screen'];
     public function __construct(private readonly Database $db, private readonly Config $config, private readonly Auth $auth, private readonly Management $management) {}
+
+    public function leasedDeviceCommand(string $token,mixed $id,mixed $lease,array $kinds):array {
+        $d=$this->deviceIdentity($token);if($d['policy']!=='active'||$d['tenant_status']!=='active')throw new Problem(403,'Device management paused.');
+        Input::id($id);if(!is_string($lease)||!preg_match('/^[a-f0-9]{64}$/D',$lease))throw new Problem(422,'Invalid command lease token.');
+        $c=$this->db->one("SELECT * FROM commands WHERE id=? AND device_id=? AND status IN ('delivered','running') AND expires_at>UTC_TIMESTAMP() AND lease_until>UTC_TIMESTAMP()",[Input::id($id),$d['id']]);
+        if(!$c||!in_array($c['kind'],$kinds,true)||!hash_equals($c['lease_hash']??'',hash('sha256',$lease)))throw new Problem(409,'Command lease is no longer current.');return [$d,$c];
+    }
 
     private static function payload(string $kind, mixed $payload): array
     {
         if (!is_array($payload) || array_is_list($payload) && $payload !== []) throw new Problem(422, 'Invalid command payload.');
+        if(in_array($kind,['apply_sources','apply_preferences'],true)) {Input::keys($payload,['draft_id']);Input::id($payload['draft_id']??null);return $payload;}
         if($kind==='preview_favourites_restore') {Input::keys($payload,['backup_id']);Input::id($payload['backup_id']??null);return $payload;}
         if($kind==='restore_favourites') {Input::keys($payload,['preview_id','mode']);Input::id($payload['preview_id']??null);if(!in_array($payload['mode']??null,['merge','replace'],true))throw new Problem(422,'Unsupported recovery mode.');return $payload;}
         if(in_array($kind,['get_categories','set_categories','get_category_layout','apply_category_layout'],true))return CommandCategories::payload($kind,$payload);
+        if($kind==='set_live_buffer') {
+            Input::keys($payload,['profile_ref','expected_revision','prebuffer_seconds']);
+            EnrollmentProof::hex($payload['profile_ref']??null,64);EnrollmentProof::hex($payload['expected_revision']??null,64);
+            if(!in_array($payload['prebuffer_seconds']??null,['0','2','5','10'],true))throw new Problem(422,'Choose Off, 2, 5 or 10 seconds of live pre-buffer.');
+            return $payload;
+        }
         if($kind==='set_settings') {
             Input::keys($payload,['profile_ref','expected_revision','sort_order']);
             EnrollmentProof::hex($payload['profile_ref']??null,64);EnrollmentProof::hex($payload['expected_revision']??null,64);
@@ -52,6 +66,8 @@ final class Commands
                 throw new Problem(409, 'The connected app has not advertised support for this action.');
             }
             if($kind==='preview_favourites_restore'&&!$this->db->one('SELECT id FROM favourites_backups WHERE id=? AND device_id=?',[$payload['backup_id'],$deviceId]))throw new Problem(404,'Backup not found.');
+            if($kind==='apply_sources'&&!$this->db->one('SELECT id FROM source_drafts WHERE id=? AND device_id=? AND expires_at>UTC_TIMESTAMP()',[$payload['draft_id'],$deviceId]))throw new Problem(409,'Source preview expired or belongs to another device.');
+            if($kind==='apply_preferences'&&!$this->db->one('SELECT id FROM preference_drafts WHERE id=? AND device_id=? AND expires_at>UTC_TIMESTAMP()',[$payload['draft_id'],$deviceId]))throw new Problem(409,'Settings preview expired or belongs to another device.');
             if($kind==='restore_favourites') {
                 $preview=$this->db->one('SELECT preview FROM favourites_restore_previews WHERE command_id=? AND device_id=? AND expires_at>UTC_TIMESTAMP()',[$payload['preview_id'],$deviceId]);if(!$preview)throw new Problem(409,'Preview expired or does not belong to this device.');
                 $p=json_decode($preview['preview'],true,16,JSON_THROW_ON_ERROR);
@@ -153,7 +169,7 @@ final class Commands
                 $rows = $this->db->all("SELECT * FROM commands WHERE device_id = ? AND expires_at > UTC_TIMESTAMP() AND attempts < 3 AND (status = 'pending' OR (status IN ('delivered','running') AND lease_until <= UTC_TIMESTAMP())) ORDER BY created_at, id LIMIT 5 FOR UPDATE", [$current['id']]);
                 $leaseSeconds = $this->config->number('command_lease_seconds', 90, 30, 600);
                 foreach ($rows as $row) {
-                    if($row['kind']==='apply_category_layout'&&$deliveries)break;
+                    if(in_array($row['kind'],['apply_category_layout','apply_sources','apply_preferences','restart_app','capture_app_screen'],true)&&$deliveries)break;
                     if (!in_array($row['kind'], $caps, true)) {
                         $this->db->query("UPDATE commands SET status = 'failed', finished_at = UTC_TIMESTAMP(), result = ? WHERE id = ?", [json_encode(['summary' => 'Capability is no longer advertised.']), $row['id']]);
                         continue;
@@ -161,7 +177,7 @@ final class Commands
                     $lease = bin2hex(random_bytes(32));
                     $this->db->query("UPDATE commands SET status = 'delivered', attempts = attempts + 1, lease_hash = ?, lease_until = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? SECOND) WHERE id = ?", [hash('sha256', $lease), $leaseSeconds, $row['id']]);
                     $deliveries[] = ['id' => $row['id'], 'kind' => $row['kind'], 'payload' => json_decode($row['payload'], false, 16, JSON_THROW_ON_ERROR), 'lease_token' => $lease, 'expires_at' => $row['expires_at']];
-                    if($row['kind']==='apply_category_layout')break;
+                    if(in_array($row['kind'],['apply_category_layout','apply_sources','apply_preferences','restart_app','capture_app_screen'],true))break;
                 }
             }
             $heartbeat=$this->config->number('heartbeat_seconds',60,15,300);
@@ -218,10 +234,20 @@ final class Commands
                     $result['layout_summary']=['profile_ref'=>$catalog['profile_ref'],'source_ref'=>$catalog['source_ref'],'revision'=>$catalog['revision'],'total'=>$catalog['total']];unset($result['catalog']);
                 }
             }
-            if($status==='succeeded'&&in_array($row['kind'],['get_settings','get_diagnostics','set_settings'],true)&&!array_key_exists('snapshot',$input))throw new Problem(422,'A completed snapshot command must include its typed snapshot.');
+            if($status==='succeeded'&&in_array($row['kind'],['get_settings','get_diagnostics','set_settings','set_live_buffer'],true)&&!array_key_exists('snapshot',$input))throw new Problem(422,'A completed snapshot command must include its typed snapshot.');
+            if($status==='succeeded'&&in_array($row['kind'],['get_sources','apply_sources'],true)) {
+                $phase=$row['kind']==='get_sources'?'read':'confirmation';
+                if(!$this->db->one('SELECT id FROM source_snapshots WHERE command_id=? AND device_id=? AND reason=?',[$commandId,$device['id'],$phase]))throw new Problem(422,'Source success requires an authenticated captured snapshot.');
+            }
+            if($status==='succeeded'&&in_array($row['kind'],['get_preferences','apply_preferences'],true)&&!$this->db->one('SELECT command_id FROM preference_snapshots WHERE command_id=? AND device_id=?',[$commandId,$device['id']]))throw new Problem(422,'Managed preference success requires a typed uploaded confirmation.');
+            if($status==='succeeded'&&in_array($row['kind'],['get_support_bundle','capture_app_screen'],true)&&!$this->db->one('SELECT id FROM support_artifacts WHERE command_id=? AND device_id=? AND expires_at>UTC_TIMESTAMP()',[$commandId,$device['id']]))throw new Problem(422,'Support success requires its authorized private artifact.');
             if(array_key_exists('snapshot',$input)) {
                 if($status!=='succeeded')throw new Problem(422,'Only completed snapshot commands can upload a snapshot.');
                 $result['snapshot']=CommandSnapshots::validate($row['kind'],$input['snapshot']);
+                if($row['kind']==='set_live_buffer') {
+                    $requested=json_decode($row['payload'],true,16,JSON_THROW_ON_ERROR);
+                    if($result['snapshot']['profile_ref']!==$requested['profile_ref']||(string)$result['snapshot']['live_prebuffer_seconds']!==$requested['prebuffer_seconds'])throw new Problem(422,'Playback buffer receipt does not match its request.');
+                }
             }
             $this->db->query('UPDATE commands SET status = ?, result = ?, finished_at = ' . ($status === 'running' ? 'NULL' : 'UTC_TIMESTAMP()') . ' WHERE id = ?', [$status, json_encode($result, JSON_THROW_ON_ERROR), $commandId]);
             if ($status !== 'running') $this->auth->audit(null, 'command.' . $status, $commandId, $current['tenant_id'], ['device_id' => $current['id'], 'kind' => $row['kind']]);

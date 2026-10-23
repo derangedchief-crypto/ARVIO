@@ -1,0 +1,35 @@
+<?php
+declare(strict_types=1);
+function advancedHttpCases(array &$tests,ControlCenter\Application $app,array $owner,array $alpha,array $tenantA,HttpFixture $http):void {
+    $fixture=function(string $kind)use($app,$owner,$alpha,$tenantA):array {
+        $c=$app->management->createCustomer($alpha,['tenant_id'=>$tenantA['id'],'name'=>'TEST advanced HTTP']);$d=$app->management->createDevice($alpha,['customer_id'=>$c['id'],'label'=>'TEST HTTP controls']);$token=$app->commands->issueTestCredential($owner,$d['id']);$app->commands->checkIn($token,['capabilities'=>ControlCenter\Commands::KINDS],'127.0.0.84');$c=$app->commands->enqueue($alpha,$d['id'],['kind'=>$kind],bin2hex(random_bytes(16)));$lease=$app->commands->checkIn($token,['capabilities'=>ControlCenter\Commands::KINDS],'127.0.0.84')['commands'][0]['lease_token'];return [$d,$token,['command_id'=>$c['id'],'lease_token'=>$lease]];
+    };
+    $tests['HTTP source endpoints require device lease web ownership CSRF and never return source secrets'] = function()use($app,$alpha,$fixture,$http):void {
+        [$d,$token,$ctx]=$fixture('get_sources');$url='https://private.example.test/get.php?username=fixture&password=NEVER-BROWSER';$doc=['schema_version'=>1,'profile_ref'=>str_repeat('a',64),'revision'=>str_repeat('b',64),'config'=>['m3uUrl'=>$url,'epgUrl'=>'','playlists'=>[],'stalkerPortals'=>[],'sortOrder'=>'provider']];
+        same(401,$http->request('POST','/api/device/sources/capture',$ctx+['reason'=>'read','snapshot'=>$doc])['status']);
+        $upload=$http->request('POST','/api/device/sources/capture',$ctx+['reason'=>'read','snapshot'=>$doc],['Authorization'=>'Bearer '.$token]);same(200,$upload['status']);$id=$upload['body']['id'];
+        $path='/api/devices/'.$d['id'].'/sources';same(401,$http->request('GET',$path)['status']);same(404,$http->request('GET',$path,null,[],'settings-beta')['status']);
+        $view=$http->request('GET',$path.'/'.$id,null,[],'settings-alpha');same(200,$view['status']);check(!str_contains($view['raw'],'NEVER-BROWSER'));check(!str_contains($view['raw'],'private.example.test'));
+        $row=$view['body']['entries'][0];$input=['snapshot_id'=>$id,'entries'=>[['ref'=>$row['ref'],'kind'=>'m3u','name'=>'TEST local rename','enabled'=>true]]];same(403,$http->request('POST',$path.'/preview',$input,[],'settings-alpha')['status']);
+        $csrf=$http->request('GET','/api/me',null,[],'settings-alpha')['body']['csrf'];same(201,$http->request('POST',$path.'/preview',$input,['X-CSRF-Token'=>$csrf],'settings-alpha')['status']);
+        same(404,$http->request('POST',$path.'/preview',['snapshot_id'=>[],'entries'=>[]],['X-CSRF-Token'=>$csrf],'settings-alpha')['status']);
+        $bad=$input;$bad['entries'][0]['ref']=[];same(422,$http->request('POST',$path.'/preview',$bad,['X-CSRF-Token'=>$csrf],'settings-alpha')['status']);
+        same(404,$http->request('POST','/api/device/sources/capture',['command_id'=>[],'lease_token'=>[],'reason'=>'read','snapshot'=>$doc],['Authorization'=>'Bearer '.$token])['status']);
+        same(422,$http->request('POST','/api/device/sources/context',$ctx,['Authorization'=>'Bearer '.$token])['status']);
+    };
+    $tests['HTTP broader settings profile and override endpoints enforce CSRF and tenant scope'] = function()use($fixture,$http):void {
+        $input=['name'=>'TEST HTTP broad profile','values'=>['clock_format'=>'24h']];same(403,$http->request('POST','/api/preference-profiles',$input,[],'settings-alpha')['status']);$csrf=$http->request('GET','/api/me',null,[],'settings-alpha')['body']['csrf'];$saved=$http->request('POST','/api/preference-profiles',$input,['X-CSRF-Token'=>$csrf],'settings-alpha');same(201,$saved['status']);$id=$saved['body']['id'];
+        $beta=$http->request('GET','/api/me',null,[],'settings-beta')['body']['csrf'];same(404,$http->request('POST','/api/preference-profiles/'.$id,$input+['expected_version'=>1],['X-CSRF-Token'=>$beta],'settings-beta')['status']);
+        [$d,$token,$ctx]=$fixture('get_preferences');$values=[];$origins=[];foreach(ControlCenter\Preferences::RULES as $key=>$choices){$values[$key]=$choices[0];$origins[$key]='local';}$doc=['schema_version'=>1,'profile_ref'=>str_repeat('a',64),'revision'=>str_repeat('b',64),'values'=>$values,'origins'=>$origins,'base_values'=>(object)[],'overrides'=>(object)[],'base_preset_id'=>'','base_version'=>0];
+        same(200,$http->request('POST','/api/device/preferences/capture',$ctx+['document'=>$doc],['Authorization'=>'Bearer '.$token])['status']);$path='/api/devices/'.$d['id'].'/preferences';same(404,$http->request('GET',$path,null,[],'settings-beta')['status']);same(200,$http->request('GET',$path,null,[],'settings-alpha')['status']);
+        $preview=['snapshot_id'=>$ctx['command_id'],'base_preset_id'=>$id,'overrides'=>(object)[]];same(403,$http->request('POST',$path.'/preview',$preview,[],'settings-alpha')['status']);same(201,$http->request('POST',$path.'/preview',$preview,['X-CSRF-Token'=>$csrf],'settings-alpha')['status']);
+        $bad=$preview;$bad['base_preset_id']=[];same(404,$http->request('POST',$path.'/preview',$bad,['X-CSRF-Token'=>$csrf],'settings-alpha')['status']);
+    };
+    $tests['HTTP private support exports cannot be anonymously downloaded or accessed by another reseller'] = function()use($fixture,$http):void {
+        [$d,$token,$ctx]=$fixture('get_support_bundle');$profile=str_repeat('a',64);$doc=['schema_version'=>1,'profile_ref'=>$profile,'snapshot'=>['schema_version'=>'1','profile_ref'=>$profile,'app_package'=>'com.arvio.tv.test','app_version'=>'2.0.112-test','sdk'=>'36','storage_total'=>'1000','storage_free'=>'900','channel_count'=>'4000','guide_state'=>'idle'],'events'=>[['code'=>'LIVE_RECOVERY','at_ms'=>time()*1000]]];$body=$ctx+['kind'=>'bundle','profile_ref'=>$profile,'document'=>$doc];same(401,$http->request('POST','/api/device/support/upload',$body)['status']);$upload=$http->request('POST','/api/device/support/upload',$body,['Authorization'=>'Bearer '.$token]);same(200,$upload['status']);$id=$upload['body']['id'];$path='/api/devices/'.$d['id'].'/support';same(404,$http->request('GET',$path,null,[],'settings-beta')['status']);same(200,$http->request('GET',$path,null,[],'settings-alpha')['status']);
+        same(401,$http->request('GET',$path.'/'.$id.'/download')['status']);same(404,$http->request('GET',$path.'/'.$id.'/download',null,[],'settings-beta')['status']);$file=$http->request('GET',$path.'/'.$id.'/download',null,[],'settings-alpha');same(200,$file['status']);check(str_contains($file['headers']['content-disposition'][0],'attachment'));check(str_contains($file['headers']['cache-control'][0],'no-store'));same('device_account',$file['body']['event_scope']);
+    };
+    $tests['sensitive managed documents reject scalar JSON bodies without server type errors'] = function():void {
+        problem(422,fn()=> ControlCenter\Sources::config('not-an-object'));problem(422,fn()=> ControlCenter\Preferences::document('not-an-object'));problem(422,fn()=> ControlCenter\Support::bundle('not-an-object'));
+    };
+}

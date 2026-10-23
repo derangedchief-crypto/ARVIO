@@ -12,6 +12,7 @@ import android.util.Base64
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.DrmInfo
 import com.arflix.tv.data.model.IptvNowNext
@@ -983,6 +984,19 @@ class IptvRepository @Inject constructor(
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save iptv sort order")
     }
 
+    // Installation-local: never part of source signatures or cross-device Cloud sync.
+    private val livePrebufferKey = stringPreferencesKey("iptv_device_live_prebuffer_seconds")
+    suspend fun livePrebufferSeconds(): Int = normalizedLivePrebuffer(context.settingsDataStore.data.first()[livePrebufferKey])
+
+    suspend fun compareAndSetManagedLivePrebuffer(profileId: String, expected: Int, requested: Int, accountMatches: (IptvConfig) -> Boolean): Boolean {
+        require(requested in listOf(0, 2, 5, 10))
+        var applied = false
+        context.settingsDataStore.edit { prefs ->
+            applied = compareManagedLivePrebuffer(prefs, livePrebufferKey, profileManager.getProfileIdSync() == profileId, accountMatches(managedConfig(profileId, prefs)), expected, requested)
+        }
+        return applied
+    }
+
     suspend fun compareAndSetManagedSortOrder(profileId: String, expected: String, requested: String, accountMatches: (IptvConfig) -> Boolean): Boolean {
         require(profileId.isNotBlank())
         var applied = false
@@ -1002,6 +1016,60 @@ class IptvRepository @Inject constructor(
             epgUrl=playlists.firstOrNull()?.epgUrl ?: decryptConfigValue(prefs[epgUrlKeyFor(profileId)].orEmpty()),playlists=playlists,
             stalkerPortals=readStalkerPortalsFor(prefs,profileId),sortOrder=normalizeIptvSortOrder(prefs[sortOrderKeyFor(profileId)]))
     }
+
+    suspend fun readManagedSources(profileId: String, accountMatches: (IptvConfig) -> Boolean): IptvConfig {
+        val config = managedConfig(profileId, context.settingsDataStore.data.first())
+        check(profileManager.getProfileIdSync() == profileId && accountMatches(config))
+        return config.copy(sortOrder="provider")
+    }
+
+    internal suspend fun readManagedPreferenceState(profileId: String, accountMatches: (IptvConfig) -> Boolean): ManagedPreferenceRead {
+        val prefs=context.settingsDataStore.data.first()
+        check(profileManager.getProfileIdSync()==profileId&&accountMatches(managedConfig(profileId,prefs)))
+        return readManagedPreferences(prefs,profileManager,profileId)
+    }
+
+    internal suspend fun compareAndSetManagedPreferenceState(profileId: String, expected: ManagedPreferenceRead,base: Map<String,String>,overrides: Map<String,String>,preset: String,version: Int,accountMatches: (IptvConfig)->Boolean): Boolean {
+        var applied=false
+        context.settingsDataStore.edit { prefs ->
+            if(profileManager.getProfileIdSync()!=profileId||!accountMatches(managedConfig(profileId,prefs))||readManagedPreferences(prefs,profileManager,profileId)!=expected)return@edit
+            applyManagedPreferences(prefs,profileManager,profileId,base,overrides,preset,version);applied=true
+        }
+        // Device/profile overlays must not be propagated to another installation.
+        return applied
+    }
+
+    suspend fun compareAndSetManagedSources(profileId: String, expected: IptvConfig, requested: IptvConfig, restoreCheckpoint: Boolean = false, accountMatches: (IptvConfig) -> Boolean): Boolean {
+        require(validManagedSourceConfig(expected, requested,restoreCheckpoint))
+        require(isStableManagedSourceTarget(requested))
+        var applied = false
+        context.settingsDataStore.edit { prefs ->
+            val current = managedConfig(profileId, prefs)
+            if (profileManager.getProfileIdSync() != profileId || !accountMatches(current) ||
+                current.copy(sortOrder="provider") != expected || !accountMatches(requested)) return@edit
+            prefs[playlistsKeyFor(profileId)] = gson.toJson(requested.playlists)
+            prefs[m3uUrlKeyFor(profileId)] = encryptConfigValue(requested.m3uUrl)
+            prefs[epgUrlKeyFor(profileId)] = encryptConfigValue(requested.epgUrl)
+            prefs[stalkerPortalsKeyFor(profileId)] = gson.toJson(requested.stalkerPortals)
+            applied = true
+        }
+        if (applied) {
+            // No disk deletion, favourite mutation or retained-guide purge.
+            invalidateCache()
+            invalidationBus.markDirty(CloudSyncScope.IPTV, profileId, "managed playlist edit")
+        }
+        return applied
+    }
+
+    /** Refuse BEFORE mutation if the existing local decoder would rewrite the
+     * proposed URL/credentials/guide representation. Never silently save a
+     * different target and only discover the mismatch during confirmation. */
+    internal fun isStableManagedSourceTarget(config: IptvConfig): Boolean = runCatching {
+        config.playlists.mapIndexedNotNull { index,p->normalizePlaylistEntry(p,index) }==config.playlists &&
+            config.stalkerPortals.mapIndexedNotNull { index,p->normalizeStalkerPortalEntry(p,index) }==config.stalkerPortals &&
+            normalizeStoredIptvUrl(config.m3uUrl)==config.m3uUrl &&
+            normalizeStoredEpgInputs(config.epgUrl).firstOrNull().orEmpty()==config.epgUrl
+    }.getOrDefault(false)
 
     private fun managedCategoryState(profileId: String,prefs: Preferences,accountMatches: (IptvConfig)->Boolean): ManagedCategoryState {
         check(profileManager.getProfileIdSync()==profileId)
@@ -2964,6 +3032,7 @@ class IptvRepository @Inject constructor(
                 prefs.edit().putLong(completionKey, System.currentTimeMillis()).apply()
                 epgIndex.markRefreshReady(key)
                 guideRetryAt.remove(key)
+                com.arflix.tv.management.ManagementEvents.record(com.arflix.tv.management.ManagementEventCode.GUIDE_REFRESH_COMPLETED)
                 _guideRefreshState.value = GuideRefreshState()
                 return@request
             }
@@ -3008,15 +3077,18 @@ class IptvRepository @Inject constructor(
                 epgIndex.pruneExpiredHistory(key, System.currentTimeMillis())
                 prefs.edit().putLong(completionKey, System.currentTimeMillis()).apply()
                 epgIndex.markRefreshReady(key)
+                com.arflix.tv.management.ManagementEvents.record(com.arflix.tv.management.ManagementEventCode.GUIDE_REFRESH_COMPLETED)
             }
             _guideRefreshState.value = GuideRefreshState()
             guideRetryAt.remove(key)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             if (refreshKey.isNotBlank()) runCatching { epgIndex.markRefreshFailed(refreshKey) }
+            com.arflix.tv.management.ManagementEvents.record(com.arflix.tv.management.ManagementEventCode.GUIDE_REFRESH_CANCELLED)
             _guideRefreshState.value = GuideRefreshState(failed = true)
             throw cancelled
         } catch (error: Exception) {
             if (refreshKey.isNotBlank()) runCatching { epgIndex.markRefreshFailed(refreshKey) }
+            com.arflix.tv.management.ManagementEvents.record(com.arflix.tv.management.ManagementEventCode.GUIDE_REFRESH_FAILED)
             if (refreshKey.isNotBlank()) guideRetryAt[refreshKey] = System.currentTimeMillis() + 120_000L
             _guideRefreshState.value = GuideRefreshState(failed = true, message = "Guide update unavailable — saved listings retained")
             System.err.println("[EPG-Background] Guide refresh incomplete: ${error.javaClass.simpleName}")

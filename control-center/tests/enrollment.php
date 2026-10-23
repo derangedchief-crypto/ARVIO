@@ -269,6 +269,48 @@ function enrollmentCases(array &$tests, ControlCenter\Application $app, ControlC
         foreach([['storage_free'=>'2000'],['guide_state'=>'https://provider.test/password'],['app_version'=>'user:password'],['app_package'=>'foreign.app'],['sdk'=>'1']] as $override)problem(422,fn()=> ControlCenter\CommandSnapshots::validate('get_diagnostics',array_replace($snapshot,$override)));
         $snapshot['logs']='private raw text';problem(422,fn()=> ControlCenter\CommandSnapshots::validate('get_diagnostics',$snapshot));
     };
+    $tests['extended diagnostics accept closed enums and reject partial payloads impossible heaps and private network data'] = function ():void {
+        $snapshot=['schema_version'=>'1','profile_ref'=>str_repeat('a',64),'app_package'=>'com.arvio.tv.test','app_version'=>'2.0.112-test','sdk'=>'36','storage_total'=>'1000','storage_free'=>'900','channel_count'=>'4000','guide_state'=>'idle',
+            'diagnostics_version'=>'2','heap_used'=>'100','heap_limit'=>'200','memory_state'=>'low','network_state'=>'unvalidated','network_transport'=>'vpn','network_metered'=>'yes'];
+        $validated=ControlCenter\CommandSnapshots::validate('get_diagnostics',$snapshot);same(100,$validated['heap_used']);same('unvalidated',$validated['network_state']);
+        foreach([['heap_used'=>'201'],['heap_limit'=>'0'],['heap_used'=>'-1'],['diagnostics_version'=>'3'],['memory_state'=>'https://private.test'],['network_state'=>'online'],['network_transport'=>'private-ssid'],['network_metered'=>'sometimes'],['ip_address'=>'127.0.0.1'],['raw_logs'=>'secret']] as $override)
+            problem(422,fn()=> ControlCenter\CommandSnapshots::validate('get_diagnostics',array_replace($snapshot,$override)));
+        foreach(['unknown','permission_denied','offline','validated','unvalidated','local_only'] as $state)same($state,ControlCenter\CommandSnapshots::validate('get_diagnostics',array_replace($snapshot,['network_state'=>$state]))['network_state']);
+        unset($snapshot['heap_limit']);problem(422,fn()=> ControlCenter\CommandSnapshots::validate('get_diagnostics',$snapshot));
+    };
+    $tests['extended diagnostic receipts require the device lease and remain isolated after reseller removal'] = function ()use($app,$owner,$alpha,$beta,$tenantA,$makeCustomer):void {
+        $c=$makeCustomer($alpha,$tenantA['id']);$d=$app->management->createDevice($alpha,['customer_id'=>$c['id'],'label'=>'TEST extended diagnostics']);$token=$app->commands->issueTestCredential($owner,$d['id']);
+        $app->commands->checkIn($token,['capabilities'=>['get_diagnostics']],'127.0.0.41');
+        $command=$app->commands->enqueue($alpha,$d['id'],['kind'=>'get_diagnostics'],bin2hex(random_bytes(16)));
+        $lease=$app->commands->checkIn($token,['capabilities'=>['get_diagnostics']],'127.0.0.41')['commands'][0]['lease_token'];
+        $snapshot=['schema_version'=>'1','profile_ref'=>str_repeat('a',64),'app_package'=>'com.arvio.tv.test','app_version'=>'2.0.112-test','sdk'=>'36','storage_total'=>'1000','storage_free'=>'900','channel_count'=>'4000','guide_state'=>'idle',
+            'diagnostics_version'=>'2','heap_used'=>'100','heap_limit'=>'200','memory_state'=>'low','network_state'=>'permission_denied','network_transport'=>'unknown','network_metered'=>'unknown'];
+        $input=['lease_token'=>$lease,'status'=>'succeeded','snapshot'=>$snapshot];
+        problem(409,fn()=> $app->commands->acknowledge($token,$command['id'],array_replace($input,['lease_token'=>str_repeat('0',64)])));
+        $bad=$input;$bad['snapshot']['ssid']='never-store';problem(422,fn()=> $app->commands->acknowledge($token,$command['id'],$bad));
+        $result=$app->commands->acknowledge($token,$command['id'],$input);same('permission_denied',$result['result']['snapshot']['network_state']);same(100,$result['result']['snapshot']['heap_used']);
+        problem(404,fn()=> $app->commands->listing($beta,$d['id'],[]));
+        $app->management->detachReseller($owner,$d['id']);problem(404,fn()=> $app->commands->listing($alpha,$d['id'],[]));
+        same('permission_denied',$app->commands->listing($owner,$d['id'],[])['items'][0]['result']['snapshot']['network_state']);
+    };
+    $tests['device live prebuffer is capability gated bounded tenant scoped and confirmed only by matching receipt'] = function ()use($app,$owner,$alpha,$beta,$tenantA,$makeCustomer):void {
+        $c=$makeCustomer($alpha,$tenantA['id']);$d=$app->management->createDevice($alpha,['customer_id'=>$c['id'],'label'=>'TEST prebuffer']);$token=$app->commands->issueTestCredential($owner,$d['id']);
+        $payload=['profile_ref'=>str_repeat('a',64),'expected_revision'=>str_repeat('b',64),'prebuffer_seconds'=>'5'];
+        $input=['kind'=>'set_live_buffer','payload'=>$payload];
+        problem(409,fn()=> $app->commands->enqueue($alpha,$d['id'],$input,bin2hex(random_bytes(16))));
+        $app->commands->checkIn($token,['capabilities'=>['set_live_buffer','get_settings']],'127.0.0.41');
+        problem(404,fn()=> $app->commands->enqueue($beta,$d['id'],$input,bin2hex(random_bytes(16))));
+        foreach(['-1','1','60','999','https://private.test'] as $invalid)problem(422,fn()=> $app->commands->enqueue($alpha,$d['id'],['kind'=>'set_live_buffer','payload'=>array_replace($payload,['prebuffer_seconds'=>$invalid])],bin2hex(random_bytes(16))));
+        problem(422,fn()=> $app->commands->enqueue($alpha,$d['id'],['kind'=>'set_live_buffer','payload'=>$payload+['buffer_bytes'=>'999999999']],bin2hex(random_bytes(16))));
+        $command=$app->commands->enqueue($alpha,$d['id'],$input,bin2hex(random_bytes(16)));same('pending',$command['status']);same(null,$command['result']);
+        $lease=$app->commands->checkIn($token,['capabilities'=>['set_live_buffer','get_settings']],'127.0.0.41')['commands'][0]['lease_token'];
+        $receipt=['lease_token'=>$lease,'status'=>'succeeded'];problem(422,fn()=> $app->commands->acknowledge($token,$command['id'],$receipt));
+        $snapshot=['schema_version'=>'1','profile_ref'=>str_repeat('a',64),'sort_order'=>'provider','playlist_count'=>'1','enabled_playlist_count'=>'1','portal_count'=>'0','favourite_channel_count'=>'3','favourite_group_count'=>'1','live_prebuffer_seconds'=>'5','live_buffer_revision'=>str_repeat('c',64)];
+        $bad=$snapshot;$bad['live_prebuffer_seconds']='2';problem(422,fn()=> $app->commands->acknowledge($token,$command['id'],$receipt+['snapshot'=>$bad]));
+        $bad=$snapshot;$bad['profile_ref']=str_repeat('d',64);problem(422,fn()=> $app->commands->acknowledge($token,$command['id'],$receipt+['snapshot'=>$bad]));
+        $result=$app->commands->acknowledge($token,$command['id'],$receipt+['snapshot'=>$snapshot]);same('5',$result['result']['snapshot']['live_prebuffer_seconds']);
+        unset($snapshot['live_buffer_revision']);problem(422,fn()=> ControlCenter\CommandSnapshots::validate('get_settings',$snapshot));
+    };
     $tests['HTTP reseller detachment is owner-only CSRF-protected and immediately removes old reseller reads'] = function ()use($app,$owner,$alpha,$tenantA,$makeCustomer,$http,$password):void {
         $customer=$makeCustomer($alpha,$tenantA['id']);$device=$app->management->createDevice($alpha,['customer_id'=>$customer['id'],'label'=>'TEST HTTP detach']);
         $o=$http->request('POST','/api/login',['email'=>'owner@example.test','password'=>$password],[],'detach-owner')['body'];

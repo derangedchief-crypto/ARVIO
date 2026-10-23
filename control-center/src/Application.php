@@ -12,6 +12,9 @@ final class Application
     public readonly SettingsPresets $presets;
     public readonly CategoryLayouts $layouts;
     public readonly Favourites $favourites;
+    public readonly Sources $sources;
+    public readonly Preferences $preferences;
+    public readonly Support $support;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
@@ -23,6 +26,9 @@ final class Application
         $this->presets=new SettingsPresets($this->db,$this->management,$this->auth,$config);
         $this->layouts=new CategoryLayouts($this->db,$this->management,$this->auth,$config);
         $this->favourites=new Favourites($this->db,$this->management,$this->commands,$this->auth,$config);
+        $this->sources=new Sources($this->db,$this->management,$this->commands,$this->auth,$config);
+        $this->preferences=new Preferences($this->db,$this->management,$this->commands,$this->auth);
+        $this->support=new Support($this->db,$this->management,$this->commands,$this->auth,$config);
     }
 
     public function serve(string $method, string $path): never
@@ -72,6 +78,11 @@ final class Application
         }
         if($method==='POST'&&$path==='/api/device/favourites/capture') {$credential=Http::bearer();$this->commands->deviceIdentity($credential);Http::json($this->favourites->capture($credential,Http::body(2097152)));}
         if($method==='POST'&&$path==='/api/device/favourites/context')Http::json($this->favourites->context(Http::bearer(),Http::body()));
+        if($method==='POST'&&$path==='/api/device/sources/capture')Http::json($this->sources->capture(Http::bearer(),Http::body(262144)));
+        if($method==='POST'&&$path==='/api/device/sources/context')Http::json($this->sources->context(Http::bearer(),Http::body()));
+        if($method==='POST'&&$path==='/api/device/preferences/capture')Http::json($this->preferences->capture(Http::bearer(),Http::body(65536)));
+        if($method==='POST'&&$path==='/api/device/preferences/context')Http::json($this->preferences->context(Http::bearer(),Http::body()));
+        if($method==='POST'&&$path==='/api/device/support/upload')Http::json($this->support->upload(Http::bearer(),Http::body(262144)));
         $token = $_COOKIE[Http::COOKIE] ?? '';
         if (!is_string($token)) throw new Problem(401, 'Please sign in.');
         $actor = $this->auth->user($token);
@@ -102,6 +113,16 @@ final class Application
             Http::cookie($this->config, ''); Http::json(['ok' => true]);
         }
         if ($method === 'GET' && $path === '/api/overview') Http::json($this->management->overview($actor));
+        if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/support$~D',$path,$m))Http::json($this->support->listing($actor,$m[1]));
+        if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/support/([a-f0-9]{32})/download$~D',$path,$m)){$file=$this->support->download($actor,$m[1],$m[2]);header('Content-Type: '.$file['mime']);header('Content-Disposition: attachment; filename="'.$file['filename'].'"');echo $file['body'];exit;}
+        if($method==='GET'&&$path==='/api/preference-profiles')Http::json($this->preferences->profiles($actor,$_GET));
+        if($method==='POST'&&$path==='/api/preference-profiles')Http::json($this->preferences->save($actor,null,Http::body()),201);
+        if($method==='POST'&&preg_match('~^/api/preference-profiles/([a-f0-9]{32})$~D',$path,$m))Http::json($this->preferences->save($actor,$m[1],Http::body()));
+        if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/preferences$~D',$path,$m))Http::json($this->preferences->latest($actor,$m[1]));
+        if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/preferences/preview$~D',$path,$m))Http::json($this->preferences->preview($actor,$m[1],Http::body()),201);
+        if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/sources$~D',$path,$m))Http::json($this->sources->listing($actor,$m[1]));
+        if($method==='GET'&&preg_match('~^/api/devices/([a-f0-9]{32})/sources/([a-f0-9]{32})$~D',$path,$m))Http::json($this->sources->view($actor,$m[1],$m[2]));
+        if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/sources/preview$~D',$path,$m))Http::json($this->sources->preview($actor,$m[1],Http::body(262144)),201);
         if($method==='GET'&&$path==='/api/settings-presets')Http::json($this->presets->listing($actor,$_GET));
         if($method==='POST'&&$path==='/api/settings-presets')Http::json($this->presets->create($actor,Http::body()),201);
         if($method==='POST'&&preg_match('~^/api/settings-presets/([a-f0-9]{32})$~D',$path,$match))Http::json($this->presets->change($actor,$match[1],Http::body()));
@@ -150,7 +171,7 @@ final class Application
         $days = $this->config->number('retention_days', 90, 7, 365);
         $commands = $this->db->query("DELETE FROM commands WHERE status IN ('succeeded','failed','expired','cancelled') AND finished_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
         $events = $this->db->query("DELETE FROM audit_events WHERE created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
-        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();}
+        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();$this->sources->maintain();$this->preferences->maintain();$this->support->maintain();}
         return ['expired_sessions_removed' => $sessions, 'old_commands_removed' => $commands, 'old_audit_events_removed' => $events];
     }
 }

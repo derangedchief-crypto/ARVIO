@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-const state = { user: null, csrf: '', tenants: [], epoch: 0, deviceTab: null, layoutEditors: new Map(), favouritesSelection: new Map() };
+const state = { user: null, csrf: '', tenants: [], epoch: 0, deviceTab: null, layoutEditors: new Map(), favouritesSelection: new Map(), sourceEditors: new Map(), preferenceEditors: new Map() };
 const requestKeys = new Map();
 let toastTimer;
 let formCounter = 0;
@@ -40,7 +40,7 @@ function fields(form, schema) {
     const label = el('label', field.label); label.htmlFor = prefix + field.key;
     const input = document.createElement(field.type === 'textarea' ? 'textarea' : field.options ? 'select' : 'input'); input.id = label.htmlFor; input.name = field.key;
     if (input.tagName === 'INPUT') input.type = field.type || 'text';
-    if (field.type === 'password') { input.autocomplete = field.key === 'current_password' ? 'current-password' : 'new-password'; input.minLength = 14; input.maxLength = 72; }
+    if (field.type === 'password') { input.autocomplete = field.key === 'current_password' ? 'current-password' : 'new-password'; input.minLength = field.min ?? 14; input.maxLength = field.max ?? 72; }
     else if (input.tagName !== 'SELECT') input.maxLength = field.max || (field.type === 'textarea' ? 2000 : 120);
     if (field.type === 'number') { input.min = 1; input.max = 100000; input.step = 1; }
     if (field.options) for (const [value, name] of field.options) { const option = el('option', name); option.value = value; input.append(option); }
@@ -54,7 +54,8 @@ function modal(title, schema, save, label = 'Save') {
   form.onsubmit = async event => { event.preventDefault(); submit.disabled = true; error.textContent = ''; try { await save(formValues(form, schema)); $('modal').close(); await route(); } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; } };
   $('modal').showModal();
 }
-function signedOut() { state.user = null; state.csrf = ''; state.tenants = []; state.deviceTab = null; state.layoutEditors.clear(); state.favouritesSelection.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
+$('modal').addEventListener('close',()=>{$('modal-form').querySelectorAll('input[type="password"], textarea[name="guides"]').forEach(input=>{input.value='';});});
+function signedOut() { state.user = null; state.csrf = ''; state.tenants = []; state.deviceTab = null; state.layoutEditors.clear(); state.favouritesSelection.clear(); state.sourceEditors.clear(); state.preferenceEditors.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
 function entryCard(title, description) { const card = el('div', null, 'entry-card'); card.append(el('span', 'E', 'brand-mark'), el('h1', title), el('p', description, 'subtle')); $('entry').replaceChildren(card); return card; }
 function loginForm() {
   const card = entryCard('Welcome back', 'Sign in to your owner or reseller workspace.'); const form = el('form');
@@ -153,6 +154,47 @@ async function presetsPage(epoch) {
   }
   await load();
   if (epoch === state.epoch) await layoutTemplatesPanel(main, epoch);
+  if (epoch === state.epoch) await preferenceProfilesPanel(main, epoch);
+}
+async function preferenceProfilesPanel(main,epoch) {
+  const box=panel('Broader settings profiles — explicit application only');main.append(box);
+  box.append(el('p','Versioned workspace profiles manage only the listed allowlisted fields. Device/profile overrides win over the base. Saving or editing a profile never pushes changes automatically. Playback buffer/sorting/category controls remain in their dedicated device sections. Sources, credentials, entitlements, update URLs and decoder selection are not generic settings fields.','notice'));
+  const search=el('input');search.placeholder='Search broader settings profiles…';search.setAttribute('aria-label','Search broader settings profiles');const result=el('div');box.append(search,button('Search settings profiles',()=>load()),result);
+  let rules={};
+  function form(profile=null) {
+    const schema=[...(!profile&&state.user.role==='owner'?[tenantField()]:[]),{key:'name',label:'Settings profile name',max:80,value:profile?.name||''},...Object.entries(rules).map(([key,choices])=>({key,label:key.replaceAll('_',' '),required:false,value:profile?.values[key]||'',options:[['','Not managed by this base profile'],...choices.map(v=>[v,v])]}))];
+    modal(profile?'Edit broader settings profile':'Create broader settings profile',schema,async v=>{const values={};for(const key of Object.keys(rules))if(v[key]!=='')values[key]=v[key];await api(profile?`/api/preference-profiles/${profile.id}`:'/api/preference-profiles',{name:v.name,values,...(profile?{expected_version:profile.version}:{...(v.tenant_id?{tenant_id:v.tenant_id}:{})})});},'Save profile — do not push');
+  }
+  box.prepend(button('Create broader settings profile',()=>form(),'primary'));
+  async function load(page=1){try{const data=await api(`/api/preference-profiles?page=${page}&search=${encodeURIComponent(search.value)}`);if(epoch!==state.epoch)return;rules=data.rules;result.replaceChildren(table(['Settings profile','Workspace','Version','Fields','Actions'],data.items.map(p=>{const a=el('div',null,'actions');a.append(button('Edit profile',()=>form(p)),button('Archive profile',async()=>{if(confirm('Archive this profile? Existing device policy stays unchanged until explicitly replaced.')){try{await api(`/api/preference-profiles/${p.id}`,{name:p.name,values:p.values,expected_version:p.version,archived:true});await load(page);}catch(e){toast(e.message);}}}));return[p.name,p.tenant_name,p.version,Object.keys(p.values).length,a];})),pagination(data,load));}catch(e){result.replaceChildren(el('p',e.message+' Apply database upgrade011 first.','error'));}}
+  await load();
+}
+async function preferencesPanel(d,parent,isCurrent,reload) {
+  const box=panel('Effective settings profiles and device/profile overrides');parent.append(box);
+  box.append(el('p','Each value shows its origin. Explicit device/profile overrides win over a base profile. Local changes are detected; a stale preview is rejected. Clearing management restores the underlying local/Cloud choice only where it has not been changed locally. Managed overlays do not propagate through Cloud to other devices. UI/audio observers may apply immediately; no forced player restart.','notice'));
+  box.append(el('p','Audio/subtitle/player preferences use existing compatible/VOD player settings, not the embedded Live TV engine’s independent audio controls. Other fields follow existing Home/clock/UI settings reads. Saving confirms stored values, not that an active player has consumed them yet. Live TV pre-buffer has its own device-wide control above.','hint'));
+  const read=button('Read expanded effective settings',()=>queue(d,'get_preferences').catch(e=>toast(e.message)));read.disabled=d.policy!=='active';box.append(read,button('Refresh expanded settings results',reload));
+  let data,profiles;try{[data,profiles]=await Promise.all([api(`/api/devices/${d.id}/preferences`),api('/api/preference-profiles?tenant_id='+encodeURIComponent(d.tenant_id))]);}catch(e){box.append(el('p',e.message+' Apply database upgrade011 first.','error'));return;}if(!isCurrent())return;
+  if(!data.snapshot){box.append(el('p','No expanded snapshot yet. Request one from the open app.','hint'));return;}
+  const doc=data.snapshot.document;
+  let editor=state.preferenceEditors.get(d.id);
+  if(!editor||(!editor.dirty&&!editor.busy&&editor.snapshot!==data.snapshot.command_id)){editor={snapshot:data.snapshot.command_id,preset:doc.base_preset_id,overrides:{...doc.overrides},dirty:false,preview:null};state.preferenceEditors.set(d.id,editor);}
+  box.append(el('p','Snapshot received: '+date(data.snapshot.created_at)+' · profile '+doc.profile_ref.slice(0,12),'subtle'));
+  box.append(el('p',doc.base_preset_id?`Applied base reference ${doc.base_preset_id.slice(0,12)} · version ${doc.base_version}. Template edits do not update this device automatically.`:'No base profile currently applied.','hint'));
+  if(editor.snapshot!==data.snapshot.command_id)box.append(el('p','A newer read is available. Discard this local draft to adopt it before previewing.','notice'));
+  let previewButton=null;function markDirty(){editor.dirty=true;if(previewButton)previewButton.disabled=d.policy!=='active';}
+  box.append(button('Discard settings draft / adopt latest read',()=>{if(!editor.dirty||confirm('Discard this local settings draft? No device settings will change.')){state.preferenceEditors.delete(d.id);reload();}}));
+  const base=el('select');base.setAttribute('aria-label','Base settings profile');const options=[['','No base profile — underlying local values'],...profiles.items.map(p=>[p.id,`${p.name} · v${p.version}`])];if(editor.preset&&!options.some(([id])=>id===editor.preset))options.push([editor.preset,'Retired/unavailable base — choose an active profile or clear it']);for(const[value,label]of options){const o=el('option',label);o.value=value;base.append(o);}base.value=editor.preset;base.disabled=!!editor.preview||!!editor.busy;base.onchange=()=>{editor.preset=base.value;markDirty();};box.append(el('label','Base settings profile'),base);
+  box.append(table(['Field (active profile)','Effective value','Origin','Explicit device/profile override'],Object.entries(data.rules).map(([key,choices])=>{const select=el('select');select.setAttribute('aria-label','Override '+key);for(const[value,label]of [['','No explicit override / reset'],...choices.map(v=>[v,v])]){const o=el('option',label);o.value=value;select.append(o);}select.value=editor.overrides[key]||'';select.disabled=!!editor.preview||!!editor.busy;select.onchange=()=>{if(select.value==='')delete editor.overrides[key];else editor.overrides[key]=select.value;markDirty();};return[key.replaceAll('_',' '),doc.values[key],String(doc.origins[key]).replaceAll('_',' '),select];})));
+  const preview=button('Preview effective settings changes',async()=>{if(editor.busy)return;editor.busy=true;box.querySelectorAll('button,select').forEach(n=>{n.disabled=true;});try{const result=await api(`/api/devices/${d.id}/preferences/preview`,{snapshot_id:editor.snapshot,base_preset_id:editor.preset,overrides:editor.overrides});if(state.preferenceEditors.get(d.id)===editor)editor.preview=result;}catch(e){if(isCurrent())toast(e.message);}finally{editor.busy=false;if(isCurrent())await reload();}});preview.disabled=!!editor.preview||!!editor.busy||!editor.dirty||d.policy!=='active';previewButton=preview;box.append(preview);
+  if(editor.preview){box.append(el('p',editor.preview.warning,'notice'),table(['Setting','Current','After apply','Origin'],editor.preview.changes.map(r=>[r.field,r.current,r.next,r.origin])));const apply=button('Push reviewed settings policy',async()=>{if(!confirm('Apply this complete reviewed base/override policy to the selected device/profile? Some UI/audio preferences can change immediately. Unrelated preferences, activation and update policy stay untouched.'))return;try{await queue(d,'apply_preferences',{draft_id:editor.preview.id});state.preferenceEditors.delete(d.id);await reload();}catch(e){toast(e.message);}},'primary');apply.disabled=d.policy!=='active';box.append(apply,button('Cancel settings preview',()=>{editor.preview=null;reload();}));}
+}
+async function supportPanel(d,parent,isCurrent,reload) {
+  const box=panel('Private support history / customer-consented panel capture');parent.append(box);
+  box.append(el('p','Request a redacted support bundle with up to 128 fixed-code events and app diagnostics. No raw logcat, URLs, headers or credentials. Panel captures require the customer’s one-time foreground consent within 20 seconds; only a dedicated safe support panel is captured—not the current page, TV video, account screens or other apps. Android updates must be idle.','notice'));
+  for(const[kind,label]of [['get_support_bundle','Request redacted support bundle'],['capture_app_screen','Request consented support-panel image']]){const b=button(label,()=>{if(kind==='capture_app_screen'&&!confirm('Ask the customer to share one safe app support panel? They may decline; there is no hidden/full-device/video capture.'))return;queue(d,kind).catch(e=>toast(e.message));});b.disabled=d.policy!=='active'||!d.capabilities.includes(kind);box.append(b);}
+  box.append(button('Refresh private support results',reload));
+  try{const data=await api(`/api/devices/${d.id}/support`);if(!isCurrent())return;box.append(el('p',data.retention,'hint'),table(['Received','Artifact','Bytes','Expires','Private download'],data.items.map(r=>{const link=el('a',r.kind==='panel'?'Download consented panel PNG':'Download redacted JSON bundle');link.href=`/api/devices/${d.id}/support/${r.id}/download`;link.setAttribute('download','');return[date(r.created_at),r.kind,r.bytes,date(r.expires_at),link];})));}catch(e){if(isCurrent())box.append(el('p',e.message+' Apply database upgrade012 first.','error'));}
 }
 async function layoutTemplatesPanel(main, epoch) {
   const p = panel('Playlist/category layout templates', el('p', 'Organize a complete source in a device’s Categories draft editor, then Save as layout template. Templates match exact full category names, not device-specific IDs. Applying a template only edits the target draft until Push.', 'subtle'));
@@ -325,10 +367,65 @@ async function layoutDraftPanel(d, body, isCurrent, goCommands) {
   try { const data = await api(`/api/devices/${d.id}/category-layout`); if (!isCurrent()) return; ingest(data); draw(); schedule(); } catch (e) { if (isCurrent()) panelNode.append(el('p', e.message + ' Apply the database upgrade under Enrollments first.', 'error')); }
 }
 async function queue(device, kind, payload = {}) {
-  if (['clear_cache', 'restart_app'].includes(kind) && !confirm('Request this app action? It may interrupt playback and can only run when the app is connected. Clear cache must preserve login, favourites and saved guides.')) return;
+  if (kind === 'clear_cache' && !confirm('Clear only disposable image and ordinary HTTP response caches? Login, profiles, favourites, saved guides, enrollment, update files and active playback buffers are preserved. Caches may refill immediately.')) return;
+  if (kind === 'restart_app' && !confirm('Request a foreground app-screen reopen? This interrupts viewing but is NOT a process/device reboot or a guaranteed remote launch. The app must be resumed and updates idle. Retries never replay it; cooldown is five minutes.')) return;
   const fingerprint = JSON.stringify([device.id, kind, payload]); const key = requestKeys.get(fingerprint) || uuid(); requestKeys.set(fingerprint, key);
   try { await api(`/api/devices/${device.id}/commands`, { kind, payload }, { 'Idempotency-Key': key }); requestKeys.delete(fingerprint); toast('Action queued—not yet executed.'); await route(); }
   catch (error) { if (error.status && error.status < 500) requestKeys.delete(fingerprint); throw error; }
+}
+async function sourcesPanel(d, body, isCurrent, reload) {
+  const box = panel('Playlist sources — local draft and one guarded push'); body.append(box);
+  box.append(el('p', 'Edit the whole source set locally. URLs, portal MACs and credentials are write-only and never read back. The verified activation source stays first with unchanged account credentials. Additional M3U/Xtream/Stalker sources, names, enabled state, order and guides can be edited. Source changes can interrupt viewing and make saved favourites unavailable, but good backup/guide history is retained.', 'notice'));
+  box.append(el('p','Keep at least one M3U/Xtream source enabled; the app’s legacy fallback is not changed. Use canonical M3U/xmltv URLs and URL-safe Xtream replacement credentials. The app refuses targets it would rewrite before any mutation. Profile source edits follow existing IPTV Cloud sync when enabled.','hint'));
+  const actions = el('div', null, 'actions');
+  const read=button('Read fresh sources from app', () => queue(d, 'get_sources').catch(e => toast(e.message)), 'primary');read.disabled=d.policy!=='active';
+  actions.append(read, button('Refresh source results', reload), button('Refresh playlist',()=>queue(d,'refresh_playlist').catch(e=>toast(e.message))),button('Reload EPG',()=>queue(d,'reload_epg').catch(e=>toast(e.message)))); box.append(actions);
+  let history; try { history = await api(`/api/devices/${d.id}/sources`); } catch(e) { box.append(el('p', e.message + ' Apply database upgrade010 first.', 'error')); return; } if (!isCurrent()) return;
+  box.append(el('p', history.notice, 'hint'));
+  if(history.commands?.length)box.append(table(['Source action','State','Result'],history.commands.map(c=>[c.kind.replaceAll('_',' '),badge(c.status),c.result?.summary||'Waiting for app — not yet applied'])));
+  const latest = history.items.find(r => ['read', 'confirmation'].includes(r.reason)) || history.items[0];
+  if (!latest) { box.append(el('p', 'No private source snapshot yet. Request a read while the app is open.', 'hint')); return; }
+  let editor = state.sourceEditors.get(d.id);
+  async function adopt() { const fresh = await api(`/api/devices/${d.id}/sources/${latest.id}`); if (!isCurrent()) return; editor = { id: latest.id, entries: fresh.entries, dirty: false, preview: null }; state.sourceEditors.set(d.id, editor); }
+  if (!editor || (!editor.dirty && !editor.preview && !editor.busy && editor.id !== latest.id)) await adopt(); if (!isCurrent() || !editor) return;
+  if (editor.id !== latest.id) box.append(el('p', 'A newer app read exists. Your local draft is retained; discard it explicitly to load the newer base.', 'notice'));
+  box.append(button('Discard draft / load latest source read', async () => { if (!editor.dirty || confirm('Discard this local draft and secret replacements? Device configuration will not change.')) { state.sourceEditors.delete(d.id); await reload(); } }));
+  const secretKeys = ['replace_url','replace_mac','replace_guides','xtream_host','xtream_username','xtream_password'];
+  async function requestPreview(input){if(editor.busy)return;editor.busy=true;box.querySelectorAll('button').forEach(b=>{b.disabled=true;});try{const result=await api(`/api/devices/${d.id}/sources/preview`,input);if(state.sourceEditors.get(d.id)!==editor)return;editor.preview=result;for(const row of editor.entries)for(const key of secretKeys)delete row[key];}catch(e){if(isCurrent())toast(e.message);}finally{editor.busy=false;if(isCurrent())await reload();}}
+  function clean(row) { const copy = { kind: row.kind, name: row.name, enabled: row.enabled }; if (row.ref) copy.ref = row.ref; for (const key of secretKeys) if (key in row) copy[key] = row[key]; return copy; }
+  function edit(row = null, kind = 'm3u') {
+    kind = row?.kind || kind;
+    const schema = [{ key: 'name', label: 'Source name', value: row?.name, max: 80 }, { key: 'enabled', label: 'Enabled', value: row?.enabled === false ? 'no' : 'yes', options: [['yes','Enabled'],['no','Disabled']] }];
+    if (!row?.canonical) schema.push({ key: 'url', label: kind === 'stalker' ? 'New/replacement portal URL (write-only)' : 'New/replacement M3U URL (write-only)', type: 'password', min: 0, max: 4096, required: false, hint: 'Blank preserves the existing value. For Xtream, use the host/username/password fields instead.' });
+    if (kind === 'stalker') schema.push({ key: 'mac', label: 'New/replacement portal MAC (write-only)', type: 'password', min: 0, max: 17, required: false });
+    if (kind === 'm3u') {
+      if (!row?.canonical) schema.push(...[['host','Xtream host'],['username','Xtream username'],['password','Xtream password']].map(([key,label]) => ({ key, label: label + ' (write-only)', type:'password', min:0, max:key==='host'?4096:256, required:false })));
+      schema.push({ key:'guide_action',label:'Guide URLs',options:[['keep','Keep existing guide preferences'],['replace','Replace guide URLs (empty clears only this source’s guide preference)']] }, {key:'guides',label:'Replacement guide URLs, one per line (write-only)',type:'textarea',max:41000,required:false});
+    }
+    modal(row ? 'Edit source in local draft' : 'Add source to local draft', schema, async v => {
+      const next = { ...(row || {kind, canonical:false}), name:v.name, enabled:v.enabled==='yes' };
+      if (v.url) next.replace_url = v.url;
+      if (v.mac) next.replace_mac = v.mac;
+      if (v.host || v.username || v.password) { if (!v.host || !v.username || !v.password || v.url) throw new Error('Supply all Xtream fields OR an M3U URL, not both.'); next.xtream_host=v.host; next.xtream_username=v.username; next.xtream_password=v.password; }
+      if (v.guide_action==='replace') next.replace_guides=v.guides.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+      if (row) editor.entries[editor.entries.indexOf(row)] = next; else if(kind==='m3u'){const firstPortal=editor.entries.findIndex(r=>r.kind==='stalker');editor.entries.splice(firstPortal<0?editor.entries.length:firstPortal,0,next);} else editor.entries.push(next);
+      editor.dirty=true; editor.preview=null;
+    }, 'Save local source edit');
+  }
+  const rows = editor.entries.map((row,index) => {
+    const a = el('div',null,'actions'); const locked=!!editor.preview||!!editor.busy;
+    const change=button('Edit',()=>edit(row)); change.disabled=locked; a.append(change);
+    for (const [label,delta] of [['Move up',-1],['Move down',1]]) { const move=button(label,()=>{const to=index+delta;[editor.entries[index],editor.entries[to]]=[editor.entries[to],editor.entries[index]];editor.dirty=true;reload();}); move.disabled=locked||row.canonical||index+delta<0||index+delta>=editor.entries.length||editor.entries[index+delta]?.canonical||editor.entries[index+delta]?.kind!==row.kind; a.append(move); }
+    const remove=button('Remove from draft',()=>{if(confirm('Remove this source from the local draft? It will only change the app after a reviewed push.')){editor.entries.splice(index,1);editor.dirty=true;reload();}});remove.disabled=locked||row.canonical;a.append(remove);
+    return [index+1,cellName(row.name,row.canonical?'Verified activation source — account protected':row.kind),row.enabled?'Enabled':'Disabled',secretKeys.some(k=>k in row)?'Replacement supplied (private)':'Existing secrets preserved',a];
+  });
+  box.append(table(['Order','Source','Status','Private values','Local actions'],rows));
+  for (const kind of ['m3u','stalker']) { const add=button(kind==='m3u'?'Add M3U / Xtream source':'Add Stalker portal',()=>edit(null,kind));add.disabled=!!editor.preview||!!editor.busy;box.append(add); }
+  const preview=button('Preview complete source replacement',()=>requestPreview({snapshot_id:editor.id,entries:editor.entries.map(clean)}));preview.disabled=!!editor.preview||!!editor.busy||!editor.dirty||d.policy!=='active';box.append(preview);
+  if(editor.preview){box.append(el('p',editor.preview.warning,'notice'),table(['Preview source','Kind','Enabled','Identity'],editor.preview.entries.map(r=>[r.name,r.kind,r.enabled?'Yes':'No',r.identity_changed?'New/restored source identity — no guessed favourites migration':'Retained'])));
+    const push=button('Push reviewed source replacement',async()=>{if(!confirm('REPLACE the complete selected profile source set? Removed/disabled sources can stop viewing. A private safety checkpoint must succeed before one atomic write. Existing guide/favourite history is retained; this is not a provider-health check.'))return;try{await queue(d,'apply_sources',{draft_id:editor.preview.id});editor.dirty=false;editor.preview=null;await reload();}catch(e){toast(e.message);}},'primary');push.disabled=d.policy!=='active'||!d.capabilities.includes('apply_sources');box.append(push,button('Cancel preview (re-enter secret replacements to edit again)',()=>{editor.preview=null;reload();}));
+  }
+  box.append(panel('Private source checkpoints / guarded rollback',table(['Captured','Reason','Protection','Action'],history.items.slice(0,20).map(r=>[date(r.created_at),r.reason,r.protected?'Initial protected':'Rolling',button('Preview rollback to this version',async()=>{if(editor.busy||!confirm('Preview rollback using this checkpoint? A fresh current source read is required; no device change happens yet.'))return;await requestPreview({snapshot_id:editor.id,rollback_id:r.id});})]))));
 }
 async function favouritesPanel(d, body, isCurrent, reload) {
   const box = panel('Favourites backups & recovery'); body.append(box);
@@ -470,13 +567,24 @@ async function devicePage(id, epoch) {
       try { await categoryPanel(d, body, () => epoch === state.epoch && tabs.querySelector('[data-tab="Categories"]').classList.contains('active'), () => select('Commands')); } catch (e) { toast(e.message); }
     } else if ((name === 'Settings' || name === 'Logs') && d.capabilities.includes(name === 'Settings' ? 'get_settings' : 'get_diagnostics')) {
       const kind = name === 'Settings' ? 'get_settings' : 'get_diagnostics';
-      const p = panel(name === 'Settings' ? 'Read-only active-profile settings' : 'Basic app diagnostics — no logs or screenshots'); body.append(p);
+      const p = panel(name === 'Settings' ? 'Read-only active-profile settings' : 'Redacted app diagnostics — no logs or screenshots'); body.append(p);
+      if (name === 'Logs') p.append(el('p', 'Memory and network fields are app-reported observations, not a provider connection test. “Validated” means Android validated the active network; it does not prove a playlist or stream works. Unknown or permission-denied values are not healthy results. Older apps return basic diagnostics only. No extra permission is requested, and no addresses, Wi-Fi names, credentials or raw logs are collected.', 'notice'));
       const request = button('Request fresh snapshot', () => queue(d, kind).catch(e => toast(e.message)), 'primary'); request.disabled = d.policy !== 'active'; p.append(request, el('p', 'The app must be open to respond. This snapshot reports one active profile at execution time, not every profile. Refresh this tab after the next app check-in.', 'hint'));
       try {
         const commands = await api(`/api/devices/${id}/commands`); if (epoch !== state.epoch || !tabs.querySelector(`[data-tab="${name}"]`).classList.contains('active')) return;
-        const latest = commands.items.filter(c => (kind === 'get_settings' ? ['get_settings', 'set_settings'].includes(c.kind) : c.kind === kind) && c.status === 'succeeded' && c.result?.snapshot).sort((a, b) => String(b.finished_at).localeCompare(String(a.finished_at)))[0];
+        const latest = commands.items.filter(c => (kind === 'get_settings' ? ['get_settings', 'set_settings', 'set_live_buffer'].includes(c.kind) : c.kind === kind) && c.status === 'succeeded' && c.result?.snapshot).sort((a, b) => String(b.finished_at).localeCompare(String(a.finished_at)))[0];
         if (latest) p.append(el('p', 'Snapshot received: ' + date(latest.finished_at), 'subtle'), detailRows(Object.entries(latest.result.snapshot).map(([key, value]) => [key.replaceAll('_', ' '), String(value)])));
         else p.append(el('p', 'No successful snapshot in the latest command-history page. Nothing has been fetched until you request it.', 'subtle'));
+        if (name === 'Settings' && d.capabilities.includes('set_live_buffer')) {
+          const snapshot = latest?.result.snapshot;
+          p.append(el('p', 'Live TV pre-buffer is a device-local setting: Off preserves current fast startup; 2, 5 or 10 seconds waits for more video before playback/recovery. Applies on the next standard live channel tune (including mpv fallback), not the currently playing stream, DRM, catch-up or movies. Larger values may increase startup/live delay; memory limits and provider behaviour can prevent reaching the target. It cannot fix sustained insufficient bandwidth or a bad provider.', 'notice'));
+          if (snapshot?.live_buffer_revision) {
+            const editBuffer = button('Adjust Live TV pre-buffer', () => modal('Device Live TV pre-buffer', [{ key: 'prebuffer_seconds', label: 'Pre-buffer amount', value: String(snapshot.live_prebuffer_seconds), options: [['0', 'Off — current fast-start default'], ['2', '2 seconds'], ['5', '5 seconds'], ['10', '10 seconds']], hint: 'Try 2 seconds first. This amount of video must be buffered; it is not a guaranteed wall-clock wait. Saving does not restart the current stream.' }], async v => {
+              if (!confirm('Save this device’s Live TV pre-buffer for its next standard live channel tune? Other playback settings and the current stream stay unchanged.')) throw new Error('No buffer change queued.');
+              await queue(d, 'set_live_buffer', { profile_ref: snapshot.profile_ref, expected_revision: snapshot.live_buffer_revision, prebuffer_seconds: v.prebuffer_seconds });
+            }, 'Queue pre-buffer setting')); editBuffer.disabled = d.policy !== 'active'; p.append(editBuffer);
+          } else p.append(el('p', 'Request a fresh settings snapshot from app112 before changing the playback buffer.', 'hint'));
+        }
         if (name === 'Settings' && d.capabilities.includes('set_settings')) {
           const snapshot = latest?.result.snapshot;
           if (!snapshot?.settings_revision) { p.append(el('p', 'Request a fresh settings snapshot before editing. Updates target its profile and reject a changed local sort order.', 'hint')); }
@@ -490,7 +598,11 @@ async function devicePage(id, epoch) {
             }
           }
         }
+        if(name==='Settings'&&d.capabilities.includes('get_preferences'))await preferencesPanel(d,p,()=>epoch===state.epoch&&tabs.querySelector('[data-tab="Settings"]').classList.contains('active'),()=>select('Settings'));
+        if(name==='Logs'&&d.capabilities.includes('get_support_bundle'))await supportPanel(d,p,()=>epoch===state.epoch&&tabs.querySelector('[data-tab="Logs"]').classList.contains('active'),()=>select('Logs'));
       } catch (e) { toast(e.message); }
+    } else if (name === 'Playlists' && d.capabilities.includes('get_sources')) {
+      await sourcesPanel(d,body,()=>epoch===state.epoch && tabs.querySelector('[data-tab="Playlists"]').classList.contains('active'),()=>select('Playlists'));
     } else if (name === 'Playlists' && d.capabilities.includes('refresh_playlist')) {
       const actions = el('div', null, 'actions');
       for (const [kind, label] of [['refresh_playlist', 'Refresh playlist'], ['reload_epg', 'Request guide refresh']]) {

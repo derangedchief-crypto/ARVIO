@@ -1,4 +1,134 @@
-# Device management 0.7.0 — validation
+# Device management 0.8.0 — validation
+
+## Complete managed-control increment / client112
+
+The release-gating results below are recorded after the final combined rerun.
+Physical owner-device acceptance is separate and remains outstanding.
+
+- **142 real MariaDB/service/HTTP checks passed**, zero failures.
+- **26 browser checks passed**, zero uncaught browser errors.
+- **170 Android JVM/Robolectric checks passed**, zero failures/errors/skips;
+  internal-test and instrumentation Kotlin compilation passed.
+- **19 activation-worker regression tests and6 draft-helper tests passed**;
+  package contract, PHP/JS syntax, earlier-migration immutability and diff checks passed.
+- These are local/synthetic tests, NOT a physical-device pilot or a guarantee of
+  improved customer-stream buffering, actual process restart or OEM behavior.
+
+### Implemented and exercised safeguards
+
+- Maintenance uses image/HTTP cache-owner APIs only. No recursive directory clear,
+  source purge, guide deletion, credentials/profile reset, update-file removal or
+  playback-buffer clearing. Owner failures are independently reported. Foreground
+  reopening is consumed before ACK/effect, never replayed on duplicate delivery,
+  blocks while updates are active, and has a five-minute persisted cooldown. It
+  reopens the activity/task, not the Android process or device.
+- Source snapshots/previews/checkpoints are encrypted server-side. Browser views
+  contain opaque refs/labels/counts only; replacements are write-only, password
+  controls are cleared on modal close and pending drafts freeze while previewing.
+  Actual source credentials/MACs inside labels are masked without rewriting an
+  unchanged private label. Credential/topology edits require nonsensitive labels
+  where keeping a private label could expose an old credential.
+- One source push requires a current device lease, source/profile/account revision,
+  successful safety capture, atomic explicit-profile DataStore CAS and exact
+  uploaded confirmation. Native URL/guide normalization mismatches are refused
+  BEFORE mutation. Canonical activation identity stays first/protected. At least
+  one M3U source remains enabled because the legacy fallback is not changed.
+- URL/credential/MAC replacement creates new supplementary source IDs; old
+  favourite/category IDs cannot silently rebound to unrelated channels. Explicit
+  compatible checkpoint restoration can restore historical IDs, and legacy empty-
+  playlist storage shape is preserved instead of forcing a migration. Protected
+  initial source checkpoints survive command-log retention. Existing guides and
+  favourites history are not purged; changed-source recovery is not guessed.
+- Broader settings use a fixed typed inventory, versioned workspace base profiles,
+  explicit device/profile override precedence and actual effective-value revisions.
+  Source/credential/update/entitlement/arbitrary preference keys are rejected.
+  Clearing policy preserves newer local values. Cloud exports strip device overlays;
+  imports update underlying choices and reapply the overlay in ONE transaction.
+  Profile-player preferences do not claim to control the embedded live engine's
+  independent audio settings; consumers/application timing are listed in README.
+- Support history accepts fixed event codes/timestamps and closed diagnostic fields
+  only. No raw exceptions/logcat/URLs/headers/credentials or channel/profile names.
+  Events are device/account scoped; the snapshot identifies its active profile.
+  One-time consent captures only a dedicated safe app panel. Decline, expiry,
+  changed eligibility, backgrounding, profile/account changes and updater activity
+  refuse it. No full-device/current-page/video capture or new OS permission.
+- Private support artifacts are encrypted, rate/count/retention bounded and every
+  download is tenant-authorized/audited/no-store. PNG checks bound encoded and
+  decoded bytes/pixels, CRCs, chunks, zlib stream length and row format; text,
+  animation, trailing content and oversized payloads are rejected. PHP zlib is
+  checked in CLI preflight. No artifacts are placed under public/.
+- Real HTTP cases cover new source/profile/override/support routes, CSRF, scoped
+  bearer leases, anonymous/foreign downloads, scalar/array injection and secret-free
+  browser responses. Browser source/policy/support receipts are explicitly driven
+  by SYNTHETIC fixtures, not presented as Android restoration/restart proof.
+- New migrations010–012 only;001–009 unchanged. Manifest permissions, activation
+  worker, updater code and signed publication workflows unchanged.112 publication
+  and live installation require separate authorization; main/customer untouched.
+
+### Owner-device acceptance still required
+
+Use only an owner-approved test device/account after website/migrations are installed
+and112 is separately published. First verify a protected good favourites backup
+and source checkpoint. Compare Off/2/5/10 on the SAME affected stream/network; test
+both fast engine and mpv fallback, low-RAM/high-bitrate cases, channel changes and
+normal Back. A larger buffer is not proof of a provider/network fix.
+
+Verify image/HTTP cleanup preserves logins, profiles, current playback, saved guides,
+favourites and update files. Request one foreground reopen, verify actual app opening
+without loops/data loss, and confirm another request within five minutes is refused.
+Do not claim all process services restarted or OEM background launching succeeded.
+
+On an owner-controlled supplementary source, test rename/order/visibility/guide edits,
+URL replacement/new source identity, stale preview conflict and explicit checkpoint
+rollback without canonical credential changes. Verify retained guides/favourites
+and deliberately unavailable old-source IDs rather than guessed migration.
+
+Apply a base settings profile plus one override, verify stored values/origins and the
+correct consumer/timing, edit locally, then reset without overwriting that local
+change. Test Cloud import/export with another owner test installation to verify
+that device overrides do not leak. Templates must never auto-push on edit.
+
+Request a support bundle; inspect the authenticated download for fixed codes only.
+Decline/expire/background a panel request and verify NO image/repeated prompt.
+Accept a fresh request and verify only the safe panel is included. Test session-
+less/former-reseller downloads fail, retention removes expired artifacts, and
+unassigning reseller management does not block ordinary app viewing.
+
+## Earlier buffer/network diagnostics slice
+
+
+- **128 real MariaDB/service/HTTP cases passed**, zero failures. New cases cover
+  closed diagnostics enums/counts, missing/partial payload rejection, impossible
+  heap counts, denied/unknown network states, private SSID/address/log rejection,
+  leased receipt enforcement and reseller isolation after device unassignment.
+- Playback buffer commands are capability gated and accept ONLY0/2/5/10 seconds.
+  Unknown fields/arbitrary byte caps are rejected. A success requires a typed
+  settings receipt with the requested profile and amount. Queueing does not claim
+  saved/applied settings. Old basic snapshots remain accepted for111 compatibility.
+- **23 browser checks passed**, including redacted diagnostic fields only after
+  a leased synthetic receipt, Android-validation caveats, Off default, bounded
+  pre-buffer selection/confirmation and a saved amount displayed after a matching
+  receipt. Synthetic fixtures are NOT physical Android playback/buffering proof.
+- Website0.8.0 supports112; no migration or worker patch in this increment.
+  Existing008/009 still apply when upgrading from0.6. Update ZIP preserves config
+  and private storage; source/signing/update workflows and manifest permissions
+  are unchanged.112 publication remains separate authorization.
+
+The existing OwnTV1.0.68 binary API accepts SourceEntity.livePrerollSecs and carries
+it into fast-engine and mpv LiveRequest. This increment uses that supported field,
+not reflection, a dependency upgrade or a new player. Off remains0; decoder,
+surface ownership, original Back, provider resolution and engine routing are
+retained. Memory safety caps remain with the existing engines. The stored choice
+is read once per new standard live tune and does not observe/rebuild active video.
+DRM, catch-up and VOD paths are unchanged. Higher values intentionally trade startup/
+live delay for headroom and may not be achievable for every feed/device.
+
+Physical pilot still required: compare Off/2/5/10 on the same affected channel/
+network/device, including repeated stalls, low-RAM/high-bitrate feeds, channel
+switches and mpv fallback. No measured startup/continuity improvement or diagnosed
+root cause is claimed from local tests. Provider/network problems may remain.
+
+## Previous favourites increment (0.7.0)
 
 ## Favourites recovery and verified line usernames
 
