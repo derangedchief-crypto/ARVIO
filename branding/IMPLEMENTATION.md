@@ -1,5 +1,19 @@
 # Storage, reseller branding and trials — development progress
 
+## Latest site delivery — 0.13.1
+
+Normal testing114/430 from50cc240 is published and its downloaded package/version/
+central signer/GitHub digest verified (run40031882645). No existing workflow changed.
+User now requests the site update followed by a separate reseller test APK. Live
+website status was read-only checked at0.10.3; this session cannot drive aaPanel or
+apply files/migrations on that host. The update ZIP preserves private configuration/
+storage/keys, includes migrations through017 and adds OWNER-only browser download of
+immutable brand inputs, so the first actual reseller name/artwork/identity can be
+supplied without an SSH export.184 DB/37 browser checks and package preservation pass.
+No website/worker installation, live trial or real reseller APK is claimed completed.
+The isolated centrally signed reseller-build adapter remains pending; normal testing
+publication must not be reused to overwrite its channel with a different package.
+
 ## In-progress broad-compatible signup integration (not published)
 
 USER CORRECTION: do not change/add GitHub workflows. The extra builder workflow was

@@ -5,7 +5,16 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current development milestone — 0.13.0 (not deployed)
+## Current update — 0.13.1 (deployment not yet confirmed)
+
+Adds owner-only **Download build inputs** to the immutable branding queue, so the
+operator can download a pinned name/artwork bundle without a server terminal.
+Reseller/anonymous requests are rejected; suspended/cancelled builds are not exported,
+and no panel/worker/signing credentials are included. All public trial rollout remains
+off. See deploy/UPDATE-0.13.1.txt for the existing-site update from0.10.3 and preparation
+of the reseller test inputs. Existing config.php/private storage/keys are preserved.
+
+## Previous development milestone — 0.13.0
 
 The user's correction preserves ALL existing GitHub workflows. The proposed extra
 builder workflow is withdrawn; the separate branded runner adapter remains deferred.

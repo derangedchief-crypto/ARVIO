@@ -71,12 +71,19 @@ final class AppBrands
             $this->auth->audit($actor,'brand.build_requested',$id,$t['id'],['version'=>(int)$brand['version']]);return ['id'=>$id,'state'=>'waiting_builder'];
         });
     }
-    /** Owner CLI export only. Inputs contain no signing secrets or update URLs. */
+    /** Internal export for the owner download/CLI and restricted central runner.
+     * Inputs contain no signing secrets or update URLs. */
     public function export(string $buildId):array {
         $this->ready();$row=$this->db->one('SELECT j.*,b.tenant_id,b.enabled FROM app_brand_builds j JOIN app_brands b ON b.id=j.brand_id WHERE j.id=?',[Input::id($buildId)]);if(!$row||!$row['enabled']||!in_array($row['state'],['waiting_builder','building','build_failed','ready_to_publish'],true))throw new Problem(404,'Build not available.');
         $t=$this->db->one("SELECT t.id FROM tenants t JOIN panel_resellers r ON r.tenant_id=t.id WHERE t.id=? AND t.status='active'",[$row['tenant_id']]);if(!$t)throw new Problem(409,'Workspace suspended or reseller link removed.');$manifest=json_decode($row['manifest'],true,12,JSON_THROW_ON_ERROR);$images=[];
         foreach($manifest['assets'] as $role=>$asset){$a=$this->db->one('SELECT image FROM app_brand_assets WHERE id=? AND tenant_id=?',[$asset['id'],$row['tenant_id']]);if(!$a||!hash_equals($asset['sha256'],hash('sha256',$a['image'])))throw new Problem(409,'Build image integrity failed.');$images[$role]=base64_encode($a['image']);}
         return ['manifest'=>$manifest,'images'=>$images];
+    }
+    public function downloadInputs(array $actor,string $buildId):array {
+        Auth::owner($actor);$this->auth->limit('brand-input-download',$actor['id'],20,3600);$id=Input::id($buildId);$bundle=$this->export($id);
+        $brand=$this->db->one('SELECT tenant_id FROM app_brands WHERE id=?',[$bundle['manifest']['brand_id']]);
+        $this->auth->audit($actor,'brand.inputs_downloaded',$id,$brand['tenant_id'],['brand_version'=>$bundle['manifest']['brand_version']]);
+        return ['filename'=>'brand-input-'.$id.'.json','body'=>json_encode($bundle,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)];
     }
     public function cancelBuild(array $actor,string $id,array $input):array {
         $this->ready();Input::keys($input,[]);return $this->db->transaction(function()use($actor,$id):array {

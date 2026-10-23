@@ -1,4 +1,17 @@
-# Device management 0.13.0 builder/public-offer layer — validation
+# Device management 0.13.1 website delivery — validation
+
+## Website0.13.1 delivery increment
+
+Adds the owner-only build-input attachment route and download link. Service/HTTP
+cases enforce owner authentication, reject reseller/anonymous access, preserve exact
+pinned input bytes/schema and use a fixed server-generated JSON filename. Browser
+coverage downloads the file as owner, checks the original brand revision after later
+edits, verifies the name/artwork-only schema and confirms resellers have no link.
+Update ZIP omits live config.php/runtime storage/keys and includes ordered migrations
+through017. No GitHub workflow or Android source is changed in this site-only increment.
+Verified locally:184 DB/service/HTTP cases and37 browser workflows pass with zero
+failures/browser errors, including the actual attachment download. Package preservation,
+archive manifest hashes, migration inclusion and JavaScript syntax checks also pass.
 
 ## Central builder/public offer increment
 

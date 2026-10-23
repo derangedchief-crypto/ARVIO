@@ -1,0 +1,37 @@
+EXTREME CONTROL CENTER 0.13.1 — EXISTING SITE UPDATE
+
+Use Extreme-Control-Center-0.13.1-Update.zip, NOT the fresh-install ZIP.
+The live site was read-only checked at0.10.3 before this package was prepared.
+This file/package does not mean the live server has been updated.
+
+1. Back up your current website, database, private config.php and storage/.
+2. In aaPanel File Manager open the EXISTING application folder containing
+   config.php and public/. Upload/extract the UPDATE ZIP over that folder,
+   allowing code-file replacement. Do not extract inside public/ and do not
+   delete/re-create the site/database. Existing config.php/storage/keys are
+   excluded from the update payload and must be kept.
+3. Open the site and refresh the page. Sign in as owner. Open More ->
+   Enrollments & website upgrades -> Apply database upgrade. Confirm your
+   backup and let it apply ALL pending migrations in order (through017).
+   Apply them with the normal upgrade screen, not by manually reimporting SQL.
+4. Confirm the site footer shows0.13.1, no pending upgrades remain and your
+   existing customers/devices still appear. Existing maintenance cron stays.
+5. My app -> My app brand: select the actual VERIFIED reseller workspace,
+   enter the app name, upload loading image/in-app logo/launcher icon and Save.
+   Keep colours/signing/updater policy unchanged. One stable brand/reseller.
+6. Request build of saved version. As OWNER click Download build inputs on
+   that build row. Send the downloaded brand-input-<id>.json for the separate
+   reseller APK test. It contains pinned name/artwork/public build identity,
+   not panel/worker credentials. No server terminal/export command is needed.
+
+Keep public trial creation OFF for this phase. No new worker connection or
+config edit is needed just to save/export branding. The site ZIP does not deploy
+either worker or connect an unattended signing runner. The existing GitHub
+workflows are unchanged. Queued does not mean an APK has already been built.
+
+The separate branded APK must use OUR central signing and its own package/
+distribution, never replace the normal testing114 channel. The existing signed
+testing workflow publishes only the normal app; its isolated branded signing
+adapter is still pending. Do not use a debug-signed substitute or silently change
+the existing workflows. Actual trial activation needs separate worker setup
+and a deliberately authorized real-panel pilot later.

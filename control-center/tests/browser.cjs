@@ -437,6 +437,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByRole('button',{name:'Save brand',exact:true}).click();await page.getByRole('heading',{name:'Edit your existing app brand',exact:true}).waitFor();
     const savedBrand=await page.evaluate(async t=>(await(await fetch('/api/app-brand?tenant_id='+t)).json()).brand,ownerTenant);
     const buildResponse=page.waitForResponse(r=>r.url().endsWith('/api/app-brand/builds')&&r.request().method()==='POST',{timeout:10000});await page.getByRole('button',{name:'Request build of saved version',exact:true}).click();let buildReply;try{buildReply=await buildResponse;}catch(e){console.log('Brand action status:',await page.locator('#toast').textContent());throw e;}assert.equal(buildReply.status(),201,await buildReply.text());await page.getByText('Waiting for central builder',{exact:true}).waitFor();
+    assert.equal(await page.getByRole('link',{name:'Download build inputs',exact:true}).count(),0);
     await page.getByLabel('Branded app name',{exact:true}).fill('TEST Renamed North');await page.getByRole('button',{name:'Save brand',exact:true}).click();await page.waitForFunction(async t=>(await(await fetch('/api/app-brand?tenant_id='+t)).json()).brand.version===2,ownerTenant);
     const changedBrand=await page.evaluate(async t=>(await(await fetch('/api/app-brand?tenant_id='+t)).json()),ownerTenant);assert.equal(changedBrand.brand.id,savedBrand.id);assert.equal(changedBrand.brand.package_name,savedBrand.package_name);assert.equal(changedBrand.builds[0].brand_version,1);assert.equal(changedBrand.trial_creation_enabled,false);
     await page.screenshot({path:path.join(output,'app-brand-self-service-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:950});await page.locator('.sidebar').waitFor({state:'hidden'});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);await page.screenshot({path:path.join(output,'app-brand-self-service-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1000});
@@ -446,6 +447,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     // The preceding synthetic suite compresses hundreds of requests into a minute.
     // Respect the unchanged 300/min actor budget before the independent admin cases.
     await page.waitForTimeout(61000);
+    {
+      await page.evaluate(id=>{location.hash='branding/'+id;},credentials.brand_tenant_id);await page.getByRole('link',{name:'Download build inputs',exact:true}).waitFor();
+      const downloadPromise=page.waitForEvent('download');await page.getByRole('link',{name:'Download build inputs',exact:true}).click();const download=await downloadPromise;assert.match(download.suggestedFilename(),/^brand-input-[a-f0-9]{32}\.json$/);const bundle=JSON.parse(fs.readFileSync(await download.path(),'utf8'));assert.deepEqual(Object.keys(bundle),['manifest','images']);assert.equal(bundle.manifest.brand_version,1);assert.equal(bundle.manifest.app_name,'TEST North TV');assert.equal(bundle.manifest.package_name,'com.extreme.brand.b'+bundle.manifest.brand_id);assert.deepEqual(Object.keys(bundle.images).sort(),['icon_asset','loading_asset','logo_asset']);
+      done('owner downloads immutable build inputs in-browser without a server terminal; reseller export remains unavailable');
+    }
     {
       const trialsContext=await browser.newContext({viewport:{width:1440,height:1000}});const tpage=await trialsContext.newPage();tpage.on('pageerror',e=>errors.push(e.message));
       await tpage.goto(base);await tpage.getByLabel('Email address').fill(credentials.trial_email);await tpage.getByLabel('Password',{exact:true}).fill(credentials.trial_password);await tpage.getByRole('button',{name:'Sign in',exact:true}).click();await tpage.getByRole('heading',{name:'Operations overview',exact:true}).waitFor();

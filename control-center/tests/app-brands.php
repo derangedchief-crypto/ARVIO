@@ -36,4 +36,9 @@ function appBrandCases(array &$tests,ControlCenter\Application $app,array $owner
         $job=$app->appBrands->get($alpha,[])['builds'][0];problem(404,fn()=> $app->appBrands->cancelBuild($beta,$job['id'],[]));same('cancelled',$app->appBrands->cancelBuild($alpha,$job['id'],[])['state']);problem(404,fn()=> $app->appBrands->export($job['id']));
         $brand=$app->appBrands->get($alpha,[])['brand'];same('waiting_builder',$app->appBrands->requestBuild($alpha,['expected_version'=>(int)$brand['version']])['state']);
     };
+    $tests['only authenticated owner downloads pinned build inputs without server secrets']=function()use($app,$owner,$alpha,$beta,$http,$password):void {
+        $job=$app->appBrands->get($alpha,[])['builds'][0];$before=$app->appBrands->export($job['id']);problem(403,fn()=> $app->appBrands->downloadInputs($alpha,$job['id']));problem(403,fn()=> $app->appBrands->downloadInputs($beta,$job['id']));
+        $file=$app->appBrands->downloadInputs($owner,$job['id']);same('brand-input-'.$job['id'].'.json',$file['filename']);same($before,json_decode($file['body'],true));same(['manifest','images'],array_keys(json_decode($file['body'],true)));
+        $login=$http->request('POST','/api/login',['email'=>'owner@example.test','password'=>$password],[],'brand-export-owner');same(200,$login['status']);$route='/api/app-brand/builds/'.$job['id'].'/inputs';same(200,$http->request('GET',$route,null,[],'brand-export-owner')['status']);same(403,$http->request('GET',$route,null,[],'brand-alpha')['status']);same(401,$http->request('GET',$route,null,[],'brand-input-anonymous')['status']);
+    };
 }

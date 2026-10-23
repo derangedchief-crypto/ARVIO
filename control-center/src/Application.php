@@ -144,6 +144,7 @@ final class Application
         if($method==='POST'&&$path==='/api/app-brand/assets')Http::json($this->appBrands->upload($actor,Http::body(1500000)),201);
         if($method==='GET'&&preg_match('~^/api/app-brand/assets/([a-f0-9]{32})$~D',$path,$m)){$image=$this->appBrands->image($actor,$m[1]);header('Content-Type: '.$image['mime']);echo $image['image'];exit;}
         if($method==='POST'&&$path==='/api/app-brand/builds')Http::json($this->appBrands->requestBuild($actor,Http::body()),201);
+        if($method==='GET'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/inputs$~D',$path,$m)){$file=$this->appBrands->downloadInputs($actor,$m[1]);header('Content-Type: application/json; charset=utf-8');header('Content-Disposition: attachment; filename="'.$file['filename'].'"');echo $file['body'];exit;}
         if($method==='POST'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/cancel$~D',$path,$m))Http::json($this->appBrands->cancelBuild($actor,$m[1],Http::body()));
         if($method==='GET'&&$path==='/api/trial-policy')Http::json($this->trialPolicies->get($actor,$_GET));
         if($method==='POST'&&$path==='/api/trial-policy/catalog')Http::json($this->trialPolicies->refresh($actor,Http::body()));

@@ -1,4 +1,12 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.13.0 (CENTRAL BUILDER / PUBLIC OFFER PREPARATION)
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.13.1 (SITE UPDATE / OWNER BRAND-INPUT EXPORT)
+
+0.13.1 UPDATE — DEPLOYMENT NOT YET CONFIRMED
+See UPDATE-0.13.1.txt for the focused update instructions. Includes0.13 features
+and migrations014–017 after0.10.3, plus an OWNER-ONLY Download build inputs link.
+Update ZIP excludes config.php and initialized private storage/keys. Public trials
+remain OFF; existing workflows unchanged. Brand signing adapter is still deferred,
+not installed by the website ZIP. No worker deployment or panel writes in this stage.
+
 
 0.13.0 DEVELOPMENT INCREMENT — NOT LIVE
 Apply migrations016 and017 AFTER prior migrations. Keep the existing sole private
