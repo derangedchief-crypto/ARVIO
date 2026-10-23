@@ -1,4 +1,31 @@
-# Device management 0.8.0 — validation
+# Device management 0.9.0 — validation
+
+## Mobile / modern visual increment
+
+- **142 real database/service/HTTP checks and28 browser checks passed**, zero
+  failures/uncaught browser errors; all6 layout-draft helper checks also passed.
+- Chromium viewport checks cover320,390,768,1024 and1440px, theme restoration in a
+  second authenticated browser page, mobile record layouts, modal bounds/touch
+  targets, drawer focus/Escape/background inertness and page overflow.
+- Actual local desktop/device inventory was visually reviewed: desktop inventory
+  fits its1070px region without horizontal overflow;390px phone records remain
+  readable at390px page width. Wide editors scroll inside their own regions.
+- Package/config-preservation, JS syntax and diff checks passed. Android/worker
+  code and database migrations are unchanged by this increment; the prior170
+  Android/19 worker results below are not claimed as a new hardware run.
+
+Website-only changes; no Android/worker/SQL/API permission modifications. Existing
+functional validation below refers to the0.8/112 increment. The0.9 browser rerun
+also exercises drawer open/close/Escape/focus restoration, inert background,
+readable mobile device records,44px dialog buttons, light/dark persistence and
+page-width containment at320/390/768/1024/1440px. Existing complete-source drafts,
+guarded pushes/rollback, overrides, private support, authentication/tenant scope
+and literal text rendering remain part of the same real HTTP/browser suite.
+
+Screenshots in test-results/ are generated from LOCAL SYNTHETIC fixtures, never
+customer data. They are not evidence of a live deployment or Android pilot.
+
+## Previous functional milestone — 0.8.0
 
 ## Complete managed-control increment / client112
 

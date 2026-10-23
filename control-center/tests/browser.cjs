@@ -11,7 +11,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
   assert.equal(credentials.email, 'owner@preview.test', 'Use only the synthetic local preview account');
   const output = path.resolve(__dirname, '../test-results'); fs.mkdirSync(output, { recursive: true });
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
   const errors = []; const checks = [];
   page.on('pageerror', error => errors.push(error.message));
   const done = name => { checks.push(name); console.log('PASS', name); };
@@ -336,10 +337,37 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     done('owner unassigns reseller management without blocking the synthetic device');
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button',{name:'Open navigation',exact:true}).click();
     await page.locator('nav a[href="#overview"]').click();
     await page.getByRole('heading', { name: 'Operations overview', exact: true }).waitFor();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Mobile page overflow');
     await page.screenshot({ path: path.join(output, 'overview-mobile.png'), fullPage: true });
+    await page.getByRole('button',{name:'Open navigation',exact:true}).click();
+    assert.equal(await page.locator('#workspace').evaluate(n=>n.inert),true);
+    await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.activeElement.id),'nav-toggle');
+    assert.equal(await page.locator('#workspace').evaluate(n=>n.inert),false);
+    await page.getByRole('button',{name:'Open navigation',exact:true}).click();
+    await page.getByRole('link',{name:'Devices',exact:true}).click();
+    await page.getByRole('heading',{name:'Devices',exact:true}).waitFor();
+    assert.equal(await page.locator('#nav-toggle').getAttribute('aria-expanded'),'false');
+    assert.equal(await page.locator('.mobile-records table').first().evaluate(n=>getComputedStyle(n).display),'block');
+    assert(await page.getByRole('button',{name:'View →',exact:true}).first().isVisible());
+    await page.screenshot({path:path.join(output,'devices-mobile-modern.png'),fullPage:true});
+    await page.locator('tr').filter({hasText:credentials.device_id}).getByRole('button',{name:'View →'}).click();
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.getByRole('button',{name:'Adjust Live TV pre-buffer',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Adjust Live TV pre-buffer',exact:true}).click();
+    const modalBounds=await page.locator('#modal').boundingBox();assert(modalBounds.x>=0&&modalBounds.x+modalBounds.width<=390);
+    assert((await page.locator('#modal-form button').first().boundingBox()).height>=44);
+    await page.locator('#modal-form').getByRole('button',{name:'Cancel',exact:true}).click();
+    done('mobile drawer supports Escape/focus restoration; device records become readable cards and editor dialogs keep touch-sized actions');
+    await page.getByRole('button',{name:'Switch to light theme',exact:true}).click();
+    assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
+    const themePage=await page.context().newPage();await themePage.goto(base);await themePage.getByRole('heading',{name:'Operations overview',exact:true}).waitFor();assert.equal(await themePage.evaluate(()=>document.documentElement.dataset.theme),'light');await themePage.close();
+    await page.screenshot({path:path.join(output,'device-settings-mobile-light.png'),fullPage:false});
+    for(const width of [320,390,768,1024,1440]){await page.setViewportSize({width,height:950});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false,`Page overflows at ${width}px`);}
+    await page.getByRole('button',{name:'Switch to dark theme',exact:true}).click();
+    done('light/dark appearance persists without customer data; active settings remain usable from 320px to desktop without page overflow');
     done('mobile overview has no horizontal page overflow');
 
     await page.setViewportSize({ width: 1440, height: 1000 });

@@ -5,7 +5,31 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current milestone — 0.8.0
+## Current milestone — 0.9.0
+
+### Mobile-first visual refresh (website only)
+
+Calmer graphite/mint dark theme plus a remembered light theme, clearer typography,
+an integrated metrics strip, flatter nested sections and less decorative framing.
+Navigation uses an accessible drawer on phone/tablet (Escape closes and returns
+focus; background is inert while open), and the desktop sidebar retains all scoped
+owner/reseller links. Device/customer/history lists use labelled mobile records;
+large source/category/settings editors keep their own keyboard-accessible horizontal
+scroll region instead of overflowing the page. Mobile actions have44px touch targets,
+inputs avoid iOS focus zoom, dialogs fit the viewport, and reduced-motion preferences
+are respected. All existing safety copy/confirmation flows remain available.
+
+Only the appearance choice is stored in browser localStorage—no customer records,
+tokens or source secrets. Dark is the default. Server ownership/CSRF/leases, app
+controls, credentials and Android playback/update behavior are unchanged. Modal
+secret inputs are wiped synchronously on button-driven dismissal as well as close.
+
+Install the0.9.0 website UPDATE ZIP over the existing site, preserving config.php
+and private storage. No NEW migrations, worker patch or APK is needed for this
+visual increment. If the prior0.8 update has not been installed, still apply its
+pending010–012 migrations and enable PHP zlib before using112's new controls.
+
+## Previous functional milestone — 0.8.0
 
 ### Complete managed-control increment (testing client112; not published yet)
 

@@ -5,6 +5,18 @@ const state = { user: null, csrf: '', tenants: [], epoch: 0, deviceTab: null, la
 const requestKeys = new Map();
 let toastTimer;
 let formCounter = 0;
+const iconPaths={overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',devices:'M4 4h16v12H4z M8 20h8 M12 16v4',customers:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',presets:'M4 7h16 M4 17h16 M8 4v6 M16 14v6',resellers:'M3 21h18 M5 21V7l7-4 7 4v14 M9 9h1 M14 9h1 M9 13h1 M14 13h1 M10 21v-4h4v4',enrollments:'M12 3l8 4v5c0 5-8 9-8 9s-8-4-8-9V7z M8 12l3 3 5-6',audit:'M8 3h8v4H8z M8 5H5v16h14V5h-3 M8 11h8 M8 15h8',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5L19 19 M5 19l1.5-1.5 M17.5 6.5L19 5',moon:'M21 13a9 9 0 0 1-10-10 9 9 0 1 0 10 10',menu:'M4 6h16 M4 12h16 M4 18h16',close:'M6 6l12 12 M18 6 6 18',key:'M14 4a6 6 0 1 1-3 11L5 21H2v-3l7-7a6 6 0 0 1 5-7z M16 8h.01',logout:'M9 4H4v16h5 M14 8l4 4-4 4 M8 12h12'};
+function icon(name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.classList.add('icon');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',iconPaths[name]||iconPaths.overview);svg.append(path);return svg;}
+const drawerMedia=window.matchMedia('(max-width:900px)');let navOpen=false;
+function setNavOpen(open,restoreFocus=true){navOpen=!!open&&drawerMedia.matches&&!$('shell').hidden;document.body.classList.toggle('nav-open',navOpen);$('nav-toggle').setAttribute('aria-expanded',String(navOpen));$('nav-toggle').setAttribute('aria-label',navOpen?'Close navigation':'Open navigation');$('nav-scrim').hidden=!navOpen;$('workspace').inert=navOpen;$('sidebar').inert=drawerMedia.matches&&!navOpen;if(drawerMedia.matches){$('sidebar').setAttribute('aria-hidden',String(!navOpen));if(navOpen){$('sidebar').setAttribute('role','dialog');$('sidebar').setAttribute('aria-modal','true');$('nav-close').focus();}else{$('sidebar').removeAttribute('role');$('sidebar').removeAttribute('aria-modal');if(restoreFocus&&!$('shell').hidden)$('nav-toggle').focus();}}else{$('sidebar').removeAttribute('aria-hidden');$('sidebar').removeAttribute('role');$('sidebar').removeAttribute('aria-modal');}}
+function applyTheme(theme){document.documentElement.dataset.theme=theme;const next=theme==='dark'?'light':'dark';$('theme-toggle').replaceChildren(icon(next==='light'?'sun':'moon'),el('span',next==='light'?'Light':'Dark','theme-text'));$('theme-toggle').setAttribute('aria-label','Switch to '+next+' theme');document.querySelector('meta[name="theme-color"]').setAttribute('content',theme==='light'?'#f4f6f5':'#101619');}
+let savedTheme='dark';try{if(localStorage.getItem('extreme-control-theme')==='light')savedTheme='light';}catch{}applyTheme(savedTheme);
+$('theme-toggle').addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';applyTheme(next);try{localStorage.setItem('extreme-control-theme',next);}catch{}});
+$('nav-toggle').replaceChildren(icon('menu'));$('nav-close').replaceChildren(icon('close'));$('password-button').prepend(icon('key'));$('logout-button').prepend(icon('logout'));
+$('nav-toggle').addEventListener('click',()=>setNavOpen(!navOpen));$('nav-close').addEventListener('click',()=>setNavOpen(false));$('nav-scrim').addEventListener('click',()=>setNavOpen(false));drawerMedia.addEventListener('change',()=>setNavOpen(false,false));setNavOpen(false,false);
+$('sidebar').addEventListener('click',event=>{if(event.target.closest('a')){const wasOpen=navOpen;setNavOpen(false,false);if(wasOpen)$('main').focus({preventScroll:true});}});
+document.querySelector('.skip-link').addEventListener('click',event=>{event.preventDefault();$('main').focus();$('main').scrollIntoView({block:'start'});});
+document.addEventListener('keydown',event=>{if(!navOpen)return;if(event.key==='Escape'){event.preventDefault();setNavOpen(false);}else if(event.key==='Tab'){const focusable=[...$('sidebar').querySelectorAll('a,button')].filter(n=>!n.disabled&&n.getClientRects().length);const first=focusable[0],last=focusable.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}});
 function el(tag, text, className = '') { const n = document.createElement(tag); if (text !== null && text !== undefined) n.textContent = String(text); if (className) n.className = className; return n; }
 function button(text, action, className = '') { const n = el('button', text, className); n.type = 'button'; n.addEventListener('click', action); return n; }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6000); }
@@ -28,8 +40,8 @@ function panel(title, ...children) { const n = el('section', null, 'panel'); if 
 function heading(title, description, actions = []) { const h = el('div', null, 'page-heading'); const left = el('div'); left.append(el('h1', title), el('p', description)); const right = el('div', null, 'actions'); right.append(...actions); h.append(left, right); return h; }
 function cellName(title, subtitle) { const n = el('div'); n.append(el('span', title, 'cell-name')); if (subtitle) n.append(el('span', subtitle, 'cell-sub')); return n; }
 function table(headers, rows) {
-  const wrap = el('div', null, 'table-scroll'); const t = el('table'); const head = el('thead'); const hr = el('tr'); headers.forEach(h => hr.append(el('th', h))); head.append(hr); t.append(head);
-  const body = el('tbody'); rows.forEach(cells => { const row = el('tr'); cells.forEach(value => { const td = el('td'); td.append(value instanceof Node ? value : document.createTextNode(String(value ?? '—'))); row.append(td); }); body.append(row); });
+  const wrap = el('div', null, 'table-scroll');const cards=['Device','Line username / customer','Workspace','Action','Settings profile'].includes(headers[0]);if(cards)wrap.classList.add('mobile-records');wrap.tabIndex=0;wrap.setAttribute('role','region');wrap.setAttribute('aria-label','Data table: '+headers.filter(Boolean).join(', '));const t = el('table');t.setAttribute('role','table');const head = el('thead'); const hr = el('tr'); headers.forEach(h => {const th=el('th',h);th.scope='col';hr.append(th);}); head.append(hr); t.append(head);
+  const body = el('tbody'); rows.forEach(cells => { const row = el('tr');row.setAttribute('role','row'); cells.forEach((value,index) => { const td = el('td');td.setAttribute('role','cell');td.dataset.label=headers[index]||'Actions'; td.append(value instanceof Node ? value : document.createTextNode(String(value ?? '—'))); row.append(td); }); body.append(row); });
   if (!rows.length) { const row = el('tr'); const td = el('td', 'No records yet.', 'empty'); td.colSpan = headers.length; row.append(td); body.append(row); }
   t.append(body); wrap.append(t); return wrap;
 }
@@ -49,15 +61,17 @@ function fields(form, schema) {
   }
 }
 function formValues(form, schema) { const values = {}; for (const f of schema) values[f.key] = f.type === 'number' ? Number(form.elements.namedItem(f.key).value) : form.elements.namedItem(f.key).value; return values; }
+function closeModal(){ $('modal-form').querySelectorAll('input[type="password"],textarea[name="guides"]').forEach(input=>{input.value='';});$('modal').close(); }
 function modal(title, schema, save, label = 'Save') {
-  $('modal-title').textContent = title; const form = $('modal-form'); form.replaceChildren(); fields(form, schema); const error = el('p', '', 'error'); const actions = el('div', null, 'form-actions'); const submit = el('button', label, 'primary'); submit.type = 'submit'; actions.append(button('Cancel', () => $('modal').close()), submit); form.append(error, actions);
-  form.onsubmit = async event => { event.preventDefault(); submit.disabled = true; error.textContent = ''; try { await save(formValues(form, schema)); $('modal').close(); await route(); } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; } };
+  $('modal-title').textContent = title; const form = $('modal-form'); form.replaceChildren(); fields(form, schema); const error = el('p', '', 'error'); const actions = el('div', null, 'form-actions'); const submit = el('button', label, 'primary'); submit.type = 'submit'; actions.append(button('Cancel', closeModal), submit); form.append(error, actions);
+  form.onsubmit = async event => { event.preventDefault(); submit.disabled = true; error.textContent = ''; try { await save(formValues(form, schema)); closeModal(); await route(); } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; } };
   $('modal').showModal();
 }
 $('modal').addEventListener('close',()=>{$('modal-form').querySelectorAll('input[type="password"], textarea[name="guides"]').forEach(input=>{input.value='';});});
 function signedOut() { state.user = null; state.csrf = ''; state.tenants = []; state.deviceTab = null; state.layoutEditors.clear(); state.favouritesSelection.clear(); state.sourceEditors.clear(); state.preferenceEditors.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
 function entryCard(title, description) { const card = el('div', null, 'entry-card'); card.append(el('span', 'E', 'brand-mark'), el('h1', title), el('p', description, 'subtle')); $('entry').replaceChildren(card); return card; }
 function loginForm() {
+  setNavOpen(false,false);
   const card = entryCard('Welcome back', 'Sign in to your owner or reseller workspace.'); const form = el('form');
   const schema = [{ key: 'email', label: 'Email address', type: 'email', max: 254 }, { key: 'password', label: 'Password', type: 'password' }]; fields(form, schema); form.elements.password.autocomplete = 'current-password'; form.elements.password.removeAttribute('minlength');
   const error = el('p', '', 'error'); const submit = el('button', 'Sign in', 'primary'); submit.type = 'submit'; form.append(error, submit); card.append(form);
@@ -76,7 +90,7 @@ async function enter() {
   $('workspace-name').textContent = state.user.role === 'owner' ? 'Owner workspace · all resellers' : state.tenants[0]?.name || 'Reseller workspace';
   const nav = $('navigation'); nav.replaceChildren();
   const links = [['overview', 'Overview'], ['devices', 'Devices'], ['customers', 'Customers'], ['presets', 'Settings presets'], ...(state.user.role === 'owner' ? [['resellers', 'Resellers'], ['enrollments', 'Enrollments']] : []), ['audit', 'Activity log']];
-  links.forEach(([key, text]) => { const link = el('a', text); link.href = '#' + key; link.dataset.page = key; nav.append(link); });
+  links.forEach(([key, text]) => { const link = el('a');link.append(icon(key),el('span',text)); link.href = '#' + key; link.dataset.page = key; nav.append(link); });setNavOpen(false,false);
   await route();
 }
 function tenantField() { return { key: 'tenant_id', label: 'Workspace / reseller', options: state.tenants.filter(t => t.status === 'active').map(t => [t.id, t.name]), hint: 'First page of active workspaces. Customer/device enrollment is automatic after verified reseller linking.' }; }
@@ -87,13 +101,14 @@ function customerForm(customer, tenant = null) {
 function deviceForm(customer) { modal('Provision device record', [{ key: 'label', label: 'Device nickname' }, { key: 'notes', label: 'Private notes (optional)', type: 'textarea', required: false, hint: 'This creates a pending record only. It does not automatically pair an existing app.' }], async values => { await api('/api/devices', { ...values, customer_id: customer.id }); toast('Device record created; secure app enrollment is still pending.'); }); }
 function resellerForm() { modal('Create reseller', [{ key: 'company', label: 'Company / workspace name' }, { key: 'panel_username', label: 'Existing panel reseller username', required: false, max: 150, hint: 'Exact panel login username. Verified server-side and permanently linked by ID. Leave blank only for a workspace without automatic enrollment.' }, { key: 'name', label: 'Contact name' }, { key: 'email', label: 'Reseller email', type: 'email', max: 254 }, { key: 'password', label: 'Initial password', type: 'password', hint: 'Share securely. The reseller can change this after signing in.' }, { key: 'device_limit', label: 'Device allocation', type: 'number', value: 100 }], async values => { await api('/api/resellers', values); state.tenants = (await api('/api/tenants')).items; toast('Reseller workspace created.'); }); }
 function connectionBadge(device) { const n = el('div'); n.append(badge(device.presence)); if (device.is_test) n.append(el('span', 'TEST', 'test-label')); return n; }
-function devicesTable(items) { return table(['Device', 'Customer / reseller', 'Policy', 'Connection', 'Last check-in', 'Version', ''], items.map(d => [cellName(d.label, d.id), cellName(d.customer_name, d.tenant_name), badge(d.policy), connectionBadge(d), date(d.last_seen_at), d.app_version || '—', button('View →', () => { location.hash = 'device/' + d.id; })])); }
+function devicesTable(items) { const result=table(['Device', 'Customer / reseller', 'Policy', 'Connection', 'Last check-in', 'Version', ''], items.map(d => [cellName(d.label, d.id), cellName(d.customer_name, d.tenant_name), badge(d.policy), connectionBadge(d), date(d.last_seen_at), d.app_version || '—', button('View →', () => { location.hash = 'device/' + d.id; },'row-link')]));result.classList.add('device-records');return result; }
 async function overview(epoch) {
   const [stats, devices] = await Promise.all([api('/api/overview'), api('/api/devices')]); if (epoch !== state.epoch) return;
   const main = $('main'); main.replaceChildren(heading('Operations overview', 'Your customers and devices, in one workspace.', [button('Refresh', route)]));
-  main.append(el('p', 'Only devices from created, verified linked resellers enter this service. Unmatched resellers are quietly ignored: no pending device or customer is created. Existing owner-managed/unassigned inventory is retained. Local simulators remain labelled TEST.', 'notice'));
+  const enrollmentNote=el('details',null,'context-note');enrollmentNote.append(el('summary','How enrollment and check-ins work'),el('p','Only devices from created, verified linked resellers enter this service. Unmatched resellers are quietly ignored: no pending device or customer is created. Existing owner-managed/unassigned inventory is retained. Local simulators remain labelled TEST.'));
   const cards = el('div', null, 'stats'); [['Managed devices', stats.total, `${stats.not_enrolled} awaiting enrollment`], ['Recently connected', stats.connected, 'App check-ins, not device power state'], ['Customers', stats.customers, 'Visible to your account only'], ['Queued / in progress', stats.pending_commands, 'Delivery is not confirmation of execution']].forEach(([label, count, note]) => { const card = el('div', null, 'stat'); card.append(el('div', label, 'stat-label'), el('strong', count), el('span', note)); cards.append(card); });
-  main.append(cards, panel('Recent devices', devicesTable(devices.items)), panel('One update source of truth', el('p', 'Every customer and reseller app uses the platform owner’s update channel. Resellers cannot upload APKs, change update URLs or disable mandatory updates.', 'subtle')));
+  const updateNote=el('section',null,'platform-note');const copy=el('div');copy.append(el('h2','One update source of truth'),el('p','Every customer and reseller app uses the platform owner’s update channel. Resellers cannot upload APKs, change update URLs or disable mandatory updates.'));updateNote.append(icon('enrollments'),copy);
+  main.append(cards,enrollmentNote,panel('Recent devices', devicesTable(devices.items)),updateNote);
 }
 async function records(resource, epoch) {
   const main = $('main'); main.replaceChildren(heading(resource === 'devices' ? 'Devices' : 'Customers', resource === 'customers' ? 'Customers are created by verified enrollment. Line usernames are verified on app check-in; refresh after the 111 app reports in.' : 'Search, manage and inspect your assigned records.', [button('Refresh', route)]));
@@ -704,6 +719,7 @@ async function enrollments(epoch) {
 async function route() {
   if (!state.user) return; const epoch = ++state.epoch; const hash = location.hash.slice(1) || 'overview'; const section = hash.startsWith('device/') ? 'devices' : hash;
   document.querySelectorAll('#navigation a').forEach(a => a.classList.toggle('active', a.dataset.page === section));
+  document.querySelectorAll('#navigation a').forEach(a=>{if(a.dataset.page===section)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});const titles={overview:'Overview',devices:'Devices',customers:'Customers',presets:'Settings presets',resellers:'Resellers',enrollments:'Enrollments',audit:'Activity log'};$('section-name').textContent=hash.startsWith('device/')?'Device details':titles[section]||'Workspace';document.title=$('section-name').textContent+' · Extreme Control';
   try {
     if (hash === 'overview') await overview(epoch);
     else if (hash === 'devices' || hash === 'customers') await records(hash, epoch);
@@ -715,7 +731,7 @@ async function route() {
     else location.hash = 'overview';
   } catch (e) { if (epoch === state.epoch) { $('main').replaceChildren(panel('Unable to load this view', el('p', e.message, 'error'), button('Retry', route))); } }
 }
-$('modal-close').addEventListener('click', () => $('modal').close());
+$('modal-close').addEventListener('click', closeModal);
 $('modal').addEventListener('close', () => { $('modal-form').replaceChildren(); $('modal-form').onsubmit = null; });
 $('logout-button').addEventListener('click', async () => { if ([...state.layoutEditors.values()].some(o => o.draft?.dirty) && !confirm('Discard unsaved browser layout drafts and sign out? Save them as templates first if needed.')) return; try { await api('/api/logout', {}); signedOut(); } catch (e) { toast(e.message); } });
 window.addEventListener('beforeunload', e => { if ([...state.layoutEditors.values()].some(o => o.draft?.dirty)) { e.preventDefault(); e.returnValue = ''; } });

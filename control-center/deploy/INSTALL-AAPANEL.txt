@@ -1,4 +1,15 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.8.0
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.9.0
+
+0.9.0 UPDATE — MOBILE / MODERN THEME (WEBSITE ONLY)
+Back up site/database/private storage, then extract the UPDATE ZIP over the site.
+Config.php and initialized storage/keys are excluded and preserved. No NEW schema,
+worker patch or APK for this visual increment. It remains compatible with111/112.
+If skipping0.8, still apply its010–012 migrations and enable PHP zlib as below.
+
+Dark graphite/mint appearance plus remembered light mode, phone/tablet drawer,
+labelled mobile device/customer/history records, contained wide editors, larger
+touch controls, less nested framing and responsive dialogs. Theme selection is
+the only persisted browser preference; permissions and management actions unchanged.
 
 0.8.0 UPDATE — LIVE PRE-BUFFER + REDACTED NETWORK / MEMORY DIAGNOSTICS
 This combined update also includes safe cache clearing, foreground screen reopening,
