@@ -301,13 +301,18 @@ class ExistingPanelAdapter:
                     if not cur.fetchone(): username=candidate;break
                 if not username: raise TrialRejected('Could not allocate a trial account')
                 password = ''.join(secrets.choice(alphabet) for _ in range(24))
+                try:activation_code=self.worker['_new_activation_code'](cur)
+                except RuntimeError:raise TrialRejected('Could not allocate a trial activation code') from None
+                if not isinstance(activation_code,str) or not re.fullmatch('[0-9]{6}',activation_code):raise TrialRejected('Invalid trial activation code allocation')
                 bouquets = group_ids(plan.get('bouquets') or '[]')
                 connections = int(plan.get('max_connections') or 1)
                 if connections<1 or connections>100: raise TrialRejected('Trial connection limit is invalid')
                 expiry = self.worker['_add_duration'](self.worker['_utcnow'](), plan['duration'], plan['duration_period'])
                 if expiry.tzinfo is None: expiry=expiry.replace(tzinfo=datetime.timezone.utc)
-                cur.execute("INSERT INTO customers (member_id,username,password,exp_date,enabled,duration,duration_period,duration_value,admin_notes,reseller_notes,bouquet,allowed_outputs,max_connections,is_restreamer,is_trial,allowed_ips,allowed_ua,created_at,package_id,updated) VALUES (%s,%s,%s,%s,1,%s,%s,%s,'',%s,%s,'[1,2,3,4]',%s,0,1,'[]','[]',%s,%s,NOW())",
-                    (owner['id'],username,password,int(expiry.timestamp()),plan['duration'],plan['duration_period'],plan.get('duration_value') or 0,self.notes(spec),json.dumps(bouquets),connections,int(time.time()),plan['id']))
+                # Only this NEW requested trial is started. Never update an existing
+                # paid line or infer success from the panel's form-action spelling.
+                cur.execute("INSERT INTO customers (member_id,username,password,exp_date,enabled,activated,duration,duration_period,duration_value,admin_notes,reseller_notes,bouquet,allowed_outputs,max_connections,is_restreamer,is_trial,allowed_ips,allowed_ua,created_at,package_id,activation_code,updated) VALUES (%s,%s,%s,%s,1,1,%s,%s,%s,'',%s,%s,'[1,2,3,4]',%s,0,1,'[]','[]',%s,%s,%s,NOW())",
+                    (owner['id'],username,password,int(expiry.timestamp()),plan['duration'],plan['duration_period'],plan.get('duration_value') or 0,self.notes(spec),json.dumps(bouquets),connections,int(time.time()),plan['id'],activation_code))
                 line_id = cur.lastrowid
                 self.worker['_set_credits'](cur,owner['id'],balance-price,-price,balance,'line_create',owner['id'],'customer',line_id)
             except TrialRejected:
@@ -328,11 +333,12 @@ class ExistingPanelAdapter:
 
     def result(self, spec, line_id):
         with self.worker['panel_db_cursor']() as (cur, _):
-            cur.execute('SELECT id,member_id,package_id,is_trial,enabled,username,password,activation_code,exp_date,reseller_notes,bouquet,max_connections,duration,duration_period,duration_value FROM customers WHERE id=%s AND member_id=%s', (line_id,spec['reseller_id']))
+            cur.execute('SELECT id,member_id,package_id,is_trial,enabled,activated,username,password,activation_code,exp_date,reseller_notes,bouquet,max_connections,duration,duration_period,duration_value FROM customers WHERE id=%s AND member_id=%s', (line_id,spec['reseller_id']))
             row = cur.fetchone()
         if not row or str(row['id']) != str(line_id) or str(row['member_id']) != spec['reseller_id'] or str(row['package_id']) != str(spec['package_id']) or str(row['is_trial']) != '1' or str(row['enabled']) != '1' or row['reseller_notes'] != self.notes(spec):
             raise TrialRejected('Created trial needs owner review')
         if row['exp_date'] not in (None,0,'0','') and int(row['exp_date'])<=time.time():raise TrialRejected('Trial has expired; no new line is created by retrying')
+        if str(row.get('activated'))!='1':raise TrialRejected('Panel has not confirmed trial activation')
         with self.worker['panel_db_cursor']() as (cur,_):
             cur.execute('SELECT * FROM users_packages WHERE id=%s AND enabled=1 AND activated=1 AND type=1',(spec['package_id'],));plan=cur.fetchone()
         if not plan:raise TrialRejected('Trial package is unavailable')
@@ -340,16 +346,21 @@ class ExistingPanelAdapter:
         try:matches=doc['fingerprint']==spec['plan_fingerprint'] and int(row['max_connections'])==doc['max_connections'] and sorted(group_ids(row['bouquet']))==sorted(doc['bouquets']) and int(row['duration'])==doc['duration'] and int(row.get('duration_value') or 0)==doc['duration_value'] and str(row['duration_period']).lower().rstrip('s')==doc['period'].rstrip('s')
         except (ValueError,TypeError,KeyError):matches=False
         if not matches:raise TrialRejected('Created trial limits require owner review')
+        code=str(row.get('activation_code') or '')
+        if not re.fullmatch('[0-9]{6}',code):raise TrialRejected('Panel has not confirmed a usable activation code')
+        with self.worker['panel_db_cursor']() as (cur,_):
+            cur.execute('SELECT id FROM customers WHERE activation_code=%s AND enabled=1 AND activated=1 AND (exp_date IS NULL OR exp_date=0 OR exp_date>%s) LIMIT 2',(code,int(time.time())));codes=cur.fetchall()
+        if len(codes)!=1 or str(codes[0]['id'])!=str(line_id):raise TrialRejected('Trial activation code requires owner review')
         # This is a privileged server response for ONE operation, never a fleet list.
         return {key:row[key] for key in ['username','password','activation_code','exp_date']}
 
     def line_status(self,line_id,reseller_id):
         with self.worker['panel_db_cursor']() as (cur,_):
-            cur.execute('SELECT id,member_id,is_trial,enabled,exp_date FROM customers WHERE id=%s AND member_id=%s',(line_id,reseller_id));row=cur.fetchone()
+            cur.execute('SELECT id,member_id,is_trial,enabled,activated,exp_date FROM customers WHERE id=%s AND member_id=%s',(line_id,reseller_id));row=cur.fetchone()
         if not row or str(row['id'])!=str(line_id) or str(row['member_id'])!=str(reseller_id):return {'state':'unavailable','expires_at':None}
         expiry=int(row['exp_date']) if row['exp_date'] not in (None,0,'0','') else None
         if expiry is not None and not 1<=expiry<=4102444800:raise TrialRejected('Invalid panel expiry')
-        state='converted' if str(row['is_trial'])=='0' else 'restricted' if str(row['enabled'])!='1' else 'pending_activation' if expiry is None else 'expired' if expiry<=time.time() else 'active'
+        state='converted' if str(row['is_trial'])=='0' else 'restricted' if str(row['enabled'])!='1' else 'pending_activation' if str(row.get('activated'))!='1' or expiry is None else 'expired' if expiry<=time.time() else 'active'
         return {'state':state,'expires_at':expiry}
 
 

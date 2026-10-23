@@ -6,12 +6,17 @@ namespace ControlCenter;
 final class EnrollmentProof
 {
     public const PACKAGES = ['com.arvio.tv', 'com.arvio.tv.beta', 'com.arvio.tv.test'];
-    public function __construct(private readonly Config $config, private readonly Secrets $secrets) {}
+    public function __construct(private readonly Config $config, private readonly Secrets $secrets,private readonly ?BrandArtifacts $artifacts=null) {}
     public function bridgeSecret(): string { return $this->secrets->mac('management-enrollment-bridge:v1'); }
     public static function package(mixed $package): string
     {
         if (!is_string($package) || !in_array($package, self::PACKAGES, true)) throw new Problem(422, 'Unsupported app package.');
         return $package;
+    }
+    public function admittedPackage(mixed $package):string {
+        if(is_string($package)&&in_array($package,self::PACKAGES,true))return $package;
+        $approved=$this->artifacts?->enrollmentPackage($package);if($approved!==null)return $approved;
+        throw new Problem(422,'Unsupported or unpublished app package.');
     }
     public static function hex(mixed $value, int $length): string
     {
@@ -43,7 +48,7 @@ final class EnrollmentProof
             throw new Problem(403,'Enrollment proof expired or has the wrong destination. Request a new proof.');
         }
         foreach(['sub','key','challenge'] as $field) self::hex($claim[$field]??null,64);
-        self::hex($claim['install']??null,32); self::hex($claim['jti']??null,32); self::package($claim['package']??null);
+        self::hex($claim['install']??null,32); self::hex($claim['jti']??null,32); $this->admittedPackage($claim['package']??null);
         $claim['hint']=Input::text($claim['hint']??'', 'account hint',40);
         if(isset($claim['panel'])) {
             $panel=$claim['panel'];

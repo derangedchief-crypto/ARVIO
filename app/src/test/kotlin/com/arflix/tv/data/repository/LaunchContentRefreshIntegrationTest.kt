@@ -2,6 +2,7 @@ package com.arflix.tv.data.repository
 
 import android.app.Application
 import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.util.CatalogueDiskFile
 import com.google.gson.JsonParser
 import io.mockk.coEvery
 import io.mockk.every
@@ -110,8 +111,8 @@ class LaunchContentRefreshIntegrationTest {
                     assertEquals(oldVod, vodFile.readText())
                     assertEquals(oldSeries, seriesFile.readText())
                 } else {
-                    val vod = JsonParser.parseString(vodFile.readText()).asJsonObject.getAsJsonArray("items")
-                    val series = JsonParser.parseString(seriesFile.readText()).asJsonObject.getAsJsonArray("items")
+                    val vod = CatalogueDiskFile.read(vodFile) { JsonParser.parseReader(it) }.asJsonObject.getAsJsonArray("items")
+                    val series = CatalogueDiskFile.read(seriesFile) { JsonParser.parseReader(it) }.asJsonObject.getAsJsonArray("items")
                     assertEquals(if (emptyVod) 0 else 1, vod.size())
                     assertEquals(if (emptyVod) 0 else 1, series.size())
                     if (!emptyVod) {

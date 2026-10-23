@@ -48,6 +48,13 @@ class ProofTests(unittest.TestCase):
             self.proof(tenant_id='foreign')
         with self.assertRaises(ValueError):
             issue_proof(SECRET, ORIGIN, 'fixture', 'a' * 32, 'b' * 64, 'foreign.app', 'c' * 64)
+    def test_brand_format_is_account_bound_not_a_claim_of_authentic_apk_or_registry_admission(self):
+        package='com.extreme.brand.b'+'d'*32+'.test'
+        token=issue_proof(SECRET,ORIGIN,'fixture','a'*32,'b'*64,package,'c'*64,now=1000)
+        encoded=token.split('.')[1];claims=json.loads(base64.urlsafe_b64decode(encoded+'='*(-len(encoded)%4)))
+        self.assertEqual(package,claims['package']);self.assertNotIn('brand_owner',claims);self.assertNotIn('signer',claims)
+        for invalid in ['com.extreme.brand.arbitrary','com.extreme.brand.b'+'d'*32+'.beta',package+'.evil']:
+            with self.assertRaises(ValueError):issue_proof(SECRET,ORIGIN,'fixture','a'*32,'b'*64,invalid,'c'*64)
 
     def test_settings_fail_closed_without_affecting_legacy_activation(self):
         self.assertFalse(configured('', ORIGIN))

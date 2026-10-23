@@ -27,4 +27,19 @@ return [
     ],
     // Contact details only; minimal eligibility history is kept separately.
     'trial_contact_retention_days' => 90,
+    // OFF until a separately authorized branded-build / panel pilot is complete.
+    // Existing admin/default settings alone NEVER publish an offer.
+    'trial_public_signup_enabled' => false,
+    'trial_channel' => 'production',
+    'trial_reseller_daily_limit' => 50,
+    'trial_device_daily_limit' => 10,
+    'trial_ip_hourly_limit' => 50,
+    // Restricted SSH CLI builder; no public HTTP builder/signing API.
+    // Map platform versions to reviewed FULL source commits only after committing.
+    'brand_builder' => [
+        'enabled' => false,
+        'publication_enabled' => false,
+        'channels' => ['testing'],
+        'sources' => [],
+    ],
 ];

@@ -1,6 +1,7 @@
 (function(root){
   'use strict';
   const drafts=new Map();
+  const buildStates={waiting_builder:'Waiting for central builder',building:'Building under central lease',ready_to_publish:'Signed and verified — not published',publishing:'Publishing — verification pending',publication_review:'Publication outcome needs owner review',build_failed:'Build failed — no publication confirmed',published:'Published and verified',cancelled:'Cancelled'};
   async function render(epoch,hint){
     const main=$('main');main.replaceChildren(heading('My app brand','One branded app identity per reseller. Change your name and images without creating another app. Colours and updates remain platform-controlled.'));
     if(hint){const selected=await api('/api/tenants/'+hint);if(epoch!==state.epoch)return;if(!state.tenants.some(t=>t.id===selected.id))state.tenants.push(selected);drafts.set('workspace',selected.id);}
@@ -19,10 +20,11 @@
     if(brand){
       const builds=panel('Builds',el('p','A request pins this saved version for the central builder. Waiting does not mean an APK exists. Editing a name/image does not change a queued version.','hint'));
       const request=button('Request build of saved version',async()=>{if(draft.dirty)throw new Error('Save or discard your draft before requesting a build.');await api('/api/app-brand/builds',{tenant_id:tenant,expected_version:brand.version});toast('Queued for central build preparation. No APK has been published.');if(epoch===state.epoch)await route();});request.disabled=!brand.enabled;
-      builds.append(request,table(['Brand version','Status','Requested','Actions'],data.builds.map(j=>{const actions=el('div');if(j.state==='waiting_builder')actions.append(button('Cancel queued build',async()=>{if(!confirm('Cancel this unstarted build? The saved app brand stays intact.'))return;await api('/api/app-brand/builds/'+j.id+'/cancel',{});if(epoch===state.epoch)await route();}));return[j.brand_version,j.state==='waiting_builder'?'Waiting for central builder':j.state,date(j.created_at),actions];})));
+      builds.append(request,table(['Brand version','Status','Requested','Actions'],data.builds.map(j=>{const actions=el('div');if(['waiting_builder','ready_to_publish','build_failed'].includes(j.state))actions.append(button(j.state==='waiting_builder'?'Cancel queued build':'Cancel unpublished build',async()=>{if(!confirm('Cancel this unpublished build? The saved app brand and existing installations stay intact.'))return;await api('/api/app-brand/builds/'+j.id+'/cancel',{});if(epoch===state.epoch)await route();}));const id=el('details');id.append(el('summary','Build ID'),el('code',j.id));actions.append(id);return[j.brand_version,buildStates[j.state]||'Unknown — ask owner to review',date(j.created_at),actions];})));
+      for(const artifact of data.artifacts||[]){const card=el('div',null,'brand-download');const link=el('a','Download '+artifact.channel+' APK '+artifact.version_name);link.href=artifact.artifact_url;link.rel='noopener noreferrer';link.target='_blank';card.append(link,el('p',artifact.package_name,'hint'),el('p','SHA256: '+artifact.apk_sha256,'hint'));builds.append(card);}
       const details=el('details',null,'advanced-details');details.append(el('summary','App identity'),detailRows([['Package',brand.package_name],['Saved brand version',brand.version]]));builds.append(details);main.append(builds);
     }
-    main.append(panel('Reseller trials',el('p','Prepare admin-approved defaults and manage follow-up contacts in Trials & contacts. App trial offers remain off until trusted installation and activation integration are validated.','hint'),button('Open trials & contacts',()=>{location.hash='trials/'+tenant;})));
+    main.append(panel('Reseller trials',el('p','Prepare approved defaults, review public-offer publication and manage follow-up contacts in Trials & contacts. Offers start OFF and require separate owner rollout approval.','hint'),button('Open trials & contacts',()=>{location.hash='trials/'+tenant;})));
   }
   root.AppBranding={render,isDirty:()=>[...drafts.values()].some(d=>d?.dirty),clear:()=>drafts.clear()};
 })(window);

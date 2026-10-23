@@ -1,4 +1,24 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.12.0 (TRIAL POLICY / CONTACTS)
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.13.0 (CENTRAL BUILDER / PUBLIC OFFER PREPARATION)
+
+0.13.0 DEVELOPMENT INCREMENT — NOT LIVE
+Apply migrations016 and017 AFTER prior migrations. Keep the existing sole private
+config.php, initialized storage and application.key. Builder/publication and public
+trial rollout stay OFF by default. No SSH builder account, runner secret, live trial
+worker or APK is installed/published merely by installing the website package.
+
+Central builder: restricted SSH forced-command cli/brand-builder.php, source-pinned
+leases, signed APK verification and honest prepared/publishing/review/published states.
+Reseller Build ID/details and verified downloads appear in My app brand. Uncertain
+publication requires reconciliation, not a blind retry. Setup and operational limits:
+branding/CENTRAL_BUILDER.md in the source repository (separate runner deployment).
+
+Public trials: explicit offer-publication UI is separate from policy/default saves.
+It requires owner rollout permission, a current verified branded artifact and reviewed
+plan/limits. User chose broad-compatible PUBLIC signup, not authentic-APK proof; no OTP.
+Normal activation/viewing is unchanged. Separate activation-worker enrollment-format
+source extension still requires its own deployment; this ZIP does not install workers.
+Real signed branded-install/update and panel pilot remain separately authorized work.
+
 
 0.12.0 DEVELOPMENT INCREMENT
 Apply migration015 after earlier migrations, including014. Trials & contacts adds

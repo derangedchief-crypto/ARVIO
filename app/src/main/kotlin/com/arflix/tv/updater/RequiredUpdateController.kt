@@ -71,7 +71,7 @@ class RequiredUpdateController @Inject constructor(
     }.getOrNull()
 
     private fun validRelease(update: AppUpdate): Boolean =
-        update.tag.matches(Regex("[vV]?\\d+(\\.\\d+){2}(-test)?")) &&
+        ReleaseVersionPolicy.accepts(update.tag, BuildConfig.BRAND_ID.isNotEmpty()) &&
             update.assetUrl.startsWith("https://") && update.assetName.endsWith(".apk", ignoreCase = true)
 
     private fun requireUpdate(update: AppUpdate) {

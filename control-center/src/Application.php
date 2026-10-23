@@ -19,6 +19,10 @@ final class Application
     public readonly AppBrands $appBrands;
     public readonly TrialPolicies $trialPolicies;
     public readonly TrialContacts $trialContacts;
+    public readonly TrialOffers $trialOffers;
+    public readonly TrialPublicSessions $trialSessions;
+    public readonly TrialSignupBroker $trialSignup;
+    public readonly BrandBuilder $brandBuilder;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
@@ -34,9 +38,12 @@ final class Application
         $this->preferences=new Preferences($this->db,$this->management,$this->commands,$this->auth);
         $this->support=new Support($this->db,$this->management,$this->commands,$this->auth,$config);
         $this->deviceProfiles=new DeviceProfiles($this->db,$this->management,$this->commands,$this->auth);
-        $this->appBrands=new AppBrands($this->db,$this->management,$this->auth);
+        $this->appBrands=new AppBrands($this->db,$this->management,$this->auth,new BrandArtifacts($this->db,new Secrets($config),$config));
         $trialWorker=new TrialWorker($config);$this->trialPolicies=new TrialPolicies($this->db,$this->management,$this->auth,$trialWorker);
         $this->trialContacts=new TrialContacts($this->db,$this->management,$this->auth,new Secrets($config),$config,$trialWorker);
+        $secrets=new Secrets($config);$artifacts=new BrandArtifacts($this->db,$secrets,$config);$this->trialOffers=new TrialOffers($this->db,$config,$this->management,$this->auth,$secrets,$this->trialPolicies,$artifacts);
+        $this->brandBuilder=new BrandBuilder($this->db,$config,$this->appBrands,$artifacts,$secrets,$this->auth);
+        $this->trialSessions=new TrialPublicSessions($this->db,$this->trialOffers,$secrets,$this->auth);$this->trialSignup=new TrialSignupBroker($this->db,$config,$secrets,$this->auth,$this->trialOffers,$this->trialSessions,new TrialBudgets($this->db,$config),$trialWorker,$this->trialContacts);
     }
 
     public function serve(string $method, string $path): never
@@ -58,6 +65,17 @@ final class Application
             Http::json(['ok' => true], 201);
         }
         if (!$migrations->installed()) throw new Problem(503, 'Owner setup is required.');
+        if(str_starts_with($path,'/api/public-trials/')){
+            $supported=(bool)$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']);
+            if(!$supported){if($method==='GET'&&$path==='/api/public-trials/offer')Http::json(['available'=>false]);throw new Problem(404,'Automatic trials unavailable.');}
+            $ip=$_SERVER['REMOTE_ADDR']??'';$this->auth->limit('public-trial-api',(new Secrets($this->config))->mac("trial-ip-v1\n$ip"),120,60);
+            if($method==='GET'&&$path==='/api/public-trials/offer'){Input::keys($_GET,['brand_id']);Http::json($this->trialOffers->publicInfo(Input::text($_GET['brand_id']??'','brand',32,false)));}
+            if($method==='POST'&&$path==='/api/public-trials/session')Http::json($this->trialSessions->create(Http::body(8192),$ip),201);
+            if($method==='POST'&&$path==='/api/public-trials/submit')Http::json($this->trialSignup->submit(Http::body(8192)));
+            if($method==='POST'&&$path==='/api/public-trials/status')Http::json($this->trialSignup->status(Http::body(8192)));
+            if($method==='POST'&&$path==='/api/public-trials/ack')Http::json($this->trialSignup->acknowledge(Http::body(8192)));
+            throw new Problem(404,'Automatic trial route not found.');
+        }
         if ($method === 'POST' && $path === '/api/login') {
             Http::sameOrigin($this->config);
             $result = $this->auth->login(Http::body(), $_SERVER['REMOTE_ADDR'] ?? 'unknown');
@@ -131,6 +149,8 @@ final class Application
         if($method==='POST'&&$path==='/api/trial-policy/catalog')Http::json($this->trialPolicies->refresh($actor,Http::body()));
         if($method==='POST'&&$path==='/api/trial-policy/grants')Http::json($this->trialPolicies->grant($actor,Http::body()));
         if($method==='POST'&&$path==='/api/trial-policy/default')Http::json($this->trialPolicies->setDefault($actor,Http::body()));
+        if($method==='GET'&&$path==='/api/trial-offer-publication')Http::json($this->trialOffers->managerState($actor,$_GET));
+        if($method==='POST'&&$path==='/api/trial-offer-publication')Http::json($this->trialOffers->publish($actor,Http::body()));
         if($method==='GET'&&$path==='/api/trial-contacts')Http::json($this->trialContacts->listing($actor,$_GET));
         if($method==='GET'&&preg_match('~^/api/trial-contacts/([a-f0-9]{32})$~D',$path,$m))Http::json($this->trialContacts->detail($actor,$m[1]));
         if($method==='POST'&&preg_match('~^/api/trial-contacts/([a-f0-9]{32})/redact$~D',$path,$m))Http::json($this->trialContacts->redact($actor,$m[1],Http::body()));
@@ -205,7 +225,7 @@ final class Application
         $days = $this->config->number('retention_days', 90, 7, 365);
         $commands = $this->db->query("DELETE FROM commands WHERE status IN ('succeeded','failed','expired','cancelled') AND finished_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
         $events = $this->db->query("DELETE FROM audit_events WHERE created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
-        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();$this->sources->maintain();$this->preferences->maintain();$this->support->maintain();$this->deviceProfiles->maintain();$this->appBrands->maintain();$this->trialContacts->maintain();}
+        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();$this->sources->maintain();$this->preferences->maintain();$this->support->maintain();$this->deviceProfiles->maintain();$this->appBrands->maintain();$this->trialContacts->maintain();$this->trialSignup->maintain();$this->brandBuilder->maintain();}
         return ['expired_sessions_removed' => $sessions, 'old_commands_removed' => $commands, 'old_audit_events_removed' => $events];
     }
 }

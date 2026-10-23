@@ -21,7 +21,7 @@ class BrandPreparationTest(unittest.TestCase):
         Image.new('RGBA', (64, 48), (20, 100, 220, 255)).save(image, format='PNG')
         raw = image.getvalue()
         meta = {'id': 'a'*32, 'sha256': hashlib.sha256(raw).hexdigest()}
-        return {'manifest': {'schema_version': 1, 'brand_id': 'b'*32, 'brand_version': 1,'app_version':'2.0.113','app_version_code':429,
+        return {'manifest': {'schema_version': 1, 'brand_id': 'b'*32, 'brand_version': 1,'app_version':'2.0.114','app_version_code':430,
             'app_name': "North & O'Neil TV", 'package_name': 'com.extreme.brand.b'+'b'*32,
             'assets': {role: dict(meta) for role in module.ROLES}},
             'images': {role: base64.b64encode(raw).decode() for role in module.ROLES}}
@@ -38,7 +38,7 @@ class BrandPreparationTest(unittest.TestCase):
                 self.assertNotIn("\\\\'", text)
             self.assertTrue((output/'res/mipmap-xxxhdpi/ic_launcher_foreground.png').is_file())
             self.assertTrue((output/'res/drawable/ic_logo_text.png').is_file())
-            self.assertEqual({'brand_id', 'brand_name', 'package_name','app_version','app_version_code'}, {line.split('=')[0] for line in (output/'brand.properties').read_text().splitlines()})
+            self.assertEqual({'brand_id', 'brand_name', 'package_name','brand_version','app_version','app_version_code'}, {line.split('=')[0] for line in (output/'brand.properties').read_text().splitlines()})
             for original in (module.ROOT/'app/src/main/res').glob('drawable*/app_banner.webp'):
                 self.assertTrue((output/'res'/original.relative_to(module.ROOT/'app/src/main/res')).is_file())
 

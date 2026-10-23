@@ -31,11 +31,14 @@ val brandProperties = brandDirectory?.let { directory ->
 }
 val brandId = brandProperties?.getProperty("brand_id") ?: ""
 val brandName = brandProperties?.getProperty("brand_name") ?: "Extreme TV"
-val platformVersionName = "2.0.113"
-val platformVersionCode = 429
+val platformVersionName = "2.0.114"
+val platformVersionCode = 430
+val brandRevision = brandProperties?.getProperty("brand_version")?.toIntOrNull() ?: 0
 if (brandDirectory != null) {
     require(brandId.matches(Regex("[a-f0-9]{32}"))) { "Invalid brand identity" }
-    require(brandProperties!!.stringPropertyNames() == setOf("brand_id", "brand_name", "package_name", "app_version", "app_version_code")) { "Unexpected brand settings" }
+    require(brandProperties!!.stringPropertyNames() == setOf("brand_id", "brand_name", "package_name", "brand_version", "app_version", "app_version_code")) { "Unexpected brand settings" }
+    require(brandRevision in 1..99999) { "Invalid brand revision" }
+    require(platformVersionCode.toLong()*100000L+brandRevision<=Int.MAX_VALUE) { "Brand version allocation exceeds Android's version limit" }
     require(brandProperties.getProperty("app_version") == platformVersionName && brandProperties.getProperty("app_version_code") == platformVersionCode.toString()) { "Brand job targets a different platform release; use the matching source version" }
     require(brandProperties.getProperty("package_name") == "com.extreme.brand.b$brandId") { "Brand package mismatch" }
     require(brandName.length in 1..60 && brandName.matches(Regex("[\\p{L}\\p{N}][\\p{L}\\p{N} .&’'()+,\\-]*"))) { "Invalid brand name" }
@@ -59,13 +62,18 @@ android {
         minSdk = 26
         targetSdk = 36
         // Keep literals for the existing centrally signed publication workflows.
-        versionCode = 429
-        versionName = "2.0.113"
+        versionCode = 430
+        versionName = "2.0.114"
+        if (brandDirectory != null) {
+            versionCode = (platformVersionCode.toLong()*100000L+brandRevision).toInt()
+            versionName = platformVersionName + "." + brandRevision
+        }
         buildConfigField("String", "GITHUB_OWNER", "\"derangedchief-crypto\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("String", "UPDATE_RELEASE_TAG", "\"\"")
         buildConfigField("String", "BRAND_ID", "\"$brandId\"")
         buildConfigField("String", "BRAND_NAME", "\"$brandName\"")
+        buildConfigField("int", "BRAND_REVISION", brandRevision.toString())
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
         // Was capped to control managed-Supabase usage costs. Self-hosted has no
         // per-request billing, so full realtime sync is safe to run at full strength.
@@ -314,11 +322,12 @@ android {
     }
 }
 
-check(android.defaultConfig.versionName == platformVersionName && android.defaultConfig.versionCode == platformVersionCode) { "Platform build identity mismatch" }
+check(android.defaultConfig.versionName == (if (brandDirectory == null) platformVersionName else "$platformVersionName.$brandRevision") && android.defaultConfig.versionCode == (if (brandDirectory == null) platformVersionCode else (platformVersionCode.toLong()*100000L+brandRevision).toInt())) { "Platform build identity mismatch" }
 if (brandDirectory != null) {
     android.buildTypes.configureEach {
         // Every brand is served by OUR repo/channel. Never fall back to a generic APK.
         buildConfigField("String", "UPDATE_RELEASE_TAG", "\"brand-$brandId${if (name == "internalTest" || name == "debug") "-testing" else ""}\"")
+        if (name == "debug") buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "false")
     }
     tasks.configureEach {
         if (name.matches(Regex("prePlay(?:Debug|Release|Staging|InternalTest)Build")) || name == "preSideloadStagingBuild") {

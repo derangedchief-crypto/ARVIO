@@ -129,6 +129,10 @@ require __DIR__.'/app-brands.php';
 appBrandCases($tests,$app,$owner,$alpha,$beta,$tenantA,$tenantB,$http,$password);
 require __DIR__.'/trials.php';
 trialCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA,$tenantB,$http,$password);
+require __DIR__.'/public-trial-signup.php';
+publicTrialCases($tests,$app,$config,$owner,$alpha,$beta,$tenantB,$http);
+require __DIR__.'/brand-builder.php';
+brandBuilderCases($tests,$app,$config,$owner,$http);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

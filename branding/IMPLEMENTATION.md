@@ -1,5 +1,58 @@
 # Storage, reseller branding and trials — development progress
 
+## In-progress broad-compatible signup integration (not published)
+
+USER CORRECTION: do not change/add GitHub workflows. The extra builder workflow was
+withdrawn before pushing. Existing normal testing/release workflows remain unchanged.
+User now authorizes a NORMAL testing114 build first; reseller APK follows only after
+that test works. The central branded runner/retained-artifact adapter is not connected
+to an installed workflow; its CLI/queue/verifier code remains prepared but deferred.
+Do not describe unattended branded builds as operational or send branded APKs to the
+generic staging-testing channel. The no-new-workflow check replaces the old workflow
+structure unit test; the runner unit case count is unchanged.
+
+The user selected public brand-scoped signup offers, not mandatory hardware
+attestation. Source now includes migration016, explicit opt-in offer publication,
+centrally approved artifact prerequisites, server-owned plan/reseller selection,
+request-bound P-256 key-possession sessions, encrypted operation recovery, quotas
+and idempotent worker provisioning. Brand/device claims remain spoofable; no APK
+or permanent physical-device authenticity claim is made.
+
+Native source targets114/430 (NOT published). Only branded builds can render the
+first-name/phone form; no OTP, Google dependency or new identifier permission.
+Prepared codes use the existing activation/sign-in path. Secure pending-request
+storage must succeed before financial submission; normal activation remains present.
+The worker now checks activated state, code uniqueness and actual trial limits
+before returning an activation-ready result. Branding-only revisions use a fourth
+version component and a newer Android version code without changing package identity.
+
+All rollout configuration remains OFF. Central builder pickup/lease, isolated
+signed-build/verification/publication runner, immutable brand-specific updater assets,
+publication reconciliation and explicit trial-offer UI are implemented in source.
+See CENTRAL_BUILDER.md for deployment/approval/recovery limits. No live builder has
+been configured or dispatched; registration in local tests uses synthetic receipts.
+Real signed installation/update, deployment and device/panel pilot remain unfinished.
+Website0.13 reports prepared versus published artifacts and owner-disabled trial
+rollout explicitly. No website/worker deployment, real trial or APK publication performed;
+testing113 remains the installed-test target. Do not call this end-to-end ready.
+Current local checks:175 DB/service/HTTP cases pass, including lost-response
+same-operation signed-poll recovery, quota preservation and artifact-metadata tamper
+rejection;28 worker unit cases,4 worker HTTP cases and6 branding-resource cases pass.
+Package configuration/key-preservation checks pass. Full Android unit run:882 tests,
+zero failures/errors,1 skipped (881 passed), and internal-test Kotlin compilation
+passed. Four older launch-refresh assertions were updated to read catalogue files
+through the gzip/legacy-compatible reader; production cache/playback code unchanged.
+Builder increment:183 DB/service/HTTP checks pass;the last full browser run passes36 workflows;17 offline runner/
+publication checks pass, including reuse of frozen prepared Actions artifacts rather
+than rebuilding a version. Branded sample resources/Kotlin compile and28 unbranded
+updater tests/internal-test Kotlin compile pass. Actual SDK verification rejects the
+published generic testing113 APK as a branded artifact despite its matching central
+signer.18 activation-worker enrollment checks pass, including branded format handling;
+the website requires the exact centrally registered package/channel. Generic Python/
+PHP enrollment-proof interoperability also passes. Real branded
+signing/publication and device/panel validation remain pending. No signed build timing
+or on-device update/performance claim is inferred from resource compilation.
+
 ## Second increment: policy and contact layer (website0.12 / migration015)
 
 Implemented owner approval of a worker-verified trial-plan subset, reseller default

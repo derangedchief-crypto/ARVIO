@@ -7,7 +7,7 @@ final class Enrollment
     private readonly EnrollmentProof $proofs;
     public function __construct(private readonly Database $db, private readonly Config $config, private readonly Auth $auth,
         private readonly Management $management, private readonly Secrets $secrets)
-    { $this->proofs = new EnrollmentProof($config,$secrets); }
+    { $this->proofs = new EnrollmentProof($config,$secrets,new BrandArtifacts($db,$secrets,$config)); }
 
     private function enabled(bool $requireEnabled = true): bool
     {
@@ -71,7 +71,7 @@ final class Enrollment
         Input::integer($input['schema_version']??1,1,1);
         $install=EnrollmentProof::hex($input['installation_id']??null,32);
         $key=EnrollmentProof::hex($input['key_fingerprint']??null,64);
-        $package=EnrollmentProof::package($input['app_package']??null);
+        $package=$this->proofs->admittedPackage($input['app_package']??null);
         if(!$enabled&&!$this->db->one("SELECT r.id FROM enrollment_requests r JOIN devices d ON d.id=r.device_id WHERE r.installation_id=? AND r.key_fingerprint=? AND r.app_package=? AND r.status='approved' AND d.policy!='removed'",[$install,$key,$package])) {
             throw new Problem(503,'New device enrollment is paused by the owner.');
         }

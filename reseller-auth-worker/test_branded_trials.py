@@ -125,7 +125,7 @@ class PlanValidationTest(unittest.TestCase):
         plan=dict(PLAN)
         cur.fetchone.side_effect=[owner,plan,None];cur.fetchall.return_value=[]
         credit=Mock();worker={'panel_db_cursor':cursor,'_reseller_package_scope':lambda c,n:(1,None),'_package_allowed':lambda *a:True,
-            '_utcnow':lambda:datetime.datetime.now(datetime.timezone.utc),'_add_duration':lambda now,value,period:now+datetime.timedelta(hours=value),'_set_credits':credit}
+            '_utcnow':lambda:datetime.datetime.now(datetime.timezone.utc),'_add_duration':lambda now,value,period:now+datetime.timedelta(hours=value),'_set_credits':credit,'_new_activation_code':lambda cur:'123456'}
         return module.ExistingPanelAdapter(worker),cur,conn,credit
     def test_actual_adapter_insert_uses_locked_owner_and_contact_notes_with_one_credit_commit(self):
         adapter,cur,conn,credit=self.adapter();self.assertEqual('999',adapter.create(request()))
@@ -140,14 +140,19 @@ class PlanValidationTest(unittest.TestCase):
         adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=None;cur.fetchone.return_value={'id':999,'member_id':102,'package_id':7,'is_trial':1,'enabled':1,'reseller_notes':adapter.notes(request())}
         with self.assertRaises(module.TrialRejected):adapter.result(request(),'999')
     def result_row(self,adapter):
-        return {'id':999,'member_id':101,'package_id':7,'is_trial':1,'enabled':1,'exp_date':int(time.time())+3600,'reseller_notes':adapter.notes(request()),'bouquet':'[10,20]','max_connections':1,'duration':24,'duration_period':'hours','duration_value':0,'username':'TEST','password':'SYNTHETIC','activation_code':'123456'}
+        return {'id':999,'member_id':101,'package_id':7,'is_trial':1,'enabled':1,'activated':1,'exp_date':int(time.time())+3600,'reseller_notes':adapter.notes(request()),'bouquet':'[10,20]','max_connections':1,'duration':24,'duration_period':'hours','duration_value':0,'username':'TEST','password':'SYNTHETIC','activation_code':'123456'}
     def test_result_confirms_actual_created_limits_and_returns_only_single_account(self):
-        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=[self.result_row(adapter),dict(PLAN)]
+        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=[self.result_row(adapter),dict(PLAN)];cur.fetchall.return_value=[{'id':999}]
         result=adapter.result(request(),'999');self.assertEqual({'username','password','activation_code','exp_date'},set(result))
     def test_result_rejects_native_panel_overgrant_instead_of_delivering_wrong_limits(self):
         for changes in [{'max_connections':2},{'bouquet':'[10,20,999]'}]:
             adapter,cur,conn,credit=self.adapter();row=self.result_row(adapter);row.update(changes);cur.fetchone.side_effect=[row,dict(PLAN)]
             with self.assertRaises(module.TrialRejected):adapter.result(request(),'999')
+    def test_result_refuses_deactivated_or_ambiguous_codes_instead_of_claiming_activation_ready(self):
+        adapter,cur,conn,credit=self.adapter();row=self.result_row(adapter);row['activated']=0;cur.fetchone.side_effect=[row]
+        with self.assertRaises(module.TrialRejected):adapter.result(request(),'999')
+        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=[self.result_row(adapter),dict(PLAN)];cur.fetchall.return_value=[{'id':999},{'id':1000}]
+        with self.assertRaises(module.TrialRejected):adapter.result(request(),'999')
     def test_metadata_normalizes_numeric_panel_ids_and_rejects_fractional_or_unbounded_values(self):
         self.assertEqual(module.plan_document(PLAN)['fingerprint'],module.plan_document(dict(PLAN,bouquets='["10","20"]'))['fingerprint'])
         for changes in [{'duration_value':'1.5'},{'credits':'0.0000000001'},{'bouquets':'[true]'}]:

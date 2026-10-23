@@ -22,7 +22,7 @@ final class TrialPolicies
         $ready=$this->worker->configured()&&$t['status']==='active'&&$fresh&&$grant&&$grant['enabled']&&$default&&$default['enabled']&&(int)$grant['version']===(int)$default['grant_version']&&$selected&&$brand&&$brand['enabled'];
         return ['tenant_id'=>$t['id'],'grant'=>$grant?['version'=>(int)$grant['version'],'enabled'=>(bool)$grant['enabled'],'allowed_plan_ids'=>array_map('intval',array_keys($allowed))]:null,
             'default'=>$default,'plans'=>$plans,'catalog'=>$actor['role']==='owner'?$catalog:null,'catalog_fresh'=>$fresh,'worker_configured'=>$this->worker->configured(),
-            'configuration_ready'=>(bool)$ready,'live_offer_enabled'=>false,'offer_status'=>'App offers remain off until trusted installation and activation integration are validated.'];
+            'configuration_ready'=>(bool)$ready,'live_offer_enabled'=>false,'offer_status'=>'Plan/default settings do not publish a trial offer. Public signup needs separate owner rollout approval and explicit offer publication.'];
     }
     public function refresh(array $actor,array $input):array {
         Auth::owner($actor);Input::keys($input,['tenant_id']);$t=$this->tenant($actor,$input['tenant_id']??null);$link=$this->link($t['id']);if(!$link||$t['status']!=='active')throw new Problem(409,'An active verified reseller is required.');

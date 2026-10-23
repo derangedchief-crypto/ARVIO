@@ -1,4 +1,51 @@
-# Device management 0.12.0 trial policy/contact layer — validation
+# Device management 0.13.0 builder/public-offer layer — validation
+
+## Central builder/public offer increment
+
+User correction: no GitHub workflow is changed or added. The proposed extra workflow
+was withdrawn; its old YAML check is superseded by an assertion that the file is absent.
+The runner prototype is tested offline, not connected to an installed branded workflow.
+
+Real-DB cases cover immutable source/channel/version/signing policy, active verified
+reseller ownership, hashed30-minute leases, heartbeat and expiry/stale-token fencing,
+ready-versus-published status, explicit publication opt-in, same-byte publication
+reconciliation, idempotent finish, package-specific enrollment, retry limits and
+maintenance/cancellation without discarding uncertain publication history.
+
+Public signup cases cover explicit public-mode publication, artifact integrity,
+request-bound P-256 possession, approved default terms, per-reseller combination
+history, daily budgets, lost-response same-operation signed-poll recovery, encrypted
+activation handoff, unpublishing without revoking prepared results and default-OFF
+anonymous routes. Branded identifiers are claims, not cryptographic APK authentication.
+
+Browser cases include the default-disabled publication action and explicit rollout
+status, alongside existing scoped defaults/contact details, stale drafts, mobile
+layout and redaction. Builder runner tests mock remote commands/GitHub: immutable
+asset upload ordering, never-latest release policy, uncertain failures, refusal to
+overwrite mismatching bytes, post-upload provenance verification and private input
+handling. A later publish run retrieves the original prepared Actions artifact and
+must match its frozen receipt; missing/mismatching bytes cannot trigger a same-version
+rebuild. All simulated publication messages are captured, not live publication.
+
+SDK read-only negative test runs real apksigner/apkanalyzer against the existing
+signed generic testing113 APK: its central signer is valid but the branded package/
+version policy correctly rejects it. Sample branded resources/Kotlin compile locally;
+updater-only native tests and internal-test Kotlin compile pass. YAML is parsed and
+safety/default/trigger structure checked; no actionlint execution is claimed.
+
+No new workflow was dispatched, no SSH builder deployed, no real branded APK signed/
+published and no panel trial created. Actual signed installation/update/enrollment,
+optional callback interoperability and panel pilot require separate authorization.
+
+Local results:183 real-DB/service/HTTP cases;36 browser workflows in the most recent
+full run;17 offline builder tests;6 branding-resource tests;28 targeted native updater
+tests;18 activation-worker enrollment tests plus Python/PHP proof interoperability.
+Branded sample resources/Kotlin and unbranded internal-test Kotlin compile. Package
+config/storage/key-preservation and syntax/YAML safety checks pass. The preceding
+full Android run (before the builder-only updater selector increment) was882 tests,
+zero failures/errors,1 skipped; it is not presented as a new post-builder full run.
+
+## Previous increment — 0.12.0
 
 ## Trial policy/contact increment
 

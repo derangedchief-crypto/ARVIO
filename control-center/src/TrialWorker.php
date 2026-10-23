@@ -10,7 +10,7 @@ final class TrialWorker
         $c=$this->config->get('trial_worker',[]);if(!is_array($c)||!is_string($c['shared_secret']??null))return false;$url=$c['base_url']??'https://resellerworker.extremeiptv.net';$u=is_string($url)&&strlen($url)<=200?parse_url($url):false;
         return preg_match('/^[a-f0-9]{64}$/D',$c['shared_secret'])===1&&$u&&($u['scheme']??'')==='https'&&isset($u['host'])&&!isset($u['user'])&&!isset($u['pass'])&&!isset($u['query'])&&!isset($u['fragment'])&&in_array($u['path']??'',['','/'],true);
     }
-    private function request(string $path,string $domain,array $input):array {
+    private function request(string $path,string $domain,array $input,bool $mayCreate=false):array {
         if(!$this->configured())throw new Problem(503,'Configure the separate trial auth-worker connection first.');
         $c=$this->config->get('trial_worker');$body=json_encode($input,JSON_THROW_ON_ERROR);$stamp=(string)time();
         $signature=hash_hmac('sha256',"$domain\n$stamp\n$body",$c['shared_secret']);
@@ -20,7 +20,7 @@ final class TrialWorker
             $raw='';$curl=curl_init(rtrim($c['base_url']??'https://resellerworker.extremeiptv.net','/').$path);
             curl_setopt_array($curl,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>$body,CURLOPT_HTTPHEADER=>$headers,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT=>5,CURLOPT_TIMEOUT=>20,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_WRITEFUNCTION=>static function($handle,$chunk)use(&$raw){if(strlen($raw)+strlen($chunk)>131072)return 0;$raw.=$chunk;return strlen($chunk);}]);
             $ok=curl_exec($curl);$status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);curl_close($curl);
-            if($ok===false||$status!==200)throw new Problem(503,'The trial auth-worker is unavailable. No new accounts were requested.');
+            if($ok===false||$status!==200)throw new Problem(503,$mayCreate?'Trial outcome is uncertain; use only the original operation ID.':'The trial auth-worker is unavailable. No new accounts were requested.');
         }
         if(!is_string($raw)||strlen($raw)>131072)throw new Problem(503,'Invalid trial worker response.');
         try{$result=json_decode($raw,true,12,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new Problem(503,'Invalid trial worker response.');}if(!is_array($result))throw new Problem(503,'Invalid trial worker response.');return $result;
@@ -44,5 +44,19 @@ final class TrialWorker
         $r=$this->request('/branded-trials/status','branded-trial-status-v1',['operation_id'=>$operation,'reseller_id'=>$resellerId]);
         if(array_diff(array_keys($r),['operation_id','reseller_id','line_id','state','expires_at','checked_at_us'])||($r['operation_id']??null)!==$operation||($r['reseller_id']??null)!==$resellerId||!is_string($r['line_id']??null)||!preg_match('/^[1-9][0-9]{0,18}$/D',$r['line_id'])||!in_array($r['state']??null,['active','expired','pending_activation','restricted','converted','unavailable','needs_review'],true)||!array_key_exists('expires_at',$r)||!is_int($r['checked_at_us']??null)||abs($r['checked_at_us']/1000000-time())>300)throw new Problem(503,'Trial status ownership or freshness did not match.');
         if($r['expires_at']!==null&&(!is_int($r['expires_at'])||$r['expires_at']<1||$r['expires_at']>4102444800))throw new Problem(503,'Invalid confirmed trial expiry.');return $r;
+    }
+    /** Internal broker input only. Never forward arbitrary public request fields. */
+    public function provision(array $spec):array {
+        Input::keys($spec,['operation_id','brand_id','reseller_id','device_ref','package_id','plan_fingerprint','first_name','phone']);Input::id($spec['operation_id']??null);Input::id($spec['brand_id']??null);
+        if(!is_string($spec['reseller_id']??null)||!preg_match('/^[1-9][0-9]{0,18}$/D',$spec['reseller_id']))throw new Problem(422,'Invalid verified reseller.');foreach(['device_ref','plan_fingerprint'] as $k)if(!is_string($spec[$k]??null)||!preg_match('/^[a-f0-9]{64}$/D',$spec[$k]))throw new Problem(422,'Invalid admitted trial context.');Input::integer($spec['package_id']??null,1,2147483647);
+        $contact=TrialContacts::contact(['first_name'=>$spec['first_name']??null,'phone'=>$spec['phone']??null]);$spec['first_name']=$contact['first_name'];$spec['phone']=$contact['phone'];
+        $r=$this->request('/branded-trials/provision','branded-trial-v1',$spec,true);
+        if(($r['operation_id']??null)!==$spec['operation_id']||!in_array($r['state']??null,['prepared','failed','needs_review','registration_pending'],true))throw new Problem(503,'Invalid trial operation response.');
+        if($r['state']!=='prepared')return ['state'=>$r['state'],'operation_id'=>$spec['operation_id'],'line_id'=>isset($r['line_id'])&&is_string($r['line_id'])&&preg_match('/^[1-9][0-9]{0,18}$/D',$r['line_id'])?$r['line_id']:null];
+        if(($r['reseller_id']??null)!==$spec['reseller_id']||($r['plan_id']??null)!==$spec['package_id']||($r['plan_fingerprint']??null)!==$spec['plan_fingerprint']||($r['notes_recorded']??null)!==true||!is_string($r['line_id']??null)||!preg_match('/^[1-9][0-9]{0,18}$/D',$r['line_id'])||!is_array($r['account']??null))throw new Problem(503,'Prepared trial ownership did not match.');
+        $account=$r['account'];Input::keys($account,['username','password','activation_code','exp_date']);$code=$account['activation_code']??null;$expires=$account['exp_date']??null;
+        if(!is_string($code)||!preg_match('/^[0-9]{6}$/D',$code)||!is_int($expires)||$expires<=time()||$expires>4102444800)throw new Problem(503,'Worker has not confirmed an active trial/code.');
+        // Do not store or return provider usernames/passwords to the signup broker.
+        return ['state'=>'prepared','operation_id'=>$spec['operation_id'],'reseller_id'=>$spec['reseller_id'],'line_id'=>$r['line_id'],'plan_id'=>$spec['package_id'],'plan_fingerprint'=>$spec['plan_fingerprint'],'notes_recorded'=>true,'expires_at'=>$expires,'activation_code'=>$code];
     }
 }

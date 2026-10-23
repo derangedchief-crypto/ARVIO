@@ -1,0 +1,60 @@
+<?php
+declare(strict_types=1);
+function publicTrialCases(array &$tests,ControlCenter\Application $app,ControlCenter\Config $config,array $owner,array $alpha,array $beta,array $tenantB,HttpFixture $http):void {
+    $secret=str_repeat('d',64);$remoteCalls=0;$remoteState='prepared';$remoteIds=[];$meta=['id'=>7,'name'=>'TEST public trial','duration'=>24,'period'=>'hours','max_connections'=>1,'credits'=>'0','bouquets'=>[10],'fingerprint'=>str_repeat('7',64)];
+    $c=new ControlCenter\Config($config->root,array_replace($config->values,['trial_worker'=>['shared_secret'=>$secret],'trial_public_signup_enabled'=>true,'trial_channel'=>'testing','trial_reseller_daily_limit'=>2]));
+    $worker=new ControlCenter\TrialWorker($c,function($path,$body)use(&$remoteCalls,&$remoteState,&$remoteIds,$meta):string {
+        $s=json_decode($body,true);if($path==='/branded-trials/plans')return json_encode(['reseller_id'=>$s['reseller_id'],'plans'=>[$meta]]);
+        same('/branded-trials/provision',$path);$remoteCalls++;$id=$s['operation_id'];$remoteIds[$id]??=(string)(910000+count($remoteIds)+1);
+        if($remoteState==='timeout')throw new RuntimeException('SYNTHETIC lost transport');
+        if($remoteState!=='prepared')return json_encode(['state'=>$remoteState,'operation_id'=>$id,'line_id'=>$remoteIds[$id]]);
+        return json_encode(['state'=>'prepared','operation_id'=>$id,'reseller_id'=>$s['reseller_id'],'line_id'=>$remoteIds[$id],'plan_id'=>$s['package_id'],'plan_fingerprint'=>$s['plan_fingerprint'],'notes_recorded'=>true,'account'=>['username'=>'SYNTHETIC','password'=>'SYNTHETIC','activation_code'=>'123456','exp_date'=>time()+86400]]);
+    });
+    $secrets=new ControlCenter\Secrets($c);$policies=new ControlCenter\TrialPolicies($app->db,$app->management,$app->auth,$worker);$artifacts=new ControlCenter\BrandArtifacts($app->db,$secrets,$c);$offers=new ControlCenter\TrialOffers($app->db,$c,$app->management,$app->auth,$secrets,$policies,$artifacts);$sessions=new ControlCenter\TrialPublicSessions($app->db,$offers,$secrets,$app->auth);$contacts=new ControlCenter\TrialContacts($app->db,$app->management,$app->auth,$secrets,$c,$worker);$broker=new ControlCenter\TrialSignupBroker($app->db,$c,$secrets,$app->auth,$offers,$sessions,new ControlCenter\TrialBudgets($app->db,$c),$worker,$contacts);
+    $brand=null;$sessionData=[];
+    $makeSession=function(string $phone,string $device,string $ip='127.0.0.201',mixed $private=null)use($sessions,$offers,&$brand):array {
+        $private??=openssl_pkey_new(['private_key_type'=>OPENSSL_KEYTYPE_EC,'curve_name'=>'prime256v1']);$key=openssl_pkey_get_details($private)['key'];$der=base64_decode(preg_replace('~-----[^\n]+-----|\s~','',$key));$contact=ControlCenter\TrialContacts::contact(['first_name'=>'TEST Prospect','phone'=>$phone]);$hash=ControlCenter\TrialPublicSessions::requestHash($contact);
+        $s=$sessions->create(['brand_id'=>$brand['id'],'offer_revision'=>$offers->publicInfo($brand['id'])['offer_revision'],'device_claim'=>$device,'public_key'=>base64_encode($der),'request_hash'=>$hash],$ip);openssl_sign($s['signing_text'],$sig,$private,OPENSSL_ALGO_SHA256);
+        return ['private'=>$private,'input'=>['token'=>$s['token'],'nonce'=>$s['nonce'],'signature'=>base64_encode($sig),'request_hash'=>$hash,'first_name'=>$contact['first_name'],'phone'=>$contact['phone'],'notice_accepted'=>true],'operation'=>$s['operation_id']];
+    };
+    $tests['public trial offer requires explicit publication and a centrally approved current branded build']=function()use($app,$policies,$offers,$artifacts,$owner,$beta,$tenantB,&$brand):void {
+        $brand=$app->appBrands->get($beta,[])['brand'];
+        $cat=$policies->refresh($owner,['tenant_id'=>$tenantB['id']]);$policies->grant($owner,['tenant_id'=>$tenantB['id'],'expected_version'=>0,'catalog_id'=>$cat['catalog_id'],'allowed_plan_ids'=>[7],'enabled'=>true]);$policies->setDefault($beta,['expected_revision'=>0,'grant_version'=>1,'plan_id'=>7,'enabled'=>true]);same(false,$offers->publicInfo($brand['id'])['available']);
+        problem(409,fn()=> $offers->publish($beta,['expected_revision'=>0,'enabled'=>true,'confirmed_public_mode'=>true,'daily_limit'=>2]));
+        $job=$app->appBrands->requestBuild($beta,['expected_version'=>(int)$brand['version']]);$manifest=$app->appBrands->export($job['id'])['manifest'];$version=$manifest['app_version'].'.'.$brand['version'].'-test';$code=$manifest['app_version_code']*100000+$brand['version'];
+        $v=['channel'=>'testing','package_name'=>$brand['package_name'].'.test','version_name'=>$version,'version_code'=>$code,'trial_protocol'=>1,'signer_sha256'=>'3273d0b0294a689565ab4b0c8ef7e1887e2ca680240718f5521628b5c46328b7','apk_sha256'=>str_repeat('a',64),'artifact_url'=>'https://github.com/derangedchief-crypto/ARVIO/releases/download/brand-'.$brand['id'].'-testing/Brand-test.apk'];
+        problem(409,fn()=> $artifacts->recordVerified($job['id'],array_replace($v,['signer_sha256'=>str_repeat('0',64)])));$artifacts->recordVerified($job['id'],$v);same(false,$offers->publicInfo($brand['id'])['available']);
+        problem(409,fn()=> $offers->publish($beta,['expected_revision'=>0,'enabled'=>true,'daily_limit'=>2]));$offers->publish($beta,['expected_revision'=>0,'enabled'=>true,'confirmed_public_mode'=>true,'daily_limit'=>2]);$public=$offers->publicInfo($brand['id']);same(true,$public['available']);check(!isset($public['reseller_id'],$public['plan_id'],$public['credits']));
+    };
+    $tests['unmatched offers allocate no session contact customer device or operation rows']=function()use($app,$offers,$sessions):void {
+        $before=[];foreach(['trial_public_sessions','trial_contacts','trial_signup_operations','customers','devices'] as $t)$before[$t]=(int)$app->db->query("SELECT COUNT(*) FROM $t")->fetchColumn();same(false,$offers->publicInfo(str_repeat('0',32))['available']);problem(409,fn()=> $sessions->create(['brand_id'=>str_repeat('0',32)],'127.0.0.202'));
+        foreach($before as $t=>$count)same($count,(int)$app->db->query("SELECT COUNT(*) FROM $t")->fetchColumn());
+    };
+    $tests['unreviewed offer revisions and tampered artifact metadata cannot authorize public signup']=function()use($app,$offers,$sessions,&$brand):void {
+        problem(409,fn()=> $sessions->create(['brand_id'=>$brand['id'],'offer_revision'=>str_repeat('0',64)],'127.0.0.208'));
+        $artifact=$app->db->one('SELECT * FROM app_brand_artifacts WHERE brand_id=?',[$brand['id']]);
+        $app->db->query('UPDATE app_brand_artifacts SET apk_sha256=? WHERE id=?',[str_repeat('0',64),$artifact['id']]);
+        try{problem(503,fn()=> $offers->publicInfo($brand['id']));}finally{$app->db->query('UPDATE app_brand_artifacts SET apk_sha256=? WHERE id=?',[$artifact['apk_sha256'],$artifact['id']]);}
+        same(true,$offers->publicInfo($brand['id'])['available']);
+    };
+    $tests['public key possession plus notice binds one signup to server-owned reseller plan and scoped result']=function()use($app,$broker,$makeSession,&$remoteCalls,&$sessionData):void {
+        $sessionData=$makeSession('+15550000001',str_repeat('a',64));$in=$sessionData['input'];problem(422,fn()=> $broker->submit(array_replace($in,['reseller_id'=>'999'])));problem(422,fn()=> $broker->submit(array_replace($in,['notice_accepted'=>false])));problem(401,fn()=> $broker->submit(array_replace($in,['signature'=>base64_encode('invalid')])));
+        $result=$broker->submit($in);same('prepared',$result['state']);same('123456',$result['activation_code']);same(1,$remoteCalls);same($result,$broker->submit($in));same(1,$remoteCalls);check(!isset($result['username'],$result['password'],$result['reseller_id']));
+        $row=$app->db->one('SELECT * FROM trial_signup_operations WHERE id=?',[$result['operation_id']]);same(null,$row['request_cipher']);check(!str_contains($row['activation_cipher'],'123456'));$contact=$app->db->one('SELECT contact_cipher FROM trial_contacts WHERE operation_id=?',[$result['operation_id']]);check($contact!==null&&!str_contains($contact['contact_cipher'],'15550000001'));
+        $other=$makeSession('+15550000001',str_repeat('a',64),'127.0.0.203');problem(409,fn()=> $broker->submit($other['input']));same(1,$remoteCalls);
+        $resume=$makeSession('+15550000001',str_repeat('a',64),'127.0.0.204',$sessionData['private']);same('prepared',$broker->submit($resume['input'])['state']);same(1,$remoteCalls);
+    };
+    $tests['lost worker response retains quota and retries only the same operation before enforcing daily capacity']=function()use($app,$broker,$makeSession,&$remoteCalls,&$remoteState,&$remoteIds):void {
+        $second=$makeSession('+15550000002',str_repeat('a',64),'127.0.0.205');$remoteState='timeout';same('retry_wait',$broker->submit($second['input'])['state']);same(2,$remoteCalls);
+        same('retry_wait',$broker->submit($second['input'])['state']);same(2,$remoteCalls);
+        $over=$makeSession('+15550000003',str_repeat('b',64),'127.0.0.206');problem(429,fn()=> $broker->submit($over['input']));same(2,$remoteCalls);
+        $remoteState='prepared';$app->db->query('UPDATE trial_signup_operations SET next_attempt_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE id=?',[$second['operation']]);same('prepared',$broker->status($second['input'])['state']);same(3,$remoteCalls);same(2,count($remoteIds));
+    };
+    $tests['unpublishing stops new sessions but does not revoke an already-created scoped handoff']=function()use($offers,$broker,$beta,&$brand,&$sessionData,$sessions):void {
+        $offers->publish($beta,['expected_revision'=>1,'enabled'=>false]);same(false,$offers->publicInfo($brand['id'])['available']);problem(409,fn()=> $sessions->create(['brand_id'=>$brand['id']],'127.0.0.207'));
+        same('prepared',$broker->status($sessionData['input'])['state']);same('delivered',$broker->acknowledge($sessionData['input'])['state']);check(!isset($broker->status($sessionData['input'])['activation_code']));
+    };
+    $tests['default-off public HTTP routes expose no offer and cannot use client reseller or plan claims']=function()use($http,&$brand):void {
+        $r=$http->request('GET','/api/public-trials/offer?brand_id='.$brand['id'],null,[],'public-prospect');same(200,$r['status']);same(false,$r['body']['available']);$r=$http->request('POST','/api/public-trials/session',['brand_id'=>$brand['id'],'device_claim'=>str_repeat('a',64)],[],'public-prospect');same(409,$r['status']);
+    };
+}

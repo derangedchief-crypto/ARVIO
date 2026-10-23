@@ -94,6 +94,20 @@ fun XtreamGateScreen(
     onSkip: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    if(com.arflix.tv.branding.AppBrand.id.isNotBlank()){
+        val trialViewModel: com.arflix.tv.trials.TrialSignupViewModel=hiltViewModel()
+        val trial by trialViewModel.uiState.collectAsStateWithLifecycle()
+        val activateTrial={trial.activationCode?.let { code ->
+            if(!viewModel.uiState.value.isSubmitting){trialViewModel.handoffStarted();viewModel.onActivationCodeChange(code);viewModel.submit { trialViewModel.activationCompleted();onLoginSuccess() }}
+        };Unit}
+        LaunchedEffect(trial.activationCode,trial.handoffAttempted,uiState.isSubmitting){
+            if(trial.activationCode!=null&&!trial.handoffAttempted&&!uiState.isSubmitting&&uiState.activationCode.isBlank())activateTrial()
+        }
+        XtreamGateContent(uiState,viewModel::onActivationCodeChange,onSubmit={viewModel.submit(onSuccess=onLoginSuccess)},onSkip={viewModel.skip(onSkip=onSkip)},trialContent={
+            TrialSignupSection(trial,uiState.isSubmitting,trialViewModel::open,trialViewModel::firstName,trialViewModel::phone,onStart={if(!uiState.isSubmitting){viewModel.onActivationCodeChange("");trialViewModel.start()}},onRetry=trialViewModel::retry,onActivate=activateTrial)
+        })
+        return
+    }
     XtreamGateContent(uiState, viewModel::onActivationCodeChange,
         onSubmit = { viewModel.submit(onSuccess = onLoginSuccess) },
         onSkip = { viewModel.skip(onSkip = onSkip) })
@@ -106,6 +120,7 @@ internal fun XtreamGateContent(
     onActivationCodeChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onSkip: () -> Unit = {},
+    trialContent: (@Composable ()->Unit)? = null,
 ) {
     var focusedField by remember { mutableStateOf("activation") }
     val activationFocusRequester = remember { FocusRequester() }
@@ -179,7 +194,7 @@ internal fun XtreamGateContent(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "EXTREME TV",
+                        text = com.arflix.tv.branding.AppBrand.name.uppercase(java.util.Locale.ROOT),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = ArcticBlack,
@@ -272,6 +287,7 @@ internal fun XtreamGateContent(
 
                 // Skip opt-out: fully removed from the layout (no spacer, no invisible
                 // hit target, no focusable node) while SHOW_SKIP_BUTTON is false.
+                trialContent?.invoke()
                 if (SHOW_SKIP_BUTTON) {
                     Spacer(16.dp)
 

@@ -30,7 +30,7 @@ def prepare(bundle, output, resources=None):
         raise ValueError('Invalid brand identity')
     if manifest['package_name'] != 'com.extreme.brand.b' + brand:
         raise ValueError('Package identity does not match brand')
-    if type(manifest['brand_version']) is not int or not 1 <= manifest['brand_version'] <= 100000:
+    if type(manifest['brand_version']) is not int or not 1 <= manifest['brand_version'] <= 99999:
         raise ValueError('Invalid brand version')
     if not isinstance(manifest['app_version'],str) or not re.fullmatch(r'\d+\.\d+\.\d+',manifest['app_version']) or type(manifest['app_version_code']) is not int or manifest['app_version_code']<1:
         raise ValueError('Invalid platform version')
@@ -106,7 +106,7 @@ def prepare(bundle, output, resources=None):
         save(foreground, f'mipmap-{qualifier}/ic_launcher_foreground.png')
     save(images['icon_asset'], 'drawable/ic_launcher_monochrome.png', (108, 108))
     # Public build identity only. Never contains updater URLs, credentials or signing input.
-    props = {'brand_id': brand, 'brand_name': name, 'package_name': manifest['package_name'], 'app_version':manifest['app_version'], 'app_version_code':str(manifest['app_version_code'])}
+    props = {'brand_id': brand, 'brand_name': name, 'package_name': manifest['package_name'], 'brand_version':str(manifest['brand_version']), 'app_version':manifest['app_version'], 'app_version_code':str(manifest['app_version_code'])}
     (output / 'brand.properties').write_text(''.join(k+'='+v.replace('\\', '\\\\')+'\n' for k,v in props.items()), encoding='utf-8')
     (output / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     return output

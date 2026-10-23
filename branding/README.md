@@ -1,8 +1,16 @@
-# One-brand build preparation
+# One-brand central build workflow
 
-This increment implements a **brand registry, private uploads, pinned build input
-queue and Android resource preparation**. It is NOT yet an unattended APK service.
-The website honestly shows Waiting for central builder; trial creation is disabled.
+Source now includes private uploads, immutable inputs, central queue pickup/leases,
+resource generation, a central signed-build runner prototype, actual APK/package/
+certificate verification, immutable brand-channel publication and uncertain-publication
+reconciliation. See **CENTRAL_BUILDER.md** for setup, recovery and explicit limits.
+All builder/publication/trial rollout settings default OFF. No live deployment,
+workflow dispatch or new signed APK publication has been performed. This is not an
+already-running unattended APK service; queued work waits until a trusted runner runs.
+The proposed extra GitHub workflow was removed at the user's request; all existing
+workflows remain unchanged. Its branded-runner/retention adapter is deferred, not
+connected to the normal testing publication workflow. Test normal114 first, then
+take up the separate reseller APK without replacing the normal testing channel.
 
 ## Operator flow (local/offline preparation only)
 
@@ -37,21 +45,22 @@ OUR existing release repository, with isolated testing tags. Different packages
 never fall back to a generic APK. Distributable release/internal-test builds refuse
 missing centrally managed signing, rather than falling back to a debug key.
 
-## Still required before shipping reseller APKs
+## Before shipping reseller APKs
 
-- Owner-controlled builder pickup/lease/finish/artifact verification and publication,
-  package/certificate enrollment registry, signed artifact provenance, compatible
-  deep-link/auth callback review and an actual brand-preserving update test.
-- Release/version allocation for branding-only revisions: changing artwork/name on
-  an already-installed app must produce a monotonically newer installable/update
-  version, not another APK with an indistinguishable version. Queue inputs already
-  pin platform and brand versions separately; automatic publisher allocation and
-  update metadata still need implementation before distribution.
-- Trusted branded-install policy suitable for sideload TV devices; merely reporting
-  a package/signing hash or extracting an embedded secret is NOT authentication.
-- Trial admin allowlists/defaults and structured contact views are implemented in
-  website0.12. Still needed: trusted branded-install session, public provisioning
-  broker, protected single-operation result delivery and activation-screen integration.
+- Deploy the restricted SSH entry point and protected runner environments only after
+  separate authorization, pin the reviewed full source commit and verify signing/
+  publication with an approved testing brand. No generic/customer channel changes.
+- Perform a real signed brand-preserving installation/update and ownership-enrollment
+  test. Cosmetic revisions now have monotonic four-part version names/newer Android
+  version codes; exact-version immutable APK selection prevents old/generic fallback.
+- Validate optional external/deep-link/Discord callback behaviour with side-by-side
+  packages before claiming those features supported. HTTPS activation is unchanged;
+  generated package-scoped providers are checked on actual APK output.
+- User chose broad-compatible PUBLIC brand-scoped signup, not hardware attestation.
+  Package/hash/embedded ID are not APK authentication. Website0.13 includes the broker,
+  request-bound key possession, quotas, native form/handoff and explicit publication
+  controls. Keep rollout off until the separately approved device/panel pilot verifies
+  real activation, note/contact persistence, recovery and repeat-trial refusal.
 
 No automatically enabled trial checkbox is shipped ahead of these backend/native
 capabilities. A user-visible name is not a panel username, authorization or ownership.

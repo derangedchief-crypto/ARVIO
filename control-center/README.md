@@ -5,7 +5,36 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current development milestone — 0.12.0
+## Current development milestone — 0.13.0 (not deployed)
+
+The user's correction preserves ALL existing GitHub workflows. The proposed extra
+builder workflow is withdrawn; the separate branded runner adapter remains deferred.
+Normal testing114 is being built first through the established testing workflow.
+No branded output is routed to the generic testing channel.
+
+Migrations016/017 add the default-OFF public brand-scoped signup broker and central
+builder queue/leases/verified artifact registry. The user selected broad compatibility,
+not mandatory hardware attestation; public brand/device claims remain spoofable.
+Explicit offer publication requires owner rollout opt-in, current centrally verified
+branded build, fresh approved/default plan, confirmation and per-reseller daily limit.
+Save/upgrade/build actions never silently enable trial offers. Unpublishing does not
+revoke already-created trials or ordinary activation/viewing.
+
+Central builder access is a restricted SSH forced-command CLI, not a public HTTP API.
+Lease expiry fences stale callbacks; uncertain publication requires same-byte download
+reconciliation, never blind recreation/overwrite. Cosmetic revisions retain package/
+signer with newer Android/four-part update versions. Only exact-version immutable
+brand APK assets are selected; generic releases and customer latest are untouched.
+The branded enrollment format additionally requires a MAC-verified centrally registered
+package/channel here; actual account/panel ownership remains authoritative. Its small
+activation-worker source extension is a separate deployment from the trial auth worker.
+
+See ../branding/CENTRAL_BUILDER.md for private configuration, source pins, protected
+environments, recovery and separately approved live testing. All external boundaries
+in tests are synthetic except read-only SDK checks of an already-published generic APK.
+No workflow dispatch, service deployment, new APK publication or live trial performed.
+
+## Previous development milestone — 0.12.0
 
 ### Trial plan approvals, reseller defaults and follow-up contacts
 

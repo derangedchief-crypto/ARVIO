@@ -21,6 +21,8 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         assert 'src/DeviceProfiles.php' in names
         assert 'src/AppBrands.php' in names and 'database/migrations/014_reseller_app_brands.sql' in names
         assert 'src/TrialPolicies.php' in names and 'src/TrialContacts.php' in names and 'database/migrations/015_trial_policies_contacts.sql' in names
+        assert 'src/TrialSignupBroker.php' in names and 'database/migrations/016_public_trial_signup.sql' in names
+        assert 'src/BrandBuilder.php' in names and 'cli/brand-builder.php' in names and 'database/migrations/017_central_brand_builder.sql' in names
         for asset in ['device-workspace.js', 'workspace-library.js', 'workspace.css', 'app-branding.js', 'trial-workspace.js']:
             assert 'public/assets/' + asset in names
             assert ('/assets/' + asset).encode() in archive.read('public/index.html')

@@ -1,7 +1,16 @@
 # Trusted branded installations — activation integration prerequisites
 
-This is an implementation/security boundary note, NOT a deployed verifier or a
-claim that every sideload TV supports attestation. Trial offers remain off today.
+The user selected BROAD COMPATIBILITY: automatic trials are explicitly public,
+brand-scoped prospect signup offers. Hardware attestation below is optional future
+research, NOT a prerequisite or the selected default. Public brand/device claims are
+not proof of an authentic APK, a permanent physical device or a verified person.
+Server-owned reseller/plan policy, quotas, request-bound key possession and durable
+reconciliation provide the chosen controls. The generic app has no trial button.
+Trial offers remain off today; central artifact approval authorizes publication,
+not caller identity. No live deployment or panel pilot is authorized by this note.
+
+The remainder is stronger-path research, NOT a deployed verifier or a claim that
+every sideload TV supports attestation.
 
 ## Authoritative inputs
 

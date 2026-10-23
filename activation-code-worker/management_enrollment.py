@@ -20,6 +20,13 @@ from urllib.parse import urlsplit
 PACKAGES = frozenset({"com.arvio.tv", "com.arvio.tv.beta", "com.arvio.tv.test"})
 
 
+def package_format(app_package):
+    # A public routing claim, not app authentication. The control center accepts
+    # branded packages ONLY after central signed-artifact publication/registration.
+    # Proof still requires actual account credentials and panel-derived ownership.
+    return isinstance(app_package,str) and (app_package in PACKAGES or re.fullmatch(r'com\.extreme\.brand\.b[a-f0-9]{32}(?:\.test)?',app_package) is not None)
+
+
 def configured(secret: str, origin: str) -> bool:
     try:
         parsed = urlsplit(origin)
@@ -47,7 +54,7 @@ def issue_proof(secret: str, origin: str, canonical_username: str,
         raise ValueError("Invalid installation")
     if not all(re.fullmatch(r"[a-f0-9]{64}", x) for x in (key_fingerprint, challenge_hash)):
         raise ValueError("Invalid challenge/key")
-    if app_package not in PACKAGES or not canonical_username or len(canonical_username) > 256:
+    if not package_format(app_package) or not canonical_username or len(canonical_username) > 256:
         raise ValueError("Invalid account/package")
     key = bytes.fromhex(secret)
     issued = int(time.time()) if now is None else now
