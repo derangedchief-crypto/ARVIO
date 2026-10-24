@@ -1,5 +1,27 @@
 # Storage, reseller branding and trials — development progress
 
+## Live pilot verifier compatibility fix
+
+The revision5 pilot compiled successfully but the old fingerprint parser rejected
+the newer GitHub Android SDK's `V2 Signer: certificate SHA-256 digest:` label.
+Hash-pinned, previously installed revision2 APK reproduced the failure on GitHub;
+the fixed parser verified the same APK successfully in run40125320781. It still
+requires exactly one certificate digest record and the exact central fingerprint;
+wrong, duplicate, extra and unrecognised records fail closed.53 builder tests pass.
+Temporary reference-download diagnostics were removed after that check; existing
+generic testing/customer workflows and default-branch application code are untouched.
+
+GitHub bridge SSH authentication previously failed because the secret lacked the
+OpenSSH key's required final newline. The SAME dedicated bridge key was re-stored
+with its exact bytes through sealed GitHub secret API input. No signing key was
+exported, replaced or regenerated. The workflow's signing preflight exports only
+the PUBLIC certificate digest inside GitHub, never private key material.
+
+Site source approval remains on the earlier e96049c commit until the owner updates
+the private source pin. No pilot artifact has been retained or published yet;
+publication and trials remain OFF. A fresh saved-brand revision is needed because
+the failed revision5 request remains bound to its original source allocation.
+
 ## Restricted website bridge setup — website0.14.1
 
 Owner console confirms website38.190.133.176:22, app folder

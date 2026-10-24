@@ -100,34 +100,6 @@ jobs:
           echo "BRAND_BUILDER_SSH_KEY_FILE=$RUNNER_TEMP/brand-builder-ssh-key" >> "$GITHUB_ENV"
           echo "BRAND_BUILDER_KNOWN_HOSTS_FILE=$RUNNER_TEMP/brand-builder-known-hosts" >> "$GITHUB_ENV"
 
-      - name: Check verifier against previously verified branded APK
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/verifier-reference"
-          gh release download staging-testing --repo derangedchief-crypto/ARVIO --pattern Extreme-IPTV-Branded-46ae4715-2.0.114.2-test.apk --dir "$RUNNER_TEMP/verifier-reference"
-          python - <<'PY'
-          import hashlib, os, subprocess, sys
-          from pathlib import Path
-          sys.path.insert(0, 'branding')
-          import central_builder as cb
-          apk = Path(os.environ['RUNNER_TEMP'])/'verifier-reference/Extreme-IPTV-Branded-46ae4715-2.0.114.2-test.apk'
-          assert cb.digest(apk) == '4728d66f8c3a0b64aaa02181c99d90be9945ecad39541ab3e95399df5a2e3771'
-          try:
-              tool = cb.sdk_tool('apksigner')
-              print('Reference verifier tool selection passed.', flush=True)
-              result = cb.command([tool, 'verify', '--verbose', '--print-certs', str(apk)])
-              print('Reference apksigner execution passed.', flush=True)
-              # Only public certificate records from this hash-pinned public APK.
-              for line in result.splitlines(keepends=True):
-                  if 'certificate SHA-256 digest:' in line:
-                      print('Public reference certificate record: ' + repr(line), flush=True)
-              cb.verify_signer(result, '3273d0b0294a689565ab4b0c8ef7e1887e2ca680240718f5521628b5c46328b7')
-              print('Reference central signature verification passed.', flush=True)
-          except Exception as error:
-              print('Reference verifier failure type: ' + type(error).__name__, flush=True)
-              raise SystemExit(1)
-          PY
-
       - name: Claim and stage signed APK or reconcile frozen publication
         id: stage
         shell: bash
