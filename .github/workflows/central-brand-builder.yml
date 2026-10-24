@@ -1,0 +1,148 @@
+name: Central Branded APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Build/retain, build/publish, or verify an uncertain publication
+        type: choice
+        options: [build, publish, reconcile]
+        default: build
+        required: true
+      channel:
+        description: Owner-approved brand channel (never generic testing/customer)
+        type: choice
+        options: [testing, production]
+        default: testing
+        required: true
+      build_id:
+        description: Exact build ID; blank picks the oldest unprepared eligible job
+        type: string
+        default: ''
+        required: false
+
+# One publisher across every brand/channel; never cancel a possibly uploading job.
+concurrency:
+  group: central-brand-publisher
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  branded-apk:
+    name: Isolated centrally signed branded APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Configure reviewers/allowed refs in repository settings BEFORE dispatch.
+    environment: ${{ inputs.mode == 'build' && 'brand-build-only' || inputs.channel == 'production' && 'brand-production-publication' || 'brand-testing-publication' }}
+    permissions:
+      contents: write
+      actions: read
+    env:
+      BRAND_BUILDER_SSH_TARGET: ${{ secrets.BRAND_BUILDER_SSH_TARGET }}
+      BRAND_CHANNEL: ${{ inputs.channel }}
+      BRAND_MODE: ${{ inputs.mode }}
+      BRAND_BUILD_ID: ${{ inputs.build_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact dispatched source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install bounded image tooling
+        run: python -m pip install -r branding/requirements.txt
+
+      - name: Prepare private owner inputs
+        env:
+          BRAND_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.BRAND_BUILDER_SSH_PRIVATE_KEY }}
+          BRAND_BUILDER_SSH_KNOWN_HOSTS: ${{ secrets.BRAND_BUILDER_SSH_KNOWN_HOSTS }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL: ${{ secrets.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          APP_ANON_KEY: ${{ secrets.APP_ANON_KEY }}
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+          TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          python branding/configure_runner.py
+          echo "BRAND_BUILDER_SSH_KEY_FILE=$RUNNER_TEMP/brand-builder-ssh-key" >> "$GITHUB_ENV"
+          echo "BRAND_BUILDER_KNOWN_HOSTS_FILE=$RUNNER_TEMP/brand-builder-known-hosts" >> "$GITHUB_ENV"
+
+      - name: Claim and stage signed APK or reconcile frozen publication
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ "$BRAND_MODE" = reconcile ]; then
+            python branding/central_builder.py reconcile --channel "$BRAND_CHANNEL" --build-id "$BRAND_BUILD_ID" --workdir "$RUNNER_TEMP/brand-job"
+          else
+            python branding/central_builder.py run --stage --channel "$BRAND_CHANNEL" --build-id "$BRAND_BUILD_ID" --workdir "$RUNNER_TEMP/brand-job"
+            if [ -f "$RUNNER_TEMP/brand-job/staged.json" ]; then
+              echo 'has_artifact=true' >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Retain only signed APK and public provenance
+        if: steps.stage.outputs.has_artifact == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: central-branded-apk-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/brand-job/export/Brand-*.apk
+            ${{ runner.temp }}/brand-job/export/Brand-*.apk.provenance.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verify retained bytes and complete approved operation
+        if: steps.stage.outputs.has_artifact == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$BRAND_MODE" = publish ]; then
+            python branding/central_builder.py complete --channel "$BRAND_CHANNEL" --workdir "$RUNNER_TEMP/brand-job" --publish
+          else
+            python branding/central_builder.py complete --channel "$BRAND_CHANNEL" --workdir "$RUNNER_TEMP/brand-job"
+          fi
+
+      - name: Fence failed or cancelled operation
+        if: failure() || cancelled()
+        run: python branding/central_builder.py abort --workdir "$RUNNER_TEMP/brand-job"
+
+      - name: Remove private disposable inputs
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import shutil
+          root = Path.cwd()
+          temp = Path(os.environ['RUNNER_TEMP'])
+          for path in [root/'app/release.keystore', root/'keystore.properties', root/'secrets.properties',
+                       temp/'brand-builder-ssh-key', temp/'brand-builder-known-hosts']:
+              path.unlink(missing_ok=True)
+          job = temp/'brand-job'
+          if job.is_dir():shutil.rmtree(job)
+          PY
