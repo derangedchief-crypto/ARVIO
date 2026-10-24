@@ -117,6 +117,10 @@ jobs:
               print('Reference verifier tool selection passed.', flush=True)
               result = cb.command([tool, 'verify', '--verbose', '--print-certs', str(apk)])
               print('Reference apksigner execution passed.', flush=True)
+              # Only public certificate records from this hash-pinned public APK.
+              for line in result.splitlines(keepends=True):
+                  if 'certificate SHA-256 digest:' in line:
+                      print('Public reference certificate record: ' + repr(line), flush=True)
               cb.verify_signer(result, '3273d0b0294a689565ab4b0c8ef7e1887e2ca680240718f5521628b5c46328b7')
               print('Reference central signature verification passed.', flush=True)
           except Exception as error:
