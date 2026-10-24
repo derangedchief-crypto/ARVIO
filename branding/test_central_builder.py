@@ -31,6 +31,16 @@ def xml(expected,**changes):
 
 
 class VerificationTests(unittest.TestCase):
+    def test_tool_failure_never_includes_private_command_or_output(self):
+        for executable, category in [('ssh','ssh'),('/private/custom-secret-command','other')]:
+            result=SimpleNamespace(returncode=255,stdout=b'PRIVATE_STDOUT',stderr=b'PRIVATE_STDERR')
+            with patch.object(cb.subprocess,'run',return_value=result):
+                with self.assertRaises(cb.ToolFailure) as caught:
+                    cb.command([executable,'PRIVATE_ARGUMENT'])
+            self.assertEqual(category,caught.exception.category)
+            self.assertEqual(255,caught.exception.code)
+            self.assertNotIn('PRIVATE',str(caught.exception))
+
     def test_source_channel_package_and_identity_are_all_pinned(self):
         c=fixture();self.assertEqual(c['expected'],cb.validate_context(c,SHA,'testing'))
         for field,value in [('source_sha','f'*40),('channel','production')]:

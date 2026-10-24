@@ -24,6 +24,14 @@ REPO = 'derangedchief-crypto/ARVIO'
 ANDROID = '{http://schemas.android.com/apk/res/android}'
 
 
+class ToolFailure(RuntimeError):
+    """Only fixed categories and numeric exit status may reach public CI logs."""
+    def __init__(self, category, code):
+        self.category = category
+        self.code = code
+        super().__init__('Central build tool failed; private output withheld.')
+
+
 def digest(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -39,7 +47,9 @@ def command(args, *, cwd=None, data=None, timeout=120):
     result = subprocess.run(args, cwd=cwd, input=data, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, timeout=timeout, check=False)
     if result.returncode:
-        raise RuntimeError('Central build tool failed; review isolated runner configuration and private job state.')
+        executable = Path(args[0]).name
+        category = executable if executable in ('git', 'ssh', 'gh', 'gradlew') else 'other'
+        raise ToolFailure(category, result.returncode)
     if len(result.stdout) > 8 * 1024 * 1024:
         raise RuntimeError('Oversized central build tool response.')
     return result.stdout.decode('utf-8')
@@ -374,7 +384,9 @@ def abort_job(args, bridge=None):
 
 
 def run_job(args, bridge=None, run=command):
+    print('Builder checkpoint: checking trusted source.', flush=True)
     root, source = reviewed_source(run)
+    print('Builder checkpoint: trusted source passed.', flush=True)
     work = Path(args.workdir).resolve();work.mkdir(mode=0o700, parents=False, exist_ok=False)
     bridge = bridge or Bridge()
     request={'build_id': args.build_id, 'channel': args.channel, 'source_sha': source}
@@ -382,10 +394,13 @@ def run_job(args, bridge=None, run=command):
         run_id=getattr(args, 'retention_id', '') if getattr(args, 'artifact_store', None) else os.environ.get('GITHUB_RUN_ID','')
         if not re.fullmatch('[1-9][0-9]{0,19}',run_id):raise ValueError('Configure a trusted durable artifact retention identity.')
         request['runner_run_id']=run_id
+    print('Builder checkpoint: requesting restricted queue hand-off.', flush=True)
     context = bridge.call('reconcile' if args.mode == 'reconcile' else 'claim', request)
+    print('Builder checkpoint: queue response received.', flush=True)
     if context.get('state') == 'no_job':
         print('No eligible queued brand build.');return
     expected = validate_context(context, source, args.channel, args.mode == 'reconcile')
+    print('Builder checkpoint: queue identity validated.', flush=True)
     private_json(work/'lease.json', context)
     try:
         with Heartbeat(bridge, context) as heartbeat:
@@ -399,9 +414,11 @@ def run_job(args, bridge=None, run=command):
             else:
                 bundle = work/'brand-input.json';private_json(bundle, context['bundle'])
                 resources = work/'resources'
+                print('Builder checkpoint: preparing approved artwork.', flush=True)
                 run([sys.executable, str(root/'branding/prepare.py'), '--bundle', str(bundle), '--output', str(resources)], cwd=root)
                 build_type = 'InternalTest' if args.channel == 'testing' else 'Release'
                 started = time.monotonic()
+                print('Builder checkpoint: compiling isolated APK.', flush=True)
                 run([str(root/'gradlew'), f'-PbrandDirectory={resources}', ':app:assembleSideload'+build_type, '--no-daemon', '--console=plain'], cwd=root, timeout=5400)
                 elapsed = round(time.monotonic()-started, 2)
                 output = root/'app/build/outputs/apk/sideload'/('internalTest' if args.channel == 'testing' else 'release')
@@ -467,6 +484,9 @@ def main():
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 run_job(args)
         else:run_job(args)
+    except ToolFailure as error:
+        print(f'Central build tool category={error.category} exit={error.code}; private output withheld.', file=sys.stderr)
+        return 1
     except Exception:
         print('Central build stopped. No automatic publication retry; review the private job state.', file=sys.stderr)
         return 1
