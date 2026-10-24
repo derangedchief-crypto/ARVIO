@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "brand_id": "46ae4715dbfe4e57dfc7498cfbd6fbfb",
+  "brand_version": 2,
+  "app_version": "2.0.114",
+  "app_version_code": 430,
+  "app_name": "Extreme IPTV",
+  "package_name": "com.extreme.brand.b46ae4715dbfe4e57dfc7498cfbd6fbfb",
+  "assets": {
+    "loading_asset": {
+      "id": "b1c50ba1c3e258cdb76bbf955d886255",
+      "sha256": "111f3a940d655b72aa12808a4b09a74a0f77fda7abd24fee2809a40b5f3e2118"
+    },
+    "logo_asset": {
+      "id": "b1c50ba1c3e258cdb76bbf955d886255",
+      "sha256": "111f3a940d655b72aa12808a4b09a74a0f77fda7abd24fee2809a40b5f3e2118"
+    },
+    "icon_asset": {
+      "id": "b1c50ba1c3e258cdb76bbf955d886255",
+      "sha256": "111f3a940d655b72aa12808a4b09a74a0f77fda7abd24fee2809a40b5f3e2118"
+    }
+  }
+}
