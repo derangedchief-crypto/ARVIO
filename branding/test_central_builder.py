@@ -76,6 +76,13 @@ class VerificationTests(unittest.TestCase):
         cb.verify_signer(good,'c'*64)
         for text in ['',good.replace('c'*64,'0'*64),good+good.replace('#1','#2')]:
             with self.assertRaises(ValueError):cb.verify_signer(text,'c'*64)
+    def test_scheme_labelled_sdk_certificate_still_requires_one_exact_signer(self):
+        old='Signer #1 certificate SHA-256 digest: '+'c'*64+'\n'
+        for scheme in ['V2','V3','V3.1','V4']:
+            good=scheme+' Signer: certificate SHA-256 digest: '+'c'*64+'\n'
+            cb.verify_signer(good,'c'*64)
+            for bad in [good+good,old+good,good+good.replace('c'*64,'d'*64),good.replace('c'*64,'d'*64),good+'Unknown certificate SHA-256 digest: '+'d'*64+'\n']:
+                with self.assertRaises(ValueError):cb.verify_signer(bad,'c'*64)
     def test_newer_or_generic_channel_metadata_is_never_overwritten(self):
         e=fixture()['expected'];good={'tagName':e['release_tag'],'name':'2.0.114.1-test','isPrerelease':True,'isDraft':False,'assets':[]}
         cb.check_release(good,e)

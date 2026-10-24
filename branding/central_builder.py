@@ -204,8 +204,12 @@ def manifest_identity(xml, expected):
 
 
 def verify_signer(text, expected):
-    signers = re.findall(r'^Signer #([0-9]+) certificate SHA-256 digest: ([a-fA-F0-9]{64})$', text, re.MULTILINE)
-    if len(signers) != 1 or signers[0][0] != '1' or signers[0][1].lower() != expected:
+    # Recent SDK tools use scheme-labelled records instead of numbered signers.
+    # Count ALL certificate digest records first so an extra/unknown signer cannot
+    # disappear merely because its label is not one of the supported formats.
+    records = [line for line in text.splitlines() if 'certificate SHA-256 digest:' in line]
+    match = re.fullmatch(r'(?:Signer #1|V(?:2|3|3\.1|4) Signer:) certificate SHA-256 digest: ([a-fA-F0-9]{64})', records[0]) if len(records) == 1 else None
+    if match is None or match[1].lower() != expected:
         raise ValueError('Actual APK signer does not match the central certificate.')
 
 
