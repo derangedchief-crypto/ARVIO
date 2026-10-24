@@ -19,7 +19,8 @@ final class BrandBuilder
     private function lockJob(string $id):array {
         $before=$this->db->one('SELECT b.tenant_id FROM app_brand_builds j JOIN app_brands b ON b.id=j.brand_id WHERE j.id=?',[Input::id($id)]);if(!$before)throw new Problem(404,'Build not found.');
         $t=$this->db->one('SELECT * FROM tenants WHERE id=? FOR UPDATE',[$before['tenant_id']]);$job=$this->db->one('SELECT * FROM app_brand_builds WHERE id=? FOR UPDATE',[$id]);$brand=$this->db->one('SELECT * FROM app_brands WHERE id=? FOR UPDATE',[$job['brand_id']]);
-        if(!$t||$t['status']!=='active'||$t['kind']!=='reseller'||!$brand||!$brand['enabled']||!$this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$t['id']]))throw new Problem(409,'Brand workspace is unavailable for building or publication.');
+        $admitted=$t&&($t['kind']==='owner'?$this->db->one("SELECT id FROM users WHERE id=? AND role='owner' AND active=1",[$job['requested_by']]):($t['kind']==='reseller'?$this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$t['id']]):null));
+        if(!$t||$t['status']!=='active'||!$admitted||!$brand||!$brand['enabled'])throw new Problem(409,'Brand workspace is unavailable for building or publication.');
         $job['tenant_id']=$t['id'];return $job;
     }
     private function leased(array $job,mixed $token,array $states,bool $allowExpired=false):void {
@@ -40,7 +41,7 @@ final class BrandBuilder
         if(!isset($input['build_id'])||$input['build_id']===''){
             $versions=[];foreach($c['sources']??[] as $version=>$sha)if(is_string($sha)&&$sha===($input['source_sha']??null))$versions[]=(string)$version;
             if(!$versions)throw new Problem(409,'No platform version is authorized for this source commit.');
-            $candidate=$this->db->one("SELECT j.id FROM app_brand_builds j JOIN app_brands b ON b.id=j.brand_id JOIN tenants t ON t.id=b.tenant_id JOIN panel_resellers r ON r.tenant_id=t.id WHERE j.app_version IN (".implode(',',array_fill(0,count($versions),'?')).") AND b.enabled=1 AND t.status='active' AND j.build_attempt<3 AND (j.state IN ('waiting_builder','build_failed') OR (j.state='building' AND j.lease_until<=UTC_TIMESTAMP())) AND (j.build_channel IS NULL OR j.build_channel=?) AND (j.source_sha IS NULL OR j.source_sha=?) ORDER BY j.created_at,j.id LIMIT 1",[...$versions,$channel,$input['source_sha']]);
+            $candidate=$this->db->one("SELECT j.id FROM app_brand_builds j JOIN app_brands b ON b.id=j.brand_id JOIN tenants t ON t.id=b.tenant_id LEFT JOIN panel_resellers r ON r.tenant_id=t.id WHERE j.app_version IN (".implode(',',array_fill(0,count($versions),'?')).") AND b.enabled=1 AND t.status='active' AND (t.kind='owner' OR (t.kind='reseller' AND r.tenant_id IS NOT NULL)) AND j.build_attempt<3 AND (j.state IN ('waiting_builder','build_failed') OR (j.state='building' AND j.lease_until<=UTC_TIMESTAMP())) AND (j.build_channel IS NULL OR j.build_channel=?) AND (j.source_sha IS NULL OR j.source_sha=?) ORDER BY j.created_at,j.id LIMIT 1",[...$versions,$channel,$input['source_sha']]);
             if(!$candidate)return ['state'=>'no_job'];$input['build_id']=$candidate['id'];
         }
         return $this->db->transaction(function()use($input,$c,$channel,$run):array {

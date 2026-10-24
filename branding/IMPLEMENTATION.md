@@ -1,5 +1,22 @@
 # Storage, reseller branding and trials — development progress
 
+## Owner-workspace hotfix — website0.13.2
+
+User uploaded0.13.1 and reported that their admin account could not select itself,
+with a non-JSON error on the selected reseller. Confirmed code defect: the dropdown
+AND backend admitted only kind=reseller and excluded the existing owner workspace.
+0.13.2 adds one owner-only brand in that existing workspace without a second reseller
+login/panel link, keeps its identity stable and supports the same private export and
+restricted builder/registry preparation. It does not rename the normal APK, enable
+financial trial policy or relax verified-reseller/device ownership rules.
+
+The owner page checks pending migrations via the existing system-status API BEFORE
+requesting branding data. Unexpected HTML responses now show safe HTTP status/request
+ID instead of blaming PHP/Nginx, and link directly to the upgrade screen. No raw HTML
+is displayed. The actual authenticated non-JSON failure has NOT been reproduced;
+read-only signed-out API checks return proper JSON. No new migration beyond017,
+configuration/key replacement, workflow change, worker deployment or APK publication.
+
 ## Latest site delivery — 0.13.1
 
 Normal testing114/430 from50cc240 is published and its downloaded package/version/

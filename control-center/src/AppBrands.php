@@ -2,7 +2,7 @@
 declare(strict_types=1);
 namespace ControlCenter;
 
-/** Exactly one persistent brand identity per verified reseller. Cosmetic inputs only. */
+/** One persistent cosmetic brand per verified reseller or the platform's owner workspace. */
 final class AppBrands
 {
     private const ASSETS=['loading_asset','logo_asset','icon_asset'];
@@ -12,16 +12,21 @@ final class AppBrands
     public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly ?BrandArtifacts $artifacts=null) {}
     private function ready():void {if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['014_reseller_app_brands.sql']))throw new Problem(503,'Apply the app-branding database upgrade first.');}
     private function tenant(array $actor,?string $id,bool $lock=false):array {
-        $this->ready();$t=$this->management->tenant($actor,Input::id($id??$actor['tenant_id']),$lock);
+        $this->ready();if($id===null&&$actor['role']==='owner')$id=$this->db->one("SELECT id FROM tenants WHERE kind='owner' ORDER BY id LIMIT 1")['id']??null;
+        $t=$this->management->tenant($actor,Input::id($id??$actor['tenant_id']),$lock);
         if($t['status']!=='active')throw new Problem(409,'Workspace suspended.');
-        if($t['kind']!=='reseller')throw new Problem(409,'Choose a reseller workspace. The platform app is managed separately.');
+        // The administrator may prepare ONE separate owner-branded app without
+        // creating/relinking a reseller account. This grants no trial/panel rights
+        // and never changes the existing generic app or its update channel.
+        if($t['kind']==='owner'){Auth::owner($actor);return $t;}
+        if($t['kind']!=='reseller')throw new Problem(409,'Choose an owner or verified reseller workspace.');
         if(!$this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$t['id']]))throw new Problem(409,'A verified linked reseller is required for branded apps.');return $t;
     }
     public function get(array $actor,array $input):array {
         Input::keys($input,['tenant_id']);$t=$this->tenant($actor,$input['tenant_id']??null);$brand=$this->db->one('SELECT * FROM app_brands WHERE tenant_id=?',[$t['id']]);
         $builds=$brand?$this->db->all('SELECT id,brand_version,app_version,state,created_at FROM app_brand_builds WHERE brand_id=? ORDER BY created_at DESC LIMIT 10',[$brand['id']]):[];
         $published=[];if($brand&&$this->artifacts&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']))foreach(['testing','production'] as $channel){$artifact=$this->artifacts->approved($brand['id'],$channel);if($artifact)$published[]=['channel'=>$channel,'version_name'=>$artifact['version_name'],'version_code'=>(int)$artifact['version_code'],'package_name'=>$artifact['package_name'],'artifact_url'=>$artifact['artifact_url'],'apk_sha256'=>$artifact['apk_sha256']];}
-        return ['brand'=>$brand,'builds'=>$builds,'artifacts'=>$published,'tenant_id'=>$t['id'],'trial_creation_enabled'=>false];
+        return ['brand'=>$brand,'builds'=>$builds,'artifacts'=>$published,'tenant_id'=>$t['id'],'workspace_kind'=>$t['kind'],'trial_creation_enabled'=>false];
     }
     public function upload(array $actor,array $input):array {
         Input::keys($input,['tenant_id','image']);$this->auth->limit('brand-image',$actor['id'],20,3600);$t=$this->tenant($actor,$input['tenant_id']??null);
@@ -75,7 +80,7 @@ final class AppBrands
      * Inputs contain no signing secrets or update URLs. */
     public function export(string $buildId):array {
         $this->ready();$row=$this->db->one('SELECT j.*,b.tenant_id,b.enabled FROM app_brand_builds j JOIN app_brands b ON b.id=j.brand_id WHERE j.id=?',[Input::id($buildId)]);if(!$row||!$row['enabled']||!in_array($row['state'],['waiting_builder','building','build_failed','ready_to_publish'],true))throw new Problem(404,'Build not available.');
-        $t=$this->db->one("SELECT t.id FROM tenants t JOIN panel_resellers r ON r.tenant_id=t.id WHERE t.id=? AND t.status='active'",[$row['tenant_id']]);if(!$t)throw new Problem(409,'Workspace suspended or reseller link removed.');$manifest=json_decode($row['manifest'],true,12,JSON_THROW_ON_ERROR);$images=[];
+        $t=$this->db->one("SELECT t.id FROM tenants t LEFT JOIN panel_resellers r ON r.tenant_id=t.id WHERE t.id=? AND t.status='active' AND (t.kind='owner' OR (t.kind='reseller' AND r.tenant_id IS NOT NULL))",[$row['tenant_id']]);if(!$t)throw new Problem(409,'Workspace suspended or reseller link removed.');$manifest=json_decode($row['manifest'],true,12,JSON_THROW_ON_ERROR);$images=[];
         foreach($manifest['assets'] as $role=>$asset){$a=$this->db->one('SELECT image FROM app_brand_assets WHERE id=? AND tenant_id=?',[$asset['id'],$row['tenant_id']]);if(!$a||!hash_equals($asset['sha256'],hash('sha256',$a['image'])))throw new Problem(409,'Build image integrity failed.');$images[$role]=base64_encode($a['image']);}
         return ['manifest'=>$manifest,'images'=>$images];
     }

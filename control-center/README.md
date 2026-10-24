@@ -5,7 +5,22 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current update — 0.13.1 (deployment not yet confirmed)
+## Current hotfix — 0.13.2 (not yet deployed)
+
+Fixes the owner/admin exclusion from branding: the selector includes/defaults to
+the existing owner workspace, and owner-only name/artwork/save/export/build preparation
+works without creating a separate reseller login or panel link. One stable owner
+brand is enforced by the same workspace uniqueness/version rules. Resellers still
+need a verified link and cannot read or alter owner branding. Financial trial policy
+and managed-device ownership checks are unchanged; owner branding enables neither.
+
+Branding first checks the existing owner system-status endpoint for pending database
+upgrades and offers a direct upgrade link before attempting branding-table queries.
+Malformed API responses now show safe HTTP status/request-ID diagnostics instead of
+asserting a PHP/Nginx configuration fault. Branding failures link directly to pending
+website upgrades. No migration beyond017 is added. See deploy/UPDATE-0.13.2.txt.
+
+## Previous update — 0.13.1 (user reports installed)
 
 Adds owner-only **Download build inputs** to the immutable branding queue, so the
 operator can download a pinned name/artwork bundle without a server terminal.

@@ -1,6 +1,31 @@
-# Device management 0.13.1 website delivery — validation
+# Device management 0.13.2 owner-branding hotfix — validation
 
-## Website0.13.1 delivery increment
+## Owner branding and error diagnosis
+
+Owner-branding tests start with the existing administrator workspace and NO panel
+reseller link. They verify default/explicit owner selection, image/name save, a single
+stable brand/package across revisions, owner-only pinned export, builder preparation
+and synthetic artifact registration without creating/relinking a reseller account.
+Resellers cannot access owner branding; ordinary reseller verification is unchanged.
+Owner branding still cannot enable financial trial policy/public offers.
+
+The browser suite tests the mobile owner selector/form/queue, then a pending-upgrade
+response that must prevent branding-table requests entirely. A separate injected HTML
+503 verifies safe HTTP-status/request-ID display, no raw page leakage and a working
+upgrade-screen link. Mobile build rows use the existing stacked record layout.
+
+Live read-only checks show version0.13.1 and JSON401 on unauthenticated API routes.
+They do NOT reproduce or establish the cause of the authenticated non-JSON response
+in the user screenshot. Pending migrations are a possibility, not a proven diagnosis.
+No Nginx configuration, live database, account mapping, signing/workflow, APK or worker
+was changed by this hotfix. No migration beyond017 is added.
+Verified locally:186 DB/service/HTTP cases and40 browser workflows pass with zero
+failures/browser errors. Owner branding, pending-upgrade preflight, safe HTML-error
+diagnostics and the mobile build-row actions are covered. Package preservation and
+manifest/migration checksum checks pass; existing migration files are byte-identical.
+
+## Previous website0.13.1 delivery increment
+
 
 Adds the owner-only build-input attachment route and download link. Service/HTTP
 cases enforce owner authentication, reject reseller/anonymous access, preserve exact

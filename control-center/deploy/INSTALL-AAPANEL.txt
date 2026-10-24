@@ -1,4 +1,13 @@
-EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.13.1 (SITE UPDATE / OWNER BRAND-INPUT EXPORT)
+EXTREME CONTROL CENTER — DEVICE MANAGEMENT 0.13.2 (OWNER BRANDING HOTFIX)
+
+0.13.2 HOTFIX — NOT YET DEPLOYED
+See UPDATE-0.13.2.txt. Administrator can select My owner workspace and prepare
+one separate owner-branded app without a second reseller login or panel link.
+Reseller verification and all financial/device-admission controls stay unchanged.
+API error pages show safe HTTP status/request ID and a link to database upgrades.
+NO new migration beyond017; apply any previous PENDING upgrade after uploading.
+Config.php/storage/keys and existing workflows/testing114/workers are unchanged.
+
 
 0.13.1 UPDATE — DEPLOYMENT NOT YET CONFIRMED
 See UPDATE-0.13.1.txt for the focused update instructions. Includes0.13 features

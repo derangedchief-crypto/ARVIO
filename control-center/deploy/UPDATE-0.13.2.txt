@@ -1,0 +1,31 @@
+EXTREME CONTROL CENTER0.13.2 — OWNER BRANDING HOTFIX
+
+This fixes a code mistake that excluded the administrator's own workspace from
+branding. You do NOT need to create another reseller login or relink the panel
+account just to prepare your own name/artwork and download the pinned build inputs.
+
+1. Back up the existing site/database/private config and storage as usual.
+   Extract Extreme-Control-Center-0.13.2-Update.zip over the application folder
+   containing config.php and public/ (not inside public/). The update excludes
+   your live config.php and initialized storage/keys. Do not delete/re-create them.
+2. Reload the site. Open More -> Enrollments & upgrades and apply any PENDING
+   database upgrade. There is NO new migration beyond017 in this hotfix, but
+   uploading a ZIP alone does not apply upgrades left from earlier releases.
+3. Open My app brand. As administrator the selector now includes and defaults
+   to My owner workspace — <your name>. Select it, save your name/images, request
+   a build and use Download build inputs. One stable brand belongs to this
+   existing owner workspace; its app is separate from the regular testing APK.
+
+If a branding request still fails, the screen now reports HTTP status and a
+request ID (when the server supplies one) and links directly to website upgrades.
+The owner branding page also checks for pending upgrades BEFORE querying branding
+tables, so an unapplied upgrade is shown directly instead of calling that endpoint.
+Send those identifiers rather than raw HTML/logs. The earlier generic non-JSON
+message did not prove an Nginx problem; the authenticated failure needs that
+status/request ID if applying the pending upgrades does not resolve it.
+
+Owner branding is cosmetic preparation only. It does NOT enable trials, create
+panel/reseller accounts, transfer customer/device ownership, change the normal
+APK/update channel or bypass verified-reseller trial/admission policy. The
+separate centrally signed branded APK path remains a later step. Existing GitHub
+workflows, normal testing114, workers, private configuration and keys are untouched.

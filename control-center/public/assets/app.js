@@ -35,7 +35,12 @@ async function api(path, body, extra = {}) {
   if (body !== undefined) { options.headers['Content-Type'] = 'application/json'; options.headers['X-CSRF-Token'] = state.csrf; options.body = JSON.stringify(body); }
   const response = await fetch(path, options);
   let data;
-  try { data = await response.json(); } catch { throw new Error('Server response was not JSON. Check the PHP/Nginx configuration.'); }
+  try { data = await response.json(); } catch {
+    if(response.status===401&&path!=='/api/login'&&sessionUser===state.user?.id)signedOut();
+    const rawId=response.headers.get('X-Request-ID')||'',requestId=/^[a-zA-Z0-9_-]{1,80}$/.test(rawId)?rawId:'';
+    const type=(response.headers.get('Content-Type')||'').toLowerCase().includes('text/html')?'an HTML page':'a non-JSON response';
+    const error=new Error(`The server returned ${type} instead of JSON (HTTP ${response.status}).${requestId?' Request ID: '+requestId:''}`);error.status=response.status;error.requestId=requestId;throw error;
+  }
   if (!response.ok) {
     if (response.status === 401 && path !== '/api/login' && sessionUser === state.user?.id) signedOut();
     const error = new Error((data.error || 'Request failed.') + (data.request_id ? ' Request ID: ' + data.request_id : '')); error.status = response.status; throw error;
@@ -46,7 +51,7 @@ function panel(title, ...children) { const n = el('section', null, 'panel'); if 
 function heading(title, description, actions = []) { const h = el('div', null, 'page-heading'); const left = el('div'); left.append(el('h1', title), el('p', description)); const right = el('div', null, 'actions'); right.append(...actions); h.append(left, right); return h; }
 function cellName(title, subtitle) { const n = el('div'); n.append(el('span', title, 'cell-name')); if (subtitle) n.append(el('span', subtitle, 'cell-sub')); return n; }
 function table(headers, rows) {
-  const wrap = el('div', null, 'table-scroll');const cards=['Device','Line username / customer','Workspace','Action','Settings profile','Position','Layout','Profile','Device / recipe'].includes(headers[0]);if(cards)wrap.classList.add('mobile-records');wrap.tabIndex=0;wrap.setAttribute('role','region');wrap.setAttribute('aria-label','Data table: '+headers.filter(Boolean).join(', '));const t = el('table');t.setAttribute('role','table');const head = el('thead'); const hr = el('tr'); headers.forEach(h => {const th=el('th',h);th.scope='col';hr.append(th);}); head.append(hr); t.append(head);
+  const wrap = el('div', null, 'table-scroll');const cards=['Device','Line username / customer','Workspace','Action','Settings profile','Position','Layout','Profile','Device / recipe','Brand version'].includes(headers[0]);if(cards)wrap.classList.add('mobile-records');wrap.tabIndex=0;wrap.setAttribute('role','region');wrap.setAttribute('aria-label','Data table: '+headers.filter(Boolean).join(', '));const t = el('table');t.setAttribute('role','table');const head = el('thead'); const hr = el('tr'); headers.forEach(h => {const th=el('th',h);th.scope='col';hr.append(th);}); head.append(hr); t.append(head);
   const body = el('tbody'); rows.forEach(cells => { const row = el('tr');row.setAttribute('role','row'); cells.forEach((value,index) => { const td = el('td');td.setAttribute('role','cell');td.dataset.label=headers[index]||'Actions'; td.append(value instanceof Node ? value : document.createTextNode(String(value ?? '—'))); row.append(td); }); body.append(row); });
   if (!rows.length) { const row = el('tr'); const td = el('td', 'No records yet.', 'empty'); td.colSpan = headers.length; row.append(td); body.append(row); }
   t.append(body); wrap.append(t); return wrap;
