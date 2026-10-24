@@ -48,7 +48,26 @@ def command(args, *, cwd=None, data=None, timeout=120):
                             stderr=subprocess.PIPE, timeout=timeout, check=False)
     if result.returncode:
         executable = Path(args[0]).name
-        category = executable if executable in ('git', 'ssh', 'gh', 'gradlew') else 'other'
+        category = executable if executable in ('git', 'ssh', 'gh', 'gradlew', 'apksigner', 'apkanalyzer') else 'other'
+        if executable == 'gradlew':
+            output = (result.stdout + result.stderr).lower()
+            for marker, label in [
+                (b'outofmemoryerror', 'gradle-memory'),
+                (b'gradle build daemon disappeared', 'gradle-daemon-lost'),
+                (b'no space left on device', 'gradle-disk-full'),
+                (b'could not resolve all', 'gradle-dependencies'),
+                (b'compilation error', 'gradle-compilation'),
+                (b'keystore was tampered', 'gradle-keystore-password'),
+            ]:
+                if marker in output:
+                    category = label
+                    break
+            # Task identifiers and source locations only, never error messages,
+            # command lines, URLs or property values from the captured output.
+            text = (result.stdout + result.stderr).decode('utf-8', errors='replace')
+            tasks = re.findall(r"Execution failed for task '(:[A-Za-z0-9_:.-]{1,160})'", text)
+            for task in sorted(set(tasks))[:8]:
+                print('Failed Gradle task: ' + task, file=sys.stderr)
         if category == 'ssh':
             # Match known OpenSSH diagnostics, but never echo their text (which
             # can contain addresses, paths, commands or private application data).
@@ -204,7 +223,9 @@ def sdk_tool(kind):
 def verify_apk(apk, expected, run=command):
     if not apk.is_file() or apk.is_symlink() or not 1024 <= apk.stat().st_size <= 536870912:
         raise ValueError('Invalid or oversized APK artifact.')
+    print('Builder checkpoint: verifying central APK signature.', flush=True)
     verify_signer(run([sdk_tool('apksigner'), 'verify', '--verbose', '--print-certs', str(apk)]), expected['signer_sha256'])
+    print('Builder checkpoint: verifying APK package and version.', flush=True)
     manifest_identity(run([sdk_tool('apkanalyzer'), 'manifest', 'print', str(apk)]), expected)
     return {'apk_sha256': digest(apk), 'apk_size_bytes': apk.stat().st_size}
 
@@ -436,6 +457,7 @@ def run_job(args, bridge=None, run=command):
                 started = time.monotonic()
                 print('Builder checkpoint: compiling isolated APK.', flush=True)
                 run([str(root/'gradlew'), f'-PbrandDirectory={resources}', ':app:assembleSideload'+build_type, '--no-daemon', '--console=plain'], cwd=root, timeout=5400)
+                print('Builder checkpoint: APK compilation passed.', flush=True)
                 elapsed = round(time.monotonic()-started, 2)
                 output = root/'app/build/outputs/apk/sideload'/('internalTest' if args.channel == 'testing' else 'release')
                 apks = list(output.glob('*.apk'))

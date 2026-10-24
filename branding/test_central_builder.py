@@ -49,6 +49,16 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(category,caught.exception.category)
             self.assertNotIn('PRIVATE',str(caught.exception))
 
+    def test_gradle_classification_only_reports_task_not_private_error(self):
+        from contextlib import redirect_stderr
+        output=io.StringIO()
+        result=SimpleNamespace(returncode=1,stdout=b"Execution failed for task ':app:compileSideloadInternalTestKotlin'.\nPRIVATE_TOKEN",stderr=b'Compilation error PRIVATE_PATH')
+        with patch.object(cb.subprocess,'run',return_value=result), redirect_stderr(output):
+            with self.assertRaises(cb.ToolFailure) as caught:cb.command(['/repo/gradlew','PRIVATE_ARGUMENT'])
+        self.assertEqual('gradle-compilation',caught.exception.category)
+        self.assertIn(':app:compileSideloadInternalTestKotlin',output.getvalue())
+        self.assertNotIn('PRIVATE',output.getvalue()+str(caught.exception))
+
     def test_source_channel_package_and_identity_are_all_pinned(self):
         c=fixture();self.assertEqual(c['expected'],cb.validate_context(c,SHA,'testing'))
         for field,value in [('source_sha','f'*40),('channel','production')]:
