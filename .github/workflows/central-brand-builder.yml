@@ -86,6 +86,17 @@ jobs:
         run: |
           set -euo pipefail
           python branding/configure_runner.py
+          # Public certificate digest only; no keystore/password/private key output.
+          certificate_sha=$(keytool -exportcert -keystore app/release.keystore -alias "$RELEASE_KEY_ALIAS" -storepass:env RELEASE_KEYSTORE_PASSWORD 2>/dev/null | sha256sum | cut -d ' ' -f 1)
+          echo "Signing preflight public certificate SHA256: $certificate_sha"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          sdk = os.environ.get('ANDROID_HOME')
+          print('Signing preflight ANDROID_HOME configured:', bool(sdk))
+          if sdk:
+              print('Signing preflight apksigner installed:', any(Path(sdk).glob('build-tools/*/apksigner')))
+          PY
           echo "BRAND_BUILDER_SSH_KEY_FILE=$RUNNER_TEMP/brand-builder-ssh-key" >> "$GITHUB_ENV"
           echo "BRAND_BUILDER_KNOWN_HOSTS_FILE=$RUNNER_TEMP/brand-builder-known-hosts" >> "$GITHUB_ENV"
 
