@@ -1,0 +1,41 @@
+EXTREME CONTROL CENTER0.14.2 — READ-ONLY DISPATCH QUEUE
+
+Install the UPDATE ZIP over the existing website application folder. Preserve the
+sole config.php, storage, original application/setup keys and all trial history.
+No database migration, app APK update or production publication is needed.
+
+New GET /api/brand-dispatch/queue accepts only a dedicated Bearer queue token.
+The site stores its SHA256 hash in the EXISTING private config.php:
+
+  'brand_dispatch' => [
+      'enabled' => true,
+      'token_sha256' => 'HASH_PRINTED_BY_WORKER_CONFIGURATOR',
+  ],
+
+This token is NOT the GitHub token and NOT an application/signing key. Generate it
+privately on the worker with the configure-poll.py helper; send only its hash to
+the website. Never paste GH_TOKEN or BRAND_QUEUE_TOKEN into chat/screenshots.
+
+The queue hint includes only state/build_id/channel/source_sha. It does not claim
+or alter a job and exposes no artwork, lease token, signing material, contact,
+trial or customer data. Missing/disabled configuration returns404; unauthorized
+requests return401. The endpoint is testing-only even if other builder channels
+are configured. A valid hint requires an owner-pinned source, admitted workspace,
+remaining build attempts and no frozen receipt. Active/prepared/published and
+uncertain-publication jobs are excluded. Failed builds back off for five minutes.
+
+The worker checks this endpoint approximately every30seconds. An empty queue does
+not contact GitHub or start an Actions run. Only an eligible exact job triggers
+the existing branded build-only/testing workflow. Existing active-run checking,
+a private worker lock and a durable five-minute dispatch-intent fence prevent
+normal repeat dispatches and throttle ambiguous API failures. GitHub runner wait
+and compilation time are additional;30seconds is pickup cadence, not build time.
+
+Keep the old dispatcher timer disabled during setup. Update the worker bundle,
+configure the token/hash and explicitly pin the reviewed source on BOTH hosts.
+Restart only the website PHP8.4 service after extraction to avoid stale bytecode.
+Validate one service run while the queue is empty (zero extra GitHub runs), then
+one new testing request, BEFORE enabling the30second timer. Publication remains
+owner-approved; no automatic production rollout or main-commit fanout is added.
+
+No existing worker, signing key, APK download identity or trial policy changes.

@@ -1,5 +1,49 @@
 # GitHub signing + worker-host dispatch
 
+## Queue-aware30second testing pickup (website0.14.2+)
+
+The updated dispatcher systemd service uses `--poll --mode build --channel testing`.
+Every run first performs a bounded HTTPS GET against the website queue endpoint,
+with a dedicated read-only Bearer token in the header. Redirects are forbidden.
+An empty queue produces NO GitHub calls or Actions runs. It never polls production
+or automatically publishes. Compilation/runner availability are separate delays.
+
+For an eligible job it verifies the protected ref/source and existing active runs,
+then records a private durable dispatch-intent fence BEFORE dispatching the exact
+job ID. The fence lasts five minutes to cover ambiguous dispatch responses/list
+propagation; the website separately enforces leases and a three-attempt build cap.
+Normal long-running builds are protected by the active-run check. Failed builds
+also have a five-minute website polling backoff. No queue claim occurs over HTTP.
+
+Deployment (owner only; do not upload this bundle to the public website):
+
+1. Disable only `brand-dispatch.timer` if it was enabled. Do not restart any payment,
+   auth or unrelated services. The installer refuses an active dispatcher timer.
+2. Install website0.14.2 UPDATE preserving the existing config/storage/keys. Restart
+   only website PHP8.4 to clear stale bytecode; retain the restricted bridge ACLs.
+3. Extract the NEW worker bundle to a root-private folder and run
+   `bash install.sh FULL_REVIEWED_SOURCE_SHA`. It preserves `/etc/brand-dispatch.env`
+   and does not start/enable anything. The helper requires existing system gh/python.
+4. Run `python3 configure-poll.py FULL_REVIEWED_SOURCE_SHA` there as root. This
+   preserves GH_TOKEN, backs up the first old env as root0600 `.before-poll`, pins
+   the source, sets BRAND_QUEUE_URL and generates/reuses BRAND_QUEUE_TOKEN privately.
+   It prints ONLY the token's SHA256 hash. No signing key is created or copied.
+5. Add `brand_dispatch.enabled=true` and `brand_dispatch.token_sha256=PRINTED_HASH`
+   to the site's existing config. Set `brand_builder.sources['2.0.115']` to the SAME
+   reviewed SHA. Preserve all other settings; channels stay testing/trials OFF.
+6. Start `brand-dispatch.service` ONCE. Empty queue must log
+   `No eligible queued testing build; GitHub was not contacted.` Verify no new run.
+7. Save/request one NEW testing-brand revision and run the service once. Verify
+   exactly one Actions build is dispatched, the same job is not duplicated, and
+   its prepared APK verifies. Publication remains an explicit exact-job approval.
+8. Only after the pilot, enable `brand-dispatch.timer`. Timer interval is30seconds
+   after each service completion, AccuracySec1second; not a build every30seconds.
+
+The queue token is scoped only to a minimal read-only testing hint. Keep its raw
+value/GitHub token private on the worker. The website stores only its hash. If the
+ref moves or token/HTTPS/policy checks fail, polling fails closed. Do not resolve a
+pin mismatch by using arbitrary/latest source or weakening signing verification.
+
 ## Restricted-account prerequisite: website0.14.1
 
 Install0.14.1 before the owner website-bridge setup bundle. Established keys must
@@ -114,8 +158,9 @@ a branded run is active/queued/waiting approval. Update the pin only after revie
 
 Copy deploy/brand-dispatch.service and .timer into systemd's unit directory, review
 paths, then daemon-reload. Do NOT enable the timer yet. Start the service once for
-the build-only pilot. The default timer checks every15 minutes; an empty queue still
-starts a short GitHub check, so do not enable unnecessary high-frequency polling.
+the build-only pilot. The current timer checks the website every30seconds using
+`--poll`; an empty queue makes no GitHub calls. The old0.14.0 setup dispatched a
+GitHub check every15minutes instead: replace that bundle before enabling this timer.
 
 An owner-only Brand-Dispatcher-Setup.zip bundles the dispatcher/unit files and
 install.sh. On the WORKER host, after installing system Python3 and gh, run

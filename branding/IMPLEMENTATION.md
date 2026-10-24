@@ -1,5 +1,18 @@
 # Storage, reseller branding and trials — development progress
 
+## Queue-aware testing pickup — website0.14.2
+
+Owner requested approximately30second pickup WITHOUT empty GitHub runs. Implemented
+a disabled-by-default authenticated read-only testing queue hint, sharing the CLI
+candidate policy, with failed-job backoff and no frozen/uncertain receipt pickup.
+Worker `--poll` checks the website before ANY GitHub call, validates exact source/
+channel/job, then uses existing active-run checks plus lock/durable five-minute
+dispatch-intent fence. Systemd service stays build-only/testing; timer30seconds.
+Owner helper preserves existing GH_TOKEN and config backup, generates a separate
+private queue token and prints only its SHA256 hash for existing website config.
+No application/signing key, production channel or trial setting changes. Runtime
+worker/site installation and empty-queue/exact-job pilot remain pending.
+
 ## Live pilot verifier compatibility fix
 
 The revision5 pilot compiled successfully but the old fingerprint parser rejected

@@ -1,9 +1,10 @@
 [Unit]
-Description=Check for branded work through GitHub every fifteen minutes
+Description=Check website for queued testing builds every thirty seconds
 
 [Timer]
-OnBootSec=5min
-OnUnitInactiveSec=15min
+OnBootSec=30s
+OnUnitInactiveSec=30s
+AccuracySec=1s
 Unit=brand-dispatch.service
 
 [Install]

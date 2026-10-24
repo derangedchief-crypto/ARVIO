@@ -1,4 +1,20 @@
-# Device management 0.14.1 restricted builder key reads — validation
+# Device management0.14.2 queue-aware worker polling — validation
+
+The authenticated testing queue hint is read-only, source-pinned and disabled by
+default. Service tests cover missing/wrong token, production refusal, source
+mismatch, repeated hints without row mutations, active/expired leases, prepared,
+uncertain/published/cancelled states, frozen receipts, retry cap and failure backoff.
+The anonymous HTTP endpoint is404 when disabled. No trial/device data is returned.
+Python tests cover empty/error queues making zero GitHub calls, bounded HTTPS
+responses, header-only tokens, redirect refusal, exact-job dispatch, durable repeat
+fencing, forbidden production/publication polling and preservation of the existing
+GitHub token during private queue-token provisioning.189 isolated DB/service/HTTP
+checks,41 browser checks,60 builder/resource/dispatcher tests,11 configuration checks
+and update-package preservation tests pass. The first browser run hit the external
+120second command timeout; a complete isolated rerun with adequate time passed all
+checks. Live deployment is pending.
+
+## Previous0.14.1 validation
 
 ## Existing encryption keys are read-only inputs
 

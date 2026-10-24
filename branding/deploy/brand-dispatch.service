@@ -10,7 +10,7 @@ Group=branddispatch
 UMask=0077
 EnvironmentFile=/etc/brand-dispatch.env
 Environment=BRAND_DISPATCH_STATE=/var/lib/brand-dispatch
-ExecStart=/usr/bin/python3 /opt/brand-dispatch/branding/dispatch_github.py --mode build --channel testing
+ExecStart=/usr/bin/python3 /opt/brand-dispatch/branding/dispatch_github.py --poll --mode build --channel testing
 TimeoutStartSec=5min
 KillMode=control-group
 NoNewPrivileges=true

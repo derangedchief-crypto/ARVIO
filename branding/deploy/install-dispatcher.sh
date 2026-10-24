@@ -9,6 +9,9 @@ test -x /usr/bin/python3 || { echo 'Install system Python3 first (/usr/bin/pytho
 test -x /usr/bin/gh || { echo 'Install system GitHub CLI first (/usr/bin/gh). No signing key is needed on this host.' >&2; exit 1; }
 base="$(cd -- "$(dirname -- "$0")" && pwd)"
 test -f "$base/branding/dispatch_github.py"
+if systemctl is-active --quiet brand-dispatch.timer; then
+  echo 'Disable only brand-dispatch.timer before upgrading this dispatcher.' >&2; exit 1
+fi
 if ! id branddispatch >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/brand-dispatch --create-home --shell /usr/sbin/nologin branddispatch
 fi
@@ -32,3 +35,4 @@ echo 'Service/timer have NOT been started or enabled by this installer.'
 echo 'Privately edit /etc/brand-dispatch.env with the dedicated Actions-write/Contents-read token.'
 echo 'Keep build-only mode until the website bridge and an exact-job publication pilot succeed.'
 echo 'Read branding/GITHUB_RUNNER.md before starting the service.'
+echo 'For30second queue-aware polling, configure the private queue token and website endpoint before starting anything.'

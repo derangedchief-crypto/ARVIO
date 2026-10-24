@@ -36,12 +36,26 @@ final class BrandBuilder
     private function context(array $job,string $token):array {
         return ['build_id'=>$job['id'],'source_sha'=>$job['source_sha'],'channel'=>$job['build_channel'],'lease_token'=>$token,'expected'=>$this->expected($job,$job['build_channel']),'bundle'=>$this->brands->export($job['id']),'prepared_receipt'=>$job['artifact_receipt']?json_decode($job['artifact_receipt'],true):null,'prepared_run_id'=>$job['artifact_receipt']?$job['runner_run_id']:null];
     }
+    private function candidate(array $c,string $channel,mixed $source,bool $poll=false):?array {
+        $versions=[];foreach($c['sources']??[] as $version=>$sha)if(is_string($sha)&&$sha===$source)$versions[]=(string)$version;
+        if(!$versions)throw new Problem(409,'No platform version is authorized for this source commit.');
+        return $this->db->one("SELECT j.id FROM app_brand_builds j JOIN app_brands b ON b.id=j.brand_id JOIN tenants t ON t.id=b.tenant_id LEFT JOIN panel_resellers r ON r.tenant_id=t.id WHERE j.app_version IN (".implode(',',array_fill(0,count($versions),'?')).") AND b.enabled=1 AND t.status='active' AND ((t.kind='owner' AND EXISTS(SELECT 1 FROM users u WHERE u.id=j.requested_by AND u.role='owner' AND u.active=1)) OR (t.kind='reseller' AND r.tenant_id IS NOT NULL)) AND j.build_attempt<3 AND j.artifact_receipt IS NULL AND (j.state IN ('waiting_builder','build_failed') OR (j.state='building' AND j.lease_until<=UTC_TIMESTAMP())) AND (j.build_channel IS NULL OR j.build_channel=?) AND (j.source_sha IS NULL OR j.source_sha=?)".($poll?" AND (j.state!='build_failed' OR j.build_finished_at IS NULL OR j.build_finished_at<=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 5 MINUTE))":"")." ORDER BY j.created_at,j.id LIMIT 1",[...$versions,$channel,$source]);
+    }
+    /** Read-only, testing-only hint. Cannot claim, renew, sign or publish a job. */
+    public function poll(array $input,mixed $authorization):array {
+        $dispatch=$this->config->get('brand_dispatch',[]);$hash=is_array($dispatch)?($dispatch['token_sha256']??null):null;
+        if(!is_array($dispatch)||($dispatch['enabled']??false)!==true||!is_string($hash)||!preg_match('/^[a-f0-9]{64}$/D',$hash))throw new Problem(404,'Queue check unavailable.');
+        if(!is_string($authorization)||!preg_match('/^Bearer ([a-f0-9]{64})$/D',$authorization,$match)||!hash_equals($hash,hash('sha256',$match[1])))throw new Problem(401,'Queue check authorization required.');
+        Input::keys($input,['channel','source_sha']);$c=$this->policy();$channel=$this->channel($c,$input['channel']??null);
+        if($channel!=='testing')throw new Problem(403,'Automatic queue checks are testing-only.');
+        $source=$input['source_sha']??null;if(!is_string($source)||!preg_match('/^[a-f0-9]{40}$/D',$source))throw new Problem(422,'Invalid source pin.');
+        $job=$this->candidate($c,$channel,$source,true);
+        return $job?['state'=>'queued','build_id'=>$job['id'],'channel'=>$channel,'source_sha'=>$source]:['state'=>'no_job'];
+    }
     public function claim(array $input):array {
         Input::keys($input,['build_id','channel','source_sha','runner_run_id']);$c=$this->policy();$channel=$this->channel($c,$input['channel']??null);$run=$input['runner_run_id']??null;if($run!==null&&(!is_string($run)||!preg_match('/^[1-9][0-9]{0,19}$/D',$run)))throw new Problem(422,'Invalid central workflow run identity.');
         if(!isset($input['build_id'])||$input['build_id']===''){
-            $versions=[];foreach($c['sources']??[] as $version=>$sha)if(is_string($sha)&&$sha===($input['source_sha']??null))$versions[]=(string)$version;
-            if(!$versions)throw new Problem(409,'No platform version is authorized for this source commit.');
-            $candidate=$this->db->one("SELECT j.id FROM app_brand_builds j JOIN app_brands b ON b.id=j.brand_id JOIN tenants t ON t.id=b.tenant_id LEFT JOIN panel_resellers r ON r.tenant_id=t.id WHERE j.app_version IN (".implode(',',array_fill(0,count($versions),'?')).") AND b.enabled=1 AND t.status='active' AND (t.kind='owner' OR (t.kind='reseller' AND r.tenant_id IS NOT NULL)) AND j.build_attempt<3 AND (j.state IN ('waiting_builder','build_failed') OR (j.state='building' AND j.lease_until<=UTC_TIMESTAMP())) AND (j.build_channel IS NULL OR j.build_channel=?) AND (j.source_sha IS NULL OR j.source_sha=?) ORDER BY j.created_at,j.id LIMIT 1",[...$versions,$channel,$input['source_sha']]);
+            $candidate=$this->candidate($c,$channel,$input['source_sha']??null);
             if(!$candidate)return ['state'=>'no_job'];$input['build_id']=$candidate['id'];
         }
         return $this->db->transaction(function()use($input,$c,$channel,$run):array {
