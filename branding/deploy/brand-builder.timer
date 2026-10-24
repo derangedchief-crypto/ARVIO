@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the approved branding queue every two minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+Unit=brand-builder.service
+
+[Install]
+WantedBy=timers.target

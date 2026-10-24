@@ -1,5 +1,27 @@
 # Storage, reseller branding and trials — development progress
 
+## Standalone builder integration — source only
+
+Manual signed owner revision1 -> 2 update passed on-device; owner confirmed retained
+branding/login/favourites/settings. Normal testing114 was restored; customer/latest
+remainsv2.0.101. No GitHub workflow changes are needed for the new dedicated-host
+adapter (standalone_runner.py). It uses disposable exact-commit checkouts, owner-only
+signing inputs, restricted SSH queue pickup, durable local immutable APK/provenance
+retention BEFORE preparation, reverified prepared-byte reuse, per-brand-only release
+publication, download verification and website registry completion. Systemd examples
+default to build-only; publication and timers need explicit staged operator setup.
+
+See STANDALONE_RUNNER.md. Deployment remains BLOCKED on a trusted host with the
+owner's original central keystore/backup and restricted website SSH configuration.
+GitHub secrets cannot be read back; no secret extraction or replacement key is used.
+Automatic builder/registry and brand updater pilot remain unverified, not operational.
+Trials/workers stay OFF; no new website migration or ZIP is required by this adapter.
+Validation:34 Python builder/resource/standalone cases pass, including durable
+retention-before-prepared, missing/tampered bytes, tenant/job isolation, disk-full
+and uncertain-publication fencing. PHP regression rerun was blocked because the
+private test MariaDB socket is unavailable; no PHP/backend code changed here.
+Historical milestone descriptions below do not supersede this status.
+
 ## Owner-workspace hotfix — website0.13.2
 
 User uploaded0.13.1 and reported that their admin account could not select itself,

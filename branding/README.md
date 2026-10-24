@@ -1,5 +1,14 @@
 # One-brand central build workflow
 
+## Current runner option
+
+See **STANDALONE_RUNNER.md**: a dedicated-host adapter now connects the queue to
+isolated builds, central signing, durable retained bytes and per-brand publication
+without changing/adding GitHub workflows. It is source-tested, not installed.
+The owner confirmed manual revision1 -> 2 updates preserve branding and data.
+Automatic queue/publication/updater validation still needs a connected-runner pilot.
+Trials stay OFF. Earlier milestone descriptions below are historical.
+
 Source now includes private uploads, immutable inputs, central queue pickup/leases,
 resource generation, a central signed-build runner prototype, actual APK/package/
 certificate verification, immutable brand-channel publication and uncertain-publication

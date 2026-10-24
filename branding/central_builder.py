@@ -6,6 +6,7 @@ owner-enabled server policy and the protected GitHub environment. `reconcile` on
 downloads/verifies a previously frozen publication; it never builds or uploads.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -15,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 
@@ -222,17 +224,55 @@ def download_verified(work, context, run=command):
     return result
 
 
-def retained_artifact(work, context, run=command):
+def retained_artifact(work, context, run=command, store=None):
     run_id=context.get('prepared_run_id')
     if not isinstance(run_id,str) or not re.fullmatch('[1-9][0-9]{0,19}',run_id):
         raise ValueError('Prepared artifact has no trusted retention identity. Do not rebuild this version.')
     directory=work/'retained';directory.mkdir(mode=0o700)
-    run(['gh','run','download',run_id,'--repo',REPO,'--name','central-branded-apk-'+run_id,'--dir',str(directory)])
+    if store is None:
+        run(['gh','run','download',run_id,'--repo',REPO,'--name','central-branded-apk-'+run_id,'--dir',str(directory)])
+    else:
+        saved = Path(store)/run_id/context['build_id']
+        for name in [context['expected']['asset_name'], context['expected']['asset_name']+'.provenance.json']:
+            source = saved/name
+            if source.is_symlink() or not source.is_file():
+                raise ValueError('Retained artifact missing. Never rebuild this version.')
+            shutil.copyfile(source, directory/name)
     e=context['expected'];apk=directory/e['asset_name'];provenance=directory/(e['asset_name']+'.provenance.json')
     result=receipt(e,context['source_sha'],verify_apk(apk,e,run),provenance)
     if result!=context['prepared_receipt']:
         raise ValueError('Retained bytes differ from the frozen prepared artifact; never rebuild or overwrite this version.')
     return apk,provenance,result
+
+
+def retain_local(store, run_id, context, apk, provenance):
+    """Durably retain exact verified bytes BEFORE freezing the server receipt."""
+    if not re.fullmatch('[1-9][0-9]{0,19}', run_id):
+        raise ValueError('Invalid local retention identity.')
+    parent = Path(store)/run_id
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = parent/context['build_id']
+    # No existing-byte replacement, including after a lost prepared response.
+    if target.exists():
+        for source in [apk, provenance]:
+            saved = target/source.name
+            if saved.is_symlink() or not saved.is_file() or digest(saved) != digest(source):
+                raise ValueError('Retained immutable artifact conflict.')
+        return
+    with tempfile.TemporaryDirectory(prefix='.retain-', dir=parent) as temporary:
+        staging = Path(temporary)/'artifact';staging.mkdir(mode=0o700)
+        for source in [apk, provenance]:
+            with source.open('rb') as src, (staging/source.name).open('xb') as dst:
+                os.chmod(staging/source.name, 0o600)
+                shutil.copyfileobj(src, dst);dst.flush();os.fsync(dst.fileno())
+        fd = os.open(staging, os.O_RDONLY | os.O_DIRECTORY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+        # The standalone runner holds one host-wide lock throughout all writes.
+        os.rename(staging, target)
+        fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
 
 
 def publish(work, context, apk, provenance, run=command, guard=lambda: None):
@@ -276,8 +316,8 @@ def run_job(args, bridge=None, run=command):
     bridge = bridge or Bridge()
     request={'build_id': args.build_id, 'channel': args.channel, 'source_sha': source}
     if args.mode=='run':
-        run_id=os.environ.get('GITHUB_RUN_ID','')
-        if not re.fullmatch('[1-9][0-9]{0,19}',run_id):raise ValueError('Use the protected GitHub runner so prepared APK bytes can be retained.')
+        run_id=getattr(args, 'retention_id', '') if getattr(args, 'artifact_store', None) else os.environ.get('GITHUB_RUN_ID','')
+        if not re.fullmatch('[1-9][0-9]{0,19}',run_id):raise ValueError('Configure a trusted durable artifact retention identity.')
         request['runner_run_id']=run_id
     context = bridge.call('reconcile' if args.mode == 'reconcile' else 'claim', request)
     if context.get('state') == 'no_job':
@@ -291,7 +331,7 @@ def run_job(args, bridge=None, run=command):
                 heartbeat.check();bridge.call('finish', dict(lease(context), receipt=result))
                 print('Previously published branded artifact verified and reconciled.');return
             if context.get('prepared_receipt'):
-                apk,provenance,result=retained_artifact(work,context,run)
+                apk,provenance,result=retained_artifact(work,context,run,getattr(args, 'artifact_store', None))
             else:
                 bundle = work/'brand-input.json';private_json(bundle, context['bundle'])
                 resources = work/'resources'
@@ -312,6 +352,8 @@ def run_job(args, bridge=None, run=command):
                     'expected': expected, 'apk': measured, 'bundle_sha256': digest(bundle), 'build_seconds': elapsed})
                 result = receipt(expected, source, measured, provenance)
             context['receipt'] = result
+            if getattr(args, 'artifact_store', None) and not context.get('prepared_receipt'):
+                retain_local(args.artifact_store, run_id, context, apk, provenance)
             heartbeat.check();bridge.call('prepared', dict(lease(context), receipt=result,release_lease=not args.publish))
             if not args.publish:
                 print('Signed APK verified locally. Nothing published. Retain these exact bytes for later publication.');return
@@ -333,10 +375,19 @@ def main():
     parser.add_argument('--channel', choices=['testing', 'production'], default='testing')
     parser.add_argument('--workdir', required=True)
     parser.add_argument('--publish', action='store_true')
+    parser.add_argument('--artifact-store', help='Private durable storage on the standalone trusted runner.')
+    parser.add_argument('--retention-id', default='', help='Owner runner-generated numeric retention identity, not a GitHub run.')
     args = parser.parse_args()
     if args.build_id and not re.fullmatch('[a-f0-9]{32}', args.build_id):parser.error('Invalid build ID.')
     if args.mode == 'reconcile' and (not args.build_id or args.publish):parser.error('Reconcile requires a build ID and cannot upload/publish.')
-    try:run_job(args)
+    if args.retention_id and not args.artifact_store:parser.error('Local retention requires --artifact-store.')
+    try:
+        if args.artifact_store:
+            store = Path(args.artifact_store).resolve(strict=True)
+            with (store/'.publisher.lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                run_job(args)
+        else:run_job(args)
     except Exception:
         print('Central build stopped. No automatic publication retry; review the private job state.', file=sys.stderr)
         return 1

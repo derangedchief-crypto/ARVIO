@@ -1,6 +1,16 @@
 # Central branded builder — deployment and recovery boundary
 
-## Current status: existing workflows stay unchanged
+## Current status: standalone adapter; existing workflows stay unchanged
+
+The no-workflow standalone adapter is now implemented in source. See
+STANDALONE_RUNNER.md for dedicated-host installation, durable local retention,
+systemd examples and the gated pilot. It is not deployed: owner signing material
+and a restricted website SSH connection still need provisioning on that host.
+Manual centrally signed owner revision1 -> 2 installation/update passed on the
+owner's device, preserving branding/login/favourites/settings. Normal testing114
+was restored after those manual tests; customer latest remainsv2.0.101.
+The remaining historical GitHub-environment instructions below apply only to the
+deferred Actions adapter, not to the new standalone runner.
 
 The proposed extra GitHub builder workflow was WITHDRAWN at the user's direction.
 No existing GitHub workflow is modified. Normal testing114 uses the established

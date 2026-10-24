@@ -1,0 +1,26 @@
+[Unit]
+Description=Isolated centrally signed branded APK queue operation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=brandbuilder
+Group=brandbuilder
+UMask=0077
+EnvironmentFile=/etc/brand-builder.env
+ExecStart=/opt/brand-builder/venv/bin/python /opt/brand-builder/source/branding/standalone_runner.py run --channel testing
+# Enable unattended publication only after a build-only and exact-job publish pilot:
+# override ExecStart with the same command plus --publish, and enable server policy.
+TimeoutStartSec=3h
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/brand-builder
+Environment=BRAND_RUNNER_STATE=/var/lib/brand-builder
+Environment=GRADLE_USER_HOME=/var/lib/brand-builder/gradle
+
+[Install]
+WantedBy=multi-user.target
