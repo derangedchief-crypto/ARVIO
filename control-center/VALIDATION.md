@@ -1,4 +1,19 @@
-# Device management0.14.2 queue-aware worker polling — validation
+# Device management0.14.3 automatic testing publication — validation
+
+Owner-opted automatic publication remains testing-only and requires site AND worker
+policy. Tests reject publish hints without explicit server mode/owner opt-in and
+preserve the default build-only worker behavior. Healthy prepared work may reuse
+retained bytes; publishing/review/published/cancelled and artifact-review states do
+not enter automatic pickup. Historical-source approval is confined to explicit
+frozen-publication reconciliation and does NOT allow old-source claims/new builds.
+The finalizer's private-config transformation is tested to preserve EVERY unrelated
+value (database credentials, custom settings, trial OFF, queue hash) while changing
+only approved source/automation/reconciliation policy.63 Python tests and189
+DB/service/HTTP cases pass. Package tests require update ZIPs to omit ALL storage
+entries, preserving initialized permissions/ACLs as well as original key contents.
+Live automatic-policy deployment and the revision8 mirror recovery remain pending.
+
+## Previous0.14.2 validation
 
 The authenticated testing queue hint is read-only, source-pinned and disabled by
 default. Service tests cover missing/wrong token, production refusal, source

@@ -1,0 +1,65 @@
+EXTREME CONTROL CENTER0.14.3 — OWNER-OPTED AUTOMATIC TESTING PUBLICATION
+
+The owner explicitly authorized automatic testing publication in this session.
+Production approval/trials/generic releases remain unchanged. This is NOT automatic
+main-commit fanout. Each brand still has its own immutable package and update feed.
+
+Install the UPDATE ZIP preserving existing config.php/storage/original keys. No
+database migration or Android update is needed. Restart only website PHP8.4.
+
+Owner convenience: after extraction, run on the WEBSITE as root:
+`bash /www/wwwroot/control.fecxbrfzku.net/deploy/enable-testing-automation.sh FULL_REVIEWED_SHA`
+This requires the existing testing-only configuration, backs up the original config
+outside the website under root0700/0600, atomically changes only testing automation/
+source policy while preserving every other config value and the original owner/ACL,
+restores only the restricted bridge's existing key/config reads and APK-folder
+writes, verifies the original encryption-key bytes and restarts only PHP8.4.
+No config values or key/token/password values are printed. Comments are normalized
+when PHP safely serializes the preserved config array. The worker timer must stay
+paused until both hosts use the same reviewed source.
+
+Update ZIPs now omit ALL storage paths (including directory/.gitkeep entries), so
+extractors cannot reset initialized storage permission/ACL masks. APK ingestion
+fails closed if its dedicated directory is not writable or tempnam falls back to
+another directory. This also addresses the live revision8 mirror permission failure.
+
+For explicit recovery of an old frozen publication only, the helper records the
+previous reviewed source in brand_builder.reconciliation_sources. This does not
+authorize old-source builds or automatic pickup: the restricted reconcile action
+still requires that exact job's stored source, frozen receipt and expired/stopped
+uncertain-publication lease. Finish/mirror must match the original verified bytes.
+
+In the EXISTING site's brand_builder settings, retain publication_enabled=true,
+channels=['testing'], and explicitly add automatic_testing_publication=true. Pin
+sources['2.0.115'] to the full reviewed source on BOTH website and worker. Keep the
+existing queue token hash and all database/trial/application-key settings unchanged.
+
+On the WORKER, stop only brand-dispatch.timer during the dispatcher upgrade. Run
+the new bundle's installer with the reviewed SHA (preserves GH_TOKEN/env), then
+`python3 configure-poll.py FULL_REVIEWED_SHA --enable-testing-publication`.
+This preserves the existing queue token/hash and GitHub token and adds the explicit
+worker opt-in BRAND_AUTO_PUBLISH_TESTING=true. No private key or token is printed.
+
+The poll endpoint remains authenticated/read-only/testing-only. Publish hints
+require BOTH automatic_testing_publication=true and publication_enabled=true. A
+build-only response cannot authorize publish mode. The worker defaults to build-only
+unless explicitly opted in, requests a publish-mode hint and dispatches its exact
+testing job ID. It NEVER polls or auto-publishes production. Old websites reject
+the publish-mode query rather than silently falling back.
+
+Eligible queued testing jobs use the existing publish workflow: build/sign/verify,
+retain, download-and-verify retained bytes, freeze receipt, publish immutable brand
+assets, download-and-verify published bytes, mirror verified bytes to the website,
+then finish the registry/update feed. No verification gate is removed. A healthy
+prepared job with an expired lease can instead reuse its exact retained bytes;
+no rebuild. Prepared jobs marked for artifact review, uncertain publications and
+published/cancelled/active jobs are excluded from automatic polling. Errors remain
+fenced, with manual reconciliation for uncertain publication; no blind upload retry.
+
+The GitHub brand-testing-publication environment no longer requires a human review,
+as explicitly approved by the owner. Its branch restriction remains. The separate
+brand-production-publication environment and its owner review are UNCHANGED.
+
+After both hosts have the same reviewed source/policy, resume the30second timer.
+An empty queue still makes zero GitHub calls. One new website request is sufficient
+to validate connected automation; no repeated device install tests are required.

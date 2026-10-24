@@ -33,20 +33,24 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ValueError('Queue redirects are forbidden.')
 
 
-def queue(source, channel):
+def queue(source, channel, mode='build'):
     url=os.environ.get('BRAND_QUEUE_URL','');token=os.environ.get('BRAND_QUEUE_TOKEN','')
     parsed=urllib.parse.urlsplit(url)
     if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.port not in (None,443) or parsed.path!='/api/brand-dispatch/queue' or parsed.query or parsed.fragment:
         raise ValueError('Configure the HTTPS website queue endpoint.')
     if not re.fullmatch('[a-f0-9]{64}',token):raise ValueError('Configure the dedicated read-only queue token.')
-    request=urllib.request.Request(url+'?'+urllib.parse.urlencode({'source_sha':source,'channel':channel}),headers={'Authorization':'Bearer '+token,'Accept':'application/json'})
+    query={'source_sha':source,'channel':channel}
+    if mode=='publish':query['mode']='publish'
+    elif mode!='build':raise ValueError('Unsupported automatic operation.')
+    request=urllib.request.Request(url+'?'+urllib.parse.urlencode(query),headers={'Authorization':'Bearer '+token,'Accept':'application/json'})
     with urllib.request.build_opener(NoRedirect).open(request,timeout=15) as response:
         if response.status!=200:raise ValueError('Queue check unavailable.')
         raw=response.read(2049)
     if len(raw)>2048:raise ValueError('Oversized queue response.')
     value=json.loads(raw)
     if value=={'state':'no_job'}:return None
-    if not isinstance(value,dict) or set(value)!={'state','build_id','channel','source_sha'} or value['state']!='queued' or value['channel']!=channel or value['source_sha']!=source or not isinstance(value['build_id'],str) or not re.fullmatch('[a-f0-9]{32}',value['build_id']):
+    keys={'state','build_id','channel','source_sha'}|({'mode'} if mode=='publish' else set())
+    if not isinstance(value,dict) or set(value)!=keys or (mode=='publish' and value.get('mode')!='publish') or value['state']!='queued' or value['channel']!=channel or value['source_sha']!=source or not isinstance(value['build_id'],str) or not re.fullmatch('[a-f0-9]{32}',value['build_id']):
         raise ValueError('Invalid pinned queue hint.')
     return value['build_id']
 
@@ -82,10 +86,14 @@ def dispatch(args):
     with (state/'.dispatch.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         polling=getattr(args,'poll',False)
+        mode=args.mode
         build_id=args.build_id
         if polling:
             if args.mode!='build' or args.channel!='testing' or build_id:raise ValueError('Polling supports build-only testing with server-selected jobs.')
-            build_id=queue(source,args.channel)
+            automatic=os.environ.get('BRAND_AUTO_PUBLISH_TESTING','false')
+            if automatic not in ('true','false'):raise ValueError('Invalid automatic testing publication policy.')
+            if automatic=='true':mode='publish'
+            build_id=queue(source,args.channel,mode)
             if build_id is None:
                 print('No eligible queued testing build; GitHub was not contacted.')
                 return
@@ -99,7 +107,7 @@ def dispatch(args):
             print('Recent dispatch is fenced; no additional workflow.')
             return
         gh(['workflow','run',WORKFLOW,'--repo',REPO,'--ref',ref,
-            '-f','mode='+args.mode,'-f','channel='+args.channel,'-f','build_id='+build_id])
+            '-f','mode='+mode,'-f','channel='+args.channel,'-f','build_id='+build_id])
         print('Branded operation dispatched. Signing stays inside GitHub.')
 
 

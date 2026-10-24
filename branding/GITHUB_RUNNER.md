@@ -1,12 +1,40 @@
 # GitHub signing + worker-host dispatch
 
+## Owner-opted unattended TESTING publication (website0.14.3+)
+
+The owner explicitly approved automatic verified TESTING publication. This is
+opt-in on BOTH hosts: site's `brand_builder.automatic_testing_publication=true`
+alongside `publication_enabled=true`, and worker `BRAND_AUTO_PUBLISH_TESTING=true`.
+Without that worker flag the existing service remains build-only. The worker
+requests an authenticated `mode=publish` testing hint and requires a matching
+publish-mode response; legacy/build-only responses cannot authorize publication.
+
+Use `python3 configure-poll.py FULL_REVIEWED_SHA --enable-testing-publication` from
+the new worker bundle to preserve GH_TOKEN/queue token and add that opt-in. Update
+the site's source pin to the SAME reviewed SHA. Pause only the dispatcher timer
+during deployment and resume it afterward. Never restart unrelated workers.
+
+Testing hints can select queued builds OR healthy prepared jobs with expired leases.
+Prepared jobs reuse retained bytes and may not carry a review failure_code. Active,
+published/cancelled, uncertain and artifact-review jobs remain excluded. Polling is
+still read-only, token-authenticated,30second and zero-GitHub-call when empty. The
+existing signed/retained/downloaded/mirrored-byte verification chain is unchanged.
+
+For unattended testing, the owner approved removing required human reviewers ONLY
+from GitHub's brand-testing-publication environment; retain its branch restrictions.
+Production's separate environment/review and website/worker channel restrictions
+remain. No main-commit update fanout or trial activation is part of this change.
+
+## Build-only30second pickup (default; website0.14.2+)
+
 ## Queue-aware30second testing pickup (website0.14.2+)
 
-The updated dispatcher systemd service uses `--poll --mode build --channel testing`.
+The dispatcher systemd service uses `--poll --mode build --channel testing`.
 Every run first performs a bounded HTTPS GET against the website queue endpoint,
 with a dedicated read-only Bearer token in the header. Redirects are forbidden.
 An empty queue produces NO GitHub calls or Actions runs. It never polls production
-or automatically publishes. Compilation/runner availability are separate delays.
+or automatically publishes unless the separate0.14.3 testing opt-in above is set.
+Compilation/runner availability are separate delays.
 
 For an eligible job it verifies the protected ref/source and existing active runs,
 then records a private durable dispatch-intent fence BEFORE dispatching the exact
@@ -105,7 +133,9 @@ deployment, timer activation, live trial or automatic branded publication is cla
    default-branch commit; no application/customer release changes belong in that commit.
 3. Create/protect brand-build-only, brand-testing-publication and
    brand-production-publication environments. Restrict refs to the reviewed source
-   branch; require owner approval for publication and disable self-review if available.
+   branch; require owner approval for production publication and disable self-review
+   if available. Testing also defaults to manual approval unless the owner explicitly
+   opts into unattended testing as described in the0.14.3 section above.
    The workflow's environment name does NOT itself configure protection.
 4. Reuse existing repository RELEASE_KEYSTORE_BASE64, RELEASE_KEYSTORE_PASSWORD,
    RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD and existing app configuration secrets.

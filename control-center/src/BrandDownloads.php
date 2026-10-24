@@ -30,7 +30,9 @@ final class BrandDownloads
         $size=$receipt['apk_size_bytes']??0;
         if(!is_int($size)||$size<1024||$size>536870912)throw new Problem(409,'Invalid APK size.');
         $directory=$this->directory();if(!is_dir($directory)&&!mkdir($directory,0700,true)&&!is_dir($directory))throw new Problem(503,'APK storage is unavailable.');
+        if(!is_writable($directory))throw new Problem(503,'Dedicated APK storage is not writable by the restricted bridge. Restore its narrow write ACL.');
         $temp=tempnam($directory,'.upload-');if($temp===false)throw new Problem(503,'APK storage is unavailable.');chmod($temp,0600);
+        if(realpath(dirname($temp))!==realpath($directory)){unlink($temp);throw new Problem(503,'APK temporary storage must remain inside the dedicated directory.');}
         $out=null;
         try {
             $out=fopen($temp,'wb');$hash=hash_init('sha256');$received=0;

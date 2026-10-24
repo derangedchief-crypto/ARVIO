@@ -36,21 +36,25 @@ final class BrandBuilder
     private function context(array $job,string $token):array {
         return ['build_id'=>$job['id'],'source_sha'=>$job['source_sha'],'channel'=>$job['build_channel'],'lease_token'=>$token,'expected'=>$this->expected($job,$job['build_channel']),'bundle'=>$this->brands->export($job['id']),'prepared_receipt'=>$job['artifact_receipt']?json_decode($job['artifact_receipt'],true):null,'prepared_run_id'=>$job['artifact_receipt']?$job['runner_run_id']:null];
     }
-    private function candidate(array $c,string $channel,mixed $source,bool $poll=false):?array {
+    private function candidate(array $c,string $channel,mixed $source,bool $poll=false,bool $publish=false):?array {
         $versions=[];foreach($c['sources']??[] as $version=>$sha)if(is_string($sha)&&$sha===$source)$versions[]=(string)$version;
         if(!$versions)throw new Problem(409,'No platform version is authorized for this source commit.');
-        return $this->db->one("SELECT j.id FROM app_brand_builds j JOIN app_brands b ON b.id=j.brand_id JOIN tenants t ON t.id=b.tenant_id LEFT JOIN panel_resellers r ON r.tenant_id=t.id WHERE j.app_version IN (".implode(',',array_fill(0,count($versions),'?')).") AND b.enabled=1 AND t.status='active' AND ((t.kind='owner' AND EXISTS(SELECT 1 FROM users u WHERE u.id=j.requested_by AND u.role='owner' AND u.active=1)) OR (t.kind='reseller' AND r.tenant_id IS NOT NULL)) AND j.build_attempt<3 AND j.artifact_receipt IS NULL AND (j.state IN ('waiting_builder','build_failed') OR (j.state='building' AND j.lease_until<=UTC_TIMESTAMP())) AND (j.build_channel IS NULL OR j.build_channel=?) AND (j.source_sha IS NULL OR j.source_sha=?)".($poll?" AND (j.state!='build_failed' OR j.build_finished_at IS NULL OR j.build_finished_at<=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 5 MINUTE))":"")." ORDER BY j.created_at,j.id LIMIT 1",[...$versions,$channel,$source]);
+        $eligible="(j.build_attempt<3 AND j.artifact_receipt IS NULL AND (j.state IN ('waiting_builder','build_failed') OR (j.state='building' AND j.lease_until<=UTC_TIMESTAMP())))";
+        if($publish)$eligible="(".$eligible." OR (j.state='ready_to_publish' AND j.artifact_receipt IS NOT NULL AND j.runner_run_id IS NOT NULL AND j.failure_code IS NULL AND j.lease_until<=UTC_TIMESTAMP()))";
+        return $this->db->one("SELECT j.id FROM app_brand_builds j JOIN app_brands b ON b.id=j.brand_id JOIN tenants t ON t.id=b.tenant_id LEFT JOIN panel_resellers r ON r.tenant_id=t.id WHERE j.app_version IN (".implode(',',array_fill(0,count($versions),'?')).") AND b.enabled=1 AND t.status='active' AND ((t.kind='owner' AND EXISTS(SELECT 1 FROM users u WHERE u.id=j.requested_by AND u.role='owner' AND u.active=1)) OR (t.kind='reseller' AND r.tenant_id IS NOT NULL)) AND ".$eligible." AND (j.build_channel IS NULL OR j.build_channel=?) AND (j.source_sha IS NULL OR j.source_sha=?)".($poll?" AND (j.state!='build_failed' OR j.build_finished_at IS NULL OR j.build_finished_at<=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 5 MINUTE))":"")." ORDER BY j.created_at,j.id LIMIT 1",[...$versions,$channel,$source]);
     }
     /** Read-only, testing-only hint. Cannot claim, renew, sign or publish a job. */
     public function poll(array $input,mixed $authorization):array {
         $dispatch=$this->config->get('brand_dispatch',[]);$hash=is_array($dispatch)?($dispatch['token_sha256']??null):null;
         if(!is_array($dispatch)||($dispatch['enabled']??false)!==true||!is_string($hash)||!preg_match('/^[a-f0-9]{64}$/D',$hash))throw new Problem(404,'Queue check unavailable.');
         if(!is_string($authorization)||!preg_match('/^Bearer ([a-f0-9]{64})$/D',$authorization,$match)||!hash_equals($hash,hash('sha256',$match[1])))throw new Problem(401,'Queue check authorization required.');
-        Input::keys($input,['channel','source_sha']);$c=$this->policy();$channel=$this->channel($c,$input['channel']??null);
+        Input::keys($input,['channel','source_sha','mode']);$c=$this->policy();$channel=$this->channel($c,$input['channel']??null);
         if($channel!=='testing')throw new Problem(403,'Automatic queue checks are testing-only.');
+        $mode=$input['mode']??'build';if(!in_array($mode,['build','publish'],true))throw new Problem(422,'Invalid automatic operation.');
+        if($mode==='publish'&&(($c['automatic_testing_publication']??false)!==true||($c['publication_enabled']??false)!==true))throw new Problem(403,'Automatic testing publication is disabled by the owner.');
         $source=$input['source_sha']??null;if(!is_string($source)||!preg_match('/^[a-f0-9]{40}$/D',$source))throw new Problem(422,'Invalid source pin.');
-        $job=$this->candidate($c,$channel,$source,true);
-        return $job?['state'=>'queued','build_id'=>$job['id'],'channel'=>$channel,'source_sha'=>$source]:['state'=>'no_job'];
+        $job=$this->candidate($c,$channel,$source,true,$mode==='publish');
+        return $job?['state'=>'queued','build_id'=>$job['id'],'channel'=>$channel,'source_sha'=>$source]+($mode==='publish'?['mode'=>'publish']:[]):['state'=>'no_job'];
     }
     public function claim(array $input):array {
         Input::keys($input,['build_id','channel','source_sha','runner_run_id']);$c=$this->policy();$channel=$this->channel($c,$input['channel']??null);$run=$input['runner_run_id']??null;if($run!==null&&(!is_string($run)||!preg_match('/^[1-9][0-9]{0,19}$/D',$run)))throw new Problem(422,'Invalid central workflow run identity.');
@@ -141,7 +145,9 @@ final class BrandBuilder
     /** Resume only verification of frozen published bytes; never creates a new build. */
     public function reconcile(array $input):array {
         Input::keys($input,['build_id','source_sha','channel']);$c=$this->policy();$channel=$this->channel($c,$input['channel']??null);return $this->db->transaction(function()use($input,$c,$channel):array {
-            $job=$this->lockJob(Input::id($input['build_id']??null));$this->source($c,$job['app_version'],$input['source_sha']??null);
+            $job=$this->lockJob(Input::id($input['build_id']??null));$source=$input['source_sha']??null;
+            $historical=$c['reconciliation_sources']??[];
+            if(!is_string($source)||!preg_match('/^[a-f0-9]{40}$/D',$source)||!is_array($historical)||!in_array($source,$historical,true))$this->source($c,$job['app_version'],$source);
             if(!in_array($job['state'],['publishing','publication_review'],true)||strtotime($job['lease_until'].' UTC')>time()||$job['build_channel']!==$channel||$job['source_sha']!==$input['source_sha']||!$job['artifact_receipt'])throw new Problem(409,'No expired or stopped publication is available to reconcile.');
             $token=bin2hex(random_bytes(32));$this->db->query("UPDATE app_brand_builds SET state='publication_review',lease_hash=?,lease_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE) WHERE id=?",[hash('sha256',$token),$job['id']]);
             return ['build_id'=>$job['id'],'source_sha'=>$job['source_sha'],'channel'=>$channel,'lease_token'=>$token,'expected'=>$this->expected($job,$channel),'receipt'=>json_decode($job['artifact_receipt'],true)];

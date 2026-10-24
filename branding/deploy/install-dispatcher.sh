@@ -33,6 +33,6 @@ systemctl daemon-reload
 echo 'Dispatcher files installed. Existing workers were not changed.'
 echo 'Service/timer have NOT been started or enabled by this installer.'
 echo 'Privately edit /etc/brand-dispatch.env with the dedicated Actions-write/Contents-read token.'
-echo 'Keep build-only mode until the website bridge and an exact-job publication pilot succeed.'
+echo 'Default mode is build-only. Automatic testing publication requires explicit worker and website owner opt-ins.'
 echo 'Read branding/GITHUB_RUNNER.md before starting the service.'
 echo 'For30second queue-aware polling, configure the private queue token and website endpoint before starting anything.'

@@ -3,6 +3,8 @@ import importlib.util
 import io
 import json
 import os
+import re
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -92,11 +94,62 @@ class PollTests(unittest.TestCase):
             self.assertEqual(original,path.with_name('worker.env.before-poll').read_text())
             self.assertEqual(0o600,path.stat().st_mode&0o777)
             self.assertEqual(64,len(digest));self.assertNotIn(digest,first)
+            self.assertNotIn('BRAND_AUTO_PUBLISH_TESTING=true',first)
+            self.assertEqual(digest,module.configure(path,SHA,True))
+            self.assertIn('BRAND_AUTO_PUBLISH_TESTING=true\n',path.read_text())
+            self.assertIn('GH_TOKEN=synthetic-private-github-token\n',path.read_text())
+
+    def test_automatic_publication_needs_worker_opt_in_and_website_publish_hint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state=Path(temporary);state.chmod(0o700);calls=[]
+            def gh(args):
+                calls.append(args)
+                return json.dumps({'object':{'sha':SHA}}) if args[0]=='api' else '[]' if args[0]=='run' else ''
+            env={'BRAND_SOURCE_SHA':SHA,'BRAND_WORKFLOW_REF':'reseller-control-center','BRAND_DISPATCH_STATE':str(state),'BRAND_AUTO_PUBLISH_TESTING':'true'}
+            with patch.dict(os.environ,env),patch.object(dispatcher,'queue',return_value=JOB) as queue,patch.object(dispatcher,'gh',side_effect=gh),redirect_stdout(io.StringIO()):
+                dispatcher.dispatch(SimpleNamespace(mode='build',channel='testing',build_id='',poll=True))
+                queue.assert_called_once_with(SHA,'testing','publish')
+            self.assertIn('mode=publish',calls[-1]);self.assertIn('channel=testing',calls[-1]);self.assertIn('build_id='+JOB,calls[-1])
+
+    def test_publish_hint_cannot_be_inferred_from_a_build_only_response(self):
+        class Response(io.BytesIO):status=200
+        value={'state':'queued','build_id':JOB,'channel':'testing','source_sha':SHA}
+        env={'BRAND_QUEUE_URL':'https://site.example/api/brand-dispatch/queue','BRAND_QUEUE_TOKEN':TOKEN}
+        for response,okay in [(value,False),(dict(value,mode='build'),False),(dict(value,mode='publish'),True)]:
+            opener=SimpleNamespace(open=lambda *a,**kw:Response(json.dumps(response).encode()))
+            with patch.dict(os.environ,env),patch.object(dispatcher.urllib.request,'build_opener',return_value=opener):
+                if okay:self.assertEqual(JOB,dispatcher.queue(SHA,'testing','publish'))
+                else:
+                    with self.assertRaises(ValueError):dispatcher.queue(SHA,'testing','publish')
 
     def test_timer_is_thirty_seconds_and_service_cannot_publish(self):
         base=Path(__file__).parent/'deploy'
         self.assertIn('OnUnitInactiveSec=30s',(base/'brand-dispatch.timer').read_text())
         self.assertIn('--poll --mode build --channel testing',(base/'brand-dispatch.service').read_text())
+
+    def test_website_finalizer_preserves_private_values_and_scopes_testing_opt_in(self):
+        repo=Path(__file__).resolve().parent.parent
+        script=repo/'control-center/deploy/enable-testing-automation.sh'
+        subprocess.run(['bash','-n',str(script)],check=True)
+        code=re.search(r"-r '\n(.*?)\n' \"\$config\"",script.read_text(),re.S)[1]
+        original="""<?php return [
+        'environment'=>'production','origin'=>'https://control.fecxbrfzku.net',
+        'database'=>['password'=>'SYNTHETIC-PRIVATE'], 'custom'=>['keep'=>'unchanged'],
+        'trials'=>['enabled'=>false],
+        'brand_builder'=>['enabled'=>true,'publication_enabled'=>true,'channels'=>['testing'],'sources'=>['2.0.115'=>'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb']],
+        'brand_dispatch'=>['enabled'=>true,'token_sha256'=>'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+        'brand_downloads'=>['enabled'=>true,'x_accel'=>false]];
+        """
+        php=['bash',str(repo/'control-center/dev/php.sh')]
+        with tempfile.TemporaryDirectory() as temporary:
+            before=Path(temporary)/'before.php';after=Path(temporary)/'after.php';before.write_text(original)
+            subprocess.run(php+['-r',code,str(before),str(after),'c'*40],cwd=repo,check=True,capture_output=True)
+            check="""$a=require $argv[1];$b=require $argv[2];
+            if($b['brand_builder']['automatic_testing_publication']!==true||$b['brand_builder']['sources']['2.0.115']!==str_repeat('c',40)||$b['brand_builder']['reconciliation_sources']!==[str_repeat('b',40)])exit(1);
+            unset($b['brand_builder']['automatic_testing_publication'],$b['brand_builder']['reconciliation_sources']);$b['brand_builder']['sources']['2.0.115']=str_repeat('b',40);exit($a===$b?0:1);
+            """
+            subprocess.run(php+['-r',check,str(before),str(after)],cwd=repo,check=True,capture_output=True)
+            self.assertEqual(original,before.read_text())
 
 
 if __name__=='__main__':unittest.main()

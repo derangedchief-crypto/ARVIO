@@ -1,5 +1,32 @@
 # Storage, reseller branding and trials — development progress
 
+## Owner-authorized automatic TESTING publication — website0.14.3
+
+Owner explicitly approved automatic verified testing publication. Both-host opt-ins
+are required: site automatic_testing_publication=true + publication_enabled=true,
+worker BRAND_AUTO_PUBLISH_TESTING=true. Authenticated/read-only testing hints must
+explicitly return publish mode; build-only/legacy responses cannot authorize it.
+The existing combined build/retain/verify/publish/mirror workflow is reused without
+removing any APK verification. Healthy expired prepared jobs can reuse retained
+bytes; review/uncertain states are excluded from automatic pickup. Default remains
+build-only until opted in. Production/trial/main-fanout scope is unchanged.
+
+Removed human review ONLY from GitHub brand-testing-publication under explicit
+owner authorization, preserving branch restriction. Production environment was
+read back unchanged. Revision8's deliberate publication reached release download
+verification but failed the website mirror: rename from tempnam fallback /tmp into
+storage/brand-apks was denied. Its frozen publication remains under review, not
+blind-retried. The website finalizer repairs only bridge/config/key read and APK
+write ACLs while preserving key bytes/private config values. Update ZIPs now omit
+ALL storage entries to preserve initialized directory modes/ACLs. Ingestion refuses
+non-writable directories and tempnam fallback. Explicit historical reconciliation
+can finish ONLY the old job's frozen published bytes after a reviewed source move;
+old sources cannot claim new builds. No signing key was copied or replaced.
+
+Website finalizer and worker opt-in helper avoid manual credential/config editing.
+Backend integration,63 builder/resource/dispatcher tests and package preservation
+tests pass. Deployment and recovery of revision8's site mirror remain pending.
+
 ## Queue-aware testing pickup — website0.14.2
 
 Owner requested approximately30second pickup WITHOUT empty GitHub runs. Implemented

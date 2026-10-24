@@ -46,6 +46,7 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
     subprocess.run(['python3', str(root / 'tools/package.py'), '--update', str(update)], check=True, capture_output=True)
     with zipfile.ZipFile(update) as archive:
         assert 'config.php' not in archive.namelist()
+        assert not any(name.startswith('storage/') for name in archive.namelist()), 'Update ZIP must not reset initialized storage permissions or ACL masks'
         target = base / 'upgrade'
         (target / 'storage').mkdir(parents=True, mode=0o700)
         (target / 'config.php').write_text('PRIVATE CONFIG SENTINEL')

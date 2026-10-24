@@ -32,17 +32,19 @@ if not args.update:
         raise SystemExit('The shipped config.php must have a blank password')
     entries['config.php'] = stub
 entries['LICENSE'] = (ROOT.parent / 'LICENSE').read_bytes()
-entries['storage/.gitkeep'] = b''
+if not args.update:
+    entries['storage/.gitkeep'] = b''
 manifest = ''.join(f'{hashlib.sha256(data).hexdigest()}  {name}\n' for name, data in sorted(entries.items()))
 entries['MANIFEST.sha256'] = manifest.encode()
 for name in entries:
     if name == 'config.local.php' or name.startswith(('dev/', 'tests/', 'test-results/')) or name.endswith(('.key', '.log', '.zip')):
         raise SystemExit(f'Refusing private/development file in delivery: {name}')
 with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-    storage = zipfile.ZipInfo('storage/', (2026, 1, 1, 0, 0, 0))
-    storage.create_system = 3
-    storage.external_attr = (0o40700 << 16) | 0x10
-    archive.writestr(storage, b'')
+    if not args.update:
+        storage = zipfile.ZipInfo('storage/', (2026, 1, 1, 0, 0, 0))
+        storage.create_system = 3
+        storage.external_attr = (0o40700 << 16) | 0x10
+        archive.writestr(storage, b'')
     for name, data in sorted(entries.items()):
         entry = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
         entry.create_system = 3
