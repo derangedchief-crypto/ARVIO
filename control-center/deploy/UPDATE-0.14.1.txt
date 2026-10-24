@@ -1,0 +1,26 @@
+EXTREME CONTROL CENTER0.14.1 — RESTRICTED BUILDER KEY-READ FIX
+
+Install the UPDATE ZIP over /www/wwwroot/control.fecxbrfzku.net, preserving the
+existing config.php, storage and original encryption keys. No new database migration.
+
+Existing encryption/setup keys are now opened READ-ONLY and never chmodded on read.
+This allows the separate restricted SSH bridge account to use a narrow read ACL
+without write permission or losing the ACL on the next PHP web request. Initial
+key creation remains exclusive/0600; empty/corrupt existing keys fail closed and
+are NEVER regenerated or replaced. No key contents or trial history are changed.
+
+The optional owner website bridge setup bundle uses /www/server/php/84/bin/php,
+all required extensions confirmed by the owner. The wrapper sends PHP diagnostics
+to stderr and disables CLI opcache/JIT, without changing the website's php.ini.
+Do not change or reinstall system PHP8.3; it lacks several required extensions.
+
+The installer creates brandbridge with a root-owned fixed command/authorized key,
+read-only ACLs on source/config/original application.key, and write permission only
+for the isolated APK delivery directory. It does not grant sudo, add the account to
+the web group, enable builder/publication/trials, or change existing workers. It
+requires setfacl/getfacl (Ubuntu package acl), and refuses unknown account/key reuse.
+The .pub key in the bundle is PUBLIC. No signing or SSH private key is included.
+
+Install0.14.1 before running the restricted bridge installer. Retain all0.14.0
+site-owned download/source-pin/dispatcher pilot steps; automatic builds are NOT
+operational until the restricted connection and owner configuration are validated.

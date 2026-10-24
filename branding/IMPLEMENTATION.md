@@ -1,5 +1,24 @@
 # Storage, reseller branding and trials — development progress
 
+## Restricted website bridge setup — website0.14.1
+
+Owner console confirms website38.190.133.176:22, app folder
+/www/wwwroot/control.fecxbrfzku.net, and complete PHP8.4 extensions at
+/www/server/php/84/bin/php. Found existing Config.secret reopened keys c+ and
+chmodded on every read, which prevented a truly read-only bridge account and
+would erase named read ACLs.0.14.1 reads established keys rb/LOCK_SH without
+chmod/write; new keys still create exclusively0600, corrupt/empty originals stop
+without regeneration.11 config and188 DB/service/HTTP tests pass.
+
+Owner-only website setup bundle provisions a dedicated public-key-only brandbridge
+account/root-owned wrapper/authorization, source/config/key read-only ACLs, and writes
+only to dedicated APK storage. It saves original ACL metadata, refuses unknown
+accounts/keys/symlinks/masked ACLs and verifies original config/key content hashes.
+No global PHP/SSH changes or source/key writes. It does not enable any rollout.
+Generated a NEW SSH bridge key (not the signing key); private key and target set in
+GitHub secrets. Host-key secret is NOT set until console fingerprint confirmation.
+Live root installer/SSH login/queue pilot remain pending. No APK or trial published.
+
 ## Site-owned reseller downloads — website0.14.0 / app2.0.115
 
 Reseller branding responses now allowlist only site download paths and readiness;

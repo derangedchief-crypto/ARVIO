@@ -1,4 +1,23 @@
-# Device management 0.14.0 site-owned APK delivery — validation
+# Device management 0.14.1 restricted builder key reads — validation
+
+## Existing encryption keys are read-only inputs
+
+11 standalone configuration checks pass, including0400 original-key reads,
+encryption/decryption with that same read-only key, preservation of operator read
+permissions, exclusive0600 initial creation, and refusal to regenerate an empty
+existing key.188 isolated DB/service/HTTP checks still pass. No key content,
+database migration, trial history or live configuration was replaced.
+
+The owner confirmed website PHP8.4 at /www/server/php/84/bin/php has all required
+extensions; system PHP8.3 is missing three and is not used. The new owner bridge
+setup defaults to the confirmed site path, uses diagnostics on stderr/CLI opcache
+off (no php.ini edits), saves pre-change ACL metadata and provisions only a
+restricted account/root-owned command plus narrow read/write boundaries. Bundle
+tests verify public-key-only packaging and rejection of private/malformed key input.
+Root account/ACL setup has NOT run on the live server; actual SSH authorization,
+read access and host-key pinning still require the owner's installer output.
+
+## Previous website0.14.0 validation
 
 ## Site-owned branded download/update delivery
 

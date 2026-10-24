@@ -47,21 +47,32 @@ final class Config
     {
         if (!in_array($name, ['application.key', 'setup.key'], true)) throw new \LogicException('Unknown key');
         $file = $this->privateFile($name);
-        if (!$create && !is_file($file)) throw new Problem(503, 'The original application key is missing. Restore it from the private backup.');
+        if (is_file($file)) {
+            // Established keys are read-only inputs. Never reopen c+, chmod away an
+            // operator's narrow read ACL, or regenerate an empty/corrupt original.
+            $handle = fopen($file, 'rb');
+            if (!$handle) throw new Problem(503, 'The original key is not readable.');
+            try {
+                if (!flock($handle, LOCK_SH)) throw new Problem(503, 'Private storage lock failed.');
+                if (fstat($handle)['size'] > 1024) throw new Problem(503, 'Invalid private key. Restore the original key backup.');
+                $secret = trim(stream_get_contents($handle, 1024));
+                if (!preg_match('/^[a-f0-9]{64}$/D', $secret)) throw new Problem(503, 'Invalid private key. Restore the original key backup.');
+                return $secret;
+            } finally { flock($handle, LOCK_UN); fclose($handle); }
+        }
+        if (!$create) throw new Problem(503, 'The original application key is missing. Restore it from the private backup.');
         $mask = umask(0077);
-        try { $handle = fopen($file, $create ? 'c+' : 'r'); } finally { umask($mask); }
-        if (!$handle) throw new Problem(503, 'Private storage is not writable.');
+        try { $handle = @fopen($file, 'x+b'); } finally { umask($mask); }
+        if (!$handle) {
+            if (is_file($file)) return $this->secret($name, false);
+            throw new Problem(503, 'Private storage is not writable.');
+        }
         chmod($file, 0600);
         try {
             if (!flock($handle, LOCK_EX)) throw new Problem(503, 'Private storage lock failed.');
-            $secret = trim(stream_get_contents($handle));
-            if ($secret === '') {
-                if (!$create) throw new Problem(503, 'The original application key is empty. Restore it from the private backup.');
-                $secret = bin2hex(random_bytes(32));
-                if (fwrite($handle, $secret . "\n") !== 65 || !fflush($handle)) {
-                    throw new Problem(503, 'Could not save private key.');
-                }
-                chmod($file, 0600);
+            $secret = bin2hex(random_bytes(32));
+            if (fwrite($handle, $secret . "\n") !== 65 || !fflush($handle)) {
+                throw new Problem(503, 'Could not save private key.');
             }
             if (!preg_match('/^[a-f0-9]{64}$/D', $secret)) throw new Problem(503, 'Invalid private key. Restore the original key backup.');
             return $secret;

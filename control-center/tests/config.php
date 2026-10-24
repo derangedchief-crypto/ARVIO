@@ -28,7 +28,20 @@ try {
     verify(!(new Config($root))->configured(), 'missing config.php remains safely unconfigured');
     $settings['environment']='testing'; $settings['origin']='http://127.0.0.1:9999'; $settings['database']['password']='';
     verify((new Config($root,$settings))->configured(), 'local socket test configuration remains supported');
+    $reader=new Config($root,$settings);$key=$reader->secret('application.key');$path=$root.'/storage/application.key';
+    verify((fileperms($path)&0777)===0600,'initial key creation remains owner-only');
+    chmod($path,0400);clearstatcache(true,$path);
+    verify($reader->secret('application.key')===$key&&(fileperms($path)&0777)===0400,'existing original key needs no write access or chmod');
+    $secrets=new ControlCenter\Secrets($reader);$encrypted=$secrets->encrypt('synthetic-private-value');
+    verify($secrets->decrypt($encrypted)==='synthetic-private-value','encryption and MAC readers use the same read-only original key');
+    chmod($path,0640);clearstatcache(true,$path);$reader->secret('application.key',false);clearstatcache(true,$path);
+    verify((fileperms($path)&0777)===0640,'reading preserves operator-provisioned shared read permissions');
+    chmod($path,0600);file_put_contents($path,'');$refused=false;
+    try{$reader->secret('application.key');}catch(ControlCenter\Problem $error){$refused=$error->status===503;}
+    verify($refused&&file_get_contents($path)==='','empty existing keys fail closed and are never regenerated');
 } finally {
     if(is_file($root.'/config.php'))unlink($root.'/config.php');
+    if(is_file($root.'/storage/application.key'))unlink($root.'/storage/application.key');
+    if(is_dir($root.'/storage'))rmdir($root.'/storage');
     rmdir($root);
 }

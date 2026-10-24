@@ -1,5 +1,15 @@
 # GitHub signing + worker-host dispatch
 
+## Restricted-account prerequisite: website0.14.1
+
+Install0.14.1 before the owner website-bridge setup bundle. Established keys must
+be read-only inputs;0.14.0 still reopened/chmodded them on access and cannot safely
+share the original key through a narrow read ACL. Do not grant write access to
+work around that. See deploy/WEBSITE_BRIDGE_SETUP.md and the0.14.1 site instructions.
+On the confirmed website host use /www/server/php/84/bin/php, NOT incomplete system
+PHP8.3. The root-owned fixed wrapper sends startup diagnostics to stderr and
+disables CLI opcache without altering web PHP configuration.
+
 ## Site-owned delivery (website0.14.0 / app2.0.115)
 
 Install website0.14.0 before enabling the connected builder. Add brand_downloads
