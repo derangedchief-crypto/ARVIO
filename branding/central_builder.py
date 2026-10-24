@@ -49,6 +49,22 @@ def command(args, *, cwd=None, data=None, timeout=120):
     if result.returncode:
         executable = Path(args[0]).name
         category = executable if executable in ('git', 'ssh', 'gh', 'gradlew') else 'other'
+        if category == 'ssh':
+            # Match known OpenSSH diagnostics, but never echo their text (which
+            # can contain addresses, paths, commands or private application data).
+            stderr = result.stderr.lower()
+            for marker, label in [
+                (b'error in libcrypto', 'ssh-key-format'),
+                (b'invalid format', 'ssh-key-format'),
+                (b'host key verification failed', 'ssh-host-verification'),
+                (b'permission denied (publickey', 'ssh-authentication'),
+                (b'connection timed out', 'ssh-timeout'),
+                (b'connection refused', 'ssh-refused'),
+                (b'no route to host', 'ssh-unreachable'),
+            ]:
+                if marker in stderr:
+                    category = label
+                    break
         raise ToolFailure(category, result.returncode)
     if len(result.stdout) > 8 * 1024 * 1024:
         raise RuntimeError('Oversized central build tool response.')

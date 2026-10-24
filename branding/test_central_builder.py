@@ -41,6 +41,14 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(255,caught.exception.code)
             self.assertNotIn('PRIVATE',str(caught.exception))
 
+    def test_ssh_diagnostics_are_classified_without_echoing_private_stderr(self):
+        for diagnostic, category in [(b'Load key PRIVATE_PATH: error in libcrypto','ssh-key-format'),(b'Host key verification failed. PRIVATE_HOST','ssh-host-verification'),(b'PRIVATE_USER: Permission denied (publickey).','ssh-authentication')]:
+            result=SimpleNamespace(returncode=255,stdout=b'',stderr=diagnostic)
+            with patch.object(cb.subprocess,'run',return_value=result):
+                with self.assertRaises(cb.ToolFailure) as caught:cb.command(['ssh','PRIVATE_ARGUMENT'])
+            self.assertEqual(category,caught.exception.category)
+            self.assertNotIn('PRIVATE',str(caught.exception))
+
     def test_source_channel_package_and_identity_are_all_pinned(self):
         c=fixture();self.assertEqual(c['expected'],cb.validate_context(c,SHA,'testing'))
         for field,value in [('source_sha','f'*40),('channel','production')]:
