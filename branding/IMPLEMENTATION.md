@@ -1,5 +1,34 @@
 # Storage, reseller branding and trials — development progress
 
+## Site-owned reseller downloads — website0.14.0 / app2.0.115
+
+Reseller branding responses now allowlist only site download paths and readiness;
+no upstream URL/source/run/provenance is returned. BrandDownloads implements bounded
+private SSH ingress with frozen-receipt SHA256/size validation and post-stream lease
+fencing, immutable content-addressed APK storage, published-registry-only metadata
+and file delivery, HEAD/single Range/resume and optional internal Nginx offload.
+There is no public upload or remote fetch/proxy endpoint. Public requests neither
+contact nor redirect to GitHub. Downloads are intentionally shareable, not identity
+proof or reseller contact data. Trials remain OFF and no viewing policy changed.
+
+The publisher preflights site delivery before authorisation, mirrors verified bytes
+before finish, and reconciliation repairs the same copy. Configuration stays private
+and default-OFF. No new database migration beyond017; preserve config/storage/keys.
+New platform source is115/431 rather than rewriting a previously built114 version.
+New branded native update checks use only owner-site metadata and exact local APK
+URLs with redirects disabled; generic updater routing is unchanged. Existing branded
+114 tests need a first manual install-over-existing to adopt the new update endpoint.
+
+This is not deployed: restricted website SSH secrets, GitHub environments, sourcepin
+and worker dispatcher setup are still required. No APK, worker or panel trial has
+been published/created by this increment. Site install instructions: UPDATE-0.14.0.txt.
+Validation:188 isolated DB/service/HTTP cases,41 browser checks,46 Python builder/
+resource/dispatcher checks and31 Android updater tests pass; internal-test Kotlin
+compile, actionlint, package preservation and installer syntax pass. One earlier
+browser attempt timed out on unchanged clock-format UI; full isolated rerun passes.
+GitHub build/publication environments now allow only reseller-control-center;
+testing/production publication requires owner approval. No build was dispatched.
+
 ## Authorised GitHub branded workflow — selected architecture
 
 Owner confirmed the worker host will coordinate builds but the central key exists

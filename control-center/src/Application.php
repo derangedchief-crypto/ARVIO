@@ -23,6 +23,7 @@ final class Application
     public readonly TrialPublicSessions $trialSessions;
     public readonly TrialSignupBroker $trialSignup;
     public readonly BrandBuilder $brandBuilder;
+    public readonly BrandDownloads $brandDownloads;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
@@ -43,6 +44,7 @@ final class Application
         $this->trialContacts=new TrialContacts($this->db,$this->management,$this->auth,new Secrets($config),$config,$trialWorker);
         $secrets=new Secrets($config);$artifacts=new BrandArtifacts($this->db,$secrets,$config);$this->trialOffers=new TrialOffers($this->db,$config,$this->management,$this->auth,$secrets,$this->trialPolicies,$artifacts);
         $this->brandBuilder=new BrandBuilder($this->db,$config,$this->appBrands,$artifacts,$secrets,$this->auth);
+        $this->brandDownloads=new BrandDownloads($config,$artifacts);
         $this->trialSessions=new TrialPublicSessions($this->db,$this->trialOffers,$secrets,$this->auth);$this->trialSignup=new TrialSignupBroker($this->db,$config,$secrets,$this->auth,$this->trialOffers,$this->trialSessions,new TrialBudgets($this->db,$config),$trialWorker,$this->trialContacts);
     }
 
@@ -65,6 +67,8 @@ final class Application
             Http::json(['ok' => true], 201);
         }
         if (!$migrations->installed()) throw new Problem(503, 'Owner setup is required.');
+        if($method==='GET'&&preg_match('~^/api/app-updates/([a-f0-9]{32})/(testing|production)$~D',$path,$match))Http::json($this->brandDownloads->metadata($match[1],$match[2]));
+        if(in_array($method,['GET','HEAD'],true)&&preg_match('~^/downloads/apps/([a-f0-9]{32})/(Brand-[0-9.]+(?:-test)?\.apk)$~D',$path,$match))$this->brandDownloads->serve($match[1],$match[2],$method==='HEAD');
         if(str_starts_with($path,'/api/public-trials/')){
             $supported=(bool)$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']);
             if(!$supported){if($method==='GET'&&$path==='/api/public-trials/offer')Http::json(['available'=>false]);throw new Problem(404,'Automatic trials unavailable.');}

@@ -5,9 +5,11 @@ declare(strict_types=1);
 if(PHP_SAPI!=='cli'){http_response_code(404);exit;}
 require dirname(__DIR__).'/src/bootstrap.php';
 try {
-    $raw=stream_get_contents(STDIN,16385);if(strlen($raw)>16384)throw new RuntimeException('Oversized builder command.');
+    // Newline-delimited header leaves the optional bounded APK stream unread.
+    // Legacy JSON-only callers terminate at EOF and remain compatible.
+    $raw=fgets(STDIN,16386);if($raw===false||strlen($raw)>16384)throw new RuntimeException('Oversized builder command.');
     $request=json_decode($raw,true,15,JSON_THROW_ON_ERROR);if(!is_array($request))throw new RuntimeException('Invalid builder command.');\ControlCenter\Input::keys($request,['action','input']);
-    if(!is_array($request['input']??null)||!in_array($request['action']??null,['claim','heartbeat','prepared','authorize','finish','fail','reconcile'],true))throw new RuntimeException('Unsupported builder command.');
+    if(!is_array($request['input']??null)||!in_array($request['action']??null,['claim','heartbeat','prepared','authorize','finish','fail','reconcile','delivery','mirror'],true))throw new RuntimeException('Unsupported builder command.');
     $config=new \ControlCenter\Config(dirname(__DIR__));$app=new \ControlCenter\Application($config);
-    $result=$app->brandBuilder->{$request['action']}($request['input']);echo json_encode($result,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)."\n";
+    $result=$request['action']==='mirror'?$app->brandBuilder->mirror($request['input'],STDIN):$app->brandBuilder->{$request['action']}($request['input']);echo json_encode($result,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)."\n";
 }catch(Throwable $error){fwrite(STDERR,"Central builder command refused or failed. Review private policy/job state.\n");exit(1);}

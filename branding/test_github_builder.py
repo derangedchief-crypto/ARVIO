@@ -7,6 +7,9 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import subprocess
+import sys
+import zipfile
 import unittest
 from unittest.mock import patch
 
@@ -21,6 +24,7 @@ class StagingTests(unittest.TestCase):
         (root/'branding').mkdir();output=root/'app/build/outputs/apk/sideload/internalTest';output.mkdir(parents=True)
         (output/'app.apk').write_bytes(b'APK'*1000);context=fixture();events=[]
         class Bridge:
+            def upload(self,context,apk):events.append('site_copy')
             def call(self,action,value):
                 events.append(action)
                 return copy.deepcopy(context) if action=='claim' else {'state':'okay'}
@@ -66,7 +70,7 @@ class StagingTests(unittest.TestCase):
     def test_publish_finishes_only_after_retained_and_release_downloads(self):
         with tempfile.TemporaryDirectory() as temporary:
             events=self.complete(Path(temporary),publish=True)
-            self.assertEqual(['retained_download','prepared','authorize','upload','published_download','finish'],events[-6:])
+            self.assertEqual(['retained_download','prepared','delivery','authorize','upload','published_download','site_copy','finish'],events[-8:])
 
     def test_uncertain_publication_stops_before_finish(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -105,6 +109,43 @@ class DispatchTests(unittest.TestCase):
     def test_active_or_waiting_operation_prevents_more_dispatches(self):
         for status in ['in_progress','queued','waiting','pending']:
             self.assertFalse(any(c[0]=='workflow' for c in self.dispatch(status=status)))
+
+
+class SiteTransferTests(unittest.TestCase):
+    def test_ssh_stream_contains_only_lease_header_and_apk_and_requires_exact_server_ack(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);apk=root/'Brand-2.0.115.1-test.apk';apk.write_bytes(b'APK'*1000)
+            context=fixture();context['receipt']={'apk_sha256':cb.digest(apk),'apk_size_bytes':apk.stat().st_size}
+            bridge=object.__new__(cb.Bridge);bridge.target='builder@site.example';bridge.key=root/'ssh-key';bridge.hosts=root/'hosts'
+            def run(args,**kwargs):
+                stream=kwargs['stdin'];header=json.loads(stream.readline());self.assertEqual({'action':'mirror','input':cb.lease(context)},header)
+                self.assertEqual(apk.read_bytes(),stream.read());self.assertEqual(600,kwargs['timeout'])
+                self.assertIn('StrictHostKeyChecking=yes',args)
+                return subprocess.CompletedProcess(args,0,json.dumps({'stored':True,**context['receipt']}).encode(),b'')
+            with patch.object(cb.subprocess,'run',side_effect=run):bridge.upload(context,apk)
+            with patch.object(cb.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'{"stored":true}',b'')):
+                with self.assertRaises(ValueError):bridge.upload(context,apk)
+
+    def test_transfer_failure_does_not_finish_publication(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);args,c,events,run,bridge=StagingTests().stage(root)
+            args.publish=True
+            result={'apk_sha256':'a'*64,'apk_size_bytes':3000}
+            def broken(*args):raise RuntimeError('site transfer unavailable')
+            def retained(work,context,run):return root/'apk',root/'provenance',context['prepared_receipt']
+            with patch.object(cb,'__file__',str(root/'branding/central_builder.py')),patch.dict(os.environ,{'GITHUB_RUN_ID':'123'}),patch.object(cb,'retained_artifact',side_effect=retained),patch.object(cb,'publish'),patch.object(cb,'download_verified',return_value=result),patch.object(bridge,'upload',side_effect=broken):
+                with self.assertRaises(RuntimeError):cb.complete_staged(args,bridge,run)
+            self.assertNotIn('finish',events);self.assertEqual('fail',events[-1])
+
+    def test_worker_bundle_has_no_credentials_or_signer_and_installer_never_starts_services(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle=Path(temporary)/'setup.zip'
+            subprocess.run([sys.executable,str(Path(__file__).with_name('package_dispatcher.py')),str(bundle)],check=True,capture_output=True)
+            with zipfile.ZipFile(bundle) as archive:
+                names=set(archive.namelist());self.assertIn('install.sh',names);self.assertIn('branding/dispatch_github.py',names)
+                self.assertFalse(any(n.endswith(('.env','.keystore','.key','.properties')) for n in names))
+                self.assertFalse(any('configure_runner' in n or 'standalone_runner' in n for n in names))
+                installer=archive.read('install.sh').decode();self.assertNotRegex(installer,r'systemctl\s+(start|enable)\b')
 
 
 if __name__=='__main__':unittest.main()

@@ -133,6 +133,8 @@ require __DIR__.'/public-trial-signup.php';
 publicTrialCases($tests,$app,$config,$owner,$alpha,$beta,$tenantB,$http);
 require __DIR__.'/brand-builder.php';
 brandBuilderCases($tests,$app,$config,$owner,$http);
+require __DIR__.'/brand-downloads.php';
+brandDownloadCases($tests,$app,$config,$owner,$http);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

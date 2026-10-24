@@ -1,0 +1,57 @@
+EXTREME CONTROL CENTER0.14.0 — SITE-OWNED BRANDED DOWNLOADS
+
+1. Back up existing private config.php, storage and database. Extract the UPDATE ZIP
+   over the application folder containing config.php and public/, not inside public/.
+   Existing configuration, initialized storage, original keys and trial history stay.
+   No new migration beyond017; apply earlier pending migrations before builder setup.
+2. Branding now returns ONLY site-owned download links, never build-provider URLs,
+   source commits, runner IDs or provenance. Existing manually published owner APKs
+   will not magically become registered site downloads. Do not fake registry entries.
+3. Before enabling publication, configure the restricted builder SSH bridge from
+   GitHub to THIS website host. Its fixed command is the installed absolute path to
+   `php cli/brand-builder.php`. It accepts one bounded JSON line and an optional
+   size/hash-bounded APK stream, never shell commands or reseller-selected paths.
+   The bridge service needs read-only code/config, original storage keys and images,
+   required DB permissions and write access ONLY to storage/brand-apks (shared with
+   PHP). Use tightly scoped ACLs/group access; do not chmod the whole site world-writable.
+   Pre-create storage/brand-apks with a dedicated shared PHP/bridge group and setgid
+   directory permissions (for example02750), or equivalent default ACLs. Verified APKs
+   are0640 so both services can read them; transfer staging starts0600. Do not grant
+   this group access to other tenants' data or make config/encryption keys public.
+4. Add to your EXISTING private config.php (do not replace it):
+     'brand_downloads' => ['enabled' => true, 'x_accel' => false],
+   This enables bounded PHP streaming with HEAD/single Range/resume support. There
+   are NO redirects or build-provider fetches on public download requests.
+   The central builder uploads and SHA256-verifies the APK privately BEFORE the
+   website registry can advertise it. Downloads do not depend on GitHub availability.
+5. OPTIONAL high-volume offload: add this location to this site's Nginx configuration,
+   substituting the REAL absolute app folder. It must NOT contain a PHP location or
+   permit directory listing. Reload/test Nginx, then set x_accel=true:
+     location /_brand_apks/ {
+         internal;
+         alias /REAL/APP/FOLDER/storage/brand-apks/;
+         default_type application/vnd.android.package-archive;
+         add_header X-Content-Type-Options nosniff always;
+     }
+   Keep internal access restrictions. Never expose storage/ or application.key.
+   Nginx must be able to read only the APK files/directory via scoped ACLs; existing
+   private keys/config must remain inaccessible. Keep PHP streaming if unsure.
+6. Platform target now2.0.115/code431 for the new site-owned native updater. Pin
+   brand_builder.sources['2.0.115'] to the FULL reviewed source commit supplied by
+   the operator AFTER commit. Keep enabled/publication_enabled OFF until SSH/source
+   setup is verified. Start testing only, with a new revision of the existing brand.
+   Cancel only definitely unpublished stale manual queue entries; never reset any
+   uncertain publication or trial history.
+7. Workflow environments and the dispatcher are separate installations. The worker
+   host holds a scoped GitHub dispatch token, not signing keys. Signing stays inside
+   GitHub. Resellers need only their website account; the owner alone sees setup.
+
+Public metadata is /api/app-updates/<brand UUID>/testing (or production).
+Public APK URLs are /downloads/apps/<artifact UUID>/Brand-<version>.apk. These are
+intentionally shareable app downloads, NOT identity or authentic-APK proof. They
+contain no reseller contact data, signing key, repository URL or GitHub credential.
+Old installed revision1/2 builds still contain their original update endpoint: install
+the first new2.0.115 branded APK over the existing app, without uninstall/clear-data.
+Subsequent builds use the site-owned updater. Generic APKs retain their existing
+updater unchanged; this website update publishes no APK and changes no live workers.
+Trials remain OFF. This does not create a panel trial or alter normal viewing.

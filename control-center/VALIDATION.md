@@ -1,4 +1,29 @@
-# Device management 0.13.2 owner-branding hotfix — validation
+# Device management 0.14.0 site-owned APK delivery — validation
+
+## Site-owned branded download/update delivery
+
+188 isolated MariaDB/service/HTTP checks and41 browser checks pass. New coverage:
+size/hash-bounded restricted-CLI APK ingestion, wrong/stale leases, short/excess/
+tampered bytes, immutable reuse, pre-registry local copy requirement, transfer temp
+cleanup and0640 group-readable APK files, no upstream/source/run fields in reseller
+responses, metadata/full downloads/HEAD/single Range/suffix/416/wrong-version paths,
+and no public builder upload route. A synthetic browser publication response verifies
+site-only links and refusal of injected external provider URLs; it is not a real APK.
+An earlier combined browser run timed out at the unchanged clock-format UI scenario;
+the subsequent complete isolated browser rerun passed all41 cases with no JS errors.
+
+46 Python builder/resource/dispatcher checks pass; workflow actionlint and installer
+bash syntax pass.31 Android updater tests pass and internal-test Kotlin compilation
+succeeds for115/431. Generic update routing is unchanged. Deterministic fresh/update
+package tests preserve private config, initialized storage, original keys and migrations.
+
+No new migration beyond017. New delivery/builder/trial settings stay default-OFF.
+Live setup still needs restricted website SSH/secrets, source pin and worker dispatcher.
+No live website install, worker install, APK publication, automatic update or panel
+trial is established by these local checks. The earlier manual owner114 revision1->2
+install-over-existing/data test passed; the new115 site updater still needs its pilot.
+
+## Previous 0.13.2 owner-branding hotfix
 
 ## Owner branding and error diagnosis
 

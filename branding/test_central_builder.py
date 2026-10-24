@@ -137,6 +137,7 @@ class PipelineTests(unittest.TestCase):
         (root/'app/build/outputs/apk/sideload/internalTest/app.apk').write_bytes(b'APK'*1000)
         c=fixture();calls=[]
         class Bridge:
+            def upload(self,context,apk):calls.append(('site_copy',{}))
             def call(self,action,value):
                 calls.append((action,value))
                 return copy.deepcopy(c) if action=='claim' else {'state':'okay'}
@@ -153,9 +154,9 @@ class PipelineTests(unittest.TestCase):
         root,c,calls=self.run_pipeline();self.assertEqual(['claim','prepared'],[x[0] for x in calls]);self.assertEqual(0o600,(root/'job/lease.json').stat().st_mode&0o777)
         provenance=json.loads(next((root/'job').glob('*.provenance.json')).read_text());self.assertNotIn('lease_token',json.dumps(provenance));self.assertNotIn(c['lease_token'],json.dumps(provenance))
     def test_explicit_publish_finishes_only_after_download_verification(self):
-        _,_,calls=self.run_pipeline(publish=True);self.assertEqual(['claim','prepared','authorize','finish'],[x[0] for x in calls])
+        _,_,calls=self.run_pipeline(publish=True);self.assertEqual(['claim','prepared','delivery','authorize','site_copy','finish'],[x[0] for x in calls])
     def test_uncertain_upload_notifies_server_and_never_rebuilds_automatically(self):
-        _,_,calls=self.run_pipeline(publish=True,fail_upload=True);self.assertEqual(['claim','prepared','authorize','fail'],[x[0] for x in calls])
+        _,_,calls=self.run_pipeline(publish=True,fail_upload=True);self.assertEqual(['claim','prepared','delivery','authorize','fail'],[x[0] for x in calls])
     def test_authorized_brand_workflow_is_isolated_and_retains_before_complete(self):
         root=Path(__file__).resolve().parent.parent
         workflow=(root/'.github/workflows/central-brand-builder.yml').read_text()

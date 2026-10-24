@@ -38,7 +38,9 @@ class AppUpdateRepository @Inject constructor(
         okHttpClient.newBuilder()
             .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-            .callTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+             .callTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+            .followRedirects(BuildConfig.BRAND_ID.isBlank())
+            .followSslRedirects(BuildConfig.BRAND_ID.isBlank())
             .build()
     }
 
@@ -71,11 +73,14 @@ class AppUpdateRepository @Inject constructor(
                 } else {
                     "tags/$channelTag"
                 }
-                val url = "https://api.github.com/repos/${BuildConfig.GITHUB_OWNER}/${BuildConfig.GITHUB_REPO}/releases/$releasePath"
+                val branded = BuildConfig.BRAND_ID.isNotBlank()
+                val url = if (branded) {
+                    BrandUpdatePolicy.metadataUrl(BuildConfig.BRAND_ID, context.packageName.endsWith(".test"))
+                } else "https://api.github.com/repos/${BuildConfig.GITHUB_OWNER}/${BuildConfig.GITHUB_REPO}/releases/$releasePath"
                 val request = Request.Builder()
                     .url(url)
-                    .header("Accept", "application/vnd.github+json")
-                    .header("User-Agent", "ARVIO/${BuildConfig.VERSION_NAME}")
+                    .header("Accept", if (branded) "application/json" else "application/vnd.github+json")
+                    .header("User-Agent", if (branded) "App/${BuildConfig.VERSION_NAME}" else "ARVIO/${BuildConfig.VERSION_NAME}")
                     // Always hit the network for this one. The shared OkHttp client
                     // has a 50MB disk cache for API responses (TMDB, Trakt, etc.), and
                     // without this, a "no update" response gets cached and keeps being
@@ -86,6 +91,7 @@ class AppUpdateRepository @Inject constructor(
 
                 updateClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
+                        if (branded) error("App update service unavailable (${response.code})")
                         error(context.getString(R.string.update_error_github_api, response.code))
                     }
                     val body = response.body?.string().orEmpty()
@@ -116,12 +122,15 @@ class AppUpdateRepository @Inject constructor(
                     } else dto.assets
                     val asset = AbiSelector.chooseBestApkAsset(candidates)
                         ?: error(context.getString(R.string.update_error_no_apk_asset))
+                    if (branded && !BrandUpdatePolicy.acceptsAsset(asset.browserDownloadUrl, displayVersion)) {
+                        error("Invalid app update download")
+                    }
 
                     AppUpdate(
                         tag = displayVersion,
                         title = dto.name?.takeIf { it.isNotBlank() } ?: tag,
                         notes = dto.body.orEmpty(),
-                        releaseUrl = dto.htmlUrl,
+                        releaseUrl = if (branded) null else dto.htmlUrl,
                         assetName = asset.name,
                         assetUrl = asset.browserDownloadUrl,
                         assetSizeBytes = asset.size

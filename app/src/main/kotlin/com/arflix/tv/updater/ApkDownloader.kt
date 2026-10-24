@@ -2,6 +2,7 @@ package com.arflix.tv.updater
 
 import android.content.Context
 import com.arflix.tv.R
+import com.arflix.tv.BuildConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -33,6 +34,8 @@ class ApkDownloader @Inject constructor(
             val downloadClient = okHttpClient.newBuilder()
                 .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                .followRedirects(BuildConfig.BRAND_ID.isBlank())
+                .followSslRedirects(BuildConfig.BRAND_ID.isBlank())
                 .build()
 
             val request = Request.Builder().url(url).build()

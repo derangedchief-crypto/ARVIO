@@ -91,10 +91,29 @@ final class BrandBuilder
             $this->db->query("UPDATE app_brand_builds SET state='publishing',lease_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE) WHERE id=?",[$job['id']]);$this->auth->audit(null,'brand.publication_authorized',$job['id'],$job['tenant_id']);return ['state'=>'publishing','expected'=>$expected];
         });
     }
+    /** Preflight before any remote publication; local delivery is an explicit gate. */
+    public function delivery(array $input):array {
+        Input::keys($input,['build_id','lease_token']);$this->policy();
+        if(!(new BrandDownloads($this->config,$this->artifacts))->enabled())throw new Problem(503,'Enable site APK delivery before publishing.');
+        $job=$this->lockForDelivery($input,['ready_to_publish']);return ['ready'=>true];
+    }
+    private function lockForDelivery(array $input,array $states):array {
+        return $this->db->transaction(function()use($input,$states):array{$job=$this->lockJob(Input::id($input['build_id']??null));$this->leased($job,$input['lease_token']??null,$states);if(!$job['artifact_receipt'])throw new Problem(409,'Missing frozen artifact receipt.');return $job;});
+    }
+    /** Only the restricted SSH CLI streams bytes here, never a reseller HTTP route. */
+    public function mirror(array $input,$stream):array {
+        Input::keys($input,['build_id','lease_token']);$this->policy();$states=['publishing','publication_review'];
+        $job=$this->lockForDelivery($input,$states);$receipt=$this->receipt($job,json_decode($job['artifact_receipt'],true,12,JSON_THROW_ON_ERROR));
+        $downloads=new BrandDownloads($this->config,$this->artifacts);
+        return $downloads->ingest($receipt,$stream,function(callable $install)use($input,$states):void{
+            $this->db->transaction(function()use($input,$states,$install):void{$current=$this->lockJob(Input::id($input['build_id']));$this->leased($current,$input['lease_token'],$states);$install();});
+        });
+    }
     public function finish(array $input):array {
         Input::keys($input,['build_id','lease_token','receipt']);$this->policy();return $this->db->transaction(function()use($input):array {
             $job=$this->lockJob(Input::id($input['build_id']??null));$this->leased($job,$input['lease_token']??null,['publishing','publication_review','published'],true);if(!is_array($input['receipt']??null))throw new Problem(422,'Missing published download verification.');$receipt=$this->receipt($job,$input['receipt']);if($receipt!==json_decode($job['artifact_receipt'],true))throw new Problem(409,'Published bytes differ from the prepared artifact.');
             if($job['state']==='published')return ['state'=>'published','idempotent'=>true];
+            $downloads=new BrandDownloads($this->config,$this->artifacts);if($downloads->enabled()&&!$downloads->available($receipt))throw new Problem(409,'Verified site APK copy is missing.');
             $saved=$this->artifacts->recordVerified($job['id'],$receipt);$this->db->query("UPDATE app_brand_builds SET published_at=UTC_TIMESTAMP(),failure_code=NULL WHERE id=?",[$job['id']]);$this->auth->audit(null,'brand.artifact_published',$job['id'],$job['tenant_id']);return ['state'=>'published','artifact_id'=>$saved['id']];
         });
     }

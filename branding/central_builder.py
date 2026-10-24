@@ -53,15 +53,29 @@ class Bridge:
         self.key = Path(os.environ['BRAND_BUILDER_SSH_KEY_FILE']).resolve(strict=True)
         self.hosts = Path(os.environ['BRAND_BUILDER_KNOWN_HOSTS_FILE']).resolve(strict=True)
 
-    def call(self, action, value):
-        args = ['ssh', '-F', '/dev/null', '-T', '-i', str(self.key), '-o', 'IdentitiesOnly=yes',
+    def args(self):
+        return ['ssh', '-F', '/dev/null', '-T', '-i', str(self.key), '-o', 'IdentitiesOnly=yes',
                 '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ClearAllForwardings=yes',
                 '-o', 'ConnectTimeout=10', '-o', f'UserKnownHostsFile={self.hosts}', self.target, 'brand-builder']
-        raw = command(args, data=json.dumps({'action': action, 'input': value}, separators=(',', ':')).encode(), timeout=60)
+    def call(self, action, value):
+        raw = command(self.args(), data=(json.dumps({'action': action, 'input': value}, separators=(',', ':'))+'\n').encode(), timeout=60)
         result = json.loads(raw)
         if not isinstance(result, dict):
             raise ValueError('Invalid central queue response.')
         return result
+
+    def upload(self, context, apk):
+        # Disk-backed bounded stream, never a memory-sized APK or a command/path from
+        # the reseller. The receiver derives size/hash exclusively from its receipt.
+        with tempfile.TemporaryFile(dir=apk.parent) as stream:
+            stream.write((json.dumps({'action':'mirror','input':lease(context)},separators=(',',':'))+'\n').encode())
+            with apk.open('rb') as source:shutil.copyfileobj(source,stream)
+            stream.seek(0)
+            result=subprocess.run(self.args(),stdin=stream,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=600)
+        if result.returncode or len(result.stdout)>16384:raise RuntimeError('Site APK delivery transfer failed; publication needs review.')
+        response=json.loads(result.stdout)
+        if response != {'stored':True,'apk_sha256':context['receipt']['apk_sha256'],'apk_size_bytes':context['receipt']['apk_size_bytes']}:
+            raise ValueError('Site APK copy did not match the frozen receipt.')
 
 
 class Heartbeat:
@@ -337,9 +351,11 @@ def complete_staged(args, bridge=None, run=command):
             if not args.publish:
                 print('Signed APK retained and downloaded bytes verified. Build prepared; nothing published.')
                 return
+            heartbeat.check();bridge.call('delivery', lease(context))
             heartbeat.check();bridge.call('authorize', dict(lease(context), confirmed_publication=True))
             heartbeat.check();publish(work, context, apk, provenance, run, guard=lambda: bridge.call('heartbeat', lease(context)))
             downloaded = download_verified(work, context, run)
+            heartbeat.check();bridge.upload(context, apk)
             heartbeat.check();bridge.call('finish', dict(lease(context), receipt=downloaded))
             print('Brand-only publication and website registry verified. Generic channels unchanged.')
     except Exception:
@@ -375,6 +391,7 @@ def run_job(args, bridge=None, run=command):
         with Heartbeat(bridge, context) as heartbeat:
             if args.mode == 'reconcile':
                 result = download_verified(work, context, run)
+                heartbeat.check();bridge.upload(context, work/'downloaded'/expected['asset_name'])
                 heartbeat.check();bridge.call('finish', dict(lease(context), receipt=result))
                 print('Previously published branded artifact verified and reconciled.');return
             if context.get('prepared_receipt'):
@@ -412,9 +429,11 @@ def run_job(args, bridge=None, run=command):
             heartbeat.check();bridge.call('prepared', dict(lease(context), receipt=result,release_lease=not args.publish))
             if not args.publish:
                 print('Signed APK verified locally. Nothing published. Retain these exact bytes for later publication.');return
+            heartbeat.check();bridge.call('delivery', lease(context))
             heartbeat.check();bridge.call('authorize', dict(lease(context), confirmed_publication=True))
             heartbeat.check();publish(work, context, apk, provenance, run, guard=lambda: bridge.call('heartbeat', lease(context)))
             downloaded = download_verified(work, context, run)
+            heartbeat.check();bridge.upload(context, apk)
             heartbeat.check();bridge.call('finish', dict(lease(context), receipt=downloaded))
             print('Branded channel published and downloaded APK verified. Generic channels unchanged.')
     except Exception:

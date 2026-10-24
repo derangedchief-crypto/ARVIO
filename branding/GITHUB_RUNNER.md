@@ -1,5 +1,30 @@
 # GitHub signing + worker-host dispatch
 
+## Site-owned delivery (website0.14.0 / app2.0.115)
+
+Install website0.14.0 before enabling the connected builder. Add brand_downloads
+enabled=true to the EXISTING private config.php, leaving trials OFF. The source pin
+for NEW jobs is now sources['2.0.115']; never repin a previously claimed old job.
+See control-center/deploy/UPDATE-0.14.0.txt for scoped storage access and optional
+Nginx internal offload. The worker/website/GitHub remain separate systems.
+
+After verifying GitHub retained/release bytes, the runner streams the APK through
+the same restricted SSH bridge. One bounded JSON header carries the lease; the
+server determines size/hash/path from the frozen receipt, verifies the stream and
+rechecks the live lease before immutable installation. Enabled site delivery blocks
+registry completion unless that exact local file exists. Recovery reuses/verifies
+the original release bytes and repairs the same local copy, never creates a version.
+
+Reseller APIs/UI expose only site paths. Metadata/download requests never contact
+or redirect to GitHub. New branded APKs use the owner site's metadata endpoint and
+reject foreign asset URLs/redirects; generic APK update routing stays unchanged.
+Existing installed114 branded tests need one manual install-over-existing to move
+to the new endpoint. They cannot be retroactively rewritten by a website update.
+
+This hides provider details in ordinary UI/URLs, not an absolute secrecy promise:
+a public repository may be independently discoverable, and APKs can be analysed.
+Do not distribute public provenance/run URLs to resellers or claim anti-analysis.
+
 ## Current choice and limits
 
 The owner explicitly authorised ONE additional branded-only workflow after confirming
@@ -44,11 +69,11 @@ console and pin known_hosts; never trust an unchecked runtime ssh-keyscan result
 The bridge account must not edit PHP source, config, authorized_keys or signing policy.
 No HTTP endpoint or privileged build/signing credential is exposed to resellers.
 
-## Website setup (separate host, existing0.13.2 code)
+## Website setup (separate host, website0.14.0)
 
 Preserve the sole private config.php, initialized storage and encryption keys. Check
 migrations through017. Under brand_builder, enable pickup, allow testing only, and
-pin sources['2.0.114'] to the FULL reviewed workflow/source commit. Keep
+pin sources['2.0.115'] to the FULL reviewed workflow/source commit. Keep
 publication_enabled=false initially. Keep trial signup/offer rollout OFF.
 
 Manual owner revisions1/2 were not registry builds. Inspect/cancel stale unpublished
@@ -81,6 +106,13 @@ Copy deploy/brand-dispatch.service and .timer into systemd's unit directory, rev
 paths, then daemon-reload. Do NOT enable the timer yet. Start the service once for
 the build-only pilot. The default timer checks every15 minutes; an empty queue still
 starts a short GitHub check, so do not enable unnecessary high-frequency polling.
+
+An owner-only Brand-Dispatcher-Setup.zip bundles the dispatcher/unit files and
+install.sh. On the WORKER host, after installing system Python3 and gh, run
+`bash install.sh <full reviewed source SHA>`. It creates only the dedicated service
+account/directories, preserves an existing /etc/brand-dispatch.env, and does NOT
+start or enable the service/timer. Edit the token privately on that host. Do not
+upload this operator bundle into the website public directory or give it to resellers.
 
 ## Pilot and publication
 

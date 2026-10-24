@@ -36,6 +36,11 @@ final class BrandArtifacts
         $row=$this->db->one('SELECT * FROM app_brand_artifacts WHERE brand_id=? AND channel=? AND enabled=1 ORDER BY version_code DESC LIMIT 1',[$brandId,$channel]);
         if(!$row)return null;if(!hash_equals($this->mac($row),$row['verification_mac']))throw new Problem(503,'Artifact registry integrity check failed.');return $row;
     }
+    public function byId(string $id):?array {
+        $row=$this->db->one('SELECT * FROM app_brand_artifacts WHERE id=? AND enabled=1',[Input::id($id)]);
+        if(!$row)return null;if(!hash_equals($this->mac($row),$row['verification_mac']))throw new Problem(503,'Artifact registry integrity check failed.');return $row;
+    }
+    public function resellerInfo(array $artifact):array {return (new BrandDownloads($this->config,$this))->publicInfo($artifact);}
     /** Package admission only; signer is central artifact provenance, NOT a client
      * authenticity claim. Account ownership and device possession remain separate. */
     public function enrollmentPackage(mixed $package):?string {

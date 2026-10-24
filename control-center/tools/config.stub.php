@@ -42,4 +42,6 @@ return [
         'channels' => ['testing'],
         'sources' => [],
     ],
+    // Site-hosted APK copies. Enable only after the restricted CLI bridge is ready.
+    'brand_downloads' => ['enabled' => false, 'x_accel' => false],
 ];

@@ -7,8 +7,8 @@ final class AppBrands
 {
     private const ASSETS=['loading_asset','logo_asset','icon_asset'];
     // Platform release identity; never selected by reseller inputs.
-    private const APP_VERSION='2.0.114';
-    private const APP_VERSION_CODE=430;
+    private const APP_VERSION='2.0.115';
+    private const APP_VERSION_CODE=431;
     public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly ?BrandArtifacts $artifacts=null) {}
     private function ready():void {if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['014_reseller_app_brands.sql']))throw new Problem(503,'Apply the app-branding database upgrade first.');}
     private function tenant(array $actor,?string $id,bool $lock=false):array {
@@ -25,7 +25,7 @@ final class AppBrands
     public function get(array $actor,array $input):array {
         Input::keys($input,['tenant_id']);$t=$this->tenant($actor,$input['tenant_id']??null);$brand=$this->db->one('SELECT * FROM app_brands WHERE tenant_id=?',[$t['id']]);
         $builds=$brand?$this->db->all('SELECT id,brand_version,app_version,state,created_at FROM app_brand_builds WHERE brand_id=? ORDER BY created_at DESC LIMIT 10',[$brand['id']]):[];
-        $published=[];if($brand&&$this->artifacts&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']))foreach(['testing','production'] as $channel){$artifact=$this->artifacts->approved($brand['id'],$channel);if($artifact)$published[]=['channel'=>$channel,'version_name'=>$artifact['version_name'],'version_code'=>(int)$artifact['version_code'],'package_name'=>$artifact['package_name'],'artifact_url'=>$artifact['artifact_url'],'apk_sha256'=>$artifact['apk_sha256']];}
+        $published=[];if($brand&&$this->artifacts&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']))foreach(['testing','production'] as $channel){$artifact=$this->artifacts->approved($brand['id'],$channel);if($artifact)$published[]=$this->artifacts->resellerInfo($artifact);}
         return ['brand'=>$brand,'builds'=>$builds,'artifacts'=>$published,'tenant_id'=>$t['id'],'workspace_kind'=>$t['kind'],'trial_creation_enabled'=>false];
     }
     public function upload(array $actor,array $input):array {

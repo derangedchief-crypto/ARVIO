@@ -47,7 +47,8 @@ final class HttpFixture
             CURLOPT_HEADERFUNCTION=>static function ($handle, string $line) use (&$responseHeaders): int {
                 $parts = explode(':', $line, 2); if (count($parts) === 2) $responseHeaders[strtolower($parts[0])][] = trim($parts[1]); return strlen($line);
             }]);
-        if ($method !== 'GET') curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($body ?? new stdClass(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        if ($method === 'HEAD') curl_setopt($curl, CURLOPT_NOBODY, true);
+        elseif ($method !== 'GET') curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($body ?? new stdClass(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         $raw = curl_exec($curl);
         if ($raw === false) throw new RuntimeException('HTTP fixture failed: ' . curl_error($curl));
         $status = curl_getinfo($curl, CURLINFO_RESPONSE_CODE);

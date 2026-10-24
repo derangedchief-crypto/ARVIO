@@ -107,6 +107,7 @@ class LocalPipelineTests(unittest.TestCase):
             (output/'app.apk').write_bytes(b'APK'*1000)
             context=fixture();events=[];store=root/'artifacts';store.mkdir()
             class Bridge:
+                def upload(self,context,apk):events.append('site_copy')
                 def call(self, action, value):
                     if action=='prepared':
                         # A real durable copy, not just a mocked retention receipt.
@@ -130,13 +131,13 @@ class LocalPipelineTests(unittest.TestCase):
             return events
 
     def test_local_publish_retains_before_prepare_and_finishes_after_verification(self):
-        self.assertEqual(['claim','prepared','authorize','finish'],self.pipeline())
+        self.assertEqual(['claim','prepared','delivery','authorize','site_copy','finish'],self.pipeline())
 
     def test_disk_full_never_prepares_or_authorizes_publication(self):
         self.assertEqual(['claim','fail'],self.pipeline(fail_retention=True))
 
     def test_uncertain_publish_stops_without_finish_or_rebuild(self):
-        self.assertEqual(['claim','prepared','authorize','fail'],self.pipeline(fail_publication=True))
+        self.assertEqual(['claim','prepared','delivery','authorize','fail'],self.pipeline(fail_publication=True))
 
 
 if __name__ == '__main__':unittest.main()

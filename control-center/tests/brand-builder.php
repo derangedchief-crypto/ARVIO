@@ -2,7 +2,7 @@
 declare(strict_types=1);
 function brandBuilderCases(array &$tests,ControlCenter\Application $app,ControlCenter\Config $config,array $owner,HttpFixture $http):void {
     $sha=str_repeat('a',40);$jobId=null;$tenant=null;$brand=null;$context=null;$receipt=null;
-    $settings=['enabled'=>true,'publication_enabled'=>true,'channels'=>['testing'],'sources'=>['2.0.114'=>$sha]];
+    $settings=['enabled'=>true,'publication_enabled'=>true,'channels'=>['testing'],'sources'=>['2.0.115'=>$sha]];
     $c=new ControlCenter\Config($config->root,array_replace($config->values,['brand_builder'=>$settings]));$secrets=new ControlCenter\Secrets($c);$artifacts=new ControlCenter\BrandArtifacts($app->db,$secrets,$c);$builder=new ControlCenter\BrandBuilder($app->db,$c,$app->appBrands,$artifacts,$secrets,$app->auth);
     $call=fn($ctx)=>['build_id'=>$ctx['build_id'],'lease_token'=>$ctx['lease_token']];
     $tests['central builder claims only owner-pinned source channel and verified active workspaces']=function()use($app,$owner,$builder,$sha,$artifacts,&$jobId,&$tenant,&$brand,&$context):void {
@@ -10,7 +10,7 @@ function brandBuilderCases(array &$tests,ControlCenter\Application $app,ControlC
         $asset=$app->appBrands->upload($owner,['tenant_id'=>$tenant['id'],'image'=>'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jSuoAAAAASUVORK5CYII=']);
         $brand=$app->appBrands->save($owner,['tenant_id'=>$tenant['id'],'name'=>'TEST Builder TV','loading_asset'=>$asset['id'],'logo_asset'=>$asset['id'],'icon_asset'=>$asset['id']]);$jobId=$app->appBrands->requestBuild($owner,['tenant_id'=>$tenant['id'],'expected_version'=>1])['id'];
         problem(409,fn()=> $builder->claim(['build_id'=>$jobId,'channel'=>'testing','source_sha'=>str_repeat('b',40)]));problem(403,fn()=> $builder->claim(['build_id'=>$jobId,'channel'=>'production','source_sha'=>$sha]));
-        $context=$builder->claim(['build_id'=>$jobId,'channel'=>'testing','source_sha'=>$sha,'runner_run_id'=>'1234']);same($sha,$context['source_sha']);same($brand['id'],$context['bundle']['manifest']['brand_id']);same('2.0.114.1-test',$context['expected']['version_name']);same(43000001,$context['expected']['version_code']);same($brand['package_name'].'.test',$context['expected']['package_name']);
+        $context=$builder->claim(['build_id'=>$jobId,'channel'=>'testing','source_sha'=>$sha,'runner_run_id'=>'1234']);same($sha,$context['source_sha']);same($brand['id'],$context['bundle']['manifest']['brand_id']);same('2.0.115.1-test',$context['expected']['version_name']);same(43100001,$context['expected']['version_code']);same($brand['package_name'].'.test',$context['expected']['package_name']);
         same(null,$artifacts->enrollmentPackage($context['expected']['package_name']));
         problem(409,fn()=> $builder->claim(['build_id'=>$jobId,'channel'=>'testing','source_sha'=>$sha]));
         $row=$app->db->one('SELECT * FROM app_brand_builds WHERE id=?',[$jobId]);check($row['lease_hash']!==$context['lease_token']);same(hash('sha256',$context['lease_token']),$row['lease_hash']);
