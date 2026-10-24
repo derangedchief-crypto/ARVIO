@@ -1,5 +1,25 @@
 # Storage, reseller branding and trials — development progress
 
+## Authorised GitHub branded workflow — selected architecture
+
+Owner confirmed the worker host will coordinate builds but the central key exists
+only in GitHub, then explicitly authorised ONE additional branded-only workflow.
+central-brand-builder.yml now signs inside GitHub using existing repository secrets;
+dispatch_github.py/systemd examples coordinate from the worker host without signing
+material. Existing testing/customer workflows are not edited. GitHub stages signed
+output, uploads APK/provenance only, DOWNLOADS and verifies retention BEFORE freezing
+the website prepared receipt, then optionally publishes/download-verifies/registers
+the per-brand channel. Continuations are bound to source, Actions run and lease.
+
+No live deployment or dispatch yet. Required gates: workflow push/registration,
+protected environments, restricted website SSH bridge, owner-pinned source, worker
+dispatcher setup, then a new-revision build-only/publish/updater pilot. No key export,
+normal testing overwrite, website migration, trial enablement or panel trial creation.
+See GITHUB_RUNNER.md. Earlier standalone signing-host instructions are not selected.
+Validation:43 Python cases pass, including two-phase retention/receipt ordering,
+failed retention, uncertain publication, stale Actions-run rejection, dispatcher
+source pinning and active-run suppression. actionlint passes the new workflow.
+
 ## Standalone builder integration — source only
 
 Manual signed owner revision1 -> 2 update passed on-device; owner confirmed retained

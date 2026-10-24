@@ -156,9 +156,16 @@ class PipelineTests(unittest.TestCase):
         _,_,calls=self.run_pipeline(publish=True);self.assertEqual(['claim','prepared','authorize','finish'],[x[0] for x in calls])
     def test_uncertain_upload_notifies_server_and_never_rebuilds_automatically(self):
         _,_,calls=self.run_pipeline(publish=True,fail_upload=True);self.assertEqual(['claim','prepared','authorize','fail'],[x[0] for x in calls])
-    def test_no_extra_github_builder_workflow_is_installed(self):
+    def test_authorized_brand_workflow_is_isolated_and_retains_before_complete(self):
         root=Path(__file__).resolve().parent.parent
-        self.assertFalse((root/'.github/workflows/central-brand-builder.yml').exists())
+        workflow=(root/'.github/workflows/central-brand-builder.yml').read_text()
+        self.assertIn('central-brand-publisher',workflow)
+        self.assertIn('cancel-in-progress: false',workflow)
+        self.assertNotIn('staging-testing',workflow)
+        self.assertNotIn('--clobber',workflow)
+        self.assertIn('ref: ${{ github.sha }}',workflow)
+        self.assertLess(workflow.index('uses: actions/upload-artifact@v4'),workflow.index('central_builder.py complete'))
+        self.assertNotIn('brand-job/**',workflow)
 
 
 if __name__=='__main__':unittest.main()

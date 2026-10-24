@@ -34,7 +34,7 @@ def main():
     keys = {'storeFile':'release.keystore', 'storePassword':os.environ['RELEASE_KEYSTORE_PASSWORD'], 'keyAlias':os.environ['RELEASE_KEY_ALIAS'], 'keyPassword':os.environ['RELEASE_KEY_PASSWORD']}
     write(root/'keystore.properties', ''.join(k+'='+prop(v)+'\n' for k,v in keys.items()).encode('ascii'))
     values = (root/'secrets.defaults.properties').read_bytes() + b'\n'
-    for k in ['TMDB_API_KEY','ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL','SENTRY_DSN','SUPABASE_URL','SUPABASE_ANON_KEY']:
+    for k in ['TMDB_API_KEY','ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL','SENTRY_DSN','SUPABASE_URL','SUPABASE_ANON_KEY','APP_ANON_KEY','TRAKT_CLIENT_ID','TRAKT_CLIENT_SECRET']:
         if os.environ.get(k):values += (k+'='+prop(os.environ[k])+'\n').encode('ascii')
     write(root/'secrets.properties', values)
 

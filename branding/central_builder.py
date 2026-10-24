@@ -303,7 +303,7 @@ def publish(work, context, apk, provenance, run=command, guard=lambda: None):
     run(['gh', 'release', 'edit', tag, '--repo', REPO, '--title', e['version_name'], '--notes-file', str(notes), '--draft=false', '--prerelease', '--latest=false'])
 
 
-def run_job(args, bridge=None, run=command):
+def reviewed_source(run=command):
     root = Path(__file__).resolve().parent.parent
     source = run(['git', 'rev-parse', 'HEAD'], cwd=root).strip()
     if not re.fullmatch('[a-f0-9]{40}', source) or os.environ.get('GITHUB_SHA', source) != source:
@@ -312,6 +312,53 @@ def run_job(args, bridge=None, run=command):
         raise ValueError('Build source is modified; commit reviewed code before signing.')
     if run(['git', 'ls-files', '--others', '--exclude-standard'], cwd=root).strip():
         raise ValueError('Untracked build source is forbidden on the central runner.')
+    return root, source
+
+
+def complete_staged(args, bridge=None, run=command):
+    """Resume only after Actions retained the exact signed APK/provenance."""
+    _, source = reviewed_source(run)
+    work = Path(args.workdir).resolve(strict=True)
+    context = json.loads((work/'staged.json').read_text())
+    run_id = os.environ.get('GITHUB_RUN_ID', '')
+    if not re.fullmatch('[1-9][0-9]{0,19}', run_id) or context.get('staged_run_id') != run_id:
+        raise ValueError('Staged build does not belong to this Actions run.')
+    validate_context(context, source, args.channel)
+    bridge = bridge or Bridge()
+    try:
+        with Heartbeat(bridge, context) as heartbeat:
+            bridge.call('heartbeat', lease(context))
+            # For a resumed job its original retained run remains authoritative.
+            retained = dict(context, prepared_run_id=context.get('prepared_run_id') or run_id,
+                            prepared_receipt=context['receipt'])
+            confirmation = work/'confirmation';confirmation.mkdir(mode=0o700)
+            apk, provenance, result = retained_artifact(confirmation, retained, run)
+            heartbeat.check();bridge.call('prepared', dict(lease(context), receipt=result, release_lease=not args.publish))
+            if not args.publish:
+                print('Signed APK retained and downloaded bytes verified. Build prepared; nothing published.')
+                return
+            heartbeat.check();bridge.call('authorize', dict(lease(context), confirmed_publication=True))
+            heartbeat.check();publish(work, context, apk, provenance, run, guard=lambda: bridge.call('heartbeat', lease(context)))
+            downloaded = download_verified(work, context, run)
+            heartbeat.check();bridge.call('finish', dict(lease(context), receipt=downloaded))
+            print('Brand-only publication and website registry verified. Generic channels unchanged.')
+    except Exception:
+        try:bridge.call('fail', lease(context))
+        except Exception:pass
+        raise
+
+
+def abort_job(args, bridge=None):
+    path = Path(args.workdir)/'lease.json'
+    if path.is_file():
+        context = json.loads(path.read_text())
+        # Published jobs reject fail; lost lease responses are harmless here.
+        try:(bridge or Bridge()).call('fail', lease(context))
+        except Exception:pass
+
+
+def run_job(args, bridge=None, run=command):
+    root, source = reviewed_source(run)
     work = Path(args.workdir).resolve();work.mkdir(mode=0o700, parents=False, exist_ok=False)
     bridge = bridge or Bridge()
     request={'build_id': args.build_id, 'channel': args.channel, 'source_sha': source}
@@ -352,6 +399,14 @@ def run_job(args, bridge=None, run=command):
                     'expected': expected, 'apk': measured, 'bundle_sha256': digest(bundle), 'build_seconds': elapsed})
                 result = receipt(expected, source, measured, provenance)
             context['receipt'] = result
+            if getattr(args, 'stage', False):
+                export = work/'export';export.mkdir(mode=0o700)
+                for file in [apk, provenance]:shutil.copyfile(file, export/file.name)
+                context['staged_run_id'] = run_id
+                private_json(work/'staged.json', context)
+                heartbeat.check();bridge.call('heartbeat', lease(context))
+                print('Signed APK staged. Retention must succeed before preparation/publication.')
+                return
             if getattr(args, 'artifact_store', None) and not context.get('prepared_receipt'):
                 retain_local(args.artifact_store, run_id, context, apk, provenance)
             heartbeat.check();bridge.call('prepared', dict(lease(context), receipt=result,release_lease=not args.publish))
@@ -370,19 +425,24 @@ def run_job(args, bridge=None, run=command):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['run', 'reconcile'])
+    parser.add_argument('mode', choices=['run', 'reconcile', 'complete', 'abort'])
     parser.add_argument('--build-id', default='')
     parser.add_argument('--channel', choices=['testing', 'production'], default='testing')
     parser.add_argument('--workdir', required=True)
     parser.add_argument('--publish', action='store_true')
+    parser.add_argument('--stage', action='store_true', help='Actions only: defer preparation until upload and download verification.')
     parser.add_argument('--artifact-store', help='Private durable storage on the standalone trusted runner.')
     parser.add_argument('--retention-id', default='', help='Owner runner-generated numeric retention identity, not a GitHub run.')
     args = parser.parse_args()
     if args.build_id and not re.fullmatch('[a-f0-9]{32}', args.build_id):parser.error('Invalid build ID.')
     if args.mode == 'reconcile' and (not args.build_id or args.publish):parser.error('Reconcile requires a build ID and cannot upload/publish.')
     if args.retention_id and not args.artifact_store:parser.error('Local retention requires --artifact-store.')
+    if args.stage and (args.mode != 'run' or args.publish or args.artifact_store):parser.error('Stage is build-only Actions mode.')
+    if args.mode in ('complete', 'abort') and (args.artifact_store or args.stage):parser.error('Actions continuation cannot use local retention.')
     try:
-        if args.artifact_store:
+        if args.mode == 'complete':complete_staged(args)
+        elif args.mode == 'abort':abort_job(args)
+        elif args.artifact_store:
             store = Path(args.artifact_store).resolve(strict=True)
             with (store/'.publisher.lock').open('a') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

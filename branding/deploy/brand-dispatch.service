@@ -1,0 +1,20 @@
+[Unit]
+Description=Dispatch centrally signed brand operation to GitHub
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=branddispatch
+Group=branddispatch
+UMask=0077
+EnvironmentFile=/etc/brand-dispatch.env
+Environment=BRAND_DISPATCH_STATE=/var/lib/brand-dispatch
+ExecStart=/usr/bin/python3 /opt/brand-dispatch/branding/dispatch_github.py --mode build --channel testing
+TimeoutStartSec=5min
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/brand-dispatch

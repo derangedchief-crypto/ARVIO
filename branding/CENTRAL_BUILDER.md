@@ -1,5 +1,14 @@
 # Central branded builder — deployment and recovery boundary
 
+## Latest owner authorisation: separate GitHub branded workflow
+
+The owner now explicitly AUTHORISED one additional branded-only workflow after
+confirming signing material exists only in GitHub. See GITHUB_RUNNER.md for the
+selected architecture: worker host dispatches, GitHub signs/retains/publishes,
+website retains the restricted queue and registry. Existing workflows stay unchanged.
+The standalone signer is an alternative source adapter, NOT the selected deployment.
+The withdrawal/deferred instructions below describe earlier decisions only.
+
 ## Current status: standalone adapter; existing workflows stay unchanged
 
 The no-workflow standalone adapter is now implemented in source. See

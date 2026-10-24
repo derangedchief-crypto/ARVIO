@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for branded work through GitHub every fifteen minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=15min
+Unit=brand-dispatch.service
+
+[Install]
+WantedBy=timers.target

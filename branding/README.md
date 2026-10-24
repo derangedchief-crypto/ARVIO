@@ -1,5 +1,13 @@
 # One-brand central build workflow
 
+## Selected deployment: signing stays in GitHub
+
+The owner explicitly authorised a separate branded-only workflow. See
+**GITHUB_RUNNER.md**: worker-host dispatch, GitHub-held existing signing secrets,
+retention-before-prepared, immutable brand-only publication and website registry.
+Existing workflows remain unchanged. Source implementation is not live deployment;
+SSH/environment/source-pin setup and a connected pilot remain necessary. Trials OFF.
+
 ## Current runner option
 
 See **STANDALONE_RUNNER.md**: a dedicated-host adapter now connects the queue to
