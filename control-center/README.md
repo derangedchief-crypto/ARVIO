@@ -5,7 +5,24 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current source update — 0.15.2 (not yet deployed)
+## Current source update — 0.15.3 (not yet deployed)
+
+The approved one-account testing pilot can now be enforced with the private
+`trial_pilot_brand_id` setting. Only that brand may admit/publish offers, and the
+broker reserves at most ONE operation ever for it under the existing tenant lock.
+Daily resets, new devices, branding revisions, failed/cancelled/uncertain work or
+released daily quotas cannot free that slot. Original-operation retries/reconciliation
+still work. No limit is inferred for ordinary rollouts without this pilot setting.
+
+`deploy/enable-owner-trial-pilot.sh` checks the exact signed panel link and freshly
+reviewed plan fingerprint, verified site-delivered testing APK and absence of another
+rollout/previous operation. It prepares only that plan/default and one/day offer,
+preserves private config/key/ACLs and activates the brand-only lifetime guard. It
+does not request a trial account. No worker reinstall, APK build, migration or
+dispatcher repin. See `deploy/UPDATE-0.15.3.txt` before separately enabling the worker
+creation flag and making the single explicit signup request.
+
+## Previous source update — 0.15.2
 
 Owner-only trial setup now supports the existing owner-branded workspace, but still
 requires a signed exact panel reseller link, current approved plans/default, verified

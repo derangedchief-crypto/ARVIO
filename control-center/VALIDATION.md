@@ -1,4 +1,22 @@
-# Device management0.15.2 owner-workspace trials — validation
+# Device management0.15.3 one-account pilot — validation
+
+197 isolated MariaDB/service/HTTP cases pass. The pilot regression exercises first
+signup, a different customer/device being refused, original-session retry and fresh
+same-key recovery, a two-day rollover, released daily quota and every operation state
+(reserved/sending/retry_wait/failed/needs_review/cancelled/prepared/delivered). Exactly
+one fake worker provision occurs. Other-brand publication/admission is refused and
+malformed pilot configuration fails closed. Existing normal multi-operation daily
+budget and uncertain-response recovery tests still pass without the pilot flag.
+
+Two setup-script checks pass: shell/embedded PHP syntax plus fail-closed reviewed-
+identity validation without touching private config, and preservation of every
+unrelated private value while adding only the testing/brand-only/one-per-day settings.
+Package-preservation checks pass. The root setup script has not been executed on the
+live website; no real trial account has been created by development/testing.
+No Android/frontend/worker code or migration changed; the previous43 browser checks
+remain applicable to the unchanged UI. The shared app/build ref is not advanced.
+
+## Previous0.15.2 owner-workspace trials validation
 
 196 isolated MariaDB/service/HTTP cases pass. New owner coverage verifies that owning
 or branding a workspace alone cannot refresh panel plans, signed exact panel lookup

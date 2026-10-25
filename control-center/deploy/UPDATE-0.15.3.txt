@@ -1,0 +1,43 @@
+Extreme Control Center0.15.3 — one-account testing pilot
+
+Install this WEBSITE update over the existing0.15.2 site. No config.php or storage/
+entries are shipped. No migration, worker reinstall, APK build or source repin.
+Shared app/build branch remains unchanged; only the website feature branch advances.
+
+Only after owner approval of the actual plan/fingerprint and ONE-account pilot:
+
+1. On AUTH worker, preserve the original /etc/extreme-branded-trials.env, its shared
+   secret and original state/identity.key. Set ONLY BRANDED_TRIAL_PROVISION_ENABLED
+   from false to true and restart ONLY iptv-auth-worker.service. Check it is active.
+   This gate by itself creates no account; website public signup is still off.
+
+2. On WEBSITE root, after extracting this update:
+   bash /www/wwwroot/control.fecxbrfzku.net/deploy/enable-owner-trial-pilot.sh EXACT_PANEL_USERNAME PLAN_ID APPROVED_FINGERPRINT
+   The script refuses changed plan terms, missing/current-incompatible testing APK,
+   conflicting panel links, another pilot/broader rollout or an existing operation.
+   It refreshes only the read-only catalogue, approves only that plan/default and
+   explicitly publishes the owner TESTING offer with daily limit1. It atomically
+   installs the original config plus trial_channel=testing,
+   trial_public_signup_enabled=true, trial_reseller_daily_limit=1 and
+   trial_pilot_brand_id=<existing owner brand>. Original key/other values/ACLs remain.
+   Only PHP8.4 restarts. No panel account, credit change or notes write occurs here.
+
+3. Make ONE explicit trial signup from an unactivated copy of the existing branded
+   app. Enter the real consenting pilot contact's first name/international phone
+   in that app; never paste private contact details into chat. Do not clear data or
+   remove an existing working installation merely to reach the activation screen.
+
+4. Verify actual panel line ownership,24-hour expiry/2-connection plan terms,
+   first-name/phone reseller_notes, protected website contact and normal activation/
+   playback. Those are live checks, not proven by package/service tests.
+
+HARD BOUND: one trial_signup_operations row TOTAL for the selected brand. Every state
+counts, even failed/cancelled/uncertain work; changing day/device/branding or releasing
+a daily budget never resets it. Original-key idempotent retries/status/reconciliation
+may recover that SAME operation. Do not delete history or remove the pilot setting
+to retry. No second pilot account without fresh owner review.
+
+Other brands remain unavailable. Existing activated subscriptions/viewing are not
+revoked by this guard. The offer remains public brand-scoped, not APK attestation;
+the pilot slot is for the first admitted request. Keep the scope bounded and review
+the actual operation before calling this pilot complete.
