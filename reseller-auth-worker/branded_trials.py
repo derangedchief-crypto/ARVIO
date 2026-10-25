@@ -293,14 +293,17 @@ class ExistingPanelAdapter:
                 if existing: conn.rollback();return existing
                 balance = decimal.Decimal(str(owner.get('credits') or '0'))
                 if balance < price: raise TrialRejected('Insufficient reseller credits')
-                alphabet = string.ascii_lowercase + string.digits
+                # Match the normal panel's compact credentials. Keep independent
+                # CSPRNG draws and the existing bounded username collision check.
+                username_alphabet = string.ascii_letters + string.digits
+                password_alphabet = string.ascii_lowercase + string.digits
                 username = None
                 for _ in range(10):
-                    candidate = ''.join(secrets.choice(alphabet) for _ in range(16))
+                    candidate = ''.join(secrets.choice(username_alphabet) for _ in range(10))
                     cur.execute('SELECT id FROM customers WHERE username=%s LIMIT 1', (candidate,))
                     if not cur.fetchone(): username=candidate;break
                 if not username: raise TrialRejected('Could not allocate a trial account')
-                password = ''.join(secrets.choice(alphabet) for _ in range(24))
+                password = ''.join(secrets.choice(password_alphabet) for _ in range(10))
                 try:activation_code=self.worker['_new_activation_code'](cur)
                 except RuntimeError:raise TrialRejected('Could not allocate a trial activation code') from None
                 if not isinstance(activation_code,str) or not re.fullmatch('[0-9]{6}',activation_code):raise TrialRejected('Invalid trial activation code allocation')

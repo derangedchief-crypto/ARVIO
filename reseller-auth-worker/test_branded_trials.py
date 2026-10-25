@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('branded_trials',Path(__file__).with_name('branded_trials.py'))
 module = importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
@@ -130,8 +130,26 @@ class PlanValidationTest(unittest.TestCase):
     def test_actual_adapter_insert_uses_locked_owner_and_contact_notes_with_one_credit_commit(self):
         adapter,cur,conn,credit=self.adapter();self.assertEqual('999',adapter.create(request()))
         insert=next(call.args for call in cur.execute.call_args_list if call.args[0].startswith('INSERT INTO customers'))
-        self.assertEqual(insert[0].count('%s'),len(insert[1]));self.assertEqual(101,insert[1][0]);self.assertEqual(16,len(insert[1][1]));self.assertEqual(24,len(insert[1][2]))
+        self.assertEqual(insert[0].count('%s'),len(insert[1]));self.assertEqual(101,insert[1][0]);self.assertRegex(insert[1][1],r'^[A-Za-z0-9]{10}$');self.assertRegex(insert[1][2],r'^[a-z0-9]{10}$')
         self.assertIn('Phone: +15551234567',insert[1][7]);self.assertIn('Test Customer',insert[1][7]);credit.assert_called_once();conn.commit.assert_called_once()
+    def test_compact_username_collision_retries_before_inserting_one_account(self):
+        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=[{'id':101,'username':'TEST','credits':'5','status':1},dict(PLAN),{'id':123},None]
+        with patch.object(module.secrets,'choice',side_effect=list('A'*10+'B'*10+'c'*10)) as choice:
+            self.assertEqual('999',adapter.create(request()));self.assertEqual(30,choice.call_count)
+        checks=[call.args[1][0] for call in cur.execute.call_args_list if call.args[0].startswith('SELECT id FROM customers WHERE username=')]
+        self.assertEqual(['A'*10,'B'*10],checks);insert=next(call.args for call in cur.execute.call_args_list if call.args[0].startswith('INSERT INTO customers'));self.assertEqual('B'*10,insert[1][1]);self.assertEqual('c'*10,insert[1][2]);conn.commit.assert_called_once();credit.assert_called_once()
+    def test_compact_username_collision_limit_fails_without_insert_or_credit_charge(self):
+        adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=[{'id':101,'username':'TEST','credits':'5','status':1},dict(PLAN)]+[{'id':123}]*10
+        with self.assertRaises(module.TrialRejected):adapter.create(request())
+        self.assertEqual(10,sum(call.args[0].startswith('SELECT id FROM customers WHERE username=') for call in cur.execute.call_args_list));self.assertFalse(any(call.args[0].startswith('INSERT INTO customers') for call in cur.execute.call_args_list));conn.commit.assert_not_called();credit.assert_not_called();conn.rollback.assert_called_once()
+    def test_existing_trial_reconciliation_never_generates_or_replaces_credentials(self):
+        adapter,cur,conn,credit=self.adapter();cur.fetchall.return_value=[{'id':999}]
+        with patch.object(module.secrets,'choice',side_effect=AssertionError('Existing credentials must not be regenerated')):
+            self.assertEqual('999',adapter.create(request()))
+        self.assertFalse(any(call.args[0].startswith(('INSERT','UPDATE')) for call in cur.execute.call_args_list));conn.commit.assert_not_called();credit.assert_not_called();conn.rollback.assert_called_once()
+    def test_preexisting_long_credentials_are_returned_unchanged_on_recovery(self):
+        adapter,cur,conn,credit=self.adapter();row=dict(self.result_row(adapter),username='X'*16,password='y'*24);cur.fetchone.side_effect=[row,dict(PLAN)];cur.fetchall.return_value=[{'id':999}]
+        result=adapter.result(request(),'999');self.assertEqual('X'*16,result['username']);self.assertEqual('y'*24,result['password']);self.assertFalse(any(call.args[0].startswith(('INSERT','UPDATE')) for call in cur.execute.call_args_list));credit.assert_not_called()
     def test_adapter_commit_error_remains_uncertain_not_a_definitive_rejection(self):
         adapter,cur,conn,credit=self.adapter();conn.commit.side_effect=OSError('Lost connection')
         with self.assertRaises(OSError):adapter.create(request())

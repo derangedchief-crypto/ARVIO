@@ -33,7 +33,7 @@ for path in "$env" "$state" "$site/branded_trials.py" "$dropin"; do test ! -L "$
 if [[ -e "$site/branded_trials.py" ]]; then
   prior="$(sha256sum "$site/branded_trials.py" | cut -d ' ' -f1)"
   payload="$(sha256sum "$base/branded_trials.py" | cut -d ' ' -f1)"
-  [[ "$prior" == "$payload" || "$prior" == 819ac5e13d6b10815909bb27067e7dc2cd5cd3e0f16dee3ed3b846ea55201788 ]] || { echo 'Existing trial module differs; preserve it for owner review.' >&2; exit 1; }
+  [[ "$prior" == "$payload" || "$prior" == 819ac5e13d6b10815909bb27067e7dc2cd5cd3e0f16dee3ed3b846ea55201788 || "$prior" == 9ec850d9f790c898421e2da0b15eaf0ee36c5dd492128df71272ce969934ab9e ]] || { echo 'Existing trial module differs; preserve it for owner review.' >&2; exit 1; }
 fi
 if [[ -e "$dropin" ]]; then
   [[ "$(cat "$dropin")" == $'[Service]\nEnvironmentFile=/etc/extreme-branded-trials.env\nReadWritePaths=/var/lib/extreme-branded-trials' ]] || { echo 'Existing service override differs; no changes made.' >&2; exit 1; }

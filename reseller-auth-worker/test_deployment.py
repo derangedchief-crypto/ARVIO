@@ -22,6 +22,7 @@ class DeploymentTests(unittest.TestCase):
                 self.assertIn('c5a93d1a4d98f214a4427e8ac0ca7dbdcb03fb5d59632ad4212740a188a7e8d1',script)
                 self.assertIn('BRANDED_TRIAL_PROVISION_ENABLED=false',script)
                 self.assertIn('trap rollback EXIT',script)
+                self.assertIn('9ec850d9f790c898421e2da0b15eaf0ee36c5dd492128df71272ce969934ab9e',script)
                 self.assertNotIn('systemctl restart brand-dispatch',script)
 
     def test_private_website_import_preserves_every_other_config_value(self):

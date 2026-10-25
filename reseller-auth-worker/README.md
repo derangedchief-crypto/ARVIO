@@ -1,7 +1,9 @@
 # Branded trial extension — additive auth-worker integration
 
 `branded_trials.py` extends the CURRENT uploaded **iptv-auth-worker** in `new auth.zip`.
-It is not the activation worker. It has not been installed or enabled on any server.
+It is not the activation worker. The owner has installed the prior bridge and
+confirmed its first real trial line was created; activation/playback remain separate
+checks. The compact-credential update below still requires its own worker upgrade.
 Do not replace the existing worker wholesale or copy historical config/backups.
 
 The supplied worker's general `/create-line` stays compatible. The new restricted
@@ -10,6 +12,28 @@ Overcast registration logic, but requires active reseller status and an enabled,
 activated TRIAL package with valid duration/nonnegative credits. Notes include first
 name, international phone number and durable provisioning request marker. Passwords
 use cryptographic randomness. No SMS/OTP, panel schema change or guessed panel API.
+
+## Compact credential update — 0.16.1 (worker only)
+
+NEW trial usernames and passwords are now exactly10 alphanumeric characters each,
+matching normal panel account lengths. Usernames use mixed-case letters/digits;
+passwords use lowercase letters/digits. Both retain independent `secrets.choice`
+randomness. Usernames still check panel collisions with a bounded10-attempt limit.
+No existing line is renamed, truncated or reset; repeated/reconciled operations retain
+their original credentials, activation code, ownership, notes and history.
+
+On AUTH host38.190.133.171, extract the new bundle into a PRIVATE staging folder and
+run `bash install.sh` there as root. The installer recognizes the previously released
+bridge hash, preserves original portal config, separate HMAC key, provisioning flag,
+identity.key and SQLite ledger, then restarts only iptv-auth-worker.service. Failed
+readiness restores original worker files. Do not repeat the website connection import
+or reinstall the website/APK/dispatcher. Do not remove the spent one-account pilot
+guard or create another live account merely to test this formatting change.
+
+39 offline/HTTP/deployment checks pass, including10-character format checks, username
+collision retry/exhaustion, no credit charge on exhaustion, unchanged existing-line
+reconciliation and preservation of already-created longer credentials. These checks
+use fake panel callbacks, not another live trial.
 
 ## Safety contract
 
