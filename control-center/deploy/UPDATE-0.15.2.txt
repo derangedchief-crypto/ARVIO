@@ -1,0 +1,28 @@
+Extreme Control Center0.15.2 — owner-workspace trial policy
+
+For an existing installed0.15.1 website, extract this UPDATE ZIP into the SAME website
+root /www/wwwroot/control.fecxbrfzku.net. The archive omits config.php and ALL storage/
+entries, preserving original keys, private connections and existing APK ACLs.
+No new migration, APK build, worker install or dispatcher repin is required for this
+website-only patch. The existing shared app/build branch is deliberately not advanced.
+
+WEBSITE root:
+  /etc/init.d/php-fpm-84 restart
+  /www/server/php/84/bin/php /www/wwwroot/control.fecxbrfzku.net/cli/console.php owner-trial-catalog EXACT_PANEL_USERNAME
+
+The CLI uses an active owner account and the existing owner workspace. It verifies the
+exact username through the signed activation-worker lookup before saving any new panel
+link. Existing conflicting permanent links are refused, never moved or overwritten.
+It fetches the real permitted trial catalogue through the separate HMAC auth-worker
+connection, preserving all grant/default/offer settings. Panel access is read-only:
+no line creation, credit charge, native registration or panel notes write.
+It prints plan IDs/names, durations, credit costs and limits, not secrets/passwords.
+
+Owner UI: My app brand -> Owner trials -> Open trials & contacts; the owner workspace
+is selectable. Owning a workspace is NOT panel verification. An unlinked workspace
+cannot refresh plans or become ready. Resellers remain excluded from owner records.
+
+Before any account creation, separately approve a current actual plan/default/daily
+cap and bounded pilot. All existing worker creation/public signup/verified artifact/
+explicit offer publication gates remain mandatory. Do not flip these flags merely
+because the owner catalogue was fetched. Existing subscriptions are unaffected.

@@ -5,7 +5,21 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current source update — 0.15.1 (not yet deployed)
+## Current source update — 0.15.2 (not yet deployed)
+
+Owner-only trial setup now supports the existing owner-branded workspace, but still
+requires a signed exact panel reseller link, current approved plans/default, verified
+branded artifact and explicit offer publication. No duplicate reseller workspace or
+new APK is needed. Resellers cannot access owner policy/contacts. No worker or Android
+code changes. Existing branding alone still grants no panel/trial rights.
+
+The private server CLI `owner-trial-catalog EXACT_PANEL_USERNAME` verifies/establishes
+the owner's permanent panel link through the existing signed activation-worker lookup,
+refuses conflicting permanent links/transfers, then refreshes the separate auth-worker
+catalogue. It does not choose/approve plans, alter offer publication settings, create
+panel accounts or export credentials. See `deploy/UPDATE-0.15.2.txt`.
+
+## Previous source update — 0.15.1
 
 Branding now shows only the latest build request; older build records, immutable
 inputs and published downloads remain intact behind the scenes. The existing-brand

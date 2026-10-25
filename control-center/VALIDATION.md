@@ -1,4 +1,20 @@
-# Device management0.15.1 compact branding — validation
+# Device management0.15.2 owner-workspace trials — validation
+
+196 isolated MariaDB/service/HTTP cases pass. New owner coverage verifies that owning
+or branding a workspace alone cannot refresh panel plans, signed exact panel lookup
+is required, conflicting permanent links cannot be transferred, reseller actors cannot
+read/change owner trial policy or contacts, current owner plan/default preparation
+does not publish an offer or call provisioning, and removing the panel link invalidates
+readiness. Confirmed synthetic contacts remain owner-scoped and reject wrong panel
+ownership. No live panel account, credit change, offer or trial has been created.
+The private CLI rejects a missing exact username before any worker request. Package
+preservation and PHP/JavaScript syntax checks pass. No worker, Android, migration,
+central signing or source-pin change is part of this website-only increment.
+43 isolated browser checks pass, including the owner branding-to-trial navigation,
+owner workspace selection and disabled publication while its link/default is missing.
+The existing compact latest-build/collapsed-editor and reseller isolation checks pass.
+
+## Previous0.15.1 compact branding validation
 
 42 isolated browser checks pass, including a synthetic eight-build response rendering
 only its newest row, the existing-brand editor starting collapsed on desktop/mobile,

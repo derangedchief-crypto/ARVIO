@@ -28,7 +28,7 @@
       for(const artifact of data.artifacts||[]){const card=el('div',null,'brand-download');if(artifact.download_ready&&/^\/downloads\/apps\/[a-f0-9]{32}\/Brand-[0-9.]+(?:-test)?\.apk$/.test(artifact.artifact_url)){const link=el('a','Download '+artifact.channel+' APK '+artifact.version_name);link.href=artifact.artifact_url;link.setAttribute('download','');card.append(link);}else card.append(el('p','Verified build — site download is not available yet. Ask the owner to finish delivery setup.','hint'));card.append(el('p',artifact.package_name,'hint'),el('p','SHA256: '+artifact.apk_sha256,'hint'));builds.append(card);}
       const details=el('details',null,'advanced-details');details.append(el('summary','App identity'),detailRows([['Package',brand.package_name],['Saved brand version',brand.version]]));builds.append(details);main.append(builds);
     }
-    if(data.workspace_kind!=='owner')main.append(panel('Reseller trials',el('p','Prepare approved defaults, review public-offer publication and manage follow-up contacts in Trials & contacts. Offers start OFF and require separate owner rollout approval.','hint'),button('Open trials & contacts',()=>{location.hash='trials/'+tenant;})));
+    main.append(panel(data.workspace_kind==='owner'?'Owner trials':'Reseller trials',el('p','Prepare approved defaults, review public-offer publication and manage follow-up contacts in Trials & contacts. A verified panel reseller link is required. Offers start OFF and require separate owner rollout approval.','hint'),button('Open trials & contacts',()=>{location.hash='trials/'+tenant;})));
   }
   root.AppBranding={render,isDirty:()=>[...drafts.values()].some(d=>d?.dirty),clear:()=>drafts.clear()};
 })(window);

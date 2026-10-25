@@ -41,6 +41,17 @@ try {
             unset($password);
             echo "Owner password reset. All owner sessions were revoked.\n";
             break;
+        case 'owner-trial-catalog':
+            if(count($argv)!==3)throw new RuntimeException('Usage: php cli/console.php owner-trial-catalog EXACT_PANEL_USERNAME');
+            $app=new Application($config);
+            $owner=$app->db->one("SELECT * FROM users WHERE role='owner' AND active=1 ORDER BY id LIMIT 1");
+            $space=$app->db->one("SELECT id FROM tenants WHERE kind='owner' AND status='active' ORDER BY id LIMIT 1");
+            if(!$owner||!$space)throw new RuntimeException('Active owner workspace required.');
+            $link=$app->enrollment->linkPanelReseller($owner,$space['id'],['username'=>$argv[2]]);
+            $app->trialPolicies->refresh($owner,['tenant_id'=>$space['id']]);
+            $policy=$app->trialPolicies->get($owner,['tenant_id'=>$space['id']]);
+            echo json_encode(['workspace'=>'owner','panel_username'=>$link['username'],'panel_id'=>$link['panel_id'],'plans'=>$policy['catalog']['plans']??[],'accounts_created'=>false,'offer_settings_changed'=>false],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)."\n";
+            break;
         case 'brand-export':
             if(count($argv)!==4)throw new RuntimeException('Usage: php cli/console.php brand-export BUILD_ID PRIVATE_OUTPUT_FILE');
             $app=new Application($config);$bundle=$app->appBrands->export($argv[2]);$mask=umask(0077);
@@ -50,7 +61,7 @@ try {
             echo "Pinned brand inputs exported. No APK built or published.\n";
             break;
         default:
-            echo "Usage: php cli/console.php preflight|migrate|maintenance|recover-owner|brand-export\n";
+            echo "Usage: php cli/console.php preflight|migrate|maintenance|recover-owner|brand-export|owner-trial-catalog\n";
     }
 } catch (Throwable $error) {
     // Database exceptions can contain SQL/customer identifiers: do not echo them.
