@@ -1,0 +1,51 @@
+Extreme Control Center0.18.0 — live branded build stages and rough ETA
+
+WEBSITE38.190.133.176, existing /www/wwwroot/control.fecxbrfzku.net.
+Back up site/database, then extract this UPDATE ZIP into that same root. It excludes
+config.php and ALL storage/ entries, preserving original keys/config/APK ACLs/history.
+
+As WEBSITE root:
+  /www/server/php/84/bin/php /www/wwwroot/control.fecxbrfzku.net/cli/console.php migrate
+  /etc/init.d/php-fpm-84 restart
+
+Reload the site with Ctrl+Shift+R. Version0.18.0. Migration020 adds only progress/timing
+metadata and an indexed sample lookup; earlier pending upgrades (including019 trial
+controls) are included. No worker reinstall, APK install or source repin is required
+for the website status/ETA view. Do NOT rerun trial setup or reset a build/receipt.
+
+WHAT THE RESELLER SEES UNDER MY APP BRAND
+- Only the latest build, with stage milestones and a rough remaining-time range.
+- Preparing branding -> building/signing -> verifying -> retaining -> publishing/
+  checking the download -> site mirror -> VERIFIED complete.
+- These are stage milestones, NOT a percentage of Gradle's compilation work. Stages
+  take different times. No percent is increased merely because time has passed.
+- Live status refresh is10s for active builds and30s otherwise, only in this view
+  while visible. It leaves unsaved branding/name/artwork fields and focus intact.
+- Queue time/approval waits cannot be predicted. Prepared/review/failed/cancelled
+  states pause ETA; a stale builder update suppresses ETA; overdue work is labelled
+  taking longer than recent builds, never a false0seconds/100percent completion.
+- A verified site download appears after actual publication, not while merely signed.
+
+TRUSTED RUNNER DETAIL
+The runner source now reports fixed stages through the EXISTING restricted SSH
+heartbeat, using its current lease/source/channel policy. It first negotiates the
+website's progress_protocol=1, so it never sends unsupported fields to an older site.
+The currently pinned old runner remains valid: its compilation is indeterminate,
+with a rough measured ETA and server-known prepared/publication/site-copy stages.
+For detailed prepare/compile/verify/retain events, use the updated runner in the NEXT
+reviewed build-source release. No automatic source-pin movement or new build is
+triggered by this website upgrade. Never repin or rebuild solely to fabricate progress.
+
+ETA BASIS
+The private deploy/brand-build-timings.json records read-only measurements from
+existing successful GitHub job steps. Three real compile/staging windows were
+607/620/1087seconds; active publication samples were43/61seconds. Initial testing
+guidance is roughly11–20minutes AFTER work starts, not a completion guarantee.
+Queue/setup/reviewer delay is excluded. As completed builds collect real stage
+timings, the website learns remaining-stage ranges from the latest20 same-channel
+successful jobs (minimum3 valid samples). Stopped/retried attempts, missing stage
+metrics and human waiting time do not become invented measurements.
+
+No raw CI commands, stderr, lease/hash tokens, manifests, private keys or GitHub URLs
+are in the reseller progress response. No signing/publication/source/version checks
+are loosened. APKs, app identity/data, trial controls/history and production stay as is.

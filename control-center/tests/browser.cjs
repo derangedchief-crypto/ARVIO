@@ -491,6 +491,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
       done('trial policies enforce owner-approved choices and stale-review guards; expired contacts stay scoped and callable without leaking phone numbers into lists or storage');
     }
     await require('./trial-controls-browser.cjs')(browser,base,credentials,output,done);
+    await require('./build-progress-browser.cjs')(browser,base,credentials,output,done);
     await navigate('resellers');
     await page.getByRole('button', { name: 'Link panel reseller', exact: true }).first().click();
     assert((await page.getByLabel('Exact panel login username', { exact: true }).inputValue()).length > 0);

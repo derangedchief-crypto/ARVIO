@@ -40,6 +40,7 @@ $fixture = '/tmp/opencode/' . $name;
 umask(0077);
 mkdir($fixture, 0700, true);
 foreach (['src','database','public'] as $directory) copyTree($root . '/' . $directory, $fixture . '/' . $directory);
+mkdir($fixture.'/deploy',0700);copy($root.'/deploy/brand-build-timings.json',$fixture.'/deploy/brand-build-timings.json');
 mkdir($fixture . '/storage', 0700); mkdir($fixture . '/dev', 0700);
 copy($root . '/dev/router.php', $fixture . '/dev/router.php'); copy($root . '/VERSION', $fixture . '/VERSION');
 $server->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
@@ -143,6 +144,8 @@ require __DIR__.'/owner-workspace.php';
 ownerWorkspaceCases($tests,$app,$config,$owner,$alpha,$tenantA,$http,$password);
 require __DIR__.'/trial-controls.php';
 trialControlCases($tests,$app,$config,$owner,$http,$password);
+require __DIR__.'/build-progress.php';
+buildProgressCases($tests,$app,$config,$owner,$alpha);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

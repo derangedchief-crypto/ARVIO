@@ -6,7 +6,31 @@ Website and companion Android source fixes are isolated on `control-center-owner
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.17.0 (not yet deployed)
+## Current source update — 0.18.0 (not yet deployed)
+
+My app brand shows the latest build's live stage bar and rough remaining-time range.
+It refreshes the status/download region without replacing unsaved name/artwork edits
+or showing old build history. Queue, publication/approval wait, retry/review, stale
+updates and completion are distinct; no timer-driven compilation percentage or false
+100% is generated. Only verified publication completes all6 stage milestones.
+
+Migration020 stores server-clock stage timings. Privileged lease-owned heartbeats
+accept only the fixed current-state-compatible stages, never customer-supplied
+percentages or elapsed times. New runners negotiate progress_protocol=1; older
+ones keep working with coarse state/indeterminate compilation and server-known
+publication/mirror milestones. Detailed artwork/compile/verify/retention updates
+begin when the updated runner is used in a reviewed build source, without bypassing
+source pins or signing/retained-byte checks.
+
+ETA learns from completed active-stage measurements, excluding stopped attempts and
+publication/approval idle time. A documented testing bootstrap uses EXISTING real
+CI measurements (no dummy builds):607/620/1087s compile/staging windows and43/61s
+publication work. It is a rough range, excludes unpredictable queue/approval waits,
+and becomes unavailable/overdue rather than pretending that a delayed build is done.
+No GitHub credentials/log links or lease/signing secrets are exposed to resellers.
+See `deploy/UPDATE-0.18.0.txt`.
+
+## Previous source update — 0.17.0
 
 Trials & contacts has an owner-only **Allow in-app trials globally** master switch
 and a workspace-scoped **Show trial button in this app** switch. Resellers can change

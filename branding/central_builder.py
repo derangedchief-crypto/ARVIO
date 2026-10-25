@@ -128,15 +128,34 @@ class Heartbeat:
         self.bridge, self.context = bridge, context
         self.stop = threading.Event()
         self.lost = False
+        self.current_phase = None
+        self.phase_lock = threading.Lock()
         self.thread = threading.Thread(target=self.loop, daemon=True)
 
     def loop(self):
         while not self.stop.wait(60):
             try:
-                self.bridge.call('heartbeat', lease(self.context))
+                with self.phase_lock:
+                    payload=lease(self.context)
+                    if self.current_phase is not None:payload['phase']=self.current_phase
+                    self.bridge.call('heartbeat', payload)
             except Exception:
                 self.lost = True
                 return
+
+    def stage(self, phase):
+        if self.context.get('progress_protocol')!=1:return
+        if phase not in ('preparing','building','verifying','retaining','publishing','mirroring'):raise ValueError('Invalid trusted build stage.')
+        with self.phase_lock:
+            self.check();self.bridge.call('heartbeat',dict(lease(self.context),phase=phase));self.current_phase=phase
+
+    def prepared(self, receipt, release_lease):
+        # Do not let a concurrent stage heartbeat reopen retention after the
+        # server has frozen the receipt and paused for publication/approval.
+        with self.phase_lock:
+            response=self.bridge.call('prepared',dict(lease(self.context),receipt=receipt,release_lease=release_lease))
+            self.current_phase=None
+            return response
 
     def __enter__(self):
         self.thread.start()
@@ -393,19 +412,22 @@ def complete_staged(args, bridge=None, run=command):
     try:
         with Heartbeat(bridge, context) as heartbeat:
             bridge.call('heartbeat', lease(context))
+            heartbeat.stage('retaining')
             # For a resumed job its original retained run remains authoritative.
             retained = dict(context, prepared_run_id=context.get('prepared_run_id') or run_id,
                             prepared_receipt=context['receipt'])
             confirmation = work/'confirmation';confirmation.mkdir(mode=0o700)
             apk, provenance, result = retained_artifact(confirmation, retained, run)
-            heartbeat.check();bridge.call('prepared', dict(lease(context), receipt=result, release_lease=not args.publish))
+            heartbeat.check();heartbeat.prepared(result,not args.publish)
             if not args.publish:
                 print('Signed APK retained and downloaded bytes verified. Build prepared; nothing published.')
                 return
             heartbeat.check();bridge.call('delivery', lease(context))
             heartbeat.check();bridge.call('authorize', dict(lease(context), confirmed_publication=True))
+            heartbeat.stage('publishing')
             heartbeat.check();publish(work, context, apk, provenance, run, guard=lambda: bridge.call('heartbeat', lease(context)))
             downloaded = download_verified(work, context, run)
+            heartbeat.stage('mirroring')
             heartbeat.check();bridge.upload(context, apk)
             heartbeat.check();bridge.call('finish', dict(lease(context), receipt=downloaded))
             print('Brand-only publication and website registry verified. Generic channels unchanged.')
@@ -446,20 +468,24 @@ def run_job(args, bridge=None, run=command):
     try:
         with Heartbeat(bridge, context) as heartbeat:
             if args.mode == 'reconcile':
+                # Reconciliation never claims a fresh compile or publication.
                 result = download_verified(work, context, run)
                 heartbeat.check();bridge.upload(context, work/'downloaded'/expected['asset_name'])
                 heartbeat.check();bridge.call('finish', dict(lease(context), receipt=result))
                 print('Previously published branded artifact verified and reconciled.');return
             if context.get('prepared_receipt'):
+                heartbeat.stage('retaining')
                 apk,provenance,result=retained_artifact(work,context,run,getattr(args, 'artifact_store', None))
             else:
                 bundle = work/'brand-input.json';private_json(bundle, context['bundle'])
                 resources = work/'resources'
                 print('Builder checkpoint: preparing approved artwork.', flush=True)
+                heartbeat.stage('preparing')
                 run([sys.executable, str(root/'branding/prepare.py'), '--bundle', str(bundle), '--output', str(resources)], cwd=root)
                 build_type = 'InternalTest' if args.channel == 'testing' else 'Release'
                 started = time.monotonic()
                 print('Builder checkpoint: compiling isolated APK.', flush=True)
+                heartbeat.stage('building')
                 run([str(root/'gradlew'), f'-PbrandDirectory={resources}', ':app:assembleSideload'+build_type, '--no-daemon', '--console=plain'], cwd=root, timeout=5400)
                 print('Builder checkpoint: APK compilation passed.', flush=True)
                 elapsed = round(time.monotonic()-started, 2)
@@ -468,6 +494,7 @@ def run_job(args, bridge=None, run=command):
                 if len(apks) != 1:
                     raise ValueError('Expected exactly one universal centrally signed APK.')
                 apk = work/expected['asset_name'];shutil.copyfile(apks[0], apk)
+                heartbeat.stage('verifying')
                 measured = verify_apk(apk, expected, run)
                 provenance = work/(expected['asset_name']+'.provenance.json')
                 # No lease tokens, signing secrets, reseller contacts or panel identities.
@@ -481,17 +508,21 @@ def run_job(args, bridge=None, run=command):
                 context['staged_run_id'] = run_id
                 private_json(work/'staged.json', context)
                 heartbeat.check();bridge.call('heartbeat', lease(context))
+                heartbeat.stage('retaining')
                 print('Signed APK staged. Retention must succeed before preparation/publication.')
                 return
             if getattr(args, 'artifact_store', None) and not context.get('prepared_receipt'):
+                heartbeat.stage('retaining')
                 retain_local(args.artifact_store, run_id, context, apk, provenance)
-            heartbeat.check();bridge.call('prepared', dict(lease(context), receipt=result,release_lease=not args.publish))
+            heartbeat.check();heartbeat.prepared(result,not args.publish)
             if not args.publish:
                 print('Signed APK verified locally. Nothing published. Retain these exact bytes for later publication.');return
             heartbeat.check();bridge.call('delivery', lease(context))
             heartbeat.check();bridge.call('authorize', dict(lease(context), confirmed_publication=True))
+            heartbeat.stage('publishing')
             heartbeat.check();publish(work, context, apk, provenance, run, guard=lambda: bridge.call('heartbeat', lease(context)))
             downloaded = download_verified(work, context, run)
+            heartbeat.stage('mirroring')
             heartbeat.check();bridge.upload(context, apk)
             heartbeat.check();bridge.call('finish', dict(lease(context), receipt=downloaded))
             print('Branded channel published and downloaded APK verified. Generic channels unchanged.')

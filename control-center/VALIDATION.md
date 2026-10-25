@@ -1,4 +1,29 @@
-# Device management0.17.0 global and per-app trial controls — validation
+# Device management0.18.0 build progress and ETA — validation
+
+210 isolated MariaDB/service/HTTP cases pass. New coverage verifies fixed stage
+milestones, negotiated capability, state-compatible/monotonic leased reports, invalid
+phase/token rejection, sanitized tenant-scoped public data, measured bootstrap and
+learned remaining-stage ranges, stale/overdue handling, stopped/retried attempts,
+fresh retry tokens, prepared wait without ETA and completion only after the existing
+verified publication finish. Queue time is not invented and clocks are server-owned.
+73 builder/resource/dispatcher tests pass, including old-server negotiation, exact
+leased phase payloads, phase-report suppression around receipt freeze and failure
+of invalid stages/lost leases. No actual job was dispatched to measure this feature.
+
+55 full browser checks pass with no uncaught errors. The focused UI checks also pass
+stage/ETA refresh with no timer-driven percentage, one
+latest row, preserved unsaved branding and build-ID focus, suppressed ETA during a
+network failure, paused prepared status, automatic verified-download appearance and
+mobile overflow checks. Publication responses in these tests are synthetic, not
+evidence of a newly signed APK or live build.
+
+The calibration file records read-only existing GitHub step measurements; it contains
+no keys/tokens or reseller data. Normal UI requests do not query GitHub or renew a
+lease. Old pinned runners remain coarse/indeterminate during compilation; fine phases
+require updated negotiated runner code on a reviewed source. Pins, approval/signing/
+byte-verification gates and production remain unchanged. Native app code did not change.
+
+## Previous0.17.0 global and per-app trial controls validation
 
 207 isolated MariaDB/service/HTTP cases pass. Coverage includes migration preservation
 of explicit published offers/fresh OFF defaults; owner-only, CSRF/revision-guarded

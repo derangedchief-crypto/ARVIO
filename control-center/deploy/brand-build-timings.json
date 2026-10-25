@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "channel": "testing",
+  "measured_at": "2026-10-24",
+  "description": "Read-only GitHub job step measurements. Queue, setup and human approval waits excluded. No new test builds were dispatched.",
+  "build_seconds": [607, 620, 1087],
+  "publication_seconds": [61, 43],
+  "build_run_ids": [40139205279, 40128628071, 40125617534],
+  "publication_run_ids": [40130302751, 40127940655]
+}

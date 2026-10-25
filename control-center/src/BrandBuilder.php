@@ -5,6 +5,7 @@ namespace ControlCenter;
 /** Privileged central-builder CLI ONLY. No session, reseller or public HTTP route. */
 final class BrandBuilder
 {
+    private function progress():BrandBuildProgress {return new BrandBuildProgress($this->db,$this->config);}
     public function __construct(private readonly Database $db,private readonly Config $config,private readonly AppBrands $brands,private readonly BrandArtifacts $artifacts,private readonly Secrets $secrets,private readonly Auth $auth) {}
     private function policy():array {
         if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['017_central_brand_builder.sql']))throw new Problem(503,'Apply the central-builder upgrade first.');
@@ -35,7 +36,7 @@ final class BrandBuilder
         return ['channel'=>$channel,'package_name'=>$m['package_name'].($channel==='testing'?'.test':''),'version_name'=>$version,'version_code'=>$code,'trial_protocol'=>1,'signer_sha256'=>$signer,'release_tag'=>$tag,'asset_name'=>$name,'artifact_url'=>'https://github.com/derangedchief-crypto/ARVIO/releases/download/'.$tag.'/'.$name];
     }
     private function context(array $job,string $token):array {
-        return ['build_id'=>$job['id'],'source_sha'=>$job['source_sha'],'channel'=>$job['build_channel'],'lease_token'=>$token,'expected'=>$this->expected($job,$job['build_channel']),'bundle'=>$this->brands->export($job['id']),'prepared_receipt'=>$job['artifact_receipt']?json_decode($job['artifact_receipt'],true):null,'prepared_run_id'=>$job['artifact_receipt']?$job['runner_run_id']:null];
+        return ['build_id'=>$job['id'],'source_sha'=>$job['source_sha'],'channel'=>$job['build_channel'],'lease_token'=>$token,'expected'=>$this->expected($job,$job['build_channel']),'bundle'=>$this->brands->export($job['id']),'prepared_receipt'=>$job['artifact_receipt']?json_decode($job['artifact_receipt'],true):null,'prepared_run_id'=>$job['artifact_receipt']?$job['runner_run_id']:null]+($this->progress()->ready()?['progress_protocol'=>1]:[]);
     }
     public function fanout(array $input):array {$c=$this->policy();$this->channel($c,'testing');return (new BrandMainUpdates($this->db,$this->config,$this->artifacts,$this->auth))->fanout($input);}
     private function eligible(bool $poll,bool $publish):string {
@@ -87,12 +88,15 @@ final class BrandBuilder
             $this->brands->export($job['id']);$token=bin2hex(random_bytes(32));
             if($job['artifact_receipt'])throw new Problem(409,'A prepared version cannot be rebuilt with different bytes.');
             $this->db->query("UPDATE app_brand_builds SET state='building',build_channel=?,source_sha=?,runner_run_id=?,lease_hash=?,lease_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE),build_attempt=build_attempt+1,artifact_receipt=NULL,failure_code=NULL,build_started_at=UTC_TIMESTAMP(),build_finished_at=NULL WHERE id=?",[$channel,$sha,$run,hash('sha256',$token),$job['id']]);
+            $this->progress()->reset($job['id']);
             $job=array_replace($job,['state'=>'building','build_channel'=>$channel,'source_sha'=>$sha,'runner_run_id'=>$run]);$this->auth->audit(null,'brand.builder_claimed',$job['id'],$job['tenant_id'],['channel'=>$channel,'attempt'=>(int)$job['build_attempt']+1]);return $this->context($job,$token);
         });
     }
     public function heartbeat(array $input):array {
-        Input::keys($input,['build_id','lease_token']);$this->policy();return $this->db->transaction(function()use($input):array {
+        Input::keys($input,['build_id','lease_token','phase']);$this->policy();return $this->db->transaction(function()use($input):array {
             $job=$this->lockJob(Input::id($input['build_id']??null));$this->leased($job,$input['lease_token']??null,['building','ready_to_publish','publishing']);
+            if(array_key_exists('phase',$input))$this->progress()->report($job,$input['phase']);
+            elseif($this->progress()->ready())$this->db->query('UPDATE app_brand_builds SET progress_updated_at=UTC_TIMESTAMP(6) WHERE id=?',[$job['id']]);
             $this->db->query('UPDATE app_brand_builds SET lease_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE) WHERE id=?',[$job['id']]);return ['state'=>$job['state']];
         });
     }
@@ -105,6 +109,7 @@ final class BrandBuilder
         Input::keys($input,['build_id','lease_token','receipt','release_lease']);$this->policy();if(isset($input['release_lease'])&&!is_bool($input['release_lease']))throw new Problem(422,'Invalid lease release.');return $this->db->transaction(function()use($input):array {
             $job=$this->lockJob(Input::id($input['build_id']??null));$this->leased($job,$input['lease_token']??null,['building','ready_to_publish']);if(!is_array($input['receipt']??null))throw new Problem(422,'Missing artifact verification receipt.');$receipt=$this->receipt($job,$input['receipt']);
             if($job['state']==='ready_to_publish'&&json_decode($job['artifact_receipt'],true)!==$receipt)throw new Problem(409,'Prepared receipt cannot change within a lease.');
+            $this->progress()->advance($job,'prepared');
             $this->db->query("UPDATE app_brand_builds SET state='ready_to_publish',artifact_receipt=?,build_finished_at=UTC_TIMESTAMP(),lease_until=".(($input['release_lease']??false)?'UTC_TIMESTAMP()':'lease_until')." WHERE id=?",[json_encode($receipt,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR),$job['id']]);return ['state'=>'ready_to_publish','published'=>false];
         });
     }
@@ -115,6 +120,7 @@ final class BrandBuilder
             $prior=$this->artifacts->approved($job['brand_id'],$job['build_channel']);if($prior&&(int)$prior['version_code']>=$expected['version_code'])throw new Problem(409,'Publication would overwrite an equal or newer approved brand update.');
             if($this->db->one("SELECT id FROM app_brand_builds WHERE brand_id=? AND build_channel=? AND id<>? AND state IN ('publishing','publication_review')",[$job['brand_id'],$job['build_channel'],$job['id']]))throw new Problem(409,'A previous channel publication needs reconciliation.');
             if(!$job['artifact_receipt'])throw new Problem(409,'Verify the signed APK before publication.');$this->receipt($job,json_decode($job['artifact_receipt'],true));
+            $this->progress()->advance($job,'publishing');
             $this->db->query("UPDATE app_brand_builds SET state='publishing',lease_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE) WHERE id=?",[$job['id']]);$this->auth->audit(null,'brand.publication_authorized',$job['id'],$job['tenant_id']);return ['state'=>'publishing','expected'=>$expected];
         });
     }
@@ -131,6 +137,7 @@ final class BrandBuilder
     public function mirror(array $input,$stream):array {
         Input::keys($input,['build_id','lease_token']);$this->policy();$states=['publishing','publication_review'];
         $job=$this->lockForDelivery($input,$states);$receipt=$this->receipt($job,json_decode($job['artifact_receipt'],true,12,JSON_THROW_ON_ERROR));
+        $this->db->transaction(function()use($input,$states):void{$current=$this->lockJob(Input::id($input['build_id']));$this->leased($current,$input['lease_token'],$states);$this->progress()->advance($current,'mirroring');});
         $downloads=new BrandDownloads($this->config,$this->artifacts);
         return $downloads->ingest($receipt,$stream,function(callable $install)use($input,$states):void{
             $this->db->transaction(function()use($input,$states,$install):void{$current=$this->lockJob(Input::id($input['build_id']));$this->leased($current,$input['lease_token'],$states);$install();});
@@ -141,6 +148,7 @@ final class BrandBuilder
             $job=$this->lockJob(Input::id($input['build_id']??null));$this->leased($job,$input['lease_token']??null,['publishing','publication_review','published'],true);if(!is_array($input['receipt']??null))throw new Problem(422,'Missing published download verification.');$receipt=$this->receipt($job,$input['receipt']);if($receipt!==json_decode($job['artifact_receipt'],true))throw new Problem(409,'Published bytes differ from the prepared artifact.');
             if($job['state']==='published')return ['state'=>'published','idempotent'=>true];
             $downloads=new BrandDownloads($this->config,$this->artifacts);if($downloads->enabled()&&!$downloads->available($receipt))throw new Problem(409,'Verified site APK copy is missing.');
+            $this->progress()->advance($job,'complete');
             $saved=$this->artifacts->recordVerified($job['id'],$receipt);$this->db->query("UPDATE app_brand_builds SET published_at=UTC_TIMESTAMP(),failure_code=NULL WHERE id=?",[$job['id']]);$this->auth->audit(null,'brand.artifact_published',$job['id'],$job['tenant_id']);return ['state'=>'published','artifact_id'=>$saved['id']];
         });
     }
@@ -148,6 +156,7 @@ final class BrandBuilder
         Input::keys($input,['build_id','lease_token']);$this->policy();return $this->db->transaction(function()use($input):array {
             $job=$this->lockJob(Input::id($input['build_id']??null));$this->leased($job,$input['lease_token']??null,['building','ready_to_publish','publishing','publication_review'],true);$uncertain=in_array($job['state'],['publishing','publication_review'],true);$state=$uncertain?'publication_review':'build_failed';
             if(!$uncertain&&$job['artifact_receipt'])$state='ready_to_publish';
+            $this->progress()->advance($job,$state==='ready_to_publish'?'prepared':'stopped',false);
             $this->db->query('UPDATE app_brand_builds SET state=?,failure_code=?,lease_until=UTC_TIMESTAMP() WHERE id=?',[$state,$uncertain?'publication_uncertain':($job['artifact_receipt']?'prepared_artifact_review':'build_failed'),$job['id']]);return ['state'=>$state];
         });
     }
@@ -165,7 +174,8 @@ final class BrandBuilder
     public function maintain():void {
         // Expiry is not publication success. Keep frozen receipts/tokens for
         // deliberate recovery and never recycle a possibly published identity.
-        $this->db->query("UPDATE app_brand_builds SET state='build_failed',failure_code='build_lease_expired' WHERE state='building' AND lease_until<=UTC_TIMESTAMP() LIMIT 1000");
-        $this->db->query("UPDATE app_brand_builds SET state='publication_review',failure_code='publication_uncertain' WHERE state='publishing' AND lease_until<=UTC_TIMESTAMP() LIMIT 1000");
+        $progress=$this->progress()->ready()?",progress_phase='stopped',progress_started_at=NULL,progress_updated_at=UTC_TIMESTAMP(6)":'';
+        $this->db->query("UPDATE app_brand_builds SET state='build_failed',failure_code='build_lease_expired'".$progress." WHERE state='building' AND lease_until<=UTC_TIMESTAMP() LIMIT 1000");
+        $this->db->query("UPDATE app_brand_builds SET state='publication_review',failure_code='publication_uncertain'".$progress." WHERE state='publishing' AND lease_until<=UTC_TIMESTAMP() LIMIT 1000");
     }
 }

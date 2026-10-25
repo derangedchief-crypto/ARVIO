@@ -1,5 +1,21 @@
 # Storage, reseller branding and trials — development progress
 
+## Branded-build progress — website0.18.0 and negotiated runner telemetry
+
+Current-build-only UI adds stage milestones, server-measured ETA and live region
+refresh without replacing unsaved branding fields. Queue/approval/review/failure/stale
+states are honest and no timer fakes compilation progress. Complete is reserved for
+the existing verified publication/site-delivery finish. Lease-owned fixed phase
+heartbeats negotiate progress_protocol=1; old runners remain compatible/coarse.
+No signing/source/receipt gate is bypassed and no extra build is dispatched.
+
+An existing-run testing baseline was measured READ-ONLY: compile/stage607/620/1087s,
+active publication43/61s. The website learns per-stage ranges from completed
+same-channel jobs, excluding idle/prepared waits and failed attempts. Numeric ETA
+is explicitly rough and suppressed for stale or paused work. Fine-grained telemetry
+requires the updated trusted runner on the next reviewed source; shared source pins
+are not moved just for this feature. No APK/production release or trial is created.
+
 ## Remote trial controls — website0.17.0 and companion app source
 
 Owner-only global master overrides the reseller/owner app's publication preference.

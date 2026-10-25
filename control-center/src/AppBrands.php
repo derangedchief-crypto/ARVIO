@@ -29,7 +29,8 @@ final class AppBrands
     }
     public function get(array $actor,array $input):array {
         Input::keys($input,['tenant_id']);$t=$this->tenant($actor,$input['tenant_id']??null);$brand=$this->db->one('SELECT * FROM app_brands WHERE tenant_id=?',[$t['id']]);
-        $builds=$brand?$this->db->all('SELECT id,brand_version,app_version,state,created_at FROM app_brand_builds WHERE brand_id=? ORDER BY created_at DESC LIMIT 10',[$brand['id']]):[];
+        $rows=$brand?$this->db->all('SELECT * FROM app_brand_builds WHERE brand_id=? ORDER BY created_at DESC,id DESC LIMIT 10',[$brand['id']]):[];$builds=[];
+        foreach($rows as $index=>$row){$item=array_intersect_key($row,array_flip(['id','brand_version','app_version','state','created_at']));if($index===0)$item['progress']=(new BrandBuildProgress($this->db,$this->config))->view($row);$builds[]=$item;}
         $published=[];if($brand&&$this->artifacts&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']))foreach(['testing','production'] as $channel){$artifact=$this->artifacts->approved($brand['id'],$channel);if($artifact)$published[]=$this->artifacts->resellerInfo($artifact);}
         return ['brand'=>$brand,'builds'=>$builds,'artifacts'=>$published,'tenant_id'=>$t['id'],'workspace_kind'=>$t['kind'],'trial_creation_enabled'=>false];
     }
