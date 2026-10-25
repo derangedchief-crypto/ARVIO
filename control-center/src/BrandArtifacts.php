@@ -32,8 +32,8 @@ final class BrandArtifacts
             $columns=array_keys($row);$columns[]='verification_mac';$this->db->query('INSERT INTO app_brand_artifacts ('.implode(',',$columns).') VALUES ('.implode(',',array_fill(0,count($columns),'?')).')',[...array_values($row),$this->mac($row)]);$this->db->query("UPDATE app_brand_builds SET state='published' WHERE id=?",[$job['id']]);return ['id'=>$row['id']];
         });
     }
-    public function approved(string $brandId,string $channel):?array {
-        $row=$this->db->one('SELECT * FROM app_brand_artifacts WHERE brand_id=? AND channel=? AND enabled=1 ORDER BY version_code DESC LIMIT 1',[$brandId,$channel]);
+    public function approved(string $brandId,string $channel,bool $current=false):?array {
+        $row=$this->db->one('SELECT * FROM app_brand_artifacts WHERE brand_id=? AND channel=? AND enabled=1 ORDER BY version_code DESC LIMIT 1'.($current?' FOR UPDATE':''),[$brandId,$channel]);
         if(!$row)return null;if(!hash_equals($this->mac($row),$row['verification_mac']))throw new Problem(503,'Artifact registry integrity check failed.');return $row;
     }
     public function byId(string $id):?array {

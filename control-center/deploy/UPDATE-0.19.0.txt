@@ -1,0 +1,30 @@
+Extreme Control Center0.19.0 — explicitly approved normal branded releases
+
+See branding/PRODUCTION_RELEASES.md in the companion worker bundle for the complete
+two-host sequence. Stop the WORKER brand-dispatch.timer before the WEBSITE cutover,
+and let accepted branded Actions jobs finish. Do not cancel publishing work.
+
+WEBSITE38.190.133.176:
+Back up site/database. Extract this UPDATE ZIP into the existing
+/www/wwwroot/control.fecxbrfzku.net root. config.php and storage are not included.
+
+As root, with the exact reviewed/integrated2.0.116 main SHA and immutable source tag:
+  bash /www/wwwroot/control.fecxbrfzku.net/deploy/enable-production-brands.sh APPROVED_MAIN_SHA
+
+This runs PHP8.4 migration021 and enables the normal-brand channel with the original
+private configuration, encryption key and bridge/download ACLs. Unknown configuration,
+concurrent config changes, active builds and uncertain publication stop for review.
+No key rotation, trial setup, account creation or generic customer release occurs.
+
+Then install the companion WORKER bundle with the SAME SHA, finish the restricted
+GitHub brand-only environment/source settings, and resume brand-dispatch.timer.
+Reload the website with Ctrl+Shift+R. Only normal latest builds/downloads are shown
+after opt-in; historical testing artifacts and package identities are retained.
+
+The first clean normal APK is a SEPARATE installation from the .test APK. Existing
+test data is not automatically transferred. Do not clear/uninstall test data.
+Future normal builds update the stable base package with the same central signer.
+
+The exhausted owner pilot stays exhausted. All trial switch preferences, history,
+contacts and worker keys remain. Existing offers may require explicit review against
+the normal artifact. Do NOT rerun enable-owner-trial-pilot.sh or create a new trial.

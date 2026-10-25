@@ -127,6 +127,18 @@ class EndpointTests(unittest.TestCase):
         self.assertIn('cu.enabled = 1 AND cu.activated = 1', cursor.sql)
         self.assertNotIn('reseller_id', cursor.sql); self.assertNotIn('fixture-password', str(cursor.args))
 
+    def test_branded_proof_endpoint_accepts_both_stable_channels_but_not_arbitrary_packages(self):
+        for package in ['com.extreme.brand.b'+'d'*32,'com.extreme.brand.b'+'d'*32+'.test']:
+            body=self.body();body['app_package']=package
+            with self.cursor([{'username':'fixture-user','password':'fixture-password'}]),self.TestClient(self.main.app) as client:
+                response=client.post('/management/enrollment-proof',json=body)
+            self.assertEqual(200,response.status_code);self.assertTrue(response.json()['ok']);self.assertNotIn('fixture-password',response.text)
+        for package in ['com.extreme.brand.arbitrary','com.extreme.brand.b'+'d'*32+'.evil']:
+            body=self.body();body['app_package']=package
+            with patch.object(self.main,'panel_cursor') as panel,self.TestClient(self.main.app) as client:
+                response=client.post('/management/enrollment-proof',json=body)
+            self.assertEqual(422,response.status_code);panel.assert_not_called()
+
     def test_bad_and_duplicate_accounts_have_the_same_generic_error(self):
         responses = []
         for rows in [[], [{'username': 'fixture-user', 'password': 'wrong'}], [{'password': 'fixture-password'}] * 2]:

@@ -24,7 +24,7 @@ $server=new PDO('mysql:unix_socket='.$socket.';charset=utf8mb4',$user,'',[PDO::A
 $server->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
 $port=(int)(getenv('CONTROL_PREVIEW_PORT')?:8186);
 if($port<1024||$port>65535) throw new RuntimeException('Invalid local preview port');
-$settings=['environment'=>'development','origin'=>'http://127.0.0.1:'.$port,'database'=>['dsn'=>"mysql:unix_socket=$socket;dbname=$name;charset=utf8mb4",'username'=>$user,'password'=>'']];
+$settings=['environment'=>'development','origin'=>'http://127.0.0.1:'.$port,'development_brand_platform'=>['version'=>'2.0.115','code'=>431],'database'=>['dsn'=>"mysql:unix_socket=$socket;dbname=$name;charset=utf8mb4",'username'=>$user,'password'=>'']];
 file_put_contents($base.'/config.php',"<?php\nreturn ".var_export($settings,true).";\n");
 $config=new Config($base,$settings); $app=new Application($config);
 $password=bin2hex(random_bytes(12));

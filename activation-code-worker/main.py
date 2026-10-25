@@ -145,7 +145,7 @@ class ManagementProofRequest(BaseModel):
     password: str = Field(min_length=1, max_length=512)
     installation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     key_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
-    app_package: str = Field(pattern=r"^com\.arvio\.tv(?:\.beta|\.test)?$")
+    app_package: str = Field(pattern=r"^(?:com\.arvio\.tv(?:\.beta|\.test)?|com\.extreme\.brand\.b[a-f0-9]{32}(?:\.test)?)$")
     challenge_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 

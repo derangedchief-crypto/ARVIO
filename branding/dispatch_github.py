@@ -55,7 +55,7 @@ def queue(source, channel, mode='build'):
     if not isinstance(value,dict) or set(value)!=keys or (mode=='publish' and value.get('mode')!='publish') or value['state']!='queued' or value['channel']!=channel or not isinstance(value.get('source_sha'),str) or not re.fullmatch('[a-f0-9]{40}',value['source_sha']) or (not main and value['source_sha']!=source) or not isinstance(value['build_id'],str) or not re.fullmatch('[a-f0-9]{32}',value['build_id']):
         raise ValueError('Invalid pinned queue hint.')
     if main:
-        if channel!='testing' or not isinstance(value['workflow_ref'],str) or not re.fullmatch(r'brand-source-[0-9]+\.[0-9]+\.[0-9]+-'+value['source_sha'],value['workflow_ref']):raise ValueError('Invalid immutable main source reference.')
+        if channel not in ('testing','production') or not isinstance(value['workflow_ref'],str) or not re.fullmatch(r'brand-source-[0-9]+\.[0-9]+\.[0-9]+-'+value['source_sha'],value['workflow_ref']):raise ValueError('Invalid immutable main source reference.')
         return {k:value[k] for k in ('build_id','source_sha','workflow_ref')}
     return value['build_id']
 
@@ -94,9 +94,10 @@ def dispatch(args):
         mode=args.mode
         build_id=args.build_id
         if polling:
-            if args.mode!='build' or args.channel!='testing' or build_id:raise ValueError('Polling supports build-only testing with server-selected jobs.')
-            automatic=os.environ.get('BRAND_AUTO_PUBLISH_TESTING','false')
-            if automatic not in ('true','false'):raise ValueError('Invalid automatic testing publication policy.')
+            if args.mode!='build' or args.channel not in ('testing','production') or build_id:raise ValueError('Polling requires an owner-approved channel and server-selected jobs.')
+            automatic=os.environ.get('BRAND_AUTO_PUBLISH_'+args.channel.upper(),'false')
+            if automatic not in ('true','false'):raise ValueError('Invalid automatic publication policy.')
+            if args.channel=='production' and automatic!='true':raise ValueError('Production polling requires explicit owner opt-in.')
             if automatic=='true':mode='publish'
             build_id=queue(source,args.channel,mode)
             if build_id is None:

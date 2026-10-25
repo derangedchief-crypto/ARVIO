@@ -44,7 +44,7 @@ mkdir($fixture.'/deploy',0700);copy($root.'/deploy/brand-build-timings.json',$fi
 mkdir($fixture . '/storage', 0700); mkdir($fixture . '/dev', 0700);
 copy($root . '/dev/router.php', $fixture . '/dev/router.php'); copy($root . '/VERSION', $fixture . '/VERSION');
 $server->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-$settings = ['environment' => 'testing', 'origin' => 'http://127.0.0.1:9876', 'database' => ['dsn' => "mysql:unix_socket=$socket;dbname=$name;charset=utf8mb4", 'username' => $dbUser, 'password' => '']];
+$settings = ['environment' => 'testing', 'origin' => 'http://127.0.0.1:9876','development_brand_platform'=>['version'=>'2.0.115','code'=>431], 'database' => ['dsn' => "mysql:unix_socket=$socket;dbname=$name;charset=utf8mb4", 'username' => $dbUser, 'password' => '']];
 $config = new Config($fixture, $settings);
 $app = new Application($config);
 $password = 'Synthetic-Test-Password-42!';
@@ -146,6 +146,8 @@ require __DIR__.'/trial-controls.php';
 trialControlCases($tests,$app,$config,$owner,$http,$password);
 require __DIR__.'/build-progress.php';
 buildProgressCases($tests,$app,$config,$owner,$alpha);
+require __DIR__.'/production-brands.php';
+productionBrandCases($tests,$app,$config,$owner);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

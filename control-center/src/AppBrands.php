@@ -7,13 +7,29 @@ final class AppBrands
 {
     private const ASSETS=['loading_asset','logo_asset','icon_asset'];
     // Platform release identity; never selected by reseller inputs.
-    private const APP_VERSION='2.0.115';
-    private const APP_VERSION_CODE=431;
+    private const APP_VERSION='2.0.116';
+    private const APP_VERSION_CODE=432;
     public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly ?BrandArtifacts $artifacts=null,private readonly ?Config $config=null) {}
-    private function platform():array {
-        if($this->config&&($this->config->get('brand_main_updates',[])['testing_enabled']??false)===true&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['018_brand_main_updates.sql'])){
+    private function channel():string {
+        $channel=$this->config?->get('brand_release',[])['default_channel']??'testing';if(!in_array($channel,['testing','production'],true))throw new Problem(503,'Invalid owner release channel.');
+        if($channel==='production'&&!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['021_production_brand_releases.sql']))throw new Problem(503,'Apply the production branding upgrade first.');return $channel;
+    }
+    private function channelScope(string $channel):string {
+        return $this->db->one('SELECT name FROM schema_migrations WHERE name=?',['021_production_brand_releases.sql'])?" AND build_channel='".$channel."'":'';
+    }
+    private function platform(string $channel):array {
+        if($this->config&&($this->config->get('brand_main_updates',[])[$channel.'_enabled']??false)===true&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['018_brand_main_updates.sql'])){
             $row=$this->db->one('SELECT * FROM brand_main_sources ORDER BY version_code DESC LIMIT 1');if($row)return ['version'=>$row['app_version'],'code'=>(int)$row['version_code'],'sha'=>$row['source_sha']];
         }
+        if($channel==='production')throw new Problem(503,'Register the approved production main source before requesting a build.');
+        // Historical testing snapshots stay buildable on their explicitly pinned
+        // old source during cutover. This never chooses production or a new key.
+        $pins=$this->config?->get('brand_builder',[])['sources']??[];
+        if(isset($pins['2.0.115'])&&!isset($pins[self::APP_VERSION]))return ['version'=>'2.0.115','code'=>431,'sha'=>null];
+        // Isolated fixtures deliberately exercise the installed historical APK
+        // protocol. This override is unavailable on a production website.
+        $fixture=$this->config&&$this->config->local()?$this->config->get('development_brand_platform'):null;
+        if(is_array($fixture))return ['version'=>$fixture['version'],'code'=>(int)$fixture['code'],'sha'=>null];
         return ['version'=>self::APP_VERSION,'code'=>self::APP_VERSION_CODE,'sha'=>null];
     }
     private function ready():void {if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['014_reseller_app_brands.sql']))throw new Problem(503,'Apply the app-branding database upgrade first.');}
@@ -29,10 +45,10 @@ final class AppBrands
     }
     public function get(array $actor,array $input):array {
         Input::keys($input,['tenant_id']);$t=$this->tenant($actor,$input['tenant_id']??null);$brand=$this->db->one('SELECT * FROM app_brands WHERE tenant_id=?',[$t['id']]);
-        $rows=$brand?$this->db->all('SELECT * FROM app_brand_builds WHERE brand_id=? ORDER BY created_at DESC,id DESC LIMIT 10',[$brand['id']]):[];$builds=[];
+        $channel=$this->channel();$rows=$brand?$this->db->all('SELECT * FROM app_brand_builds WHERE brand_id=?'.$this->channelScope($channel).' ORDER BY created_at DESC,id DESC LIMIT 10',[$brand['id']]):[];$builds=[];
         foreach($rows as $index=>$row){$item=array_intersect_key($row,array_flip(['id','brand_version','app_version','state','created_at']));if($index===0)$item['progress']=(new BrandBuildProgress($this->db,$this->config))->view($row);$builds[]=$item;}
-        $published=[];if($brand&&$this->artifacts&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']))foreach(['testing','production'] as $channel){$artifact=$this->artifacts->approved($brand['id'],$channel);if($artifact)$published[]=$this->artifacts->resellerInfo($artifact);}
-        return ['brand'=>$brand,'builds'=>$builds,'artifacts'=>$published,'tenant_id'=>$t['id'],'workspace_kind'=>$t['kind'],'trial_creation_enabled'=>false];
+        $published=[];if($brand&&$this->artifacts&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']))foreach($channel==='production'?['production']:['testing','production'] as $artifactChannel){$artifact=$this->artifacts->approved($brand['id'],$artifactChannel);if($artifact)$published[]=$this->artifacts->resellerInfo($artifact);}
+        return ['brand'=>$brand,'builds'=>$builds,'artifacts'=>$published,'release_channel'=>$channel,'tenant_id'=>$t['id'],'workspace_kind'=>$t['kind'],'trial_creation_enabled'=>false];
     }
     public function upload(array $actor,array $input):array {
         Input::keys($input,['tenant_id','image']);$this->auth->limit('brand-image',$actor['id'],20,3600);$t=$this->tenant($actor,$input['tenant_id']??null);
@@ -67,20 +83,21 @@ final class AppBrands
         return $this->db->transaction(function()use($actor,$input):array {
             $t=$this->tenant($actor,$input['tenant_id']??null,true);$brand=$this->db->one('SELECT * FROM app_brands WHERE tenant_id=? FOR UPDATE',[$t['id']]);if(!$brand||!$brand['enabled'])throw new Problem(409,'Save an enabled brand first.');
             if((int)$brand['version']!==Input::integer($input['expected_version']??null,1,100000))throw new Problem(409,'Brand changed; reload before requesting a build.');
-            $platform=$this->platform();
-            $old=$this->db->one('SELECT id,state FROM app_brand_builds WHERE brand_id=? AND brand_version=? AND app_version=?',[$brand['id'],$brand['version'],$platform['version']]);
+            $channel=$this->channel();$platform=$this->platform($channel);
+            $scope=$this->channelScope($channel);$old=$this->db->one('SELECT id,state FROM app_brand_builds WHERE brand_id=? AND brand_version=? AND app_version=?'.$scope,[$brand['id'],$brand['version'],$platform['version']]);
             if($old){
                 if($old['state']==='cancelled'){
-                    if($this->db->one("SELECT id FROM app_brand_builds WHERE brand_id=? AND state IN ('waiting_builder','building','ready_to_publish','publishing','publication_review')",[$brand['id']]))throw new Problem(409,'This brand already has a queued build.');
+                    if($this->db->one("SELECT id FROM app_brand_builds WHERE brand_id=?".$scope." AND state IN ('waiting_builder','building','ready_to_publish','publishing','publication_review')",[$brand['id']]))throw new Problem(409,'This brand already has a queued build.');
                     $this->db->query("UPDATE app_brand_builds SET state='waiting_builder' WHERE id=?",[$old['id']]);$old['state']='waiting_builder';$this->auth->audit($actor,'brand.build_requeued',$old['id'],$t['id']);
                 }return $old;
             }
-            if($this->db->one("SELECT id FROM app_brand_builds WHERE brand_id=? AND state IN ('waiting_builder','building','ready_to_publish','publishing','publication_review')",[$brand['id']]))throw new Problem(409,'This brand already has a queued build; finish or cancel it first.');
+            if($this->db->one("SELECT id FROM app_brand_builds WHERE brand_id=?".$scope." AND state IN ('waiting_builder','building','ready_to_publish','publishing','publication_review')",[$brand['id']]))throw new Problem(409,'This brand already has a queued build; finish or cancel it first.');
             $id=Database::id();$images=[];foreach(self::ASSETS as $key){$asset=$this->db->one('SELECT id,sha256 FROM app_brand_assets WHERE id=? AND tenant_id=?',[$brand[$key],$t['id']]);if(!$asset)throw new Problem(409,'A saved image is unavailable.');$images[$key]=$asset;}
             $manifest=['schema_version'=>1,'brand_id'=>$brand['id'],'brand_version'=>(int)$brand['version'],'app_version'=>$platform['version'],'app_version_code'=>$platform['code'],'app_name'=>$brand['name'],'package_name'=>$brand['package_name'],'assets'=>$images];
             $this->db->query('INSERT INTO app_brand_builds (id,brand_id,brand_version,app_version,manifest,requested_by) VALUES (?,?,?,?,?,?)',[$id,$brand['id'],$brand['version'],$platform['version'],json_encode($manifest,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),$actor['id']]);
+            if(!$platform['sha']&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['021_production_brand_releases.sql']))$this->db->query('UPDATE app_brand_builds SET build_channel=? WHERE id=?',[$channel,$id]);
             if($platform['sha']){
-                $this->db->query("UPDATE app_brand_builds SET build_channel='testing',source_sha=? WHERE id=?",[$platform['sha'],$id]);
+                $this->db->query('UPDATE app_brand_builds SET build_channel=?,source_sha=? WHERE id=?',[$channel,$platform['sha'],$id]);
                 $this->db->query('INSERT INTO brand_main_jobs (build_id,source_sha) VALUES (?,?)',[$id,$platform['sha']]);
             }
             foreach(array_unique(array_column($images,'id')) as $asset)$this->db->query('INSERT INTO app_brand_build_assets (build_id,asset_id) VALUES (?,?)',[$id,$asset]);

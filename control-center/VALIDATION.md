@@ -1,4 +1,23 @@
-# Device management0.18.0 build progress and ETA — validation
+# Device management0.19.0 normal branded releases — validation
+
+214 isolated MariaDB/service/HTTP cases pass. New coverage verifies separate-channel
+deduplication, clean normal package/version/filename, explicit production opt-in,
+immutable main-source queue routing, testing artifact/history preservation and
+published rebrand catch-up without artwork/name rollback. 77 Python builder tests
+pass. 24 activation-worker tests pass using its isolated dependency environment,
+including the narrow source patch and repeat/unknown-policy safety checks.
+39 trial-worker tests, 55 browser checks and 44 native trial/updater unit tests
+pass. Android main/UI compilation succeeds at2.0.116/code432. Workflow lint and
+shell syntax, update-package preservation and pilot-helper checks pass. The website
+configuration test confirms the original database/bridge/trial secrets, custom
+settings and exhausted pilot limit are retained while normal releases are selected.
+
+These are local checks, not evidence of a deployed production configuration or
+published normal APK. The first normal package is a separate installation from
+the historical .test identity; no data transfer is promised. Existing pilot history
+is retained. Live receipt/download verification and hardware evidence remain separate.
+
+## Previous0.18.0 build progress and ETA validation
 
 210 isolated MariaDB/service/HTTP cases pass. New coverage verifies fixed stage
 milestones, negotiated capability, state-compatible/monotonic leased reports, invalid
