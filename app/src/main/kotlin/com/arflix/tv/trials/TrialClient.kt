@@ -20,7 +20,10 @@ internal data class TrialContact(val firstName: String, val phone: String) {
             require(name.length in 1..60 && name.matches(Regex("[\\p{L}\\p{M}][\\p{L}\\p{M} ’'-]*"))) { "Enter your first name." }
             var number=phone.trim().replace(Regex("[ ().-]"),"")
             if(number.startsWith("00"))number="+"+number.drop(2)
-            require(number.matches(Regex("\\+[1-9][0-9]{7,14}"))) { "Include the international country code, for example +1." }
+            else if(number.matches(Regex("[1-9][0-9]{7,14}")))number="+$number"
+            // A bare number already includes its country code; never guess a
+            // country or prepend one. Keep the existing canonical server identity.
+            require(number.matches(Regex("\\+[1-9][0-9]{7,14}"))) { "Enter the country code and phone number, for example 15551234567. The + is optional." }
             return TrialContact(name,number)
         }
     }

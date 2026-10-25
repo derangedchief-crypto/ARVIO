@@ -1,5 +1,22 @@
 # Storage, reseller branding and trials — development progress
 
+## Native trial phone entry — optional plus (awaiting a signed APK release)
+
+The app accepts country-code-prefixed digits without requiring a typed `+`. Existing
+`+` and `00` international prefixes remain supported. Display copy/placeholder explain
+that the country code is still required; no country is guessed from locale/device/IP.
+All accepted forms normalize to the SAME existing `+`-prefixed server representation
+before session signing/hashing, submission or pending-request comparison. Server and
+worker validation, panel notes, contact identity and duplicate-trial history stay
+unchanged. No OTP, new permissions, trial reset or extra live trial is involved.
+
+This is an Android source change, not a website/worker hotfix. No APK version bump,
+build/publication, source repin, production release or shared-main merge is included.
+Installed builds retain the old form until a centrally signed newer APK is released.
+The app's sideload-debug main/UI compilation and all7 targeted Robolectric trial
+client tests pass, including identical contact/request hashes for bare/+/00 forms,
+canonical phone submission, malformed input rejection and unchanged session binding.
+
 ## Owner-authorized automatic TESTING publication — website0.14.3
 
 Owner explicitly approved automatic verified testing publication. Both-host opt-ins

@@ -32,11 +32,23 @@ class TrialWireClientTest {
     @Test fun `contact normalization requires country code with no verification step`() {
         val c=TrialContact.parse("  Jose\u0301  ","001 (555) 123-4567")
         assertEquals("José",c.firstName);assertEquals("+15551234567",c.phone)
-        try { TrialContact.parse("Name","5551234567");fail() }catch(_:IllegalArgumentException){}
+        try { TrialContact.parse("Name","05551234567");fail() }catch(_:IllegalArgumentException){}
         assertEquals(64,c.requestHash().length)
     }
+    @Test fun `optional plus and international prefix retain identical contact and request identity`() {
+        val canonical=TrialContact.parse("Test","+15551234567")
+        for(number in listOf("15551234567","1 (555) 123-4567","0015551234567","+1 (555) 123-4567"," 15551234567 ")) {
+            val contact=TrialContact.parse("Test",number)
+            assertEquals(canonical,contact);assertEquals(canonical.requestHash(),contact.requestHash())
+        }
+    }
+    @Test fun `optional plus never guesses a country or accepts malformed phone numbers`() {
+        for(number in listOf("","+","00","05551234567","555123","+015551234567","++15551234567","1+5551234567","1555abc4567","1\n5551234567","1234567890123456")) {
+            try { TrialContact.parse("Test",number);fail("Malformed phone accepted") }catch(_:IllegalArgumentException){}
+        }
+    }
     @Test fun `client signs only the exact server assigned operation and never selects reseller or package`() {
-        val c=TrialContact.parse("Test","+15551234567");val token="b".repeat(64);val nonce="c".repeat(64);val op="d".repeat(32)
+        val c=TrialContact.parse("Test","15551234567");val token="b".repeat(64);val nonce="c".repeat(64);val op="d".repeat(32)
         val expected="trial-submit-v1\n${trialHash(token)}\n$brand\n$op\n$nonce\n${c.requestHash()}"
         var calls=0
         val wire=TrialWireClient(client { path,body ->

@@ -31,8 +31,8 @@ internal fun TrialSignupSection(state: TrialSignupUiState,manualBusy: Boolean,on
         if(state.formOpen&&!state.pending){
             Spacer(16.dp);Text("First name",color=Color.White,fontSize=13.sp)
             GateTextField(state.firstName,onFirst,"First name",onRequestKeyboard={keyboard?.show()},isFocused=focused=="first",modifier=Modifier.fillMaxWidth().semantics { contentDescription="Trial first name" }.onFocusChanged { if(it.isFocused)focused="first" })
-            Spacer(12.dp);Text("Phone number including country code",color=Color.White,fontSize=13.sp)
-            GateTextField(state.phone,onPhone,"+1 555 123 4567",keyboardType=KeyboardType.Phone,onRequestKeyboard={keyboard?.show()},isFocused=focused=="phone",modifier=Modifier.fillMaxWidth().semantics { contentDescription="Trial phone number" }.onFocusChanged { if(it.isFocused)focused="phone" })
+            Spacer(12.dp);Text("Phone number with country code (+ optional)",color=Color.White,fontSize=13.sp)
+            GateTextField(state.phone,onPhone,"1 555 123 4567",keyboardType=KeyboardType.Phone,onRequestKeyboard={keyboard?.show()},isFocused=focused=="phone",modifier=Modifier.fillMaxWidth().semantics { contentDescription="Trial phone number" }.onFocusChanged { if(it.isFocused)focused="phone" })
             Spacer(12.dp);Text(state.notice,color=Color.White.copy(alpha=.7f),fontSize=12.sp)
             Spacer(12.dp);GateButton(onClick={keyboard?.hide();onStart()},text=if(state.busy)"Setting up trial…" else "Start trial",isFocused=focused=="start",enabled=!manualBusy&&!state.busy,modifier=Modifier.fillMaxWidth().onFocusChanged { if(it.isFocused)focused="start" })
         }
