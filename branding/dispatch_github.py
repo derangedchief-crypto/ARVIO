@@ -50,8 +50,13 @@ def queue(source, channel, mode='build'):
     value=json.loads(raw)
     if value=={'state':'no_job'}:return None
     keys={'state','build_id','channel','source_sha'}|({'mode'} if mode=='publish' else set())
-    if not isinstance(value,dict) or set(value)!=keys or (mode=='publish' and value.get('mode')!='publish') or value['state']!='queued' or value['channel']!=channel or value['source_sha']!=source or not isinstance(value['build_id'],str) or not re.fullmatch('[a-f0-9]{32}',value['build_id']):
+    main=isinstance(value,dict) and 'workflow_ref' in value
+    if main:keys.add('workflow_ref')
+    if not isinstance(value,dict) or set(value)!=keys or (mode=='publish' and value.get('mode')!='publish') or value['state']!='queued' or value['channel']!=channel or not isinstance(value.get('source_sha'),str) or not re.fullmatch('[a-f0-9]{40}',value['source_sha']) or (not main and value['source_sha']!=source) or not isinstance(value['build_id'],str) or not re.fullmatch('[a-f0-9]{32}',value['build_id']):
         raise ValueError('Invalid pinned queue hint.')
+    if main:
+        if channel!='testing' or not isinstance(value['workflow_ref'],str) or not re.fullmatch(r'brand-source-[0-9]+\.[0-9]+\.[0-9]+-'+value['source_sha'],value['workflow_ref']):raise ValueError('Invalid immutable main source reference.')
+        return {k:value[k] for k in ('build_id','source_sha','workflow_ref')}
     return value['build_id']
 
 
@@ -97,7 +102,10 @@ def dispatch(args):
             if build_id is None:
                 print('No eligible queued testing build; GitHub was not contacted.')
                 return
-        actual = json.loads(gh(['api', f'repos/{REPO}/git/ref/heads/{ref}']))['object']['sha']
+            if isinstance(build_id,dict):
+                source=build_id['source_sha'];ref=build_id['workflow_ref'];build_id=build_id['build_id']
+        namespace='tags' if ref.startswith('brand-source-') else 'heads'
+        actual = json.loads(gh(['api', f'repos/{REPO}/git/ref/{namespace}/{ref}']))['object']['sha']
         if actual != source:raise ValueError('Dispatch branch moved; review and repin before dispatch.')
         runs = json.loads(gh(['run','list','--repo',REPO,'--workflow',WORKFLOW,'--limit','100','--json','status']))
         if any(run['status'] != 'completed' for run in runs):

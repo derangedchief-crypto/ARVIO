@@ -10,11 +10,13 @@ output=Path(sys.argv[1]) if len(sys.argv)>1 else Path('/tmp/opencode/Brand-Dispa
 entries={
     'LICENSE':root.parent/'LICENSE',
     'install.sh':root/'deploy/install-dispatcher.sh',
+    'upgrade.sh':root/'deploy/upgrade-dispatcher.sh',
     'configure-poll.py':root/'deploy/configure-poll.py',
     'branding/dispatch_github.py':root/'dispatch_github.py',
     'branding/deploy/brand-dispatch.service':root/'deploy/brand-dispatch.service',
     'branding/deploy/brand-dispatch.timer':root/'deploy/brand-dispatch.timer',
     'branding/GITHUB_RUNNER.md':root/'GITHUB_RUNNER.md',
+    'branding/MAIN_UPDATES.md':root/'MAIN_UPDATES.md',
     'branding/CENTRAL_BUILDER.md':root/'CENTRAL_BUILDER.md',
 }
 with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:

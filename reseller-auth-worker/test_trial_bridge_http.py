@@ -14,7 +14,7 @@ class BridgeHttpTest(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(dir='/tmp/opencode');self.panel=Panel()
         self.service=module.TrialService(Path(self.tmp.name)/'private',self.panel);self.secret='e'*64
-        with patch.dict(os.environ,{'BRANDED_TRIAL_SHARED_SECRET':self.secret,'BRANDED_TRIAL_STATE_DIR':str(Path(self.tmp.name)/'private')}),patch.object(module,'TrialService',return_value=self.service):
+        with patch.dict(os.environ,{'BRANDED_TRIAL_SHARED_SECRET':self.secret,'BRANDED_TRIAL_STATE_DIR':str(Path(self.tmp.name)/'private'),'BRANDED_TRIAL_PROVISION_ENABLED':'true'}),patch.object(module,'TrialService',return_value=self.service):
             app=FastAPI();module.install_trial_routes(app,{})
         self.client=TestClient(app)
     def tearDown(self):self.client.close();self.tmp.cleanup()
@@ -31,6 +31,19 @@ class BridgeHttpTest(unittest.TestCase):
         with patch.dict(os.environ,{'BRANDED_TRIAL_SHARED_SECRET':'','BRANDED_TRIAL_STATE_DIR':''}):
             app=FastAPI();module.install_trial_routes(app,{})
         with TestClient(app) as client:self.assertEqual(503,client.post('/branded-trials/provision',json=request()).status_code)
+    def test_owner_creation_gate_defaults_off_without_disabling_signed_catalog(self):
+        with patch.dict(os.environ,{'BRANDED_TRIAL_SHARED_SECRET':self.secret,'BRANDED_TRIAL_STATE_DIR':str(Path(self.tmp.name)/'private')}),patch.object(module,'TrialService',return_value=self.service):
+            os.environ.pop('BRANDED_TRIAL_PROVISION_ENABLED',None)
+            app=FastAPI();module.install_trial_routes(app,{})
+        stamp=str(int(time.time()));raw=json.dumps(request()).encode()
+        with TestClient(app) as client:
+            headers={'X-Trial-Timestamp':stamp,'X-Trial-Signature':module.signature(self.secret,stamp,raw)}
+            self.assertEqual(503,client.post('/branded-trials/provision',content=raw,headers=headers).status_code)
+            self.assertEqual(0,self.panel.creates)
+            raw=json.dumps({'reseller_id':'101'}).encode();headers['X-Trial-Signature']=module.signature(self.secret,stamp,raw,'branded-trial-plans-v1')
+            with patch.object(module.ExistingPanelAdapter,'catalog',return_value={'reseller_id':'101','plans':[module.plan_document(PLAN)]}):
+                self.assertEqual(200,client.post('/branded-trials/plans',content=raw,headers=headers).status_code)
+            self.assertEqual(0,self.panel.creates)
     def test_catalog_and_status_use_distinct_read_only_signature_domains(self):
         stamp=str(int(time.time()));body=json.dumps({'reseller_id':'101'}).encode();headers={'X-Trial-Timestamp':stamp,'X-Trial-Signature':module.signature(self.secret,stamp,body,'branded-trial-plans-v1')}
         with patch.object(module.ExistingPanelAdapter,'catalog',return_value={'reseller_id':'101','plans':[module.plan_document(PLAN)]}):

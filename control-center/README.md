@@ -5,7 +5,22 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current hotfix — 0.13.2 (not yet deployed)
+## Current source update — 0.15.0 (not yet deployed)
+
+Migration018 adds testing-only shared-main fanout: preserve each LIVE branded APK's
+name/artwork/revision/package while increasing platform versions. Draft branding is
+never auto-published. Exact immutable source tags and existing signature/lease/byte-
+verification/downgrade gates remain mandatory. Main currently lacks compatible app
+source; old/unsupported main cannot queue a downgrade. Production and generic releases
+are untouched. See `../branding/MAIN_UPDATES.md` and `deploy/UPDATE-0.15.0.txt`.
+
+The separate auth-worker extension now has an additive hash-checked installer,
+rollback on failed readiness, a separate private HMAC/state directory and a default-
+OFF creation switch. `deploy/connect-trial-worker.sh` imports only the private
+connection into the original config, preserving all other values and key/ACLs. It
+does not select a reseller/plan, enable offers or create panel accounts.
+
+## Previous hotfix — 0.13.2
 
 Fixes the owner/admin exclusion from branding: the selector includes/defaults to
 the existing owner workspace, and owner-only name/artwork/save/export/build preparation

@@ -150,6 +150,12 @@ class PollTests(unittest.TestCase):
             """
             subprocess.run(php+['-r',check,str(before),str(after)],cwd=repo,check=True,capture_output=True)
             self.assertEqual(original,before.read_text())
+            subprocess.run(php+['-r',code,str(before),str(after),'c'*40,'--main-updates'],cwd=repo,check=True,capture_output=True)
+            main_check="""$a=require $argv[1];$b=require $argv[2];
+            if(($b['brand_main_updates']['testing_enabled']??null)!==true||$b['brand_builder']['channels']!==['testing']||$b['trials']['enabled']!==false)exit(1);
+            unset($b['brand_main_updates'],$b['brand_builder']['automatic_testing_publication'],$b['brand_builder']['reconciliation_sources']);$b['brand_builder']['sources']['2.0.115']=str_repeat('b',40);exit($a===$b?0:1);
+            """
+            subprocess.run(php+['-r',main_check,str(before),str(after)],cwd=repo,check=True,capture_output=True)
 
 
 if __name__=='__main__':unittest.main()

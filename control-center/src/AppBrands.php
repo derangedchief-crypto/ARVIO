@@ -9,7 +9,13 @@ final class AppBrands
     // Platform release identity; never selected by reseller inputs.
     private const APP_VERSION='2.0.115';
     private const APP_VERSION_CODE=431;
-    public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly ?BrandArtifacts $artifacts=null) {}
+    public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly ?BrandArtifacts $artifacts=null,private readonly ?Config $config=null) {}
+    private function platform():array {
+        if($this->config&&($this->config->get('brand_main_updates',[])['testing_enabled']??false)===true&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['018_brand_main_updates.sql'])){
+            $row=$this->db->one('SELECT * FROM brand_main_sources ORDER BY version_code DESC LIMIT 1');if($row)return ['version'=>$row['app_version'],'code'=>(int)$row['version_code'],'sha'=>$row['source_sha']];
+        }
+        return ['version'=>self::APP_VERSION,'code'=>self::APP_VERSION_CODE,'sha'=>null];
+    }
     private function ready():void {if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['014_reseller_app_brands.sql']))throw new Problem(503,'Apply the app-branding database upgrade first.');}
     private function tenant(array $actor,?string $id,bool $lock=false):array {
         $this->ready();if($id===null&&$actor['role']==='owner')$id=$this->db->one("SELECT id FROM tenants WHERE kind='owner' ORDER BY id LIMIT 1")['id']??null;
@@ -61,7 +67,8 @@ final class AppBrands
         return $this->db->transaction(function()use($actor,$input):array {
             $t=$this->tenant($actor,$input['tenant_id']??null,true);$brand=$this->db->one('SELECT * FROM app_brands WHERE tenant_id=? FOR UPDATE',[$t['id']]);if(!$brand||!$brand['enabled'])throw new Problem(409,'Save an enabled brand first.');
             if((int)$brand['version']!==Input::integer($input['expected_version']??null,1,100000))throw new Problem(409,'Brand changed; reload before requesting a build.');
-            $old=$this->db->one('SELECT id,state FROM app_brand_builds WHERE brand_id=? AND brand_version=? AND app_version=?',[$brand['id'],$brand['version'],self::APP_VERSION]);
+            $platform=$this->platform();
+            $old=$this->db->one('SELECT id,state FROM app_brand_builds WHERE brand_id=? AND brand_version=? AND app_version=?',[$brand['id'],$brand['version'],$platform['version']]);
             if($old){
                 if($old['state']==='cancelled'){
                     if($this->db->one("SELECT id FROM app_brand_builds WHERE brand_id=? AND state IN ('waiting_builder','building','ready_to_publish','publishing','publication_review')",[$brand['id']]))throw new Problem(409,'This brand already has a queued build.');
@@ -70,8 +77,12 @@ final class AppBrands
             }
             if($this->db->one("SELECT id FROM app_brand_builds WHERE brand_id=? AND state IN ('waiting_builder','building','ready_to_publish','publishing','publication_review')",[$brand['id']]))throw new Problem(409,'This brand already has a queued build; finish or cancel it first.');
             $id=Database::id();$images=[];foreach(self::ASSETS as $key){$asset=$this->db->one('SELECT id,sha256 FROM app_brand_assets WHERE id=? AND tenant_id=?',[$brand[$key],$t['id']]);if(!$asset)throw new Problem(409,'A saved image is unavailable.');$images[$key]=$asset;}
-            $manifest=['schema_version'=>1,'brand_id'=>$brand['id'],'brand_version'=>(int)$brand['version'],'app_version'=>self::APP_VERSION,'app_version_code'=>self::APP_VERSION_CODE,'app_name'=>$brand['name'],'package_name'=>$brand['package_name'],'assets'=>$images];
-            $this->db->query('INSERT INTO app_brand_builds (id,brand_id,brand_version,app_version,manifest,requested_by) VALUES (?,?,?,?,?,?)',[$id,$brand['id'],$brand['version'],self::APP_VERSION,json_encode($manifest,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),$actor['id']]);
+            $manifest=['schema_version'=>1,'brand_id'=>$brand['id'],'brand_version'=>(int)$brand['version'],'app_version'=>$platform['version'],'app_version_code'=>$platform['code'],'app_name'=>$brand['name'],'package_name'=>$brand['package_name'],'assets'=>$images];
+            $this->db->query('INSERT INTO app_brand_builds (id,brand_id,brand_version,app_version,manifest,requested_by) VALUES (?,?,?,?,?,?)',[$id,$brand['id'],$brand['version'],$platform['version'],json_encode($manifest,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),$actor['id']]);
+            if($platform['sha']){
+                $this->db->query("UPDATE app_brand_builds SET build_channel='testing',source_sha=? WHERE id=?",[$platform['sha'],$id]);
+                $this->db->query('INSERT INTO brand_main_jobs (build_id,source_sha) VALUES (?,?)',[$id,$platform['sha']]);
+            }
             foreach(array_unique(array_column($images,'id')) as $asset)$this->db->query('INSERT INTO app_brand_build_assets (build_id,asset_id) VALUES (?,?)',[$id,$asset]);
             $this->auth->audit($actor,'brand.build_requested',$id,$t['id'],['version'=>(int)$brand['version']]);return ['id'=>$id,'state'=>'waiting_builder'];
         });

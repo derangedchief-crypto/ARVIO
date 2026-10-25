@@ -4,6 +4,8 @@ set -euo pipefail
 umask 077
 [[ $(id -u) == 0 && "${1:-}" =~ ^[a-f0-9]{40}$ ]] || { echo 'Run as root: bash enable-testing-automation.sh FULL_REVIEWED_SOURCE_SHA' >&2; exit 1; }
 sha="$1"
+main_updates="${2:-}"
+[[ -z "$main_updates" || "$main_updates" == --main-updates ]] || { echo 'Optional second argument: --main-updates (testing only).' >&2; exit 1; }
 site=/www/wwwroot/control.fecxbrfzku.net
 php=/www/server/php/84/bin/php
 config="$site/config.php"
@@ -16,6 +18,10 @@ for path in "$config" "$site/storage/application.key" "$directory"; do
   test -e "$path" && test ! -L "$path" || { echo 'Original private files or APK directory need owner review.' >&2; exit 1; }
 done
 "$php" -d opcache.enable_cli=0 -r 'exit(version_compare(trim(file_get_contents($argv[1])),"0.14.3",">=")?0:1);' "$site/VERSION" || { echo 'Extract website0.14.3 UPDATE first.' >&2; exit 1; }
+if [[ "$main_updates" == --main-updates ]]; then
+  test -f "$site/database/migrations/018_brand_main_updates.sql";test -f "$site/src/BrandMainUpdates.php"
+  runuser -u www -- "$php" -d opcache.enable_cli=0 "$site/cli/console.php" migrate
+fi
 key_before="$(sha256sum "$site/storage/application.key")"
 install -d -m 0700 -o root -g root /root/extreme-site-config-backups
 backup="/root/extreme-site-config-backups/config-before-auto-$(date +%Y%m%d%H%M%S)-$$.php"
@@ -34,9 +40,10 @@ cp --preserve=all -- "$config" "$temp"
   $c["brand_builder"]["reconciliation_sources"]=array_values(array_unique($historical));
   $c["brand_builder"]["sources"]["2.0.115"]=$argv[3];
   $c["brand_builder"]["automatic_testing_publication"]=true;
+  if(($argv[4]??"")==="--main-updates")$c["brand_main_updates"]["testing_enabled"]=true;
   $out="<?php\ndeclare(strict_types=1);\nreturn ".var_export($c,true).";\n";
   if(file_put_contents($argv[2],$out)!==strlen($out))exit(1);
-' "$config" "$temp" "$sha" || { echo 'Existing testing-only settings need review; config was not replaced.' >&2; exit 1; }
+' "$config" "$temp" "$sha" "$main_updates" || { echo 'Existing testing-only settings need review; config was not replaced.' >&2; exit 1; }
 "$php" -d opcache.enable_cli=0 -l "$temp" >/dev/null
 mv -T -- "$temp" "$config"
 setfacl -m u:brandbridge:r-- "$config" "$site/storage/application.key"
@@ -53,4 +60,5 @@ runuser -u brandbridge -- "$php" -d display_errors=stderr -d opcache.enable_cli=
 echo 'Website testing automation enabled; source pin updated and APK storage ACL repaired.'
 echo 'Existing database settings, queue token hash and original encryption key preserved.'
 echo 'Only PHP8.4 restarted. Production channels, trial settings and other workers unchanged.'
+if [[ "$main_updates" == --main-updates ]]; then echo 'Main-to-brand TESTING fanout enabled. Old/unsupported main produces no APK or downgrade.';fi
 echo 'Private original-config backup: '"$backup"

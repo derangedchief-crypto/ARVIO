@@ -39,7 +39,7 @@ final class Application
         $this->preferences=new Preferences($this->db,$this->management,$this->commands,$this->auth);
         $this->support=new Support($this->db,$this->management,$this->commands,$this->auth,$config);
         $this->deviceProfiles=new DeviceProfiles($this->db,$this->management,$this->commands,$this->auth);
-        $this->appBrands=new AppBrands($this->db,$this->management,$this->auth,new BrandArtifacts($this->db,new Secrets($config),$config));
+        $this->appBrands=new AppBrands($this->db,$this->management,$this->auth,new BrandArtifacts($this->db,new Secrets($config),$config),$config);
         $trialWorker=new TrialWorker($config);$this->trialPolicies=new TrialPolicies($this->db,$this->management,$this->auth,$trialWorker);
         $this->trialContacts=new TrialContacts($this->db,$this->management,$this->auth,new Secrets($config),$config,$trialWorker);
         $secrets=new Secrets($config);$artifacts=new BrandArtifacts($this->db,$secrets,$config);$this->trialOffers=new TrialOffers($this->db,$config,$this->management,$this->auth,$secrets,$this->trialPolicies,$artifacts);

@@ -1,4 +1,25 @@
-# Device management0.14.3 automatic testing publication — validation
+# Device management0.15.0 main fanout/trial bridge — validation
+
+193 isolated MariaDB/service/HTTP cases pass, including new coverage for default-off
+fanout, newer exact source identities, immutable registrations/idempotent retries,
+published branding versus drafts, no mutation of existing brands/artifacts/production,
+dynamic source/tag polling, retry/backoff/uncertain-publication fencing, rejection of
+production claims, unchanged central-signer receipt enforcement and subsequent branding
+requests using latest main.69 builder/resource/dispatcher checks and35 trial-worker/
+HTTP/deployment checks pass. Trial tests use fake panel callbacks, never real accounts.
+Private website import is tested to preserve every unrelated config value and refuse
+silent rotation of an existing different secret. Default-off trial creation leaves
+signed read-only catalogue access working. Package checks pass; actionlint and shell
+syntax checks pass. No Android/playback code or app version was changed.
+
+The additive installer is syntax/package checked and contains original-hash/service
+gates plus backup/readiness/rollback. It has NOT been run against the live auth worker;
+offline checks are not proof of actual service sandbox/Overcast behaviour. Website,
+dispatcher, workflow main registration and environment/tag protections still require
+deployment. Main still has older unsupported application source; no main-source APK
+or real panel trial was produced. Hardware storage savings remain unmeasured.
+
+## Previous0.14.3 automatic testing publication validation
 
 Owner-opted automatic publication remains testing-only and requires site AND worker
 policy. Tests reject publish hints without explicit server mode/owner opt-in and

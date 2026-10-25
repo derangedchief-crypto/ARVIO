@@ -1,0 +1,45 @@
+Extreme Control Center0.15.0 — shared-main testing updates and trial bridge setup
+
+No customer APK, main application merge or live trial account is authorized by this
+update. Existing website0.14.3, generic test114 and customer latest101 stay usable.
+
+WEBSITE HOST: /www/wwwroot/control.fecxbrfzku.net
+Back up DB/private config/key, then extract the UPDATE ZIP in this existing site root.
+The archive contains NO config.php and NO storage/ entries (preserves runtime ACLs).
+Run as root, using the full reviewed reseller-control-center commit:
+  bash deploy/enable-testing-automation.sh REVIEWED_FULL_SHA --main-updates
+It applies migration018, preserves private values/key and restarts only PHP8.4.
+
+DISPATCHER HOST: existing /opt/brand-dispatch
+Extract Brand-Dispatcher-Setup0.15.0 privately and run as root:
+  bash upgrade.sh REVIEWED_FULL_SHA
+It pauses only the dispatcher timer, drains the short active dispatch under its lock,
+updates code/source pin, preserves tokens/env/state/testing opt-in and restores the
+previous timer state. Failure restores original code/environment. No unit changes.
+No keys or secrets are in this bundle. No signing key leaves GitHub.
+
+AUTH WORKER HOST: /opt/iptv-auth-worker (not the website or activation worker)
+Extract Brand-Trial-Bridge-Setup0.15.0 privately; run bash install.sh beside its module.
+It accepts the owner-confirmed original main.py SHA, adds the restricted route hook,
+preserves portal config, restarts ONLY iptv-auth-worker.service and rolls back original
+files/override if readiness fails. Inactive/different services are refused, not started.
+New trial creation stays OFF. Preserve original /var/lib/extreme-branded-trials and
+/etc/extreme-branded-trials.env on every later update.
+
+Transfer /root/brand-trial-website-connection.json directly to WEBSITE /root/ using
+private SSH/SFTP (root0600). Never paste its contents into chat or put it in public/.
+Then WEBSITE root:
+  bash deploy/connect-trial-worker.sh
+This imports only the separate trial connection. It cannot enable an offer or choose
+a plan. Do not replace any existing different trial secret; investigate a mismatch.
+
+Remaining GitHub main/tag/environment setup is documented in branding/MAIN_UPDATES.md
+inside the dispatcher bundle. Register only the branded workflow on main until the
+real compatible application release is separately reviewed. Old main skips fanout.
+
+Before trial creation: owner must select a verified RESELLER workspace (owner workspace
+is not eligible), refresh actual read-only plans, approve a plan/default/daily limit,
+then authorize a bounded live pilot. Only then set BRANDED_TRIAL_PROVISION_ENABLED=true
+on AUTH and restart that service, and explicitly publish the brand/plan-bound website
+offer. Deployment or migration never silently enables offers. Verify the real line,
+owner, expiry and first-name/phone reseller_notes before calling the pilot complete.

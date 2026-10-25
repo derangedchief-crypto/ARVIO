@@ -372,12 +372,14 @@ def install_trial_routes(app, worker):
     # New trial work runs in the threadpool. Protect the legacy shared cookie jar
     # for BOTH old portal callers and new trial callers in this worker process.
     enabled=bool(directory and re.fullmatch('[a-f0-9]{64}',secret))
+    provision_enabled=os.environ.get('BRANDED_TRIAL_PROVISION_ENABLED','false')=='true'
     if enabled:serialize_native_refresh(worker)
     service = TrialService(directory, ExistingPanelAdapter(worker)) if enabled else None
 
     @app.post('/branded-trials/provision')
     async def provision(request: Request):
         raw=await authenticated_body(request,'branded-trial-v1')
+        if not provision_enabled:raise HTTPException(503,'Trial creation is disabled by the owner; policy catalog remains read-only')
         try: return await run_in_threadpool(service.request,json.loads(raw))
         except (TrialRejected, ValueError, TypeError): raise HTTPException(409,'Trial unavailable or already requested; review this operation before retrying') from None
         except Exception: raise HTTPException(503,'Trial outcome requires review; retry only with the same operation ID') from None
