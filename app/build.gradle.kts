@@ -31,8 +31,8 @@ val brandProperties = brandDirectory?.let { directory ->
 }
 val brandId = brandProperties?.getProperty("brand_id") ?: ""
 val brandName = brandProperties?.getProperty("brand_name") ?: "Extreme TV"
-val platformVersionName = "2.0.116"
-val platformVersionCode = 432
+val platformVersionName = "2.0.117"
+val platformVersionCode = 433
 val brandRevision = brandProperties?.getProperty("brand_version")?.toIntOrNull() ?: 0
 if (brandDirectory != null) {
     require(brandId.matches(Regex("[a-f0-9]{32}"))) { "Invalid brand identity" }
@@ -62,8 +62,8 @@ android {
         minSdk = 26
         targetSdk = 36
         // Keep literals for the existing centrally signed publication workflows.
-        versionCode = 432
-        versionName = "2.0.116"
+        versionCode = 433
+        versionName = "2.0.117"
         if (brandDirectory != null) {
             versionCode = (platformVersionCode.toLong()*100000L+brandRevision).toInt()
             versionName = platformVersionName + "." + brandRevision
@@ -607,8 +607,6 @@ val validateReleaseCloudSecrets = tasks.register("validateReleaseCloudSecrets") 
     doLast {
         val appAnonKey = localSecretValue("APP_ANON_KEY").ifBlank { localSecretValue("SUPABASE_ANON_KEY") }
         val supabaseUrl = localSecretValue("SUPABASE_URL")
-        val traktClientId = localSecretValue("TRAKT_CLIENT_ID")
-        val traktClientSecret = localSecretValue("TRAKT_CLIENT_SECRET")
         val supabaseHost = supabaseUrl.substringAfter("://", missingDelimiterValue = "").substringBefore('/')
         val hasValidSupabaseUrl =
             (supabaseUrl.startsWith("https://") || supabaseUrl.startsWith("http://")) &&
@@ -626,14 +624,8 @@ val validateReleaseCloudSecrets = tasks.register("validateReleaseCloudSecrets") 
         ) {
             "Release builds require a real APP_ANON_KEY in secrets.properties, Gradle properties, or the environment."
         }
-        require(
-            traktClientId.length > 20 &&
-                !traktClientId.startsWith("your-", ignoreCase = true) &&
-                traktClientSecret.length > 20 &&
-                !traktClientSecret.startsWith("your-", ignoreCase = true)
-        ) {
-            "Release builds require real TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET values."
-        }
+        // Trakt remains an optional APK integration. Its owner-supplied values
+        // are still compiled when configured, but are not a release prerequisite.
     }
 }
 
