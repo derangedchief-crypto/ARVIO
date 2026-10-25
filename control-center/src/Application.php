@@ -126,6 +126,7 @@ final class Application
             $this->auth->verifyCsrf($token, $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
         }
         if ($method === 'GET' && $path === '/api/me') Http::json(['user' => $actor, 'csrf' => $this->auth->csrf($token)]);
+        if($method==='GET'&&$path==='/api/workspace-context'){Input::keys($_GET,[]);Http::json(['workspace'=>$this->management->workspace($actor)]);}
         if($method==='GET'&&$path==='/api/system/status') { Auth::owner($actor); Http::json(['pending_migrations'=>$migrations->pending()]); }
         if($method==='POST'&&$path==='/api/system/migrate') {
             Auth::owner($actor); Input::keys(Http::body(),[]);
@@ -146,7 +147,7 @@ final class Application
             $this->auth->changePassword($actor, Http::body());
             Http::cookie($this->config, ''); Http::json(['ok' => true]);
         }
-        if ($method === 'GET' && $path === '/api/overview') Http::json($this->management->overview($actor));
+        if ($method === 'GET' && $path === '/api/overview') Http::json($this->management->overview($actor,$_GET));
         if($method==='GET'&&$path==='/api/app-brand')Http::json($this->appBrands->get($actor,$_GET));
         if($method==='POST'&&$path==='/api/app-brand')Http::json($this->appBrands->save($actor,Http::body()));
         if($method==='POST'&&$path==='/api/app-brand/assets')Http::json($this->appBrands->upload($actor,Http::body(1500000)),201);
@@ -168,7 +169,7 @@ final class Application
         if($method==='POST'&&$path==='/api/device-profiles')Http::json($this->deviceProfiles->save($actor,null,Http::body()),201);
         if($method==='GET'&&preg_match('~^/api/device-profiles/([a-f0-9]{32})$~D',$path,$m))Http::json($this->deviceProfiles->get($actor,$m[1]));
         if($method==='POST'&&preg_match('~^/api/device-profiles/([a-f0-9]{32})$~D',$path,$m))Http::json($this->deviceProfiles->save($actor,$m[1],Http::body()));
-        if($method==='GET'&&$path==='/api/device-defaults')Http::json($this->deviceProfiles->policy($actor,Input::id($_GET['tenant_id']??$actor['tenant_id'])));
+        if($method==='GET'&&$path==='/api/device-defaults'){Input::keys($_GET,['tenant_id']);Http::json($this->deviceProfiles->policy($actor,$this->management->workspace($actor,$_GET['tenant_id']??null)['id']));}
         if($method==='POST'&&$path==='/api/device-defaults')Http::json($this->deviceProfiles->setPolicy($actor,Http::body()));
         if($method==='GET'&&$path==='/api/device-setups')Http::json($this->deviceProfiles->jobs($actor,$_GET));
         if($method==='GET'&&preg_match('~^/api/device-setups/([a-f0-9]{32})$~D',$path,$m))Http::json($this->deviceProfiles->detail($actor,$m[1]));

@@ -7,7 +7,7 @@ final class TrialPolicies
 {
     public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly TrialWorker $worker) {}
     private function ready():void {if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['015_trial_policies_contacts.sql']))throw new Problem(503,'Apply the trial-policy database upgrade first.');}
-    private function tenant(array $actor,?string $id,bool $lock=false):array {$this->ready();if($id===null&&$actor['role']==='owner')$id=$this->db->one("SELECT id FROM tenants WHERE kind='owner' ORDER BY id LIMIT 1")['id']??null;$t=$this->management->tenant($actor,Input::id($id??$actor['tenant_id']),$lock);if($t['kind']==='owner')Auth::owner($actor);elseif($t['kind']!=='reseller')throw new Problem(409,'Choose an owner or reseller workspace.');return $t;}
+    private function tenant(array $actor,?string $id,bool $lock=false):array {$this->ready();$t=$this->management->workspace($actor,$id,$lock);if($t['kind']==='owner')Auth::owner($actor);elseif($t['kind']!=='reseller')throw new Problem(409,'Choose an owner or reseller workspace.');return $t;}
     private function link(string $tenant):?array {return $this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$tenant]);}
     private function catalog(string $tenant):?array {
         $c=$this->db->one('SELECT * FROM trial_plan_catalogs WHERE tenant_id=?',[$tenant]);if($c)$c['plans']=json_decode($c['plans'],true,12,JSON_THROW_ON_ERROR);return $c;

@@ -46,7 +46,7 @@ final class CategoryLayouts
     }
     public function create(array $actor,array $input): array
     {
-        Input::keys($input,['tenant_id','name','entries']);$tenantId=Input::id($input['tenant_id']??$actor['tenant_id']);$name=Input::text($input['name']??null,'template name',80);$entries=self::entries($input['entries']??null);
+        Input::keys($input,['tenant_id','name','entries']);$tenantId=$this->management->workspace($actor,$input['tenant_id']??null)['id'];$name=Input::text($input['name']??null,'template name',80);$entries=self::entries($input['entries']??null);
         return $this->db->transaction(function()use($actor,$tenantId,$name,$entries):array {
             $tenant=$this->management->tenant($actor,$tenantId,true);if($tenant['status']!=='active')throw new Problem(409,'Workspace suspended.');
             if((int)$this->db->query('SELECT COUNT(*) FROM category_layout_templates WHERE tenant_id=? AND archived=0',[$tenantId])->fetchColumn()>=100)throw new Problem(409,'Archive an unused layout template first (100 active per workspace).');

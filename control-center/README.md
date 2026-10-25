@@ -2,10 +2,33 @@
 
 PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 `https://control.fecxbrfzku.net`, delivered as an aaPanel Nginx upload/extract ZIP.
-Work is isolated on `reseller-control-center`; no changes to the Android app,
-activation/maintenance services, central updater, `main` or publishing workflows.
+Website-only owner-access fixes are isolated on `control-center-owner-trials`.
+The shared app/build branch remains pinned separately; this update does not change
+Android code, worker deployments, APK releases or source pins.
 
-## Current source update — 0.15.3 (not yet deployed)
+## Current source update — 0.16.0 (not yet deployed)
+
+Owner workspace access is now shared across the whole site, rather than being a set
+of reseller-only exceptions. An authenticated workspace-context endpoint resolves the
+EXISTING owner record even though an owner login has no reseller tenant_id. A common
+picker guarantees **My owner workspace**, supports server-paginated workspace search
+and labels the actual current scope. Branding, trials, layouts, settings profiles,
+device recipes and new-device defaults use this shared context. Dashboard, customers,
+devices and audit can filter to the owner workspace or retain the aggregate admin view.
+
+Workspace administration includes owner branding/trial/default shortcuts and explicit
+owner device-allocation editing, but never self-suspension. Already owner-held devices
+do not offer a misleading remove-from-reseller action. Implicit owner create/read
+requests resolve the same owner workspace, not a null reseller ID; reseller scopes
+and signed panel-link requirements stay enforced. No records are moved or duplicated.
+
+Served HTML derives asset versions and the visible footer from VERSION. Open tabs
+detect a newer server version and offer a deliberate reload without silently losing
+unsaved drafts. The current owner one-account pilot is preserved and its remaining
+slot/status is visible; another brand cannot show an enabled publish action while
+the pilot restriction applies. See `deploy/UPDATE-0.16.0.txt`.
+
+## Previous source update — 0.15.3
 
 The approved one-account testing pilot can now be enforced with the private
 `trial_pilot_brand_id` setting. Only that brand may admit/publish offers, and the

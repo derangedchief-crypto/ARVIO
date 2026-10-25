@@ -18,8 +18,7 @@ final class AppBrands
     }
     private function ready():void {if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['014_reseller_app_brands.sql']))throw new Problem(503,'Apply the app-branding database upgrade first.');}
     private function tenant(array $actor,?string $id,bool $lock=false):array {
-        $this->ready();if($id===null&&$actor['role']==='owner')$id=$this->db->one("SELECT id FROM tenants WHERE kind='owner' ORDER BY id LIMIT 1")['id']??null;
-        $t=$this->management->tenant($actor,Input::id($id??$actor['tenant_id']),$lock);
+        $this->ready();$t=$this->management->workspace($actor,$id,$lock);
         if($t['status']!=='active')throw new Problem(409,'Workspace suspended.');
         // The administrator may prepare ONE separate owner-branded app without
         // creating/relinking a reseller account. This grants no trial/panel rights

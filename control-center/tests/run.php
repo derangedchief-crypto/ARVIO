@@ -139,6 +139,8 @@ require __DIR__.'/brand-main-updates.php';
 brandMainUpdateCases($tests,$app,$config,$owner);
 require __DIR__.'/owner-trials.php';
 ownerTrialCases($tests,$app,$config,$owner,$alpha);
+require __DIR__.'/owner-workspace.php';
+ownerWorkspaceCases($tests,$app,$config,$owner,$alpha,$tenantA,$http,$password);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

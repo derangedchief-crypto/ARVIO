@@ -1,4 +1,26 @@
-# Device management0.15.3 one-account pilot — validation
+# Device management0.16.0 owner workspace throughout the site — validation
+
+202 isolated MariaDB/service/HTTP cases pass, including authoritative owner workspace
+resolution without a reseller tenant_id, implicit owner creation of layouts/presets/
+settings/device profiles, real owner overview/audit scopes, authenticated self context,
+reseller cross-tenant refusal, editable owner allocation without self-suspension,
+unchanged records/roles/panel links/brands/trial state during reads, and HTML/header/
+asset/footer versions following VERSION rather than hard-coded old cache keys.
+Pilot tests additionally verify remaining-slot reporting and refusal to expose another
+brand's publish action; the existing one-operation admission/recovery guard still passes.
+
+48 full browser checks pass. The focused owner browser suite also passes six scenarios
+and has no uncaught errors:
+owner resource creation/default visibility without a reseller login; owner recovery from
+a deliberately incomplete roster plus server-paginated search; dashboard/customer/
+device/audit scopes alongside aggregate administration; directory owner shortcuts and
+allocation controls; explicit suspended-workspace selection without a silent scope
+change; update notification/reload with unsaved-edit protection. Screenshots
+use only synthetic local data. Package/private-config preservation and pilot-script
+checks pass. No live panel trial, worker deployment, APK build or private-config change
+was performed for this increment. Old user-stopped local services were not restarted.
+
+## Previous0.15.3 one-account pilot validation
 
 197 isolated MariaDB/service/HTTP cases pass. The pilot regression exercises first
 signup, a different customer/device being refused, original-session retry and fresh

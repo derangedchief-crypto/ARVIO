@@ -25,6 +25,15 @@ final class Management
     {
         return $this->tenantListing($actor, [])['items'];
     }
+    /** The owner has no reseller tenant_id. Resolve its EXISTING workspace instead
+     * of inventing a reseller, changing the login role, or returning a null scope. */
+    public function workspace(array $actor,mixed $id=null,bool $lock=false):array {
+        if($id===null||$id===''){
+            if($actor['role']==='owner')$id=$this->db->one("SELECT id FROM tenants WHERE kind='owner' ORDER BY id LIMIT 1")['id']??null;
+            else $id=$actor['tenant_id']??null;
+        }
+        return $this->tenant($actor,Input::id($id),$lock);
+    }
     public function tenantListing(array $actor, array $input): array
     {
         Input::keys($input, ['page', 'search']);
@@ -74,7 +83,12 @@ final class Management
         $limit = Input::integer($input['device_limit'] ?? 100, 1, 100000);
         return $this->db->transaction(function () use ($actor, $id, $status, $limit): array {
             $tenant = $this->tenant($actor, $id, true);
-            if ($tenant['kind'] !== 'reseller') throw new Problem(403, 'The owner workspace cannot be suspended here.');
+            if($tenant['kind']==='owner'){
+                if($status!=='active'||$tenant['status']!=='active')throw new Problem(403,'The owner workspace cannot be suspended here.');
+                $this->db->query('UPDATE tenants SET device_limit=? WHERE id=?',[$limit,$id]);
+                $this->auth->audit($actor,'owner.allocation_updated',$id,$id,['device_limit'=>$limit]);return $this->tenant($actor,$id);
+            }
+            if ($tenant['kind'] !== 'reseller') throw new Problem(403, 'Workspace policy cannot be changed here.');
             $this->db->query('UPDATE tenants SET status = ?, device_limit = ? WHERE id = ?', [$status, $limit, $id]);
             if ($status === 'suspended') {
                 $this->db->query('DELETE s FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.tenant_id = ?', [$id]);
@@ -94,8 +108,8 @@ final class Management
     public function createCustomer(array $actor, array $input): array
     {
         Input::keys($input, ['tenant_id', 'name', 'notes', 'external_reference']);
-        $tenant = $this->tenant($actor, Input::id($input['tenant_id'] ?? $actor['tenant_id']));
-        if ($tenant['status'] !== 'active') throw new Problem(409, 'This reseller is suspended.');
+        $tenant = $this->workspace($actor, $input['tenant_id'] ?? null);
+        if ($tenant['status'] !== 'active') throw new Problem(409, 'This workspace is suspended.');
         $name = Input::text($input['name'] ?? null, 'name', 120);
         $notes = Input::text($input['notes'] ?? '', 'notes', 2000, false);
         $reference = Input::text($input['external_reference'] ?? '', 'reference', 128, false);
@@ -249,9 +263,11 @@ final class Management
     }
     private function hasVerifiedUsernames():bool {return (bool)$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['009_verified_line_usernames.sql']);}
 
-    public function overview(array $actor): array
+    public function overview(array $actor,array $input=[]): array
     {
+        Input::keys($input,['tenant_id']);
         $args = []; $scope = $this->scope($actor, 'tenant_id', $args);
+        if(!empty($input['tenant_id'])){$tenant=$this->workspace($actor,$input['tenant_id']);$scope.=' AND tenant_id=?';$args[]=$tenant['id'];}
         $threshold = $this->config->number('offline_after_seconds', 180, 60, 1800);
         $stats = $this->db->one("SELECT COUNT(*) AS total, COALESCE(SUM(enrolled_at IS NULL),0) AS not_enrolled, COALESCE(SUM(last_seen_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL $threshold SECOND)),0) AS connected, COALESCE(SUM(policy != 'active'),0) AS restricted FROM devices WHERE $scope AND policy != 'removed'", $args);
         $stats['customers'] = (int) $this->db->query("SELECT COUNT(*) FROM customers WHERE $scope", $args)->fetchColumn();
@@ -261,8 +277,9 @@ final class Management
 
     public function audit(array $actor, array $input): array
     {
-        Input::keys($input, ['page']); $page = Input::page($input['page'] ?? 1); $offset = ($page - 1) * 25;
+        Input::keys($input, ['page','tenant_id']); $page = Input::page($input['page'] ?? 1); $offset = ($page - 1) * 25;
         $args = []; $scope = $this->scope($actor, 'tenant_id', $args);
+        if(!empty($input['tenant_id'])){$tenant=$this->workspace($actor,$input['tenant_id']);$scope.=' AND tenant_id=?';$args[]=$tenant['id'];}
         $total = (int) $this->db->query("SELECT COUNT(*) FROM audit_events WHERE $scope", $args)->fetchColumn();
         $rows = $this->db->all("SELECT id, action, resource_id, created_at, metadata FROM audit_events WHERE $scope ORDER BY id DESC LIMIT 25 OFFSET $offset", $args);
         return ['items' => $rows, 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total];

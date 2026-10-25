@@ -22,7 +22,7 @@ final class SettingsPresets
     }
     public function create(array $actor,array $input): array
     {
-        Input::keys($input,['tenant_id','name','sort_order']);$tenantId=Input::id($input['tenant_id']??$actor['tenant_id']);
+        Input::keys($input,['tenant_id','name','sort_order']);$tenantId=$this->management->workspace($actor,$input['tenant_id']??null)['id'];
         $name=Input::text($input['name']??null,'preset name',80);$sort=self::sort($input['sort_order']??null);
         return $this->db->transaction(function()use($actor,$tenantId,$name,$sort):array {
             $tenant=$this->management->tenant($actor,$tenantId,true);if($tenant['status']!=='active')throw new Problem(409,'This workspace is suspended.');

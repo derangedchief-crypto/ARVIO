@@ -13,7 +13,7 @@ import argparse
 import shutil
 
 repository = Path(__file__).resolve().parents[2]
-parser = argparse.ArgumentParser(); parser.add_argument('--browser', action='store_true'); parser.add_argument('--browser-only', action='store_true', help='UI development only: skip service tests; release validation uses --browser'); parser.add_argument('--keep-db', action='store_true'); args = parser.parse_args()
+parser = argparse.ArgumentParser(); parser.add_argument('--browser', action='store_true'); parser.add_argument('--browser-only', action='store_true', help='UI development only: skip service tests; release validation uses --browser'); parser.add_argument('--browser-script',default='control-center/tests/browser.cjs',help='Local-only focused browser suite'); parser.add_argument('--keep-db', action='store_true'); args = parser.parse_args()
 state = Path(tempfile.mkdtemp(prefix='control-enrollment-tests-', dir='/tmp/opencode'))
 state.chmod(0o700)
 environment = {**os.environ, 'CONTROL_DEV_DIR': str(state), 'CONTROL_TEST_SOCKET': str(state / 'database.sock')}
@@ -51,7 +51,7 @@ with (state / 'startup.log').open('wb') as log:
                 except OSError: time.sleep(0.05)
             browser_env = {**environment, 'CONTROL_PREVIEW_URL': f'http://127.0.0.1:{port}',
                            'LD_LIBRARY_PATH': '/tmp/opencode/control-center-browser-tools/root/usr/lib/x86_64-linux-gnu'}
-            result = subprocess.run(['node', 'control-center/tests/browser.cjs', str(preview/'preview-credentials.json')], cwd=repository, env=browser_env)
+            result = subprocess.run(['node', args.browser_script, str(preview/'preview-credentials.json')], cwd=repository, env=browser_env)
         raise SystemExit(result.returncode)
     finally:
         if web is not None and web.poll() is None:

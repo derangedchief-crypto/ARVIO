@@ -1,7 +1,9 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-const state = { user: null, csrf: '', tenants: [], epoch: 0, deviceTab: null, layoutEditors: new Map(), favouritesSelection: new Map(), sourceEditors: new Map(), preferenceEditors: new Map() };
+const state = { user: null, csrf: '', tenants: [], workspaceSelf: null, workspaceScope: '', toolWorkspace: null, epoch: 0, deviceTab: null, layoutEditors: new Map(), favouritesSelection: new Map(), sourceEditors: new Map(), preferenceEditors: new Map() };
+const siteVersion=document.querySelector('meta[name="control-version"]')?.content||'';
+function checkSiteVersion(version){if(!siteVersion||!/^\d+\.\d+\.\d+$/.test(version||'')||version===siteVersion)return;const notice=$('site-update');if(!notice||!notice.hidden)return;notice.replaceChildren(el('span','The website has been updated. Reload to use the current workspace controls.'),button('Reload updated website',()=>{if(hasUnsentDrafts()&&!confirm('Reload and discard unsaved browser edits? Saved settings and app data are unaffected.'))return;location.reload();}));notice.hidden=false;}
 const requestKeys = new Map();
 let toastTimer;
 let formCounter = 0;
@@ -34,6 +36,7 @@ async function api(path, body, extra = {}) {
   const options = { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json', ...extra } };
   if (body !== undefined) { options.headers['Content-Type'] = 'application/json'; options.headers['X-CSRF-Token'] = state.csrf; options.body = JSON.stringify(body); }
   const response = await fetch(path, options);
+  checkSiteVersion(response.headers.get('X-Control-Version'));
   let data;
   try { data = await response.json(); } catch {
     if(response.status===401&&path!=='/api/login'&&sessionUser===state.user?.id)signedOut();
@@ -80,7 +83,7 @@ function modal(title, schema, save, label = 'Save') {
   $('modal').showModal();
 }
 $('modal').addEventListener('close',()=>{$('modal-form').querySelectorAll('input[type="password"], textarea[name="guides"]').forEach(input=>{input.value='';});});
-function signedOut() { window.TrialWorkspace?.clear();window.AppBranding?.clear();window.DeviceWorkspace?.clear();window.WorkspaceLibrary?.clear();state.user = null; state.csrf = ''; state.tenants = []; state.deviceTab = null; state.layoutEditors.clear(); state.favouritesSelection.clear(); state.sourceEditors.clear(); state.preferenceEditors.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
+function signedOut() { window.TrialWorkspace?.clear();window.AppBranding?.clear();window.DeviceWorkspace?.clear();window.WorkspaceLibrary?.clear();state.user = null; state.csrf = ''; state.tenants = []; state.workspaceSelf=null;state.workspaceScope='';state.toolWorkspace=null;state.deviceTab = null; state.layoutEditors.clear(); state.favouritesSelection.clear(); state.sourceEditors.clear(); state.preferenceEditors.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
 function entryCard(title, description) { const card = el('div', null, 'entry-card'); card.append(el('span', 'E', 'brand-mark'), el('h1', title), el('p', description, 'subtle')); $('entry').replaceChildren(card); return card; }
 function loginForm() {
   setNavOpen(false,false);
@@ -97,23 +100,46 @@ function setupForm() {
   form.onsubmit = async e => { e.preventDefault(); submit.disabled = true; try { await api('/api/setup', formValues(form, schema)); form.reset(); loginForm(); toast('Owner account created. Sign in to continue.'); } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; } };
 }
 async function enter() {
-  state.tenants = (await api('/api/tenants')).items;
+  const user=state.user.id;const [listing,context]=await Promise.all([api('/api/tenants'),api('/api/workspace-context')]);if(state.user?.id!==user)return;
+  state.workspaceSelf=context.workspace;state.tenants=listing.items;rememberWorkspace(context.workspace);state.workspaceScope='';state.toolWorkspace=context.workspace.id;
   $('entry').replaceChildren(); $('entry').hidden = true; $('shell').hidden = false; $('account-name').textContent = state.user.display_name;
-  $('workspace-name').textContent = state.user.role === 'owner' ? 'Owner workspace · all resellers' : state.tenants[0]?.name || 'Reseller workspace';
+  workspaceTitle();
   const nav = $('navigation'); nav.replaceChildren();
   const groups = [
     ['Overview', [['overview','Dashboard','overview']]],
     ['My clients', [['customers','Customers','customers'],['devices','Devices','devices'],['trials','Trials & contacts','profiles']]],
     ['Device setup', [['library','Layouts & playlists','layouts'],['library/settings','Settings profiles','presets'],['library/profiles','Device profiles','profiles'],['library/defaults','New-device defaults','defaults']]],
     ['Playlist editor', [['library/layout/new','Open template maker','editor']]],
-    ...(state.user.role==='owner'?[['User management',[['resellers','Resellers & panel links','resellers'],['enrollments','Enrollments & upgrades','enrollments']]]]:[]),
+    ...(state.user.role==='owner'?[['Workspace management',[['resellers','Workspaces & panel links','resellers'],['enrollments','Enrollments & upgrades','enrollments']]]]:[]),
     ['My app', [['branding','My app brand','profiles']]],
     ['Workspace', [['audit','Activity log','audit'],['more','More tools','more']]]
   ];
   groups.forEach(([title,links],index)=>{const group=el('section',null,'nav-group');const label=el('h2',title,'nav-group-title');label.id='nav-group-'+index;group.setAttribute('aria-labelledby',label.id);group.append(label);links.forEach(([key,text,glyph])=>{const link=el('a');link.append(icon(glyph),el('span',text));link.href='#'+key;link.dataset.page=key;group.append(link);});nav.append(group);});setNavOpen(false,false);
   await route();
 }
-function tenantField() { return { key: 'tenant_id', label: 'Workspace / reseller', options: state.tenants.filter(t => t.status === 'active').map(t => [t.id, t.name]), hint: 'First page of active workspaces. Customer/device enrollment is automatic after verified reseller linking.' }; }
+function rememberWorkspace(t){if(!t||!t.id)return;const index=state.tenants.findIndex(w=>w.id===t.id);if(index<0)state.tenants.push(t);else state.tenants[index]={...state.tenants[index],...t};}
+function workspaceOptions(activeOnly=false){const items=[...state.tenants];if(state.workspaceSelf&&!items.some(t=>t.id===state.workspaceSelf.id))items.push(state.workspaceSelf);return items.filter(t=>(!activeOnly||t.status==='active')&&(state.user.role==='owner'||t.id===state.user.tenant_id)).sort((a,b)=>(b.kind==='owner')-(a.kind==='owner')||a.name.localeCompare(b.name));}
+function workspaceName(t){const name=t.kind==='owner'?'My owner workspace — '+(state.user.display_name||t.name):t.name;return name+(t.status!=='active'?' · '+t.status:'');}
+function workspaceTitle(id='',fallback=''){const t=state.tenants.find(t=>t.id===id)||(state.workspaceSelf?.id===id?state.workspaceSelf:null);$('workspace-name').textContent=t?workspaceName(t):fallback||(state.user.role==='owner'?'All workspaces · owner administration':workspaceName(state.workspaceSelf));}
+function toolWorkspace(){return workspaceOptions().find(t=>t.id===state.toolWorkspace)?.id||state.workspaceSelf?.id||state.user.tenant_id;}
+async function chooseWorkspace(id){const epoch=state.epoch,user=state.user?.id;const t=state.tenants.find(t=>t.id===id)||await api('/api/tenants/'+id);if(epoch!==state.epoch||user!==state.user?.id)return null;rememberWorkspace(t);state.toolWorkspace=t.id;workspaceTitle(t.id);return t.id;}
+function tenantField(){return {key:'tenant_id',label:'Workspace / reseller',value:toolWorkspace(),options:workspaceOptions(true).map(t=>[t.id,workspaceName(t)]),hint:'Your existing owner workspace is included. Use the page workspace search to find another workspace outside the initial list.'};}
+function workspacePicker(parent,label,value,change,{allowAll=false,activeOnly=false}={}){
+  const row=el('div',null,'workspace-picker');const select=el('select');select.setAttribute('aria-label',label);
+  if(allowAll&&state.user.role==='owner'){const all=el('option','All workspaces');all.value='';select.append(all);}
+  const choices=workspaceOptions(activeOnly);const selected=workspaceOptions().find(t=>t.id===value);if(selected&&!choices.some(t=>t.id===selected.id))choices.push(selected);
+  for(const t of choices){const option=el('option',workspaceName(t));option.value=t.id;if(activeOnly&&t.status!=='active')option.disabled=true;select.append(option);}select.value=value||'';
+  const pick=async id=>{if(id&&!await chooseWorkspace(id))return;change(id);};select.onchange=()=>Promise.resolve(pick(select.value)).catch(e=>toast(e.message));row.append(select);
+  if(state.user.role==='owner'){
+    row.append(button('Use my owner workspace',()=>pick(state.workspaceSelf.id),'quiet'));
+    const search=el('details',null,'workspace-search');search.append(el('summary','Find another workspace'));const form=el('form',null,'filters');const input=el('input');input.type='search';input.setAttribute('aria-label','Find workspace name');input.placeholder='Workspace name';const submit=el('button','Find workspace');submit.type='submit';form.append(input,submit);const result=el('div');search.append(form,result);row.append(search);const epoch=state.epoch;let turn=0;
+    async function load(page=1){const token=++turn;result.inert=true;result.setAttribute('aria-busy','true');try{const data=await api('/api/tenants?page='+page+'&search='+encodeURIComponent(input.value));if(epoch!==state.epoch||token!==turn)return;result.replaceChildren(table(['Workspace','Status','Actions'],data.items.filter(t=>!activeOnly||t.status==='active').map(t=>[workspaceName(t),t.status,button('Use workspace',async()=>{rememberWorkspace(t);await pick(t.id);})])),pagination(data,load));}catch(e){if(epoch===state.epoch&&token===turn)result.replaceChildren(el('p',e.message,'error'));}finally{if(epoch===state.epoch&&token===turn){result.inert=false;result.removeAttribute('aria-busy');}}}
+    form.onsubmit=e=>{e.preventDefault();load(1);};search.ontoggle=()=>{if(search.open&&!result.childNodes.length)load(1);};
+  }
+  parent.append(row);return select;
+}
+function scopePicker(parent){if(state.user.role==='owner')workspacePicker(parent,'Workspace filter',state.workspaceScope,id=>{state.workspaceScope=id;route();},{allowAll:true});workspaceTitle(state.user.role==='owner'?state.workspaceScope:state.workspaceSelf.id);}
+function scopeQuery(){return state.workspaceScope?'&tenant_id='+encodeURIComponent(state.workspaceScope):'';}
 function customerForm(customer, tenant = null) {
   const schema = [...(!customer && !tenant && state.user.role === 'owner' ? [tenantField()] : []), { key: 'name', label: 'Customer name', value: customer?.name }, { key: 'external_reference', label: 'Account reference (optional)', value: customer?.external_reference, required: false, max: 128, hint: 'A customer/billing reference—not a provider password.' }, { key: 'notes', label: 'Private notes (optional)', type: 'textarea', value: customer?.notes, required: false }];
   modal(customer ? 'Edit customer' : 'Add customer' + (tenant ? ' · ' + tenant.name : ''), schema, async values => { if (tenant) values.tenant_id = tenant.id; await api(customer ? '/api/customers/' + customer.id : '/api/customers', values); toast('Customer saved.'); });
@@ -131,8 +157,9 @@ function devicesTable(items) {
   }));result.classList.add('device-records');result.querySelectorAll('tbody tr').forEach((row,i)=>{if(items[i])row.dataset.deviceId=items[i].id;});return result;
 }
 async function overview(epoch) {
-  const [stats, devices] = await Promise.all([api('/api/overview'), api('/api/devices')]); if (epoch !== state.epoch) return;
-  const main = $('main'); main.replaceChildren(heading('Operations overview', 'Your customers and devices, in one workspace.', [button('Refresh', route)]));
+  const [stats, devices] = await Promise.all([api('/api/overview?'+scopeQuery().slice(1)), api('/api/devices?'+scopeQuery().slice(1))]); if (epoch !== state.epoch) return;
+  const main = $('main'); main.replaceChildren(heading('Operations overview', state.user.role==='owner'?'Use your owner workspace or review all reseller workspaces. Choose the scope below.':'Your customers and devices, in one workspace.', [button('Refresh', route)]));
+  scopePicker(main);
   const enrollmentNote=el('details',null,'context-note');enrollmentNote.append(el('summary','How enrollment and check-ins work'),el('p','Only devices from created, verified linked resellers enter this service. Unmatched resellers are quietly ignored: no pending device or customer is created. Existing owner-managed/unassigned inventory is retained. Local simulators remain labelled TEST.'));
   const cards = el('div', null, 'stats'); [['Managed devices', stats.total, `${stats.not_enrolled} awaiting enrollment`], ['Recently connected', stats.connected, 'App check-ins, not device power state'], ['Customers', stats.customers, 'Visible to your account only'], ['Queued / in progress', stats.pending_commands, 'Delivery is not confirmation of execution']].forEach(([label, count, note]) => { const card = el('div', null, 'stat'); card.append(el('div', label, 'stat-label'), el('strong', count), el('span', note)); cards.append(card); });
   const updateNote=el('section',null,'platform-note');const copy=el('div');copy.append(el('h2','One update source of truth'),el('p','Every customer and reseller app uses the platform owner’s update channel. Resellers cannot upload APKs, change update URLs or disable mandatory updates.'));updateNote.append(icon('enrollments'),copy);
@@ -141,11 +168,12 @@ async function overview(epoch) {
 async function records(resource, epoch,customerId=null) {
   if(resource==='devices')return fleetPage(epoch,customerId);
   const main = $('main'); main.replaceChildren(heading(resource === 'devices' ? 'Devices' : 'Customers', resource === 'customers' ? 'Customers are created by verified enrollment. Line usernames are verified on app check-in; refresh after the 111 app reports in.' : 'Search, manage and inspect your assigned records.', [button('Refresh', route)]));
+  scopePicker(main);
   const box = panel(null); const filters = el('form', null, 'filters'); const search = el('input'); search.placeholder = resource === 'devices' ? 'Search device, model, customer or ID…' : 'Search customer or reference…'; search.setAttribute('aria-label', 'Search');
   filters.append(search, button('Search', () => load(1))); filters.onsubmit = e => { e.preventDefault(); load(1); }; const resultBox = el('div'); box.append(filters, resultBox); main.append(box);
   async function load(page = 1) {
     try {
-      const data = await api(`/api/${resource}?page=${page}&search=${encodeURIComponent(search.value)}${customerId?'&customer_id='+encodeURIComponent(customerId):''}`); if (epoch !== state.epoch) return;
+      const data = await api(`/api/${resource}?page=${page}&search=${encodeURIComponent(search.value)}${scopeQuery()}${customerId?'&customer_id='+encodeURIComponent(customerId):''}`); if (epoch !== state.epoch) return;
        const content = resource === 'devices' ? devicesTable(data.items) : table(['Line username / customer', 'Workspace', 'Reference', 'Actions'], data.items.map(c => { const actions = el('div', null, 'actions'); actions.append(button('View devices',()=>{location.hash='devices/customer/'+c.id;}),button('Edit notes', () => customerForm(c))); const name = c.line_username || (/^Panel line [0-9]+$/.test(c.name) ? 'Username awaiting app check-in' : c.name); return [cellName(name, c.notes), c.tenant_name, c.external_reference || '—', actions]; }));
       resultBox.replaceChildren(content, pagination(data, load));
     } catch (e) { toast(e.message); }
@@ -153,14 +181,17 @@ async function records(resource, epoch,customerId=null) {
   await load();
 }
 async function fleetPage(epoch,customerId=null){
+  if(customerId){const customer=await api('/api/customers/'+customerId);if(epoch!==state.epoch)return;if(state.user.role==='owner'){await chooseWorkspace(customer.tenant_id);if(epoch!==state.epoch)return;state.workspaceScope=customer.tenant_id;}}
   const main=$('main');const count=el('p','Loading devices…','fleet-count');const head=heading('Devices','', [button('Refresh',()=>load())]);head.querySelector('p').replaceWith(count);main.replaceChildren(head);main.classList.add('fleet-page');
+  scopePicker(main);
   const form=el('form',null,'fleet-filters');const search=el('input');search.type='search';search.placeholder='Search device, model or customer username…';search.setAttribute('aria-label','Search');const policy=el('select');policy.setAttribute('aria-label','App access filter');for(const[value,text]of [['','Current enrollments'],['active','Active'],['suspended','Suspended'],['blocked','Blocked'],['removed','Revoked enrollments']]){const o=el('option',text);o.value=value;policy.append(o);}
   const submit=el('button','Search');submit.type='submit';form.append(search,policy,submit);const results=el('div',null,'fleet-results');const note=el('p','Connection reflects app check-ins—not device power or stream health. Access changes and reseller removal are in the device’s Summary.','fleet-help');main.append(form,results,note);let page=1,serial=0;
-  async function load(next=page){const turn=++serial;page=next;results.setAttribute('aria-busy','true');try{const data=await api(`/api/devices?page=${page}&search=${encodeURIComponent(search.value)}&policy=${policy.value}${customerId?'&customer_id='+encodeURIComponent(customerId):''}`);if(epoch!==state.epoch||turn!==serial)return;count.textContent=`${data.total} ${search.value||policy.value?'matching ':''}${data.total===1?'device':'devices'}${customerId?' for this customer':''}`;results.replaceChildren(devicesTable(data.items),pagination(data,load));}catch(e){if(epoch===state.epoch&&turn===serial)results.replaceChildren(panel('Could not load devices',el('p',e.message,'error'),button('Try again',()=>load())));}finally{if(turn===serial)results.removeAttribute('aria-busy');}}
+  async function load(next=page){const turn=++serial;page=next;results.setAttribute('aria-busy','true');try{const data=await api(`/api/devices?page=${page}&search=${encodeURIComponent(search.value)}&policy=${policy.value}${scopeQuery()}${customerId?'&customer_id='+encodeURIComponent(customerId):''}`);if(epoch!==state.epoch||turn!==serial)return;count.textContent=`${data.total} ${search.value||policy.value?'matching ':''}${data.total===1?'device':'devices'}${customerId?' for this customer':''}`;results.replaceChildren(devicesTable(data.items),pagination(data,load));}catch(e){if(epoch===state.epoch&&turn===serial)results.replaceChildren(panel('Could not load devices',el('p',e.message,'error'),button('Try again',()=>load())));}finally{if(turn===serial)results.removeAttribute('aria-busy');}}
   form.onsubmit=e=>{e.preventDefault();load(1);};policy.onchange=()=>load(1);await load(1);
 }
 async function resellers(epoch) {
-  const main = $('main'); main.replaceChildren(heading('Reseller workspaces', 'Strictly isolated customer and device access.', [button('Create reseller', resellerForm, 'primary')]));
+  const main = $('main'); main.replaceChildren(heading('Workspaces & panel links', 'Your existing owner workspace and isolated reseller workspaces.', [button('Create reseller', resellerForm, 'primary')]));
+  const own=panel('My owner workspace');for(const[label,hash]of [['My customers','customers'],['My devices','devices'],['My app brand','branding/'+state.workspaceSelf.id],['My trials & contacts','trials/'+state.workspaceSelf.id],['My device defaults','library/defaults/workspace/'+state.workspaceSelf.id]])own.append(button(label,()=>{if(hash==='customers'||hash==='devices')state.workspaceScope=state.workspaceSelf.id;location.hash=hash;}));main.append(own);
   const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
   if (system.pending_migrations.length) { main.replaceChildren(heading('Database upgrade required', 'Open Enrollments and apply the database upgrade before linking panel resellers.')); return; }
   const links = (await api('/api/panel-resellers')).items; if (epoch !== state.epoch) return;
@@ -171,12 +202,13 @@ async function resellers(epoch) {
       const rows = data.items.map(t => {
         const linked = links.find(p => p.tenant_id === t.id);
         const actions = el('div', null, 'actions');
-        if(linked&&t.status==='active')actions.append(button('Device defaults',()=>{location.hash='library/defaults/workspace/'+t.id;}));
-        if(linked&&t.status==='active'&&t.kind==='reseller')actions.append(button('App brand',()=>{location.hash='branding/'+t.id;}));
-        if(linked&&t.kind==='reseller')actions.append(button('Trials & contacts',()=>{location.hash='trials/'+t.id;}));
+        if(t.status==='active'&&(linked||t.kind==='owner'))actions.append(button('Device defaults',()=>{location.hash='library/defaults/workspace/'+t.id;}));
+        if(t.status==='active'&&(linked||t.kind==='owner'))actions.append(button('App brand',()=>{location.hash='branding/'+t.id;}));
+        if(linked||t.kind==='owner')actions.append(button('Trials & contacts',()=>{location.hash='trials/'+t.id;}));
         if (!linked) actions.append(button('Link panel reseller', () => modal('Link existing panel reseller', [{ key: 'username', label: 'Exact panel login username', value: t.name, max: 150, hint: 'The worker must verify this active account. This permanent ID link enables automatic device/customer enrollment. Existing ownership is never silently transferred.' }], async values => { await api('/api/tenants/' + t.id + '/panel-link', values); toast('Panel reseller verified and linked. Pending apps will retry with fresh ownership proofs.'); })));
         if (t.kind !== 'owner') actions.append(button('Manage', () => modal('Reseller policy', [{ key: 'status', label: 'Status', value: t.status, options: [['active', 'Active'], ['suspended', 'Suspended — signs reseller out']] }, { key: 'device_limit', label: 'Device allocation', type: 'number', value: t.device_limit }], async values => { if (values.status === 'suspended' && !confirm('Suspend this reseller and cancel pending device actions? This does not wipe customer data.')) throw new Error('No changes made.'); await api('/api/tenants/' + t.id, values); toast('Reseller policy saved.'); })));
-        return [cellName(t.name, linked ? `Panel: ${linked.username} · ID ${linked.panel_id}` : 'Panel not linked · manual review'), badge(t.status), `${t.devices_used} / ${t.device_limit}`, actions];
+        if(t.kind==='owner')actions.append(button('Owner device allocation',()=>modal('Owner device allocation',[{key:'device_limit',label:'Device allocation',type:'number',value:t.device_limit}],v=>api('/api/tenants/'+t.id,{status:'active',device_limit:v.device_limit}))));
+        return [cellName(workspaceName(t), linked ? `Panel: ${linked.username} · ID ${linked.panel_id}` : 'Panel not linked · manual review'), badge(t.status), `${t.devices_used} / ${t.device_limit}`, actions];
       });
       results.replaceChildren(table(['Workspace', 'Status', 'Allocation', 'Actions'], rows), pagination(data, load));
     } catch (error) { toast(error.message); }
@@ -187,7 +219,7 @@ function detailRows(entries) { const dl = el('dl', null, 'detail-grid'); entries
 const sortOptions = [['provider', 'Provider order'], ['number', 'Channel number'], ['name', 'Channel name (A–Z)']];
 function presetForm(preset = null,tenantId=null) {
   modal(preset ? 'Edit settings preset' : 'Create settings preset', [
-    ...(!preset && state.user.role === 'owner' ? [{...tenantField(),value:tenantId||undefined}] : []),
+    ...(!preset && state.user.role === 'owner' ? [{...tenantField(),value:tenantId||toolWorkspace()}] : []),
     { key: 'name', label: 'Preset name', max: 80, value: preset?.name || '' },
     { key: 'sort_order', label: 'Channel sorting', options: sortOptions, value: preset?.sort_order || 'provider', hint: 'This preset changes channel sorting only. It never changes playlists, credentials, playback engines or app updates.' }
   ], async values => { await api(preset ? '/api/settings-presets/' + preset.id : '/api/settings-presets', values); toast('Preset saved. Devices are unchanged until you explicitly apply it from their Settings tab.'); });
@@ -216,7 +248,7 @@ async function preferenceProfilesPanel(main,epoch,tenantId=null) {
   const search=el('input');search.placeholder='Search broader settings profiles…';search.setAttribute('aria-label','Search broader settings profiles');const result=el('div');box.append(search,button('Search settings profiles',()=>load()),result);
   let rules={};
   function form(profile=null) {
-    const schema=[...(!profile&&state.user.role==='owner'?[{...tenantField(),value:tenantId||undefined}]:[]),{key:'name',label:'Settings profile name',max:80,value:profile?.name||''},...Object.entries(rules).map(([key,choices])=>({key,label:key.replaceAll('_',' '),required:false,value:profile?.values[key]||'',options:[['','Not managed by this base profile'],...choices.map(v=>[v,v])]}))];
+    const schema=[...(!profile&&state.user.role==='owner'?[{...tenantField(),value:tenantId||toolWorkspace()}]:[]),{key:'name',label:'Settings profile name',max:80,value:profile?.name||''},...Object.entries(rules).map(([key,choices])=>({key,label:key.replaceAll('_',' '),required:false,value:profile?.values[key]||'',options:[['','Not managed by this base profile'],...choices.map(v=>[v,v])]}))];
     modal(profile?'Edit broader settings profile':'Create broader settings profile',schema,async v=>{const values={};for(const key of Object.keys(rules))if(v[key]!=='')values[key]=v[key];await api(profile?`/api/preference-profiles/${profile.id}`:'/api/preference-profiles',{name:v.name,values,...(profile?{expected_version:profile.version}:{...(v.tenant_id?{tenant_id:v.tenant_id}:{})})});},'Save profile — do not push');
   }
   box.prepend(button('Create broader settings profile',()=>form(),'primary'));
@@ -598,7 +630,7 @@ async function devicePage(id, epoch) {
       const columns = el('div', null, 'columns'); columns.append(panel('Device information', detailRows([['Installation record', d.id], ['Model', d.model], ['OS version', d.os_version], ['App version', d.app_version], ['Storage free / total', d.storage_total === null ? null : `${(d.storage_free / 1073741824).toFixed(1)} / ${(d.storage_total / 1073741824).toFixed(1)} GB`], ['Capabilities', d.capabilities.join(', ') || 'None reported']])), panel('Connection & policy', detailRows([['Policy', d.policy], ['Connection', d.presence.replaceAll('_', ' ')], ['First seen / provisioned', date(d.created_at)], ['Last app check-in', date(d.last_seen_at)], ['Observed IP', d.last_ip]]))); body.append(columns);
       const policyActions = el('div', null, 'actions'); policyActions.append(button('Edit notes', () => modal('Device details', [{ key: 'label', label: 'Nickname', value: d.label }, { key: 'notes', label: 'Private notes', type: 'textarea', value: d.notes, required: false }], async values => { await api('/api/devices/' + d.id, values); toast('Device details saved.'); })));
        const policies = d.policy === 'removed' ? [] : [...(d.policy === 'active' ? [['suspended', 'Suspend app']] : (d.policy !== 'blocked' || state.user.role === 'owner' ? [['active', 'Reactivate']] : [])), ...(state.user.role === 'owner' ? [['blocked', 'Block app'], ['removed', 'Revoke enrollment (locks app)']] : [])];
-       if (state.user.role === 'owner' && !d.reseller_detached) policyActions.append(button('Remove from reseller — keep app working', async () => {
+       if (state.user.role === 'owner' && !d.reseller_detached && d.tenant_id!==state.workspaceSelf?.id) policyActions.append(button('Remove from reseller — keep app working', async () => {
          if (!confirm('Remove this device from its reseller and move it to the owner-only Unassigned devices area? This clears management restrictions, cancels old queued commands and keeps the app login/data intact. It does NOT change the IPTV subscription in your panel.')) return;
          try { await api('/api/devices/' + d.id + '/detach-reseller', {}); toast('Reseller access removed. App remains active.'); await route(); } catch (e) { toast(e.message); }
        }));
@@ -673,11 +705,13 @@ async function devicePage(id, epoch) {
   await select(state.deviceTab?.id === id && names.includes(state.deviceTab.name) ? state.deviceTab.name : 'Overview');
 }
 async function audit(epoch) {
-  const main = $('main'); main.replaceChildren(heading('Activity log', 'Who changed what—without passwords, tokens or provider URLs.')); const box = panel(null); main.append(box);
-  const load = async (page = 1) => { const result = await api('/api/audit?page=' + page); if (epoch !== state.epoch) return; box.replaceChildren(table(['Time', 'Action', 'Record', 'Details'], result.items.map(r => [date(r.created_at), r.action, el('span', r.resource_id || '—', 'mono'), r.metadata])), pagination(result, load)); };
+  const main = $('main'); main.replaceChildren(heading('Activity log', 'Who changed what—without passwords, tokens or provider URLs.'));
+  scopePicker(main);
+  const box=panel(null);main.append(box);
+  const load = async (page = 1) => { const result = await api('/api/audit?page=' + page+scopeQuery()); if (epoch !== state.epoch) return; box.replaceChildren(table(['Time', 'Action', 'Record', 'Details'], result.items.map(r => [date(r.created_at), r.action, el('span', r.resource_id || '—', 'mono'), r.metadata])), pagination(result, load)); };
   await load();
 }
-async function morePage(epoch){const main=$('main');main.replaceChildren(heading('Workspace tools','Saved configurations, activity and administration—separate from customer playback controls.'));const links=[['Library','Layouts, settings profiles and new-device defaults','library'],['Activity log','See who requested each action and its result','audit'],...(state.user.role==='owner'?[['Resellers & panel links','Verified workspace admission and reseller accounts','resellers'],['Enrollments & website upgrades','Owner enrollment tools and pending database upgrades','enrollments']]:[])];const box=panel('Tools');for(const[title,description,hash]of links){const a=el('a',null,'workspace-tool-link');a.href='#'+hash;a.append(cellName(title,description),el('span','→'));box.append(a);}main.append(box);}
+async function morePage(epoch){const main=$('main');main.replaceChildren(heading('Workspace tools','Saved configurations, activity and administration—separate from customer playback controls.'));const links=[['Library','Layouts, settings profiles and new-device defaults','library'],['Activity log','See who requested each action and its result','audit'],...(state.user.role==='owner'?[['Workspaces & panel links','Owner workspace, verified reseller links and device allocations','resellers'],['Enrollments & website upgrades','Owner enrollment tools and pending database upgrades','enrollments']]:[])];const box=panel('Tools');for(const[title,description,hash]of links){const a=el('a',null,'workspace-tool-link');a.href='#'+hash;a.append(cellName(title,description),el('span','→'));box.append(a);}main.append(box);}
 function downloadText(filename, content) {
   const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
   const a = el('a'); a.href = url; a.download = filename; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -761,7 +795,8 @@ async function enrollments(epoch) {
 }
 async function route() {
   $('main').classList.remove('fleet-page');
-  if (!state.user) return; const epoch = ++state.epoch; const hash = location.hash.slice(1) || 'overview'; const section = hash.startsWith('device/')||hash.startsWith('devices/') ? 'devices' : hash.startsWith('library')||hash==='presets'?'library':hash.startsWith('branding')?'branding':hash.startsWith('trials')?'trials':['resellers','enrollments','audit'].includes(hash)?'more':hash;
+  if (!state.user||!state.workspaceSelf) return; const epoch = ++state.epoch; const hash = location.hash.slice(1) || 'overview'; const section = hash.startsWith('device/')||hash.startsWith('devices/') ? 'devices' : hash.startsWith('library')||hash==='presets'?'library':hash.startsWith('branding')?'branding':hash.startsWith('trials')?'trials':['resellers','enrollments','audit'].includes(hash)?'more':hash;
+  workspaceTitle();
   const navKey=hash==='presets'?'library/settings':hash.startsWith('library/layout/')?'library/layout/new':hash.startsWith('library/layouts')?'library':hash.startsWith('library/')?hash.split('/').slice(0,2).join('/'):['resellers','enrollments','audit'].includes(hash)?hash:section;
   document.querySelectorAll('#navigation a').forEach(a => a.classList.toggle('active', a.dataset.page === navKey));
   document.querySelectorAll('#bottom-nav a').forEach(a=>{const key=a.getAttribute('href').slice(1);a.classList.toggle('active',key===section||(key==='more'&&section==='library'));});
@@ -788,6 +823,7 @@ $('logout-button').addEventListener('click', async () => { if (hasUnsentDrafts()
 window.addEventListener('beforeunload', e => { if (hasUnsentDrafts()) { e.preventDefault(); e.returnValue = ''; } });
 $('password-button').addEventListener('click', () => modal('Change your password', [{ key: 'current_password', label: 'Current password', type: 'password' }, { key: 'new_password', label: 'New password', type: 'password', hint: 'Changing your password signs out every session, including this one.' }], async values => { await api('/api/password', values); signedOut(); toast('Password changed. Sign in again.'); }, 'Change password'));
 window.addEventListener('hashchange', route);
+let lastVersionCheck=0;window.addEventListener('focus',()=>{if(!state.user||Date.now()-lastVersionCheck<60000)return;lastVersionCheck=Date.now();api('/api/status').then(status=>checkSiteVersion(status.version)).catch(()=>{});});
 (async () => {
   try {
     const status = await api('/api/status');

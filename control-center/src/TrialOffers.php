@@ -33,7 +33,7 @@ final class TrialOffers
     public function publish(array $actor,array $input):array {
         $this->ready();Input::keys($input,['tenant_id','expected_revision','enabled','daily_limit','confirmed_public_mode']);if(!is_bool($input['enabled']??null))throw new Problem(422,'Choose an offer publication state.');
         return $this->db->transaction(function()use($actor,$input):array {
-            $t=$this->management->tenant($actor,Input::id($input['tenant_id']??$actor['tenant_id']),true);$old=$this->db->one('SELECT * FROM trial_offer_publications WHERE tenant_id=? FOR UPDATE',[$t['id']]);$revision=Input::integer($input['expected_revision']??0,0,100000);if($revision!==(int)($old['revision']??0))throw new Problem(409,'Offer publication changed; reload it.');
+            $t=$this->management->workspace($actor,$input['tenant_id']??null,true);$old=$this->db->one('SELECT * FROM trial_offer_publications WHERE tenant_id=? FOR UPDATE',[$t['id']]);$revision=Input::integer($input['expected_revision']??0,0,100000);if($revision!==(int)($old['revision']??0))throw new Problem(409,'Offer publication changed; reload it.');
             if(!$input['enabled']&&$old){$this->db->query('UPDATE trial_offer_publications SET enabled=0,revision=revision+1,updated_by=? WHERE tenant_id=?',[$actor['id'],$t['id']]);$this->auth->audit($actor,'trial.offer_unpublished',null,$t['id']);return ['revision'=>$revision+1,'published'=>false,'existing_trials_changed'=>false];}
             if(!$input['enabled'])return ['revision'=>0,'published'=>false,'existing_trials_changed'=>false];
             if(!$this->enabled()||($input['confirmed_public_mode']??null)!==true)throw new Problem(409,'Public signup rollout is off or has not been explicitly confirmed.');$daily=Input::integer($input['daily_limit']??$this->dailyCap(),1,$this->dailyCap());$s=$this->snapshot($actor,$t['id']);
@@ -53,9 +53,11 @@ final class TrialOffers
         $s=$this->admitted($brandId);if(!$s)return ['available'=>false];return ['available'=>true,'offer_revision'=>hash('sha256',$s['policy_stamp']),'brand_name'=>$s['brand_name'],'duration'=>$s['plan']['duration'],'period'=>$s['plan']['period'],'max_connections'=>$s['plan']['max_connections'],'notice_version'=>1,'notice'=>'Your first name and phone number will be shared with this reseller for trial setup and follow-up. No phone verification or automated messages.'];
     }
     public function managerState(array $actor,array $input):array {
-        $this->ready();Input::keys($input,['tenant_id']);$t=$this->management->tenant($actor,Input::id($input['tenant_id']??$actor['tenant_id']));$row=$this->db->one('SELECT revision,enabled,daily_limit FROM trial_offer_publications WHERE tenant_id=?',[$t['id']]);$reason='';$s=null;
+        $this->ready();Input::keys($input,['tenant_id']);$t=$this->management->workspace($actor,$input['tenant_id']??null);$row=$this->db->one('SELECT revision,enabled,daily_limit FROM trial_offer_publications WHERE tenant_id=?',[$t['id']]);$reason='';$s=null;
         try{$s=$this->snapshot($actor,$t['id']);}catch(Problem $e){$reason=$e->status<500?$e->getMessage():'Offer prerequisites need owner review.';}
+        $pilot=$this->pilotBrand();$pilotStatus=null;
+        if($pilot!==null){$brand=$this->db->one('SELECT id FROM app_brands WHERE tenant_id=?',[$t['id']]);if(!$brand||$brand['id']!==$pilot){$s=null;$reason='Only the owner-selected single-account pilot brand is enabled.';}elseif($actor['role']==='owner'){$operation=$this->db->one('SELECT id,state FROM trial_signup_operations WHERE brand_id=? LIMIT 1',[$pilot]);$pilotStatus=['operation_limit'=>1,'remaining'=>$operation?0:1,'state'=>$operation['state']??null];}}
         $active=false;if($s&&$this->enabled())$active=$this->admitted($s['brand_id'])!==null;
-        return ['publication'=>$row,'rollout_enabled'=>$this->enabled(),'can_publish'=>$s!==null&&$this->enabled(),'active'=>$active,'daily_cap'=>$this->dailyCap(),'access_mode'=>'public_brand_signup','reason'=>$reason];
+        return ['publication'=>$row,'rollout_enabled'=>$this->enabled(),'can_publish'=>$s!==null&&$this->enabled(),'active'=>$active,'daily_cap'=>$this->dailyCap(),'access_mode'=>'public_brand_signup','reason'=>$reason,'pilot'=>$pilotStatus];
     }
 }

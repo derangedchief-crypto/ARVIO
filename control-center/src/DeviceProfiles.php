@@ -30,7 +30,7 @@ final class DeviceProfiles
     public function save(array $actor,?string $id,array $input):array {
         $this->ready();Input::keys($input,['tenant_id','name','layout_template_id','layout_version','settings_profile_id','settings_version','sort_order','prebuffer_seconds','expected_version','archived']);$name=Input::text($input['name']??null,'device profile name',80);$archive=$input['archived']??false;if(!is_bool($archive))throw new Problem(422,'Invalid archive flag.');
         return $this->db->transaction(function()use($actor,$id,$input,$name,$archive):array {
-            $old=$id?$this->profile($actor,$id):null;$tenant=$this->management->tenant($actor,$old['tenant_id']??Input::id($input['tenant_id']??$actor['tenant_id']),true);if($tenant['status']!=='active')throw new Problem(409,'Workspace is suspended.');
+            $old=$id?$this->profile($actor,$id):null;$tenant=$this->management->workspace($actor,$old['tenant_id']??$input['tenant_id']??null,true);if($tenant['status']!=='active')throw new Problem(409,'Workspace is suspended.');
             if($old){$current=$this->db->one('SELECT * FROM device_setup_profiles WHERE id=? FOR UPDATE',[$id]);if((int)$current['version']!==Input::integer($input['expected_version']??null,1,99999))throw new Problem(409,'Device profile changed; reload it first.');$version=(int)$current['version']+1;}
             else {if((int)$this->db->query('SELECT COUNT(*) FROM device_setup_profiles WHERE tenant_id=? AND archived=0',[$tenant['id']])->fetchColumn()>=100)throw new Problem(409,'Archive an unused device profile first (100/workspace).');$id=Database::id();$version=1;}
             $definition=$archive&&$old?$old['definition']:$this->definition($tenant['id'],$input);$json=json_encode($definition,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);
@@ -44,7 +44,7 @@ final class DeviceProfiles
     public function setPolicy(array $actor,array $input):array {
         $this->ready();Input::keys($input,['tenant_id','profile_id','profile_version','enabled','expected_revision']);if(!is_bool($input['enabled']??null))throw new Problem(422,'Choose whether automatic setup is enabled.');
         return $this->db->transaction(function()use($actor,$input):array {
-            $tenant=$this->management->tenant($actor,Input::id($input['tenant_id']??$actor['tenant_id']),true);$profile=$this->profile($actor,Input::id($input['profile_id']??null));$version=Input::integer($input['profile_version']??null,1,100000);if($tenant['status']!=='active')throw new Problem(409,'Workspace suspended.');
+            $tenant=$this->management->workspace($actor,$input['tenant_id']??null,true);$profile=$this->profile($actor,Input::id($input['profile_id']??null));$version=Input::integer($input['profile_version']??null,1,100000);if($tenant['status']!=='active')throw new Problem(409,'Workspace suspended.');
             $prior=$this->db->one('SELECT * FROM device_setup_defaults WHERE tenant_id=? FOR UPDATE',[$tenant['id']]);$revision=Input::integer($input['expected_revision']??0,0,PHP_INT_MAX);if($revision!==(int)($prior['revision']??0))throw new Problem(409,'Default policy changed; reload it first.');
             $retainPinned=$prior&&$prior['profile_id']===$profile['id']&&(int)$prior['profile_version']===$version;
             if($profile['tenant_id']!==$tenant['id']||($input['enabled']&&$profile['archived'])||(!$retainPinned&&($profile['archived']||$version!==(int)$profile['version'])))throw new Problem(409,'Choose an active device profile in this workspace; existing pins can be retained.');

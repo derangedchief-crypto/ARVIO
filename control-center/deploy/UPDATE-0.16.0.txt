@@ -1,0 +1,39 @@
+Extreme Control Center0.16.0 — usable owner workspace throughout the website
+
+WEBSITE ONLY: /www/wwwroot/control.fecxbrfzku.net on38.190.133.176.
+
+1. Back up the existing website/database using your normal aaPanel backup.
+2. Extract the UPDATE ZIP into the existing website root, overwriting website source.
+   It contains NO config.php and NO storage/ entries: original private connections,
+   key bytes, APK storage ACLs and trial history remain in place.
+3. As WEBSITE root run:
+     /etc/init.d/php-fpm-84 restart
+4. Reload the website with Ctrl+Shift+R (or close/reopen its browser tab). The visible
+   version should be0.16.0. An already-open older tab cannot replace its own JS until
+   reloaded. New0.16 tabs show a protected reload notice on future site upgrades.
+
+No new migration, worker reinstall, APK install/rebuild, dispatcher source repin,
+panel relink or trial setup is required. DO NOT rerun enable-owner-trial-pilot.sh,
+reset history, or re-publish the existing pilot merely to install this UI/API fix.
+
+WHAT CHANGES
+- My owner workspace is always available via the authenticated self context, even
+  when a cached/partial initial roster omitted it. No extra reseller login/tenant.
+- Shared owner selection and a direct Use my owner workspace action in branding,
+  trials, Library layouts/settings/device profiles and new-device defaults.
+- Workspace search is server-paginated, not silently limited to the first page.
+- Dashboard/customers/devices/activity log have explicit own-workspace filters;
+  All workspaces preserves the owner's aggregate administration view.
+- Workspaces & panel links includes the owner row and owner shortcuts/allocation.
+  An owner cannot suspend its own workspace through the reseller suspension action.
+- The header names the actual scope. Owner-held devices are not labelled as needing
+  removal from a reseller merely because their detached flag is false.
+- Owner APIs resolve missing tenant_id to the existing owner workspace for supported
+  resource creation/read operations. Cross-tenant reseller requests still fail.
+- The existing single-account pilot is displayed accurately and remains hard bounded.
+
+WHAT DOES NOT CHANGE
+MarcPanel's permanent link, brand/package/artwork, centrally signed APKs/updater,
+current approved plan/default/offer/counter, contact retention, saved native data,
+viewing rights, payment/activation/auth services and production release policy.
+This does not create a trial, move customers/devices or enable new default actions.

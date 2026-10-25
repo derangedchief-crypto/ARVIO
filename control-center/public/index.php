@@ -29,6 +29,9 @@ try {
         if (!extension_loaded($extension)) throw new Problem(503, 'Enable required PHP extensions: PDO/MySQL, mbstring, OpenSSL, fileinfo and cURL.');
     }
     $config = new Config(dirname(__DIR__));
+    $version=trim(file_get_contents(dirname(__DIR__).'/VERSION'));
+    if(!preg_match('/^[0-9]+\.[0-9]+\.[0-9]+$/D',$version))throw new Problem(503,'Invalid website version.');
+    header('X-Control-Version: '.$version);
     Http::guard($config);
     $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -37,7 +40,11 @@ try {
     }
     if ($method === 'GET' && $path === '/') {
         header('Content-Type: text/html; charset=utf-8');
-        readfile(__DIR__ . '/index.html'); exit;
+        $html=file_get_contents(__DIR__.'/index.html');
+        $html=preg_replace('~(/assets/[^" ?]+)\?v=[0-9.]+~','${1}?v='.$version,$html);
+        $html=preg_replace('~(<meta name="control-version" content=")[^"]*~','${1}'.$version,$html);
+        $html=preg_replace('~Device management · [0-9.]+~','Device management · '.$version,$html);
+        echo $html;exit;
     }
     if (!$config->configured()) {
         if ($method === 'GET' && $path === '/api/status') Http::json(['configured' => false, 'installed' => false]);

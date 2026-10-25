@@ -46,7 +46,7 @@ final class TrialContacts
         return ['id'=>$row['id'],'first_name'=>$contact['first_name']??'Contact removed','phone'=>$contact?($full?$contact['phone']:'••••'.substr($contact['phone'],-4)):null,'phone_verified'=>false,'contact_available'=>$contact!==null,'state'=>$state,'expires_at'=>$row['expires_at'],'trial_expires_at'=>$row['trial_expires_at'],'created_at'=>$row['created_at'],'last_verified_at'=>$row['status_checked_at'],'contact_retention_until'=>$row['contact_retention_until'],'plan_id'=>(int)$row['plan_id']];
     }
     public function listing(array $actor,array $input):array {
-        $this->ready();Input::keys($input,['tenant_id','page']);$t=$this->management->tenant($actor,Input::id($input['tenant_id']??$actor['tenant_id']));$page=Input::page($input['page']??1);$offset=($page-1)*25;
+        $this->ready();Input::keys($input,['tenant_id','page']);$t=$this->management->workspace($actor,$input['tenant_id']??null);$page=Input::page($input['page']??1);$offset=($page-1)*25;
         $total=(int)$this->db->query('SELECT COUNT(*) FROM trial_contacts WHERE tenant_id=?',[$t['id']])->fetchColumn();$rows=$this->db->all("SELECT * FROM trial_contacts WHERE tenant_id=? ORDER BY created_at DESC,id LIMIT 25 OFFSET $offset",[$t['id']]);
         return ['items'=>array_map(fn($r)=>$this->publicRow($r,false),$rows),'page'=>$page,'pages'=>max(1,(int)ceil($total/25)),'total'=>$total,'retention_days'=>$this->config->number('trial_contact_retention_days',90,7,365)];
     }
