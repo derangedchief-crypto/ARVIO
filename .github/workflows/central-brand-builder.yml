@@ -1,12 +1,14 @@
 name: Central Branded APK
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       mode:
         description: Build/retain, build/publish, or verify an uncertain publication
         type: choice
-        options: [build, publish, reconcile]
+        options: [build, publish, reconcile, fanout]
         default: build
         required: true
       channel:
@@ -30,7 +32,38 @@ permissions:
   contents: read
 
 jobs:
+  main-fanout:
+    name: Queue brand-preserving main updates (testing only)
+    if: github.event_name == 'push' || inputs.mode == 'fanout'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: brand-build-only
+    permissions:
+      contents: write
+    steps:
+      - name: Require owner-pinned trusted operator source
+        env:
+          OPERATOR_SHA: ${{ vars.BRAND_BUILDER_OPERATOR_SHA }}
+        run: '[[ "$OPERATOR_SHA" =~ ^[a-f0-9]{40}$ ]]'
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ vars.BRAND_BUILDER_OPERATOR_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify main and queue each live brand without altering its artwork
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRAND_OPERATOR_SHA: ${{ vars.BRAND_BUILDER_OPERATOR_SHA }}
+          BRAND_MAIN_SOURCE_SHA: ${{ github.sha }}
+          BRAND_BUILDER_SSH_TARGET: ${{ secrets.BRAND_BUILDER_SSH_TARGET }}
+          BRAND_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.BRAND_BUILDER_SSH_PRIVATE_KEY }}
+          BRAND_BUILDER_SSH_KNOWN_HOSTS: ${{ secrets.BRAND_BUILDER_SSH_KNOWN_HOSTS }}
+        run: python branding/rollout_main.py
+
   branded-apk:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'fanout'
     name: Isolated centrally signed branded APK
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -86,6 +119,17 @@ jobs:
         run: |
           set -euo pipefail
           python branding/configure_runner.py
+          # Public certificate digest only; no keystore/password/private key output.
+          certificate_sha=$(keytool -exportcert -keystore app/release.keystore -alias "$RELEASE_KEY_ALIAS" -storepass:env RELEASE_KEYSTORE_PASSWORD 2>/dev/null | sha256sum | cut -d ' ' -f 1)
+          echo "Signing preflight public certificate SHA256: $certificate_sha"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          sdk = os.environ.get('ANDROID_HOME')
+          print('Signing preflight ANDROID_HOME configured:', bool(sdk))
+          if sdk:
+              print('Signing preflight apksigner installed:', any(Path(sdk).glob('build-tools/*/apksigner')))
+          PY
           echo "BRAND_BUILDER_SSH_KEY_FILE=$RUNNER_TEMP/brand-builder-ssh-key" >> "$GITHUB_ENV"
           echo "BRAND_BUILDER_KNOWN_HOSTS_FILE=$RUNNER_TEMP/brand-builder-known-hosts" >> "$GITHUB_ENV"
 
