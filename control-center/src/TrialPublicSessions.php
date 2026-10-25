@@ -18,7 +18,7 @@ final class TrialPublicSessions
         $token=bin2hex(random_bytes(32));$tokenHash=hash('sha256',$token);$nonce=bin2hex(random_bytes(32));$operation=Database::id();$keyHash=hash('sha256',$der);$device=$this->secrets->mac("trial-device-v1\n".$input['device_claim']);$ipRef=$this->secrets->mac("trial-ip-v1\n$ip");
         $text=self::signingText($tokenHash,$brand,$operation,$nonce,$input['request_hash']);
         $this->db->transaction(function()use($offer,$tokenHash,$operation,$brand,$device,$details,$keyHash,$input,$nonce,$ipRef):void {
-            $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$offer['tenant_id']]);$current=$this->offers->admitted($brand);if(!$current||$current['policy_stamp']!==$offer['policy_stamp'])throw new Problem(409,'Trial offer changed; review it again.');
+            $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$offer['tenant_id']]);$current=$this->offers->admitted($brand,true);if(!$current||$current['policy_stamp']!==$offer['policy_stamp'])throw new Problem(409,'Trial offer changed; review it again.');
             $this->db->query('INSERT INTO trial_public_sessions (token_hash,operation_id,brand_id,tenant_id,device_ref,client_key,client_key_hash,request_hash_mac,nonce_hash,policy_stamp,ip_ref,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE))',[$tokenHash,$operation,$brand,$offer['tenant_id'],$device,$details['key'],$keyHash,$this->secrets->mac("trial-request-hash-v1\n".$input['request_hash']),hash('sha256',$nonce),$offer['policy_stamp'],$ipRef]);
         });
         return ['token'=>$token,'operation_id'=>$operation,'nonce'=>$nonce,'signing_text'=>$text,'expires_seconds'=>900];

@@ -50,6 +50,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.ui.theme.AccentWhite
@@ -97,6 +102,12 @@ fun XtreamGateScreen(
     if(com.arflix.tv.branding.AppBrand.id.isNotBlank()){
         val trialViewModel: com.arflix.tv.trials.TrialSignupViewModel=hiltViewModel()
         val trial by trialViewModel.uiState.collectAsStateWithLifecycle()
+        val lifecycleOwner=LocalLifecycleOwner.current
+        LaunchedEffect(lifecycleOwner,trialViewModel){
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED){
+                while(isActive){trialViewModel.refreshOffer();delay(30_000)}
+            }
+        }
         val activateTrial={trial.activationCode?.let { code ->
             if(!viewModel.uiState.value.isSubmitting){trialViewModel.handoffStarted();viewModel.onActivationCodeChange(code);viewModel.submit { trialViewModel.activationCompleted();onLoginSuccess() }}
         };Unit}

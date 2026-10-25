@@ -1,0 +1,45 @@
+Extreme Control Center0.17.0 — reseller app trial switch + admin global master
+
+WEBSITE ONLY on38.190.133.176, root /www/wwwroot/control.fecxbrfzku.net.
+Back up the existing website/database, then extract the UPDATE ZIP into that same
+site root. The archive excludes config.php and ALL storage/ entries.
+
+As WEBSITE root run:
+  /www/server/php/84/bin/php /www/wwwroot/control.fecxbrfzku.net/cli/console.php migrate
+  /etc/init.d/php-fpm-84 restart
+
+Then reload the site with Ctrl+Shift+R. Version should be0.17.0. Migration019 changes
+only platform_settings trial-control fields. Existing explicit publication determines
+its initial master state; a fresh site starts OFF. It preserves enrollment state,
+private keys/connections, seller opt-outs, approved plan/default/artifact bindings,
+published APKs, contact history, quotas and the existing single-account pilot bound.
+If the migration is pending, public trial admission fails closed until it is applied.
+
+TRIALS & CONTACTS
+- ADMIN: Allow in-app trials globally controls ALL branded apps including owner.
+- EACH RESELLER: Show trial button in this app affects only its own workspace/app.
+- Effective permission still requires BOTH switches, the private deployment gate,
+  current approved plan/default, verified panel link, published artifact/offer and
+  remaining eligibility/quota. The separate auth-worker gate is also mandatory.
+- The admin can manage a selected workspace, but a reseller cannot modify another
+  workspace or the master. All switch writes require CSRF and a current revision.
+- Global resume does not turn reseller opt-outs back ON, change plans or reset usage.
+- Old open forms cannot bypass a pause. No NEW session/signup/dispatch is authorized
+  after the relevant OFF decision. A dispatch already authorized/underway may finish;
+  no switch can recall an already-sent remote panel request.
+- Pending originals remain tracked/reserved while paused. Resuming retries only that
+  same operation. Already-created activation handoff, existing trial expiry/viewing,
+  ordinary activation and manual panel/portal operations are not revoked.
+
+APP DELIVERY
+The companion Android source refreshes on activation-screen entry/resume and about
+every30seconds while visible, hides Get a trial when OFF, and retains Retry existing
+request/Activate my trial for an already-started request. Generic apps still have no
+trial button. This native enhancement needs the next approved centrally signed APK;
+no APK was built/published here. Older installed builds pick up offer availability
+when entering/reopening the offer; server-side enforcement applies regardless.
+Each later switch change is server-managed: no per-reseller APK rebuild is needed.
+
+No worker reinstall/private-file editing, source repin, main merge, production APK,
+new live account or broader rollout is part of this update. Do NOT rerun the pilot
+setup or delete/reset its spent slot to test these switches.

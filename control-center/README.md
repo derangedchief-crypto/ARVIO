@@ -2,11 +2,35 @@
 
 PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 `https://control.fecxbrfzku.net`, delivered as an aaPanel Nginx upload/extract ZIP.
-Website-only owner-access fixes are isolated on `control-center-owner-trials`.
-The shared app/build branch remains pinned separately; this update does not change
-Android code, worker deployments, APK releases or source pins.
+Website and companion Android source fixes are isolated on `control-center-owner-trials`.
+The site archive never installs an APK or worker. Native source changes require a
+separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.16.0 (not yet deployed)
+## Current source update — 0.17.0 (not yet deployed)
+
+Trials & contacts has an owner-only **Allow in-app trials globally** master switch
+and a workspace-scoped **Show trial button in this app** switch. Resellers can change
+only their own app; they cannot read/change the master or override an admin pause.
+The master is persisted/version-guarded/audited in migration019. Fresh installations
+start OFF; upgrades preserve an already explicitly published offer without changing
+private deployment/worker gates, approved terms, publication stamps or quotas.
+
+Reseller opt-outs survive global OFF/ON. A valid seller preference may be prepared
+during the admin pause, but no new session/signup/dispatch is admitted while paused.
+Current locking reads serialize dispatch decisions with the switches; a request
+already authorized/underway can finish. Pending original operations pause without
+losing their request, reservation or identity and can resume as the SAME operation.
+Prepared activation handoffs, existing accounts and ordinary viewing remain usable.
+No pilot/history reset, credit/expiry change or broad rollout occurs by toggling.
+
+The companion app source refreshes its offer on activation-screen entry/resume and
+about every30 seconds only while that screen is visible. It hides NEW signup when
+unavailable, while retaining pending-request recovery and created-account activation.
+This enhancement awaits the next signed APK; existing builds already enforce the
+server decision when opening/refreshing the offer. No APK rebuild per toggle.
+See `deploy/UPDATE-0.17.0.txt` for the website/migration installation.
+
+## Previous source update — 0.16.0
 
 Owner workspace access is now shared across the whole site, rather than being a set
 of reseller-only exceptions. An authenticated workspace-context endpoint resolves the

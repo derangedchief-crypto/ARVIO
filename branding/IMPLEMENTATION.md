@@ -1,5 +1,22 @@
 # Storage, reseller branding and trials — development progress
 
+## Remote trial controls — website0.17.0 and companion app source
+
+Owner-only global master overrides the reseller/owner app's publication preference.
+Both are persisted, scoped, audited and revision guarded. Existing deployment,
+approved-plan/artifact, worker and pilot/quota gates remain mandatory. A global pause
+does not rewrite seller preferences; resume retains their opt-outs. New admission and
+dispatch decisions use current locking reads. Already-underway remote requests may
+finish; original pending operations pause/resume without releasing quota or minting a
+second identity. Prepared handoff and normal activation/viewing remain available.
+
+Native code refreshes on activation-screen entry/resume and about every30seconds only
+while visible. New signup disappears when unavailable, but an already-tracked request
+can still recover/activate. Optional paused metadata retains the old protocol state
+for installed-client compatibility. This source change and the optional-plus change
+below await a separately approved centrally signed APK; no per-toggle APK build is
+needed. Website installation requires migration019; no worker reinstall/key change.
+
 ## Native trial phone entry — optional plus (awaiting a signed APK release)
 
 The app accepts country-code-prefixed digits without requiring a typed `+`. Existing

@@ -16,7 +16,7 @@ final class TrialSignupBroker
         $id=$this->budgets->locked($session,fn()=> $this->db->transaction(function()use($session,$contact):string {
             $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$session['tenant_id']]);$s=$this->db->one('SELECT * FROM trial_public_sessions WHERE token_hash=? AND expires_at>UTC_TIMESTAMP() FOR UPDATE',[$session['token_hash']]);if(!$s)throw new Problem(401,'Trial session expired.');
             $existing=$this->db->one('SELECT id FROM trial_signup_operations WHERE id=?',[$s['resume_operation_id']??$s['operation_id']]);if($existing)return $existing['id'];
-            $offer=$this->offers->admitted($s['brand_id']);if(!$offer||$offer['policy_stamp']!==$s['policy_stamp'])throw new Problem(409,'Offer changed; review it before starting a new request.');
+            $offer=$this->offers->admitted($s['brand_id'],true);if(!$offer||$offer['policy_stamp']!==$s['policy_stamp'])throw new Problem(409,'Offer changed; review it before starting a new request.');
             $eligibility=$this->secrets->mac("trial-eligibility-v1\n".$offer['panel_reseller_id']."\n".$contact['phone']."\n".$s['device_ref']);$old=$this->db->one('SELECT * FROM trial_signup_operations WHERE eligibility_key=? FOR UPDATE',[$eligibility]);
             if($old){if(!hash_equals($old['client_key_hash'],$s['client_key_hash']))throw new Problem(409,'This customer/device has already requested or used a trial with this reseller.');$this->db->query('UPDATE trial_public_sessions SET resume_operation_id=? WHERE token_hash=?',[$old['id'],$s['token_hash']]);return $old['id'];}
             $this->offers->admitNewOperation($s['brand_id']);
@@ -35,6 +35,7 @@ final class TrialSignupBroker
             $this->process($job['id']);$job=$this->db->one('SELECT * FROM trial_signup_operations WHERE id=?',[$job['id']]);
         }
         $result=['state'=>$job['state'],'operation_id'=>$job['id']];
+        if(in_array($job['state'],['reserved','sending','retry_wait','registration_pending'],true)&&$this->offers->paused($job['brand_id']))$result['paused']=true;
         if($job['state']==='prepared'){
             if($job['activation_cipher']===null||$job['activation_until']===null||strtotime($job['activation_until'].' UTC')<=time())return ['state'=>'already_created','operation_id'=>$job['id']];
             $data=$this->open('trial-activation-v1',$job,$job['activation_cipher']);$result['activation_code']=$data['activation_code'];$result['expires_at']=$data['expires_at'];
@@ -48,11 +49,17 @@ final class TrialSignupBroker
         });
     }
     public function process(string $id):void {
-        $request=$this->db->transaction(function()use($id):?array {
-            $before=$this->db->one('SELECT tenant_id FROM trial_signup_operations WHERE id=?',[$id]);if(!$before)return null;$this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$before['tenant_id']]);$job=$this->db->one('SELECT * FROM trial_signup_operations WHERE id=? FOR UPDATE',[$id]);
+        $before=$this->db->one('SELECT tenant_id FROM trial_signup_operations WHERE id=?',[$id]);if(!$before)return;
+        $request=$this->db->transaction(function()use($id,$before):?array {
+            $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$before['tenant_id']]);$job=$this->db->one('SELECT * FROM trial_signup_operations WHERE id=? FOR UPDATE',[$id]);
             if(!$job||!in_array($job['state'],['reserved','sending','retry_wait','registration_pending'],true)||strtotime($job['next_attempt_at'].' UTC')>time()||$job['request_cipher']===null)return null;
+            if($job['tenant_id']!==$before['tenant_id'])throw new Problem(409,'Trial ownership changed; review this operation.');
+            // Current/locking reads serialize the dispatch decision against the
+            // admin and reseller switches. A dispatch already authorized here
+            // may finish; a later OFF cannot recall a remote panel request.
+            if($this->offers->paused($job['brand_id'],true))return null;
             if((int)$job['attempts']>=3){$this->db->query("UPDATE trial_signup_operations SET state='needs_review' WHERE id=?",[$id]);return null;}
-            $ctx=$this->open('trial-request-v1',$job,$job['request_cipher']);$offer=$this->offers->admitted($job['brand_id']);
+            $ctx=$this->open('trial-request-v1',$job,$job['request_cipher']);$offer=$this->offers->admitted($job['brand_id'],true);
             if(!$offer||$offer['policy_stamp']!==$ctx['policy_stamp']){
                 if((int)$job['attempts']===0){$this->db->query("UPDATE trial_signup_operations SET state='cancelled',eligibility_key=NULL,request_cipher=NULL WHERE id=?",[$id]);$this->db->query('UPDATE trial_signup_budgets SET counted=0 WHERE operation_id=?',[$id]);}
                 else $this->db->query("UPDATE trial_signup_operations SET state='needs_review' WHERE id=?",[$id]);return null;
@@ -70,7 +77,7 @@ final class TrialSignupBroker
         });
     }
     public function maintain():void {
-        if($this->offers->enabled())foreach($this->db->all("SELECT id FROM trial_signup_operations WHERE state IN ('reserved','sending','retry_wait','registration_pending') AND next_attempt_at<=UTC_TIMESTAMP() ORDER BY next_attempt_at LIMIT 5") as $r)$this->process($r['id']);
+        if($this->offers->enabled())foreach($this->db->all("SELECT j.id FROM trial_signup_operations j JOIN trial_offer_publications p ON p.brand_id=j.brand_id AND p.enabled=1 WHERE j.state IN ('reserved','sending','retry_wait','registration_pending') AND j.next_attempt_at<=UTC_TIMESTAMP() ORDER BY j.next_attempt_at LIMIT 5") as $r)$this->process($r['id']);
         $this->db->query('UPDATE trial_signup_operations SET activation_cipher=NULL WHERE activation_cipher IS NOT NULL AND activation_until<=UTC_TIMESTAMP() LIMIT 1000');
         $this->db->query("UPDATE trial_signup_operations SET request_cipher=NULL,state=IF(state IN ('reserved','sending','retry_wait','registration_pending'),'needs_review',state) WHERE request_cipher IS NOT NULL AND contact_retention_until<=UTC_TIMESTAMP() LIMIT 1000");
         $this->db->query('DELETE s FROM trial_public_sessions s WHERE s.expires_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 DAY) AND NOT EXISTS(SELECT 1 FROM trial_signup_operations j WHERE j.session_hash=s.token_hash)');

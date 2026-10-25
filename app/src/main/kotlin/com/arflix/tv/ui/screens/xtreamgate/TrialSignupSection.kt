@@ -23,12 +23,12 @@ import com.arflix.tv.trials.TrialSignupUiState
 /** Rendered only inside an actual branded build. No OTP or paid-plan picker. */
 @Composable
 internal fun TrialSignupSection(state: TrialSignupUiState,manualBusy: Boolean,onOpen: ()->Unit,onFirst: (String)->Unit,onPhone: (String)->Unit,onStart: ()->Unit,onRetry: ()->Unit,onActivate: ()->Unit) {
-    if(!state.available)return
+    if(!state.showSection)return
     var focused by remember { mutableStateOf("") };val keyboard=LocalSoftwareKeyboardController.current
     Column(Modifier.fillMaxWidth().padding(top=20.dp)) {
-        GateButton(onClick=onOpen,text=if(state.formOpen)"Hide trial setup" else "Get a trial${state.durationLabel.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}",isFocused=focused=="open",enabled=!manualBusy&&!state.busy,modifier=Modifier.fillMaxWidth().onFocusChanged { if(it.isFocused)focused="open" })
-        if(!state.formOpen&&!state.pending)return@Column
-        if(state.formOpen&&!state.pending){
+        if(state.showNewTrialButton)GateButton(onClick=onOpen,text=if(state.formOpen)"Hide trial setup" else "Get a trial${state.durationLabel.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}",isFocused=focused=="open",enabled=!manualBusy&&!state.busy,modifier=Modifier.fillMaxWidth().onFocusChanged { if(it.isFocused)focused="open" })
+        if(!state.formOpen&&!state.pending&&state.activationCode==null&&!state.busy)return@Column
+        if(state.available&&state.formOpen&&!state.pending){
             Spacer(16.dp);Text("First name",color=Color.White,fontSize=13.sp)
             GateTextField(state.firstName,onFirst,"First name",onRequestKeyboard={keyboard?.show()},isFocused=focused=="first",modifier=Modifier.fillMaxWidth().semantics { contentDescription="Trial first name" }.onFocusChanged { if(it.isFocused)focused="first" })
             Spacer(12.dp);Text("Phone number with country code (+ optional)",color=Color.White,fontSize=13.sp)

@@ -1,4 +1,29 @@
-# Device management0.16.0 owner workspace throughout the site — validation
+# Device management0.17.0 global and per-app trial controls — validation
+
+207 isolated MariaDB/service/HTTP cases pass. Coverage includes migration preservation
+of explicit published offers/fresh OFF defaults; owner-only, CSRF/revision-guarded
+global changes; seller isolation; global OFF overriding saved seller ON; retained
+seller opt-outs on resume; stale forms refused without a worker call; preserved
+grants/enrollment/quota/history; and uncertain original requests pausing/resuming as
+the SAME operation. Prepared activation/ack remain usable while OFF. Current locking
+reads serialize new dispatch authorization with both controls; already-authorized
+remote work may finish and is never falsely claimed recalled.
+
+52 browser checks pass with no uncaught errors. The focused trial-controls suite
+also passes reseller-only app control/no admin access, global override (including
+seller preferences saved during pause), and retained opt-outs/private safety gates.
+Publication responses in those UI cases are synthetic; master mutations and role
+checks use the isolated local server. No live panel account is created.
+
+Android sideload-debug main/UI compilation and13 trial-client/visibility tests pass:
+optional-plus canonical identity, unchanged signing/bindings, backward-compatible
+paused status, hidden new signup, retained original recovery/activation and work
+already underway. Native refresh enhancement awaits a signed APK; no APK version,
+build/publication, shared-source repin or main/customer merge was performed.
+Package/private-config preservation and pilot-helper checks pass. No deployed
+switches, worker flags, pilot history or private keys were changed by development.
+
+## Previous0.16.0 owner workspace throughout the site validation
 
 202 isolated MariaDB/service/HTTP cases pass, including authoritative owner workspace
 resolution without a reseller tenant_id, implicit owner creation of layouts/presets/

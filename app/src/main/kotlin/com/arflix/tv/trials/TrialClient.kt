@@ -33,7 +33,7 @@ internal data class TrialOffer(val available: Boolean, val brandName: String="",
 internal data class TrialSession(val token: String,val nonce: String,val operationId: String,val requestHash: String,val signature: String,val createdAt: Long) {
     fun proof(): JSONObject = JSONObject().put("token",token).put("nonce",nonce).put("request_hash",requestHash).put("signature",signature)
 }
-internal data class TrialProgress(val state: String,val activationCode: String?=null,val expiresAt: Long?=null)
+internal data class TrialProgress(val state: String,val activationCode: String?=null,val expiresAt: Long?=null,val paused: Boolean=false)
 
 /** Public brand routing is not app authentication. No worker/build secret exists here. */
 internal class TrialWireClient(client: OkHttpClient,private val brandId: String=BuildConfig.BRAND_ID) {
@@ -65,7 +65,7 @@ internal class TrialWireClient(client: OkHttpClient,private val brandId: String=
         val state=j.optString("state");require(state in setOf("not_submitted","reserved","sending","retry_wait","registration_pending","needs_review","prepared","delivered","failed","cancelled","already_created")) { "Trial status unavailable." }
         val code=if(j.has("activation_code"))j.getString("activation_code") else null
         if(state=="prepared")require(code?.matches(Regex("[0-9]{6}"))==true&&j.optLong("expires_at")>System.currentTimeMillis()/1000) { "Trial activation has not been confirmed." }
-        return TrialProgress(state,code,j.optLong("expires_at").takeIf { it>0 })
+        return TrialProgress(state,code,j.optLong("expires_at").takeIf { it>0 },j.optBoolean("paused",false))
     }
     private fun call(path: String,body: JSONObject?): JSONObject {
         val builder=Request.Builder().url("https://control.fecxbrfzku.net/api/public-trials/$path").cacheControl(CacheControl.FORCE_NETWORK)

@@ -156,6 +156,8 @@ final class Application
         if($method==='GET'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/inputs$~D',$path,$m)){$file=$this->appBrands->downloadInputs($actor,$m[1]);header('Content-Type: application/json; charset=utf-8');header('Content-Disposition: attachment; filename="'.$file['filename'].'"');echo $file['body'];exit;}
         if($method==='POST'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/cancel$~D',$path,$m))Http::json($this->appBrands->cancelBuild($actor,$m[1],Http::body()));
         if($method==='GET'&&$path==='/api/trial-policy')Http::json($this->trialPolicies->get($actor,$_GET));
+        if($method==='GET'&&$path==='/api/trials/settings'){Input::keys($_GET,[]);Http::json($this->trialOffers->globalSettings($actor));}
+        if($method==='POST'&&$path==='/api/trials/settings')Http::json($this->trialOffers->setGlobal($actor,Http::body()));
         if($method==='POST'&&$path==='/api/trial-policy/catalog')Http::json($this->trialPolicies->refresh($actor,Http::body()));
         if($method==='POST'&&$path==='/api/trial-policy/grants')Http::json($this->trialPolicies->grant($actor,Http::body()));
         if($method==='POST'&&$path==='/api/trial-policy/default')Http::json($this->trialPolicies->setDefault($actor,Http::body()));

@@ -71,4 +71,9 @@ class TrialWireClientTest {
         val wire=TrialWireClient(client { _,_->"x".repeat(70000) },brand)
         try{wire.offer();fail()}catch(_:IllegalArgumentException){}
     }
+    @Test fun `paused status preserves the original protocol state for recovery`() {
+        val wire=TrialWireClient(client { path,_->assertEquals("status",path);JSONObject().put("state","retry_wait").put("paused",true).toString() },brand)
+        val result=wire.status(TrialSession("b".repeat(64),"c".repeat(64),"d".repeat(32),"e".repeat(64),"c2ln",System.currentTimeMillis()))
+        assertEquals("retry_wait",result.state);assertTrue(result.paused);assertNull(result.activationCode)
+    }
 }

@@ -50,7 +50,7 @@ try {
         if(!$state['active']||(int)($state['publication']['daily_limit']??0)!==1)$app->trialOffers->publish($owner,['tenant_id'=>$space['id'],'expected_revision'=>(int)($state['publication']['revision']??0),'enabled'=>true,'daily_limit'=>1,'confirmed_public_mode'=>true]);
         $out="<?php\ndeclare(strict_types=1);\nreturn ".var_export($updated,true).";\n";if(file_put_contents($argv[2],$out)!==strlen($out))throw new RuntimeException('Private pilot configuration could not be fully staged.');
     });
-    echo json_encode(['workspace'=>'owner','panel_username'=>$argv[3],'plan_id'=>$plan['id'],'plan_name'=>$plan['name'],'duration'=>$plan['duration'],'period'=>$plan['period'],'max_connections'=>$plan['max_connections'],'credits'=>$plan['credits'],'channel'=>'testing','brand_id'=>$brand['id'],'daily_limit'=>1,'lifetime_pilot_operation_limit'=>1,'accounts_created'=>false],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)."\n";
+    echo json_encode(['workspace'=>'owner','panel_username'=>$argv[3],'plan_id'=>$plan['id'],'plan_name'=>$plan['name'],'duration'=>$plan['duration'],'period'=>$plan['period'],'max_connections'=>$plan['max_connections'],'credits'=>$plan['credits'],'channel'=>'testing','brand_id'=>$brand['id'],'daily_limit'=>1,'lifetime_pilot_operation_limit'=>1,'global_enabled'=>$app->trialOffers->globalSettings($owner)['enabled'],'accounts_created'=>false],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)."\n";
 } catch(Throwable $error) {
     fwrite(STDERR,$error instanceof PDOException?"Database operation failed; review private server logs.\n":$error->getMessage()."\n");exit(1);
 }
@@ -65,3 +65,4 @@ mv -T -- "$temp" "$config"
 /etc/init.d/php-fpm-84 restart
 echo 'Owner TESTING pilot configured: ONE operation total, at most one per day. Other brands are excluded.'
 echo 'No account was created. Original uncertain/failed requests retain the slot; never reset history to retry.'
+echo 'The admin global trial switch remains authoritative; this helper never changes it.'
