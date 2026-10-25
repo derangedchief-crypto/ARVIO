@@ -5,7 +5,16 @@ PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 Work is isolated on `reseller-control-center`; no changes to the Android app,
 activation/maintenance services, central updater, `main` or publishing workflows.
 
-## Current source update — 0.15.0 (not yet deployed)
+## Current source update — 0.15.1 (not yet deployed)
+
+Branding now shows only the latest build request; older build records, immutable
+inputs and published downloads remain intact behind the scenes. The existing-brand
+name/artwork editor is collapsed by default and opens by clicking its heading. New
+brand setup stays open, and unsaved drafts stay visible when rerendered.
+
+Includes the0.15.0 shared-main/trial deployment work below; no Android changes.
+
+## Previous source update — 0.15.0
 
 Migration018 adds testing-only shared-main fanout: preserve each LIVE branded APK's
 name/artwork/revision/package while increasing platform versions. Draft branding is

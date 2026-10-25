@@ -1,0 +1,15 @@
+Extreme Control Center0.15.1 — compact branding page
+
+The branding page now displays only the latest build request, not the build history.
+Older records/immutable inputs/published APKs are retained; no history is deleted.
+The existing-brand name/artwork editor starts collapsed. Click its heading to edit.
+New-brand setup remains open. Unsaved edits are kept open across page rerenders.
+
+Extract the UPDATE ZIP in the existing website root. It contains NO config.php and
+NO storage/ entries, preserving existing private configuration, keys and APK ACLs.
+Refresh the browser to load updated JS/CSS. No new APK/device installation is needed.
+
+This includes the previous0.15.0 source. If upgrading from0.14.3, also follow
+UPDATE-0.15.0.txt for migration018 and coordinated website/dispatcher source repinning.
+Those main/trial features are NOT silently enabled by these UI edits. No additional
+migration is introduced after018, and no trial/production release policy is changed.

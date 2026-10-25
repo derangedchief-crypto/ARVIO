@@ -1,4 +1,15 @@
-# Device management0.15.0 main fanout/trial bridge — validation
+# Device management0.15.1 compact branding — validation
+
+42 isolated browser checks pass, including a synthetic eight-build response rendering
+only its newest row, the existing-brand editor starting collapsed on desktop/mobile,
+explicit opening/closing, first-brand setup and saving still working, latest-build
+actions/downloads remaining available, and no page overflow or uncaught JavaScript
+errors. Build history is hidden only in presentation, never deleted or rewritten.
+Update-package preservation checks and JavaScript syntax checks pass. Asset URLs are
+versioned0.15.1 to avoid retaining old cached JS/CSS after installation. No Android,
+build identity, signing, updater or trial-policy changes in this UI increment.
+
+## Previous0.15.0 main fanout/trial bridge validation
 
 193 isolated MariaDB/service/HTTP cases pass, including new coverage for default-off
 fanout, newer exact source identities, immutable registrations/idempotent retries,
