@@ -3736,10 +3736,19 @@ class StreamRepository @Inject constructor(
      * Resolve a single stream for playback - with timeout to prevent hanging forever
      */
     suspend fun resolveStreamForPlayback(stream: StreamSource): StreamSource? = withContext(Dispatchers.IO) {
-        cachedResolvedStream(stream)?.let { return@withContext it.copy(displayAddonName = stream.displayAddonName ?: it.displayAddonName) }
+        val protectedIptv=stream.addonId=="iptv_xtream_vod"
+        if(protectedIptv&&!iptvRepository.canPlayIptvStream(stream.url.orEmpty()))return@withContext null
+        cachedResolvedStream(stream)?.let {
+            if(protectedIptv)iptvRepository.registerResolvedPrimary(stream.url.orEmpty(),it.url.orEmpty())
+            return@withContext it.copy(displayAddonName = stream.displayAddonName ?: it.displayAddonName)
+        }
         try {
             withTimeout(STREAM_RESOLUTION_TIMEOUT_MS) {
                 resolveStreamInternal(stream)?.also { resolved ->
+                    if(protectedIptv){
+                        if(!iptvRepository.canPlayIptvStream(stream.url.orEmpty()))return@withTimeout null
+                        iptvRepository.registerResolvedPrimary(stream.url.orEmpty(),resolved.url.orEmpty())
+                    }
                     resolvedStreamCache[resolvedStreamCacheKey(stream)] = CachedResolvedStream(
                         stream = resolved,
                         createdAtMs = System.currentTimeMillis()

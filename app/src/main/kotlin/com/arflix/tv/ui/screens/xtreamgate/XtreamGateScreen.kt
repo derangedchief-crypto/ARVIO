@@ -95,11 +95,12 @@ private const val SHOW_SKIP_BUTTON = false
 @Composable
 fun XtreamGateScreen(
     viewModel: XtreamGateViewModel = hiltViewModel(),
+    allowTrial: Boolean = true,
     onLoginSuccess: () -> Unit = {},
     onSkip: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    if(com.arflix.tv.branding.AppBrand.id.isNotBlank()){
+    if(allowTrial&&com.arflix.tv.branding.AppBrand.id.isNotBlank()){
         val trialViewModel: com.arflix.tv.trials.TrialSignupViewModel=hiltViewModel()
         val trial by trialViewModel.uiState.collectAsStateWithLifecycle()
         val lifecycleOwner=LocalLifecycleOwner.current

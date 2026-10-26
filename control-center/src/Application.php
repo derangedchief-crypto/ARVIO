@@ -33,7 +33,7 @@ final class Application
         if ((new Migrations($this->db, $config))->installed()) $config->secret('application.key', false);
         $this->auth = new Auth($this->db, $config, new Secrets($config));
         $this->management = new Management($this->db, $config, $this->auth);
-        $this->moduleLicences=new ModuleLicences($this->db,$this->management,$this->auth);
+        $this->moduleLicences=new ModuleLicences($this->db,$this->management,$this->auth,$config);
         $this->commands = new Commands($this->db, $config, $this->auth, $this->management);
         $this->enrollment = new Enrollment($this->db,$config,$this->auth,$this->management,new Secrets($config));
         $this->presets=new SettingsPresets($this->db,$this->management,$this->auth,$config);

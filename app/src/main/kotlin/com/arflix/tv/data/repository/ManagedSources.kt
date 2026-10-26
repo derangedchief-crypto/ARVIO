@@ -24,7 +24,7 @@ internal fun validManagedSourceConfig(before: IptvConfig,requested: IptvConfig,r
         val oldLists=original.playlists.associateBy {it.id};val oldPortals=original.stalkerPortals.associateBy {it.id}
         if(target.playlists.any {p->oldLists[p.id]?.let {it.m3uUrl!=p.m3uUrl}==true}||target.stalkerPortals.any {p->oldPortals[p.id]?.let {it.portalUrl!=p.portalUrl||it.macAddress!=p.macAddress}==true})return@runCatching false
     }
-    if(target.playlists.size !in 1..3||target.stalkerPortals.size>3||ids.toSet().size!=ids.size||ids.any {!it.matches(Regex("[A-Za-z0-9_-]{1,64}"))})return@runCatching false
+    if(target.playlists.size !in 1..4||target.stalkerPortals.size>3||ids.toSet().size!=ids.size||ids.any {!it.matches(Regex("[A-Za-z0-9_-]{1,64}"))})return@runCatching false
     if(target.playlists.any {it.name.length !in 1..80||!url(it.m3uUrl)||!url(it.epgUrl,true)||it.epgUrls.size>10||it.epgUrls.any {guide->!url(guide)}})return@runCatching false
     if(target.stalkerPortals.any {it.name.length !in 1..80||!url(it.portalUrl)||!it.macAddress.matches(Regex("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}"))})return@runCatching false
     true

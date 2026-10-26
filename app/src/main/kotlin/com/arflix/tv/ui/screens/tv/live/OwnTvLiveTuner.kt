@@ -23,6 +23,7 @@ internal class OwnTvLiveTuner(
     engines: LiveEngines,
     private val onEngineStarted: (Boolean) -> Unit = {},
     private val prebufferSeconds: suspend () -> Int = { 0 },
+    private val authorized:(String)->Boolean={true},
     private val nowMs: () -> Long = SystemClock::elapsedRealtime,
 ) {
     private var sequence = 0L
@@ -50,7 +51,8 @@ internal class OwnTvLiveTuner(
     })
 
     fun play(url: String, headers: Map<String, String>, name: String,
-        isHls: Boolean, refreshUrl: (suspend () -> String?)?) {
+         isHls: Boolean, refreshUrl: (suspend () -> String?)?) {
+        if(!authorized(url)){stop();return}
         val id = ++sequence
         com.arflix.tv.management.ManagementEvents.record(com.arflix.tv.management.ManagementEventCode.LIVE_TUNE_REQUEST)
         val channel = ChannelEntity(id = id, sourceId = id, name = name, streamUrl = url,
@@ -65,6 +67,7 @@ internal class OwnTvLiveTuner(
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { 0 }
             if (id != sequence) return@launch
+            if(!authorized(url)){this@OwnTvLiveTuner.stop();return@launch}
             val requestSource = SourceEntity(id = id, name = "ARVIO live", type = SourceType.M3U, url = "",
                 userAgent = StreamHeaders.userAgentOf(headers), livePrerollSecs = seconds.takeIf { it in listOf(0, 2, 5, 10) } ?: 0, maxConnections = 1)
             source = requestSource

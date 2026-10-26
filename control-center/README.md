@@ -7,7 +7,33 @@ Website changes are tested on `control-center-owner-trials` and synchronized int
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.24.1 PHP update/cache compatibility
+## Current source update — 0.25.0 primary-line and playback safeguards
+
+Compatible client source pins the account established by verified activation-code
+entry separately from editable sources. An expired/invalid primary blocks ordinary
+app use and controlled playback. Extra Playlists licensing now gates USE of all
+saved extras, not merely creation; there is no exemption based on customer/source
+age. The valid primary remains available without the optional add-on.
+
+Outage grace is capped at15 minutes since successful verification and by any known
+earlier expiry. Confirmed negatives discard permission. Positive grants are kept
+only in memory: process/device restart requires online checks, not new offline
+time. Primary checks combine the fixed provider and activation-worker validation.
+
+Legacy installs without a trustworthy binding need one activation-code confirmation,
+retaining extra source IDs and data. A retained fourth source is supported when
+confirmation must add the real primary beside three legacy entries. Cloud/profile
+source edits cannot replace the protected binding. Uncontrolled stock casting is
+unavailable until a receiver can enforce expiry after the app is gone.
+
+The separate worker update is targeted/read-only and preserves existing config,
+environment, keys and trial ledger. See `deploy/UPDATE-0.25.0.txt` for the ordered
+worker/website/testing-client rollout. No new migration beyond024 is needed.
+Keep enforcement OFF until controlled validation. Native118/434 is not a customer
+release merely because its source is prepared. Old/modified APKs are not claimed
+to enforce the safeguards. Customer117 remains unchanged by source preparation.
+
+## Previous 0.24.1 PHP update/cache compatibility
 
 Release ZIPs now use distinct, reproducible timestamps per version instead of one
 shared timestamp. This lets PHP OPcache notice overwritten routers/classes when

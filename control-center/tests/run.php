@@ -158,6 +158,8 @@ require __DIR__.'/current-activity.php';
 currentActivityCases($tests,$app,$owner,$alpha,$beta,$tenantA,$enrolled);
 require __DIR__.'/module-licences.php';
 moduleLicenceCases($tests,$app,$owner,$alpha,$beta,$tenantA,$http,$password,$fixture);
+require __DIR__.'/primary-access.php';
+primaryAccessCases($tests,$app,$config,$owner);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

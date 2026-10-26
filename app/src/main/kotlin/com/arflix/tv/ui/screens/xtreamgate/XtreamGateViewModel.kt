@@ -112,7 +112,7 @@ class XtreamGateViewModel @Inject constructor(
                     enabled = true,
                     epgUrls = listOf(combined)
                 )
-                iptvRepository.savePlaylists(listOf(entry))
+                iptvRepository.saveVerifiedActivation(credentials,entry)
 
                 // Saving the playlist config alone does not fetch anything — it just
                 // persists what to load. We do need the channel LIST fetched (fast —

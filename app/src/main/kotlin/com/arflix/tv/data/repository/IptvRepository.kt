@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -252,16 +253,54 @@ class IptvRepository @Inject constructor(
     private val invalidationBus: CloudSyncInvalidationBus,
     private val epgPlaybackGate: IptvEpgPlaybackGate,
     private val extraPlaylistLicence: com.arflix.tv.management.ExtraPlaylistLicence = com.arflix.tv.management.ExtraPlaylistLicence(context),
+    private val primaryAccess: com.arflix.tv.access.PrimaryAccessRepository = com.arflix.tv.access.PrimaryAccessRepository(context),
 ) {
     private val gson = Gson()
-    suspend fun checkExtraPlaylistAccess() = extraPlaylistLicence.authorize(observeConfig().first())
+    suspend fun checkExtraPlaylistAccess() {
+        if(!primaryAccess.primaryAllowed())throw com.arflix.tv.management.ExtraPlaylistLicenceException("Verify your primary activation line first.")
+        extraPlaylistLicence.authorize(primaryAccess.canonicalConfig())
+    }
+    fun observeActivationConfig():Flow<IptvConfig> = primaryAccess.state.map { runCatching{primaryAccess.canonicalConfig()}.getOrDefault(IptvConfig()) }
+    fun observePlaybackConfig():Flow<IptvConfig> = combine(observeConfig(),primaryAccess.state){raw,_->primaryAccess.playbackConfig(raw)}.distinctUntilChanged()
+    private suspend fun playbackConfig():IptvConfig = primaryAccess.playbackConfig(observeConfig().first())
+    suspend fun canPlayChannel(id:String):Boolean {
+        if(!primaryAccess.primaryAllowed())return false
+        val c=playbackConfig()
+        return if(id.startsWith("stalker:"))c.stalkerPortals.any{it.enabled&&id.startsWith("stalker:${it.id}:")}
+        else c.playlists.any{it.enabled&&id.startsWith("${it.id}:")}
+    }
+    fun canPlayIptvStream(url:String)=primaryAccess.permitsIptvUrl(url)
+    fun registerResolvedPrimary(original:String,resolved:String)=primaryAccess.registerResolvedPrimary(original,resolved)
+    /** Retain every saved source and its ID; a legacy extra named list_1 never
+     * becomes the activation authority. The new binding is verified separately. */
+    internal suspend fun saveVerifiedActivation(credentials:IptvActivationCredentials,entry:IptvPlaylistEntry) {
+        primaryAccess.bindVerified(credentials) {
+            val profile=profileManager.getProfileIdSync();val previous=observeConfig().first()
+            val identity=com.arflix.tv.access.ActivationAnchor(credentials.username,credentials.password)
+            check(identity.matches(entry.m3uUrl))
+            val old=previous.playlists.ifEmpty{if(previous.m3uUrl.isBlank())emptyList()else listOf(IptvPlaylistEntry("list_1","Saved playlist",previous.m3uUrl,previous.epgUrl))}
+            val matching=old.firstOrNull{identity.matches(it.m3uUrl)}
+            val id=matching?.id ?: if(old.none{it.id=="list_1"})"list_1" else "activation_${identity.identity.take(16)}"
+            val primary=normalizePlaylistEntry(entry.copy(id=id,enabled=true),0)?:error("Invalid activation source")
+            val formerPrimaryId=old.firstOrNull{primaryAccess.isPrimary(it.m3uUrl)}?.id
+            val retained=old.filterNot{it.id==matching?.id||it.id==formerPrimaryId}
+            context.settingsDataStore.edit { prefs ->
+                check(profileManager.getProfileIdSync()==profile&&managedConfig(profile,prefs)==previous){"Profile changed; retry activation."}
+                prefs[playlistsKeyFor(profile)]=gson.toJson(listOf(primary)+retained)
+                prefs[m3uUrlKeyFor(profile)]=encryptConfigValue(primary.m3uUrl);prefs[epgUrlKeyFor(profile)]=encryptConfigValue(primary.epgUrl)
+            }
+            invalidateCache()
+        }
+    }
     /** Called inside the serialized settings transaction so stale drafts and concurrent
      * imports cannot reuse a decision for another account or source configuration. */
     private suspend fun authorizeSourceChange(profileId: String, prefs: Preferences, target: IptvConfig, requireSelected: Boolean = true) {
         val selected = profileManager.getProfileIdSync()
+        primaryAccess.protectPrimary(managedConfig(profileId,prefs),target)
         if (requireSelected && selected != profileId) throw com.arflix.tv.management.ExtraPlaylistLicenceException("Profile changed; reopen playlist settings.")
-        if (needsExtraPlaylistLicence(managedConfig(profileId, prefs), target)) {
-            extraPlaylistLicence.authorize(target)
+        if (primaryAccess.needsExtraGrant(managedConfig(profileId, prefs), target)) {
+            if(!primaryAccess.primaryAllowed())throw com.arflix.tv.management.ExtraPlaylistLicenceException("Verify the primary activation line first.")
+            extraPlaylistLicence.authorize(primaryAccess.canonicalConfig())
             if (profileManager.getProfileIdSync() != selected) throw com.arflix.tv.management.ExtraPlaylistLicenceException("Profile changed; retry playlist settings.")
         }
     }
@@ -294,7 +333,7 @@ class IptvRepository @Inject constructor(
     private val verifiedVodCatalogs = VerifiedVodCatalogs()
 
     internal suspend fun vodLookupScopeKey(): String {
-        val raw = profileManager.getProfileIdSync() + "|" + buildConfigSignature(observeConfig().first())
+        val raw = profileManager.getProfileIdSync() + "|" + buildConfigSignature(playbackConfig())
         return MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
     }
@@ -625,13 +664,13 @@ class IptvRepository @Inject constructor(
             val primary = playlists.firstOrNull()
             val legacyM3uUrl = normalizeStoredIptvUrl(decryptConfigValue(prefs[m3uUrlKey()].orEmpty()))
             val legacyEpgUrls = normalizeStoredEpgInputs(decryptConfigValue(prefs[epgUrlKey()].orEmpty()))
-            IptvConfig(
+            primaryAccess.editingConfig(IptvConfig(
                 m3uUrl = primary?.m3uUrl ?: legacyM3uUrl,
                 epgUrl = primary?.epgUrl ?: legacyEpgUrls.firstOrNull().orEmpty(),
                 playlists = playlists,
                 stalkerPortals = readStalkerPortals(prefs),
                 sortOrder = normalizeIptvSortOrder(prefs[sortOrderKey()])
-            )
+            ))
         }
 
     fun observeFavoriteGroups(): Flow<List<String>> =
@@ -731,7 +770,7 @@ class IptvRepository @Inject constructor(
         val previousConfig = observeConfig().first()
         val normalized = playlists.mapIndexed { index, item ->
             normalizePlaylistEntry(item, index)
-        }.filterNotNull().take(3)
+        }.filterNotNull().take(maxOf(3,previousConfig.playlists.size))
         val primary = normalized.firstOrNull()
         val nextConfig = previousConfig.copy(
             m3uUrl = primary?.m3uUrl.orEmpty(),
@@ -980,7 +1019,7 @@ class IptvRepository @Inject constructor(
      * (keeps the legacy single-portal behavior intact).
      */
     suspend fun resolveStalkerStreamUrl(channelId: String?, command: String): String? {
-        val config = observeConfig().first()
+        val config = playbackConfig()
         val portals = config.stalkerPortals
         if (portals.isEmpty()) return null
         val portalId = channelId?.let { portalIdFromChannelId(it) }
@@ -1028,9 +1067,9 @@ class IptvRepository @Inject constructor(
 
     private fun managedConfig(profileId: String,prefs: Preferences): IptvConfig {
         val playlists=decodePlaylists(prefs[playlistsKeyFor(profileId)].orEmpty())
-        return IptvConfig(m3uUrl=playlists.firstOrNull()?.m3uUrl ?: normalizeStoredIptvUrl(decryptConfigValue(prefs[m3uUrlKeyFor(profileId)].orEmpty())),
+        return primaryAccess.editingConfig(IptvConfig(m3uUrl=playlists.firstOrNull()?.m3uUrl ?: normalizeStoredIptvUrl(decryptConfigValue(prefs[m3uUrlKeyFor(profileId)].orEmpty())),
             epgUrl=playlists.firstOrNull()?.epgUrl ?: decryptConfigValue(prefs[epgUrlKeyFor(profileId)].orEmpty()),playlists=playlists,
-            stalkerPortals=readStalkerPortalsFor(prefs,profileId),sortOrder=normalizeIptvSortOrder(prefs[sortOrderKeyFor(profileId)]))
+            stalkerPortals=readStalkerPortalsFor(prefs,profileId),sortOrder=normalizeIptvSortOrder(prefs[sortOrderKeyFor(profileId)])))
     }
 
     suspend fun readManagedSources(profileId: String, accountMatches: (IptvConfig) -> Boolean): IptvConfig {
@@ -2200,7 +2239,7 @@ class IptvRepository @Inject constructor(
             cleanupStaleEpgTempFiles()
             onProgress(IptvLoadProgress(context.getString(R.string.iptv_starting_load), 2))
             val now = System.currentTimeMillis()
-            val config = observeConfig().first()
+            val config = playbackConfig()
             val profileId = profileManager.getProfileIdSync()
             ensureCacheOwnership(profileId, config)
             cleanupIptvCacheDirectory()
@@ -2679,7 +2718,7 @@ class IptvRepository @Inject constructor(
     suspend fun warmupFromCacheOnly() {
         withContext(Dispatchers.IO) {
             loadMutex.withLock {
-                val config = observeConfig().first()
+                val config = playbackConfig()
                 val profileId = profileManager.getProfileIdSync()
                 ensureCacheOwnership(profileId, config)
                 if (!hasAnyConfiguredSource(config)) return@withLock
@@ -2725,7 +2764,7 @@ class IptvRepository @Inject constructor(
     suspend fun getCachedSnapshotOrNull(): IptvSnapshot? {
         return withContext(Dispatchers.IO) {
             loadMutex.withLock {
-                val config = observeConfig().first()
+                val config = playbackConfig()
                 val profileId = profileManager.getProfileIdSync()
                 ensureCacheOwnership(profileId, config)
 
@@ -3011,7 +3050,7 @@ class IptvRepository @Inject constructor(
         var refreshKey = ""
         try {
             warmupFromCacheOnly()
-            val config = observeConfig().first()
+            val config = playbackConfig()
             if (!hasAnyConfiguredSource(config)) return@request
             val key = currentEpgIndexKey(config)
             refreshKey = key
@@ -3126,7 +3165,7 @@ class IptvRepository @Inject constructor(
     suspend fun populateCompleteGuideIndex(onProgress: (IptvLoadProgress) -> Unit = {}): GuideBulkRefreshResult =
         withContext(backgroundEpgDispatcher) {
             completeGuideIndexMutex.withLock {
-                val config = observeConfig().first()
+                val config = playbackConfig()
                 val sourceKey = currentEpgIndexKey(config)
                 val total = pagedChannelStoreCount()
                 val channels = if (total > cachedChannels.size) {
@@ -3328,7 +3367,7 @@ class IptvRepository @Inject constructor(
     ): Map<String, IptvNowNext>? {
         if (channelIds.isEmpty()) return null
         return withContext(Dispatchers.IO) {
-            val config = observeConfig().first()
+            val config = playbackConfig()
             val requested = if (maxChannels > 0) {
                 channelIds.take(maxChannels).toHashSet()
             } else {
@@ -3895,7 +3934,7 @@ class IptvRepository @Inject constructor(
     ): Boolean {
         return loadMutex.withLock {
             if (expectedProfile != null && (profileManager.getProfileIdSync() != expectedProfile ||
-                    buildConfigSignature(observeConfig().first()) != expectedSignature)) return@withLock false
+                    buildConfigSignature(playbackConfig()) != expectedSignature)) return@withLock false
             cachedChannels = channels
             cachedGroupedChannels = buildGroupedChannels(channels)
             cachedPlaylistAt = System.currentTimeMillis()
@@ -3922,7 +3961,7 @@ class IptvRepository @Inject constructor(
     fun requestLaunchContentRefresh(recheckOnLaunch: Boolean = false): kotlinx.coroutines.Job = launchContentCoordinator.request {
         try {
             warmupFromCacheOnly()
-            val config = observeConfig().first()
+            val config = playbackConfig()
             if (!hasAnyConfiguredSource(config)) return@request
             val profile = profileManager.getProfileIdSync()
             val signature = buildConfigSignature(config)
@@ -3939,7 +3978,7 @@ class IptvRepository @Inject constructor(
                 _guideRefreshState.value = GuideRefreshState(loading = true, message = "Checking playlists before guide update", percent = 0)
             }
             suspend fun stillCurrent() = profileManager.getProfileIdSync() == profile &&
-                buildConfigSignature(observeConfig().first()) == signature
+                buildConfigSignature(playbackConfig()) == signature
             val key = currentEpgIndexKey(config)
             val previous = if (pagedChannelStoreCount() > cachedChannels.size)
                 channelStore.window(key, 0, pagedChannelStoreCount()) else cachedChannels
@@ -4472,7 +4511,7 @@ class IptvRepository @Inject constructor(
         )
         val normalizedPlaylists = state.playlists.mapIndexed { index, playlist ->
             normalizePlaylistEntry(playlist, index)
-        }.filterNotNull().take(3)
+        }.filterNotNull().take(4)
         val effectivePlaylists = normalizedPlaylists.ifEmpty {
             if (normalizedM3u.isBlank()) emptyList() else listOf(
                 IptvPlaylistEntry(
@@ -5591,7 +5630,7 @@ class IptvRepository @Inject constructor(
         verifyBeforeFallback: Boolean = false,
     ): List<StreamSource> {
         return withContext(Dispatchers.IO) { movieVodLookupMutex.withLock {
-            val config = observeConfig().first()
+            val config = playbackConfig()
             val providers = activePlaylists(config).mapNotNull(::resolveXtreamCredentials).distinctBy(::xtreamCacheKey)
             if (providers.isEmpty()) return@withLock emptyList()
             val profile = profileManager.getProfileIdSync()
@@ -5599,7 +5638,7 @@ class IptvRepository @Inject constructor(
             val missKey = "$profile|$signature|$imdbId|$tmdbId|${normalizeLookupText(title)}|$year"
             val verificationScope = vodLookupScopeKey()
             suspend fun ensureCurrent() {
-                if (profileManager.getProfileIdSync() != profile || buildConfigSignature(observeConfig().first()) != signature) {
+                if (profileManager.getProfileIdSync() != profile || buildConfigSignature(playbackConfig()) != signature) {
                     throw VodVerificationException()
                 }
             }
@@ -5771,7 +5810,7 @@ class IptvRepository @Inject constructor(
     suspend fun verifyEpisodeVodBeforeFallback(
         title: String, season: Int, episode: Int, imdbId: String? = null, tmdbId: Int? = null,
     ): List<StreamSource> = withContext(Dispatchers.IO) { movieVodLookupMutex.withLock {
-        val config = observeConfig().first()
+        val config = playbackConfig()
         val providers = activePlaylists(config).mapNotNull(::resolveXtreamCredentials).distinctBy(::xtreamCacheKey)
         if (providers.isEmpty()) return@withLock emptyList()
         val profile = profileManager.getProfileIdSync()
@@ -5781,7 +5820,7 @@ class IptvRepository @Inject constructor(
         val normalizedImdb = normalizeImdbId(imdbId)
         val normalizedTmdb = normalizeTmdbId(tmdbId)
         suspend fun ensureCurrent() {
-            if (profileManager.getProfileIdSync() != profile || buildConfigSignature(observeConfig().first()) != signature) throw VodVerificationException()
+            if (profileManager.getProfileIdSync() != profile || buildConfigSignature(playbackConfig()) != signature) throw VodVerificationException()
         }
         fun candidates(rows: List<XtreamSeriesItem>): List<XtreamSeriesItem> {
             val ids = rows.filter { (!normalizedTmdb.isNullOrBlank() && normalizeTmdbId(it.tmdb) == normalizedTmdb) ||
@@ -5949,7 +5988,7 @@ class IptvRepository @Inject constructor(
         allowNetwork: Boolean = true
     ): List<StreamSource> {
         return withContext(Dispatchers.IO) {
-            val config = observeConfig().first()
+            val config = playbackConfig()
             val creds = resolveXtreamCredentials(config.epgUrl)
                 ?: resolveXtreamCredentials(config.m3uUrl)
                 ?: return@withContext emptyList()
@@ -6185,7 +6224,7 @@ class IptvRepository @Inject constructor(
 
     suspend fun warmXtreamVodCachesIfPossible() {
         withContext(Dispatchers.IO) {
-            val config = observeConfig().first()
+            val config = playbackConfig()
             val creds = resolveXtreamCredentials(config.epgUrl)
                 ?: resolveXtreamCredentials(config.m3uUrl)
                 ?: return@withContext
@@ -6207,7 +6246,7 @@ class IptvRepository @Inject constructor(
         tmdbId: Int? = null
     ) {
         withContext(Dispatchers.IO) {
-            val config = observeConfig().first()
+            val config = playbackConfig()
             val creds = resolveXtreamCredentials(config.epgUrl)
                 ?: resolveXtreamCredentials(config.m3uUrl)
                 ?: return@withContext
@@ -6235,7 +6274,7 @@ class IptvRepository @Inject constructor(
         tmdbId: Int? = null
     ) {
         withContext(Dispatchers.IO) {
-            val config = observeConfig().first()
+            val config = playbackConfig()
             val creds = resolveXtreamCredentials(config.epgUrl)
                 ?: resolveXtreamCredentials(config.m3uUrl)
                 ?: return@withContext
@@ -10322,7 +10361,7 @@ class IptvRepository @Inject constructor(
     }
 
     suspend fun getVodCategories(): List<XtreamVodCategoryInfo> {
-        val config = observeConfig().first()
+        val config = playbackConfig()
         val creds = resolveXtreamCredentials(config.epgUrl)
             ?: resolveXtreamCredentials(config.m3uUrl)
             ?: return emptyList()
@@ -10331,7 +10370,7 @@ class IptvRepository @Inject constructor(
     }
 
     suspend fun getCachedVodCategories(): List<XtreamVodCategoryInfo> {
-        val config = observeConfig().first()
+        val config = playbackConfig()
         val creds = resolveXtreamCredentials(config.epgUrl)
             ?: resolveXtreamCredentials(config.m3uUrl)
             ?: return emptyList()
@@ -10340,7 +10379,7 @@ class IptvRepository @Inject constructor(
     }
 
     suspend fun getSeriesCategories(): List<XtreamSeriesCategoryInfo> {
-        val config = observeConfig().first()
+        val config = playbackConfig()
         val creds = resolveXtreamCredentials(config.epgUrl)
             ?: resolveXtreamCredentials(config.m3uUrl)
             ?: return emptyList()
@@ -10349,7 +10388,7 @@ class IptvRepository @Inject constructor(
     }
 
     suspend fun getCachedSeriesCategories(): List<XtreamSeriesCategoryInfo> {
-        val config = observeConfig().first()
+        val config = playbackConfig()
         val creds = resolveXtreamCredentials(config.epgUrl)
             ?: resolveXtreamCredentials(config.m3uUrl)
             ?: return emptyList()

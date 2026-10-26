@@ -77,7 +77,7 @@ class EpisodeVodVerificationTest {
         }.build()
         val profile = mockk<ProfileManager>(relaxed = true)
         every { profile.getProfileIdSync() } returns "fixture"
-        val repository = spyk(IptvRepository(context, client, profile, mockk(relaxed = true), IptvEpgPlaybackGate()))
+        val repository = spyk(IptvRepository(context, client, profile, mockk(relaxed = true), IptvEpgPlaybackGate(),primaryAccess=primaryAccessFixture()))
         every { repository.observeConfig() } returns flowOf(IptvConfig(playlists = playlists))
         try {
             val result = repository.verifyEpisodeVodBeforeFallback("Harbour Watch", season, 2, tmdbId = 12345)

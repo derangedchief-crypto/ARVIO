@@ -1477,6 +1477,11 @@ fun PlayerScreen(
             }
     }
 
+    val primaryAccess=com.arflix.tv.ui.components.LocalPrimaryAccess.current
+    com.arflix.tv.ui.components.ObservePrimaryPlayback(allowed={uiState.selectedStream?.addonId!="iptv_xtream_vod"||primaryAccess?.permitsIptvUrl(uiState.selectedStreamUrl.orEmpty())==true}) {
+        if(exoPlayer.mediaItemCount>0||exoPlayer.isPlaying){exoPlayer.stop();exoPlayer.clearMediaItems()}
+        if(castManager.isRemotePlaying())castManager.disconnect()
+    }
     DisposableEffect(lifecycleOwner, exoPlayer) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -1732,6 +1737,9 @@ fun PlayerScreen(
     LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
         if (playerReleased) return@LaunchedEffect
         val url = uiState.selectedStreamUrl
+        if(primaryAccess?.primaryAllowed()!=true || (uiState.selectedStream?.addonId=="iptv_xtream_vod"&&url!=null&&!primaryAccess.permitsIptvUrl(url))){
+            exoPlayer.stop();viewModel.reportPlaybackError("Primary verification or an active Extra Playlists subscription is required.");return@LaunchedEffect
+        }
         if (BuildConfig.DEBUG) {
         }
         if (url != null) {

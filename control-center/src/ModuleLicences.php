@@ -6,7 +6,7 @@ namespace ControlCenter;
 final class ModuleLicences
 {
     public const MODULE='extra_playlists';
-    public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth) {}
+    public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly Config $config) {}
     private function ready():void {if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['024_module_licences.sql']))throw new Problem(503,'Upgrade the website database to use Add-ons.');}
     public function policy():array {
         if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['024_module_licences.sql']))return ['schema_version'=>1,'enforced'=>false,'revision'=>0];
@@ -76,8 +76,11 @@ final class ModuleLicences
     }
     public function decision(array $device):array {
         $policy=$this->policy();$valid=false;
-        if($policy['enforced'])$valid=(bool)$this->db->one("SELECT l.id FROM devices d JOIN tenants t ON t.id=d.tenant_id JOIN module_licences l ON l.tenant_id=d.tenant_id WHERE d.id=? AND d.policy='active' AND l.module=? AND l.status='active' AND l.expires_at>UTC_TIMESTAMP() AND t.status='active'",[$device['id'],self::MODULE]);
-        return ['schema_version'=>1,'device_id'=>$device['id'],'module'=>self::MODULE,'enforced'=>$policy['enforced'],'allowed'=>!$policy['enforced']||$valid];
+        $seconds=900;
+        if($policy['enforced']){$row=$this->db->one("SELECT l.id,TIMESTAMPDIFF(SECOND,UTC_TIMESTAMP(),l.expires_at) AS remaining FROM devices d JOIN tenants t ON t.id=d.tenant_id JOIN module_licences l ON l.tenant_id=d.tenant_id WHERE d.id=? AND d.policy='active' AND l.module=? AND l.status='active' AND l.expires_at>UTC_TIMESTAMP() AND t.status='active'",[$device['id'],self::MODULE]);$valid=(bool)$row;$seconds=$row?min(900,max(0,(int)$row['remaining'])):0;}
+        $reason=$policy['enforced']&&!$valid?'licence_inactive':null;
+        if($policy['enforced']&&$valid){$primary=(new PrimaryLineAccess($this->db,$this->config))->device($device);$valid=$primary['valid'];$seconds=min($seconds,$primary['seconds']);if(!$valid)$reason=$primary['reason'];}
+        return ['schema_version'=>1,'device_id'=>$device['id'],'module'=>self::MODULE,'enforced'=>$policy['enforced'],'allowed'=>(!$policy['enforced']||$valid)&&$seconds>0,'valid_for_seconds'=>$seconds,'reason'=>$reason];
     }
     public static function needsLicence(array $before,array $target):bool {
         $lists=static fn($c)=>$c['playlists']?:($c['m3uUrl']!==''?[['id'=>'list_1','m3uUrl'=>$c['m3uUrl']]]:[]);
@@ -90,6 +93,6 @@ final class ModuleLicences
         return false;
     }
     public function enforce(array $device,array $before,array $target):void {
-        if(self::needsLicence($before,$target)&&!$this->decision($device)['allowed'])throw new Problem(403,'Extra Playlists requires an active monthly reseller add-on. Existing playlists and viewing are unchanged.');
+        if(self::needsLicence($before,$target)){$decision=$this->decision($device);if(!$decision['allowed'])throw new Problem(403,$decision['reason']==='primary_invalid'?'The primary activation line must be active before extra playlists can be used.':'Extra Playlists requires an active monthly reseller add-on. Saved playlists are retained; only the valid primary remains usable without the add-on.');}
     }
 }

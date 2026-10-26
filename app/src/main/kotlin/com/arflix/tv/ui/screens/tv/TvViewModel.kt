@@ -244,7 +244,7 @@ class TvViewModel @Inject constructor(
             val cached = iptvRepository.getMemoryCachedSnapshot()
                 ?: iptvRepository.getCachedSnapshotOrNull()
             if (cached != null) {
-                val config = iptvRepository.observeConfig().first()
+                val config = iptvRepository.observePlaybackConfig().first()
                 // The observeConfigAndFavorites() coroutine may have already read fresh
                 // favorites from DataStore before this cached snapshot was loaded from disk.
                 // Prefer those in-memory favorites over whatever was baked into the cache,
@@ -330,7 +330,7 @@ class TvViewModel @Inject constructor(
     private fun observeConfigAndFavorites() {
         viewModelScope.launch {
             combine(
-                combine(iptvRepository.observeConfig(), iptvRepository.observeFavoriteGroups(), iptvRepository.observeFavoriteChannels()) { a, b, c -> Triple(a, b, c) },
+                combine(iptvRepository.observePlaybackConfig(), iptvRepository.observeFavoriteGroups(), iptvRepository.observeFavoriteChannels()) { a, b, c -> Triple(a, b, c) },
                 iptvRepository.observeHiddenGroups(),
                 iptvRepository.observeGroupOrder()
             ) { triple, hiddenGroups, groupOrder ->
@@ -1150,7 +1150,7 @@ class TvViewModel @Inject constructor(
             if (targetPlaylistId.isNotBlank()) {
                 iptvRepository.toggleHiddenGroup(targetPlaylistId, groupName)
             } else {
-                val config = iptvRepository.observeConfig().first()
+                val config = iptvRepository.observePlaybackConfig().first()
                 val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
                 activePlaylists.forEach { activePlaylistId ->
                     iptvRepository.toggleHiddenGroup(activePlaylistId, groupName)
@@ -1588,7 +1588,7 @@ class TvViewModel @Inject constructor(
             if (targetPlaylistId.isNotBlank()) {
                 iptvRepository.moveGroupUp(targetPlaylistId, groupName, currentVisiblePlaylistGroups(targetPlaylistId))
             } else {
-                val config = iptvRepository.observeConfig().first()
+                val config = iptvRepository.observePlaybackConfig().first()
                 val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
                 activePlaylists.forEach { activePlaylistId ->
                     iptvRepository.moveGroupUp(activePlaylistId, groupName, currentVisiblePlaylistGroups(activePlaylistId))
@@ -1608,7 +1608,7 @@ class TvViewModel @Inject constructor(
             if (targetPlaylistId.isNotBlank()) {
                 iptvRepository.moveGroupToTop(targetPlaylistId, groupName, currentVisiblePlaylistGroups(targetPlaylistId))
             } else {
-                val config = iptvRepository.observeConfig().first()
+                val config = iptvRepository.observePlaybackConfig().first()
                 val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
                 activePlaylists.forEach { activePlaylistId ->
                     iptvRepository.moveGroupToTop(activePlaylistId, groupName, currentVisiblePlaylistGroups(activePlaylistId))
@@ -1628,7 +1628,7 @@ class TvViewModel @Inject constructor(
             if (targetPlaylistId.isNotBlank()) {
                 iptvRepository.moveGroupDown(targetPlaylistId, groupName, currentVisiblePlaylistGroups(targetPlaylistId))
             } else {
-                val config = iptvRepository.observeConfig().first()
+                val config = iptvRepository.observePlaybackConfig().first()
                 val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
                 activePlaylists.forEach { activePlaylistId ->
                     iptvRepository.moveGroupDown(activePlaylistId, groupName, currentVisiblePlaylistGroups(activePlaylistId))
@@ -1711,6 +1711,7 @@ class TvViewModel @Inject constructor(
         catchupAttempt: Int = 0,
         nativeContainerDetection: Boolean = false,
     ): IptvPlaybackTarget {
+        check(iptvRepository.canPlayChannel(channel.id)){"Primary validation or Extra Playlists permission is required for this source."}
         val rawUrl = if (program != null) {
             iptvRepository.resolvePlayableCatchupUrl(channel, program, catchupAttempt)
         } else {
@@ -1722,12 +1723,15 @@ class TvViewModel @Inject constructor(
             isStalkerChannel = channel.id.startsWith("stalker:"),
             forceRefresh = forceRefresh,
         )
-        return iptvPlaybackUrlResolver.resolve(
+        val target=iptvPlaybackUrlResolver.resolve(
             rawUrl = resolvedUrl,
             headers = channel.requestHeaders,
             forceRefresh = forceRefresh,
             nativeContainerDetection = nativeContainerDetection,
         )
+        check(iptvRepository.canPlayChannel(channel.id)){"Playlist permission changed. Select an available primary channel."}
+        iptvRepository.registerResolvedPrimary(rawUrl,target.url)
+        return target
     }
 
     private suspend fun resolveStalkerStreamIfNeeded(

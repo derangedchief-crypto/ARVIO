@@ -138,7 +138,7 @@ class ServerCachedGuideIntegrationTest {
         val profile = mockk<ProfileManager>(relaxed = true)
         every { profile.getProfileIdSync() } returns "fixture"
         val repository = spyk(IptvRepository(context, client, profile, mockk(relaxed = true),
-            IptvEpgPlaybackGate().apply { setPlaybackActive(true) }))
+            IptvEpgPlaybackGate().apply { setPlaybackActive(true) },primaryAccess=primaryAccessFixture()))
         val config = IptvConfig(
             m3uUrl = if (xtream) "https://provider.example.test/get.php?username=user&password=pass&type=m3u_plus" else "https://provider.example.test/list.m3u",
             epgUrl = "https://guide.example.test/feed.xml")

@@ -25,7 +25,7 @@ class ExtraPlaylistPersistenceTest {
         every{profile.profileStringKey(any())}answers{androidx.datastore.preferences.core.stringPreferencesKey("profile_addon-test_${firstArg<String>()}")}
         every{profile.profileStringKeyFor(any(),any())}answers{androidx.datastore.preferences.core.stringPreferencesKey("profile_${firstArg<String>()}_${secondArg<String>()}")}
         val licence=mockk<ExtraPlaylistLicence>();coEvery{licence.authorize(any())}throws ExtraPlaylistLicenceException("Locked")
-        val repo=IptvRepository(ApplicationProvider.getApplicationContext(),OkHttpClient(),profile,mockk(relaxed=true),IptvEpgPlaybackGate(),licence)
+        val repo=IptvRepository(ApplicationProvider.getApplicationContext(),OkHttpClient(),profile,mockk(relaxed=true),IptvEpgPlaybackGate(),licence,primaryAccessFixture())
         repo.clearConfig();repo.saveConfig("https://a.test/list.m3u","");val before=repo.observeConfig().first();coVerify(exactly=0){licence.authorize(any())}
         val extra=IptvPlaylistEntry("list_2","Extra","https://b.test/list.m3u");val target=before.copy(playlists=before.playlists+extra)
         suspend fun denied(block:suspend()->Unit){try{block();fail("Expected licence denial")}catch(_:ExtraPlaylistLicenceException){};assertEquals(before,repo.observeConfig().first())}

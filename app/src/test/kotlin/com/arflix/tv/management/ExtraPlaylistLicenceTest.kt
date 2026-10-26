@@ -31,7 +31,7 @@ class ExtraPlaylistLicenceTest {
     }
     @After fun cleanup(){unmockkAll()}
     private fun gate()=ExtraPlaylistLicence(ApplicationProvider.getApplicationContext())
-    private fun decision(id:String=device,allowed:Boolean=true)=JSONObject().put("schema_version",1).put("module","extra_playlists").put("device_id",id).put("allowed",allowed)
+    private fun decision(id:String=device,allowed:Boolean=true)=JSONObject().put("schema_version",1).put("module","extra_playlists").put("device_id",id).put("allowed",allowed).put("valid_for_seconds",900)
     private suspend fun denied(block:suspend()->Unit){try{block();fail("Expected safe licence denial")}catch(_:ExtraPlaylistLicenceException){}}
     @Test fun authenticatedDecisionIsFreshAndRevocationIsNotCached()=runBlocking {
         coEvery{anyConstructed<ManagementApi>().control("/api/device/addons/authorize",any(),any())}returns decision()

@@ -2148,7 +2148,12 @@ fun LiveTvScreen(
     // OwnTV's libmpv engine is a compatibility rung, not a second permanent
     // decoder. It is only activated after Media3 exhausts its controlled
     // recovery, then reuses the same visible PlayerView surface.
-    val ownTvMpvFallback = remember(context) { OwnTvMpvFallback(context, prebufferSeconds = { viewModel.iptvRepository.livePrebufferSeconds() }) }
+    val primaryAccess=com.arflix.tv.ui.components.LocalPrimaryAccess.current
+    val ownTvMpvFallback = remember(context,primaryAccess) { OwnTvMpvFallback(context,authorized={primaryAccess?.permitsIptvUrl(it)==true}, prebufferSeconds = { viewModel.iptvRepository.livePrebufferSeconds() }) }
+    com.arflix.tv.ui.components.ObservePrimaryPlayback(allowed={playingChannel==null||primaryAccess?.permitsIptvUrl(playingChannel.streamUrl)==true}) {
+        if(ownTvMpvFallback.hasPlayback())ownTvMpvFallback.stop()
+        if(exoPlayer.mediaItemCount>0||exoPlayer.isPlaying){exoPlayer.stop();exoPlayer.clearMediaItems()}
+    }
     var usingOwnTvMpvFallback by remember { mutableStateOf(false) }
 
     DisposableEffect(exoPlayer, ownTvMpvFallback) {
@@ -2281,6 +2286,12 @@ fun LiveTvScreen(
         drmInfo: com.arflix.tv.data.model.DrmInfo? = null,
         forcePrepare: Boolean = false,
     ) {
+        if(primaryAccess?.permitsIptvUrl(stream)!=true){
+            if(ownTvMpvFallback.hasPlayback())ownTvMpvFallback.stop()
+            exoPlayer.stop();exoPlayer.clearMediaItems()
+            playbackDiagnostic=PlaybackDiagnostic(title="Playlist locked",detail="Verify the primary line and Extra Playlists subscription.",severity=PlaybackDiagnosticSeverity.Error)
+            return
+        }
         val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
         iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
 

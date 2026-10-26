@@ -112,7 +112,7 @@ class DeviceManagementAgent @Inject constructor(
     }
     suspend fun runWhileStarted(): Unit = withContext(Dispatchers.IO) {
         runner.withLock {
-        repository.get().observeConfig().map(::managementAccount).distinctUntilChanged()
+        repository.get().observeActivationConfig().map(::managementAccount).distinctUntilChanged()
             .retryWhen { error, _ ->
                 if (error is CancellationException) throw error
                 _state.value = _state.value.copy(checkingLocalState = false, status = "Management state unavailable")

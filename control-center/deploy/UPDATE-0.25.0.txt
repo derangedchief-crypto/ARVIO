@@ -1,0 +1,40 @@
+Extreme Control Center 0.25.0 — primary-line and retrospective playback safeguards
+
+PREPARATION ONLY: customer117 is unchanged. Keep module enforcement OFF while
+coordinating the worker, website and separately approved118 testing client.
+
+1. ACTIVATION WORKER host: install the separate Primary-Line-Guard-Worker bundle
+   using its targeted upgrade-primary-status.sh. Do not run the full installer or
+   overwrite its .env/config/keys/trial ledger. Verify /management/primary-line-health.
+2. WEBSITE host: back up, then overwrite the existing website root with this
+   UPDATE ZIP, restart/reload PHP8.4 and hard-refresh. There is no new migration
+   beyond024. Existing licence keys, dates and enforcement preference stay intact.
+3. Client118/434 needs separate approval for a signed TEST build, then real-device
+   validation. Do not publish a customer or branded APK merely to install this ZIP.
+
+NEW RULES (compatible client required):
+- Only a verified activation code can establish/change the app's pinned primary.
+  Playlist reordering, labels, source IDs, cloud imports and restores cannot do so.
+- Invalid/expired primary blocks ordinary app use and controlled playback, even
+  when an extra line and the reseller's licence are otherwise valid.
+- A valid primary without an active Extra Playlists entitlement is primary-only.
+  ALL existing extras count, regardless of when the customer or source was added.
+- Existing data is retained, not deleted. Legacy installations without a trusted
+  binding require one activation-code confirmation, preserving existing extras/IDs.
+- Outage grace is at most15 minutes since a successful validation, bounded by any
+  earlier known primary/licence expiry. Confirmed negatives end permission now.
+  Retry does not extend grace. Positive grants are memory-only; process/device
+  restart requires online verification, never a fresh offline grace window.
+- Uncontrolled casting via the stock receiver is unavailable in the guarded client:
+  it cannot enforce expiry after the controlling app is gone. Existing APKs and
+  third-party sessions already handed off cannot be retroactively controlled.
+
+Server add-on checks use the already enrolled account's signed, read-only panel
+line status; they never choose a secondary playlist. Worker outages fail new
+additions closed. The client may retain previously verified playback only for
+the bounded outage grace. No direct panel DB credentials are added to the website.
+
+Before enabling enforcement: test expired trial + valid extra, old extra sources,
+key revocation during playback, primary renewal, server outage past the deadline,
+reordering/profile/restore/resume attempts and intact saved data. Older/unupdated
+or modified APKs are not claimed to enforce these rules.

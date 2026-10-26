@@ -39,6 +39,7 @@ function moduleLicenceCases(array &$tests,ControlCenter\Application $app,array $
         same(false,$service->policy()['enforced']);[$t,$seller]=$fixture();$devices=[];
         for($i=0;$i<2;$i++){$c=$app->management->createCustomer($seller,['name'=>'TEST module customer','tenant_id'=>$t['id']]);$devices[]=$app->management->createDevice($seller,['customer_id'=>$c['id'],'label'=>'TEST module device']);}
         $issued=$service->issue($owner,['tenant_id'=>$t['id'],'module'=>'extra_playlists']);$r=$service->redeem($seller,['key'=>$issued['key']])['licence'];$toggle(true);
+        foreach($devices as $d)$app->commands->issueTestCredential($owner,$d['id']);
         try {
             foreach($devices as $d)same(true,$service->decision($d)['allowed']);
             $credential=$app->commands->issueTestCredential($owner,$devices[0]['id']);

@@ -55,7 +55,7 @@ class CompleteGuideIndexIntegrationTest {
         val profile = mockk<ProfileManager>(relaxed = true)
         every { profile.getProfileIdSync() } returns "fixture"
         val gate = IptvEpgPlaybackGate().apply { setPlaybackActive(true) }
-        val repository = spyk(IptvRepository(context, client, profile, mockk(relaxed = true), gate))
+        val repository = spyk(IptvRepository(context, client, profile, mockk(relaxed = true), gate,primaryAccess=primaryAccessFixture()))
         every { repository.observeConfig() } returns flowOf(IptvConfig(
             m3uUrl = "https://provider.example.test/list.m3u", epgUrl = "https://guide.example.test/feed.xml"))
         fun field(name: String) = IptvRepository::class.java.getDeclaredField(name).apply { isAccessible = true }

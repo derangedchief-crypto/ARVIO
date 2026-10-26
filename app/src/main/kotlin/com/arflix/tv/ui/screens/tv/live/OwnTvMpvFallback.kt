@@ -63,14 +63,16 @@ internal object OwnTvIptvRuntime {
  * LiveTuneController owns routing, watch/retry ladders and engine handovers.
  * The old adapter name is retained for callers; it no longer means mpv-only live.
  */
-internal class OwnTvMpvFallback(context: Context, prebufferSeconds: suspend () -> Int = { 0 }) {
+internal class OwnTvMpvFallback(context: Context, private val authorized:(String)->Boolean, prebufferSeconds: suspend () -> Int = { 0 }) {
+    private var authorizedUrl:String?=null
     private val engine = OwnTvIptvRuntime.player(context)
     private val liveEngine = OwnTvIptvRuntime.livePlayer(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val surfaceEngine = MutableStateFlow(OwnTvSurfaceEngine.NONE)
-    private val tuner = OwnTvLiveTuner(scope, EnginePair(liveEngine, engine), prebufferSeconds = prebufferSeconds, onEngineStarted = { fast ->
+    private val tuner = OwnTvLiveTuner(scope, EnginePair(liveEngine, engine), prebufferSeconds = prebufferSeconds, authorized=authorized, onEngineStarted = { fast ->
         selectSurfaceEngine(if (fast) OwnTvSurfaceEngine.FAST_LIVE else OwnTvSurfaceEngine.MPV)
     })
+    init { engine.discardBackgroundRestore();liveEngine.discardBackgroundRestore();tuner.stop() }
     val playing = combine(surfaceEngine, engine.isPlaying, liveEngine.isPlaying) { owner, mpv, fast ->
         when (owner) { OwnTvSurfaceEngine.FAST_LIVE -> fast; OwnTvSurfaceEngine.MPV -> mpv; else -> false }
     }
@@ -180,7 +182,9 @@ internal class OwnTvMpvFallback(context: Context, prebufferSeconds: suspend () -
     }
 
     fun play(url: String, headers: Map<String, String>, archive: Boolean = false, startPositionMs: Long = 0,
-        refreshUrl: (suspend () -> String?)? = null, isHls: Boolean = false, name: String = "Live channel") {
+         refreshUrl: (suspend () -> String?)? = null, isHls: Boolean = false, name: String = "Live channel") {
+        if(!authorized(url)){stop();return}
+        authorizedUrl=url
         engine.discardBackgroundRestore()
         liveEngine.discardBackgroundRestore()
         if (!archive) {
@@ -190,7 +194,8 @@ internal class OwnTvMpvFallback(context: Context, prebufferSeconds: suspend () -
             tuner.play(url, headers, name, isHls, refreshUrl)
             return
         }
-        tuner.playArchive {
+        tuner.playArchive archive@{
+            if(!authorized(url)){stop();return@archive}
             selectSurfaceEngine(OwnTvSurfaceEngine.MPV)
             engine.play(url = url, isLive = false, isArchive = true,
             startPositionMs = startPositionMs, muted = false,
@@ -201,10 +206,13 @@ internal class OwnTvMpvFallback(context: Context, prebufferSeconds: suspend () -
     }
 
     fun stop() {
+        authorizedUrl=null
         tuner.stop(); selectSurfaceEngine(OwnTvSurfaceEngine.NONE)
         engine.discardBackgroundRestore(); liveEngine.discardBackgroundRestore()
     }
+    fun hasPlayback()=surfaceEngine.value!=OwnTvSurfaceEngine.NONE||engine.isPlaying.value||liveEngine.isPlaying.value
     fun togglePlayPause() {
+        if(authorizedUrl?.let(authorized)!=true){stop();return}
         when (surfaceEngine.value) {
             OwnTvSurfaceEngine.FAST_LIVE -> liveEngine.togglePlayPause()
             OwnTvSurfaceEngine.MPV -> engine.togglePlayPause()

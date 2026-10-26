@@ -84,6 +84,9 @@ class CastManager @Inject constructor(
     }
 
     fun initialize(isMobile: Boolean) {
+        // The stock receiver cannot enforce our bound-primary expiry after the
+        // controlling app is killed. Fail closed until a guarded receiver exists.
+        if(!hasRevocableReceiver()) {_castState.value=CastState.NotAvailable;return}
         if (!isMobile) {
             _castState.value = CastState.NotAvailable
             return
@@ -110,6 +113,7 @@ class CastManager @Inject constructor(
     }
 
     fun loadMedia(url: String, title: String, imageUrl: String?, mimeType: String, positionMs: Long) {
+        if(!hasRevocableReceiver())return
         val client = currentSession?.remoteMediaClient ?: return
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE).apply {
             putString(MediaMetadata.KEY_TITLE, title)
@@ -128,6 +132,7 @@ class CastManager @Inject constructor(
     }
 
     fun play() {
+        if(!hasRevocableReceiver())return
         currentSession?.remoteMediaClient?.play()
     }
 
@@ -161,6 +166,7 @@ class CastManager @Inject constructor(
     fun disconnect() {
         castContext?.sessionManager?.endCurrentSession(true)
     }
+    private fun hasRevocableReceiver()=false
 
     fun getRouteSelector(): MediaRouteSelector =
         MediaRouteSelector.Builder()

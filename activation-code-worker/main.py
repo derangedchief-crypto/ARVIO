@@ -287,3 +287,7 @@ async def activate(
     row = matches[0]
     log.info("Activation succeeded for client=%s", client_ip)
     return ActivationResponse(ok=True, username=str(row["username"]), password=str(row["password"]))
+
+# Read-only primary status; existing activation/enrollment routes are unchanged.
+from primary_line_status import install_primary_status_routes
+install_primary_status_routes(app, settings, panel_cursor)

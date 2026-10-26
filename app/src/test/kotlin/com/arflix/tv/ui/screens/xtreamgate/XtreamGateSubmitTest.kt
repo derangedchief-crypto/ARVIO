@@ -49,11 +49,11 @@ class XtreamGateSubmitTest {
             assertFalse(vm.uiState.value.isSubmitting)
             assertNull(vm.uiState.value.errorMessage)
             coVerify(exactly = 1) { activation.resolve("123456") }
-            coVerify(exactly = 1) { iptv.savePlaylists(any()) }
+            coVerify(exactly = 1) { iptv.saveVerifiedActivation(any(),any()) }
             coVerifyOrder {
                 profiles.setActiveProfile("fresh-profile")
                 manager.setCurrentProfileId("fresh-profile")
-                iptv.savePlaylists(any())
+                iptv.saveVerifiedActivation(any(),any())
             }
         } finally { vm.viewModelScope.cancel(); runCurrent(); Dispatchers.resetMain() }
     }

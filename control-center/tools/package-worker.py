@@ -7,7 +7,7 @@ import zipfile
 root = Path(__file__).resolve().parents[2]
 output = root / 'control-center/dist/Extreme-Activation-Management-Bridge-Update.zip'
 output.parent.mkdir(parents=True, exist_ok=True)
-names = ['main.py', 'config.py', 'management_enrollment.py', 'update-management-bridge.sh', 'MANAGEMENT-BRIDGE-UPDATE.txt']
+names = ['main.py', 'config.py', 'management_enrollment.py', 'primary_line_status.py', 'update-management-bridge.sh', 'MANAGEMENT-BRIDGE-UPDATE.txt']
 with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
     for name in names:
         source = root / 'activation-code-worker' / name

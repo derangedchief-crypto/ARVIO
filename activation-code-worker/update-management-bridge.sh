@@ -7,18 +7,18 @@ settings_file="${1:-}"
 [[ -f "$app/main.py" && -f "$app/config.py" && -f "$app/.env" ]] || { echo 'Existing activation-worker installation not found.' >&2; exit 1; }
 backup="$app/backups/management-$(date -u +%Y%m%d-%H%M%S)-$$"
 mkdir -m 700 -p "$backup"
-for name in main.py config.py management_enrollment.py .env; do
+for name in main.py config.py management_enrollment.py primary_line_status.py .env; do
   if [[ -f "$app/$name" ]]; then cp -p "$app/$name" "$backup/$name"; fi
 done
 restore() {
   echo 'Update failed; restoring the previous worker files.' >&2
-  for name in main.py config.py management_enrollment.py .env; do
+  for name in main.py config.py management_enrollment.py primary_line_status.py .env; do
     if [[ -f "$backup/$name" ]]; then cp -p "$backup/$name" "$app/$name"; fi
   done
   systemctl restart iptv-activation-worker || true
 }
 trap restore ERR
-for name in main.py config.py management_enrollment.py; do
+for name in main.py config.py management_enrollment.py primary_line_status.py; do
   install -m 644 "$source_dir/$name" "$app/$name"
 done
 if [[ -n "$settings_file" ]]; then
@@ -53,7 +53,7 @@ finally:
     if os.path.exists(temporary): os.unlink(temporary)
 PY
 fi
-"$app/venv/bin/python" -m py_compile "$app/main.py" "$app/config.py" "$app/management_enrollment.py"
+"$app/venv/bin/python" -m py_compile "$app/main.py" "$app/config.py" "$app/management_enrollment.py" "$app/primary_line_status.py"
 systemctl restart iptv-activation-worker
 ready=0
 for attempt in $(seq 1 45); do

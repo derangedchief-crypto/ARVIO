@@ -614,6 +614,8 @@ fun TvScreen(
     var isPlayerReleased by remember { mutableStateOf(false) }
 
     var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
+    val primaryAccess=com.arflix.tv.ui.components.LocalPrimaryAccess.current
+    com.arflix.tv.ui.components.ObservePrimaryPlayback(allowed={playingChannel==null||primaryAccess?.permitsIptvUrl(playingChannel.streamUrl)==true}) { if(exoPlayer?.mediaItemCount?.let{it>0}==true||exoPlayer?.isPlaying==true){exoPlayer?.stop();exoPlayer?.clearMediaItems()} }
 
     var miniPlayerView by remember { mutableStateOf<PlayerView?>(null) }
     var fullPlayerView by remember { mutableStateOf<PlayerView?>(null) }
@@ -648,6 +650,7 @@ fun TvScreen(
     fun prepareStream(stream: String, drmInfo: com.arflix.tv.data.model.DrmInfo? = null) {
         val player = exoPlayer ?: return
         if (isPlayerReleased) return
+        if(primaryAccess?.permitsIptvUrl(stream)!=true){player.stop();player.clearMediaItems();return}
         player.stop()
         player.clearMediaItems()
         val mediaItem = MediaItem.Builder()

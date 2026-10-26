@@ -19,7 +19,7 @@ internal data class ManagementAccount(val username: String, val password: String
  * playlist credentials to the activation worker or choose a client-supplied host. */
 internal fun managementAccount(config: IptvConfig): ManagementAccount? {
     val urls = if (config.playlists.isEmpty()) listOf(config.m3uUrl)
-        else config.playlists.filter { it.enabled }.sortedBy { if (it.id == "list_1") 0 else 1 }.map { it.m3uUrl }
+        else config.playlists.take(1).filter { it.enabled }.map { it.m3uUrl }
     for (raw in urls) {
         val parts = raw.trim().split(Regex("\\s+"), limit = 3)
         val url = (if (parts.size == 3) parts[0] else raw).toHttpUrlOrNull() ?: continue

@@ -1,0 +1,23 @@
+Primary line guard — read-only activation-worker update
+
+Install ONLY on the existing ACTIVATION WORKER host, not the aaPanel website.
+This source-only bundle contains no config, environment, signing key or trial data.
+Do not run the old full install.sh or recreate the virtual environment.
+
+After owner approval, extract into a temporary directory on that worker, then run:
+  sudo bash upgrade-primary-status.sh /opt/iptv-activation-worker
+
+Only main.py's route-registration tail and primary_line_status.py are updated.
+The installer saves a private source backup, verifies syntax, and restarts only
+iptv-activation-worker.service. Existing .env/config.py are checked unchanged.
+An unsuccessful restart restores the previous source. Other workers and the trial
+ledger are untouched. The read-only lookup uses the existing management bridge
+secret and panel connection; no credentials are sent to the website.
+
+Verify /management/primary-line-health reports schema_version1 and
+credential_validation_version1. The reverse proxy must forward BOTH new paths:
+ /management/primary-line-status (signed server checks)
+ /management/primary-verify (bounded credential checks for the client)
+to the same existing activation worker as enrollment-proof and reseller-lookup.
+Do not replace the existing /activate or EPG routes. Keep the addon enforcement
+switch OFF until website and compatible testing-client validation is complete.

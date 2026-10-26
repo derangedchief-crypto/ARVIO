@@ -27,7 +27,7 @@ final class Sources
     public static function config(mixed $config,bool $forApply=false):array {
         if(!is_array($config))throw new Problem(422,'Invalid source configuration.');
         Input::keys($config,['m3uUrl','epgUrl','playlists','stalkerPortals','sortOrder']);
-        if(($config['sortOrder']??null)!=='provider'||!is_array($config['playlists']??null)||!array_is_list($config['playlists'])||count($config['playlists'])>3||!is_array($config['stalkerPortals']??null)||!array_is_list($config['stalkerPortals'])||count($config['stalkerPortals'])>3)throw new Problem(422,'Invalid source configuration.');
+        if(($config['sortOrder']??null)!=='provider'||!is_array($config['playlists']??null)||!array_is_list($config['playlists'])||count($config['playlists'])>4||!is_array($config['stalkerPortals']??null)||!array_is_list($config['stalkerPortals'])||count($config['stalkerPortals'])>3)throw new Problem(422,'Invalid source configuration.');
         $ids=[];
         foreach($config['playlists'] as &$p) {
             if(!is_array($p))throw new Problem(422,'Invalid playlist.');Input::keys($p,['id','name','m3uUrl','epgUrl','enabled','epgUrls']);
@@ -47,17 +47,28 @@ final class Sources
     private function lease(string $token,mixed $id,mixed $lease):array {
         return $this->commands->leasedDeviceCommand($token,$id,$lease,['get_sources','apply_sources']);
     }
+    private function assertPrimary(array $device,array $config):void {
+        if(!(new ModuleLicences($this->db,$this->management,$this->auth,$this->config))->policy()['enforced'])return;
+        if($this->config->local()&&($device['is_test']??false))return;
+        $bound=$this->db->one("SELECT account_ref FROM enrollment_requests WHERE device_id=? AND key_fingerprint=? AND app_package=? AND status='approved' ORDER BY created_at DESC,id DESC LIMIT 1",[$device['id'],$device['key_fingerprint']??null,$device['app_package']??null]);
+        $url=parse_url(self::lists($config)[0]['m3uUrl']);$query=[];if(is_array($url))parse_str($url['query']??'',$query);
+        $user=$query['username']??null;$secret=(new EnrollmentProof($this->config,$this->secrets))->bridgeSecret();
+        if(!$bound||!is_string($user)||($url['scheme']??null)!=='https'||strtolower($url['host']??'')!=='tv.extremeiptv.net'||($url['port']??443)!==443||!hash_equals($bound['account_ref'],hash_hmac('sha256',"account-v1\n".$user,hex2bin($secret))))throw new Problem(409,'The source does not match the verified primary activation. Confirm the activation code in the compatible client.');
+    }
     private function snapshot(string $device,string $id):array {$r=$this->db->one('SELECT * FROM source_snapshots WHERE id=? AND device_id=?',[Input::id($id),$device]);if(!$r)throw new Problem(404,'Source checkpoint not found.');return $r;}
     private function draft(string $device,string $id):array {$r=$this->db->one('SELECT * FROM source_drafts WHERE id=? AND device_id=? AND expires_at>UTC_TIMESTAMP()',[Input::id($id),$device]);if(!$r)throw new Problem(409,'Source preview expired or belongs to another device.');return $r;}
     public function authorizeDraft(array $device,string $id):void {
         $draft=$this->draft($device['id'],$id);$base=$this->snapshot($device['id'],$draft['snapshot_id']);
-        (new ModuleLicences($this->db,$this->management,$this->auth))->enforce($device,$this->decode($base['payload_cipher'])['config'],$this->decode($draft['payload_cipher']));
+        $this->assertPrimary($device,$this->decode($base['payload_cipher'])['config']);
+        $this->assertPrimary($device,$this->decode($draft['payload_cipher']));
+        (new ModuleLicences($this->db,$this->management,$this->auth,$this->config))->enforce($device,$this->decode($base['payload_cipher'])['config'],$this->decode($draft['payload_cipher']));
     }
     public function capture(string $token,array $input):array {
         Input::keys($input,['command_id','lease_token','reason','snapshot']);[$d,$c]=$this->lease($token,$input['command_id']??'',$input['lease_token']??'');$this->auth->limit('sources-upload',$d['id'],20,60);
         $reason=$input['reason']??null;if(!in_array($reason,$c['kind']==='get_sources'?['read']:['pre_apply','confirmation'],true))throw new Problem(422,'Invalid source snapshot phase.');
         $doc=$input['snapshot']??null;if(!is_array($doc))throw new Problem(422,'Invalid source snapshot.');Input::keys($doc,['schema_version','profile_ref','revision','config']);
         if(($doc['schema_version']??null)!==1)throw new Problem(422,'Invalid source schema.');EnrollmentProof::hex($doc['profile_ref']??null,64);EnrollmentProof::hex($doc['revision']??null,64);$doc['config']=self::config($doc['config']??[]);
+        $this->assertPrimary($d,$doc['config']);
         if($c['kind']==='apply_sources') {$p=json_decode($c['payload'],true,16,JSON_THROW_ON_ERROR);$draft=$this->draft($d['id'],$p['draft_id']);if($doc['profile_ref']!==$draft['profile_ref']||($reason==='pre_apply'&&$doc['revision']!==$draft['expected_revision']))throw new Problem(409,'Source checkpoint does not match the reviewed target.');
             if($reason==='confirmation'&&($doc['config']!=$this->decode($draft['payload_cipher'])||!$this->db->one("SELECT id FROM source_snapshots WHERE command_id=? AND reason='pre_apply'",[$c['id']])))throw new Problem(409,'Source confirmation requires the safety checkpoint and exact reviewed target.');}
         return $this->db->transaction(function()use($token,$d,$c,$doc,$reason,$input):array {
@@ -76,17 +87,20 @@ final class Sources
     public function listing(array $actor,string $device):array {
         $this->management->device($actor,$device);$rows=$this->db->all('SELECT id,command_id,profile_ref,revision,reason,protected,created_at FROM source_snapshots WHERE device_id=? ORDER BY created_at DESC,id DESC LIMIT 60',[$device]);
         $this->commands->expire($device);$commands=$this->db->all("SELECT * FROM commands WHERE device_id=? AND kind IN ('get_sources','apply_sources') ORDER BY created_at DESC,id DESC LIMIT 10",[$device]);
-        return ['items'=>$rows,'commands'=>array_map(Commands::publicCommand(...),$commands),'addon'=>(new ModuleLicences($this->db,$this->management,$this->auth))->decision($this->management->device($actor,$device)),'notice'=>'Up to 10 initial profile checkpoints are protected; 50 additional rolling versions are retained (90 days). URLs and credentials are never returned.']+$this->commands->currentState($actor,$device,['get_sources','apply_sources']);
+        try{$addon=(new ModuleLicences($this->db,$this->management,$this->auth,$this->config))->decision($this->management->device($actor,$device));}
+        catch(Problem $e){if($e->status!==503)throw $e;$addon=['allowed'=>false,'valid_for_seconds'=>0,'reason'=>'validation_unavailable'];}
+        return ['items'=>$rows,'commands'=>array_map(Commands::publicCommand(...),$commands),'addon'=>$addon,'notice'=>'Up to 10 initial profile checkpoints are protected; 50 additional rolling versions are retained (90 days). URLs and credentials are never returned.']+$this->commands->currentState($actor,$device,['get_sources','apply_sources']);
     }
     public function view(array $actor,string $device,string $id):array {$this->management->device($actor,$device);$row=$this->snapshot($device,$id);$doc=$this->decode($row['payload_cipher']);unset($row['payload_cipher']);$row['entries']=$this->publicConfig($device,$doc['profile_ref'],$doc['config']);return $row;}
     public function preview(array $actor,string $device,array $input):array {
         Input::keys($input,['snapshot_id','entries','rollback_id']);$d=$this->management->device($actor,$device);$this->auth->limit('sources-preview',$actor['id'],30,60);
         if((int)$this->db->query('SELECT COUNT(*) FROM source_drafts WHERE device_id=? AND expires_at>UTC_TIMESTAMP()',[$device])->fetchColumn()>=10)throw new Problem(409,'Ten source previews already active; wait for expiry before creating another.');
         $base=$this->snapshot($device,Input::id($input['snapshot_id']??null));if(strtotime($base['created_at'].' UTC')<time()-600)throw new Problem(409,'Read fresh sources from the app before editing.');$doc=$this->decode($base['payload_cipher']);$target=$doc['config'];$keptPrivate=[];$credentialEdit=false;
+        $this->assertPrimary($d,$doc['config']);
         if(isset($input['rollback_id'])) {
             if(isset($input['entries']))throw new Problem(422,'Choose draft editing or rollback.');$old=$this->snapshot($device,Input::id($input['rollback_id']));if($old['profile_ref']!==$base['profile_ref'])throw new Problem(409,'Rollback profile differs.');$target=$this->decode($old['payload_cipher'])['config'];
         } else {
-            $entries=$input['entries']??null;if(!is_array($entries)||!array_is_list($entries)||count($entries)>6)throw new Problem(422,'Invalid source draft.');
+            $entries=$input['entries']??null;if(!is_array($entries)||!array_is_list($entries)||count($entries)>7)throw new Problem(422,'Invalid source draft.');
             $known=[];foreach(['playlists'=>'m3u','stalkerPortals'=>'stalker'] as $field=>$kind)foreach(($field==='playlists'?self::lists($target):$target[$field]) as $p)$known[$this->ref($device,$doc['profile_ref'],$kind,$p['id'])]=['kind'=>$kind,'entry'=>$p];
             $lists=[];$portals=[];$seen=[];
             foreach($entries as $entry) {
@@ -110,7 +124,7 @@ final class Sources
             $target=['m3uUrl'=>$lists[0]['m3uUrl']??'','epgUrl'=>$lists[0]['epgUrl']??'','playlists'=>$lists,'stalkerPortals'=>$portals,'sortOrder'=>'provider'];
         }
         $target=self::config($target,true);$primary=self::lists($doc['config'])[0];$nextPrimary=self::lists($target)[0];if($nextPrimary['id']!==$primary['id']||$nextPrimary['m3uUrl']!==$primary['m3uUrl'])throw new Problem(409,'The verified activation source must stay first with unchanged credentials/URL. Use verified activation for account transfers.');
-        (new ModuleLicences($this->db,$this->management,$this->auth))->enforce($d,$doc['config'],$target);
+        (new ModuleLicences($this->db,$this->management,$this->auth,$this->config))->enforce($d,$doc['config'],$target);
         $oldIds=array_column(array_merge(self::lists($doc['config']),$doc['config']['stalkerPortals']),'id');$nextIds=array_column(array_merge(self::lists($target),$target['stalkerPortals']),'id');sort($oldIds);sort($nextIds);
         if($keptPrivate&&($credentialEdit||$oldIds!==$nextIds))throw new Problem(422,'Give remaining private source labels nonsensitive names before changing sources or credentials.');
         $id=Database::id();$this->db->query('INSERT INTO source_drafts (id,device_id,snapshot_id,profile_ref,expected_revision,restore_checkpoint,payload_cipher,created_by,expires_at) VALUES (?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 10 MINUTE))',[$id,$device,$base['id'],$base['profile_ref'],$base['revision'],(int)isset($input['rollback_id']),$this->encode($target),$actor['id']]);$this->auth->audit($actor,'sources.preview_created',$id,$d['tenant_id']);

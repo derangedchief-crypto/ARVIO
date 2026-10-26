@@ -24,7 +24,7 @@ class GuideOwnershipRetentionTest {
         context.getSharedPreferences("arvio_iptv_prefs", 0).edit().clear().commit()
         val profile = mockk<ProfileManager>(relaxed = true)
         every { profile.getProfileIdSync() } returns "fixture"
-        val repository = IptvRepository(context, OkHttpClient(), profile, mockk(relaxed = true), IptvEpgPlaybackGate())
+        val repository = IptvRepository(context, OkHttpClient(), profile, mockk(relaxed = true), IptvEpgPlaybackGate(),primaryAccess=primaryAccessFixture())
         val config = IptvConfig(m3uUrl = "https://provider.example.test/list.m3u", epgUrl = "https://guide.example.test/old.xml")
         val type = IptvRepository::class.java
         val keyMethod = type.getDeclaredMethod("epgIndexKey", String::class.java, IptvConfig::class.java).apply { isAccessible = true }

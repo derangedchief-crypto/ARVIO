@@ -71,7 +71,7 @@ class LaunchContentRefreshIntegrationTest {
         }.build()
         val profile = mockk<ProfileManager>(relaxed = true)
         every { profile.getProfileIdSync() } answers { profileId }
-        val repository = spyk(IptvRepository(context, client, profile, mockk(relaxed = true), IptvEpgPlaybackGate()))
+        val repository = spyk(IptvRepository(context, client, profile, mockk(relaxed = true), IptvEpgPlaybackGate(),primaryAccess=primaryAccessFixture()))
         coEvery { repository.warmupFromCacheOnly() } returns Unit
         every { repository.observeConfig() } returns flowOf(IptvConfig(m3uUrl = "$host/get.php?username=fixture-user&password=fixture-pass&type=m3u_plus"))
         every { repository.requestGuideRefresh(any()) } returns Job().apply { complete() }

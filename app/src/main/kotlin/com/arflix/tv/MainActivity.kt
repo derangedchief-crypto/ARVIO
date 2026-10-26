@@ -177,6 +177,7 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var deviceManagementAgent: com.arflix.tv.management.DeviceManagementAgent
+    @Inject lateinit var primaryAccess: com.arflix.tv.access.PrimaryAccessRepository
 
     private var jankStats: JankStats? = null
 
@@ -215,6 +216,7 @@ class MainActivity : ComponentActivity() {
         }
 
         super.onCreate(savedInstanceState)
+        primaryAccess.start()
 
         lifecycleScope.launch {
             repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
@@ -441,6 +443,7 @@ class MainActivity : ComponentActivity() {
                         ) {
                             com.arflix.tv.ui.components.MaintenanceGate(maintenance) {
                                 com.arflix.tv.ui.components.DeviceManagementGate(deviceManagement, deviceManagementAgent::dismissMessage) {
+                                    com.arflix.tv.ui.components.PrimaryActivationGate(primaryAccess) {
                                     ArflixApp(
                                         authRepository = authRepository.get(),
                                         profileRepository = profileRepository.get(),
@@ -462,6 +465,7 @@ class MainActivity : ComponentActivity() {
                                         preloadedLogoCache = startupState.logoCache,
                                         onExitApp = { finish() }
                                     )
+                                    }
                                 }
                             }
                         }
@@ -496,11 +500,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        primaryAccess.foreground(true)
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             // Returning to a retained activity is also an app launch to the user.
             // Debounce quick returns/rotations without waiting for process death.
             iptvRepository.get().requestLaunchContentRefresh(recheckOnLaunch = true)
         }
+    }
+    override fun onStop() {
+        primaryAccess.foreground(false)
+        super.onStop()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -740,7 +749,7 @@ fun ArflixApp(
     }
 
     val startDestination = when {
-        gateOnboardingDone == false -> Screen.XtreamGate.route
+        gateOnboardingDone == false -> if(com.arflix.tv.ui.components.LocalPrimaryState.current.bound)Screen.JellyfinGate.route else Screen.XtreamGate.route
         skipProfileSelection == true && activeProfile != null -> Screen.Home.route
         else -> Screen.ProfileSelection.route
     }

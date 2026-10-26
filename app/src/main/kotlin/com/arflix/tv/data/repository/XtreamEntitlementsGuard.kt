@@ -298,7 +298,7 @@ class XtreamEntitlementsGuard @Inject constructor(
      */
     private suspend fun readCredentials(): Credentials? {
         val config = withTimeoutOrNull(CONFIG_READ_TIMEOUT_MS) {
-            iptvRepository.observeConfig().first()
+            iptvRepository.observeActivationConfig().first()
         } ?: return null
 
         val candidates = buildList {

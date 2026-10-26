@@ -1,4 +1,30 @@
-# Device management 0.24.1 archive/cache compatibility — validation
+# Device management 0.25.0 primary safeguards — validation
+
+Final local validation: 927 Android tests (zero failures/errors, one existing skip),
+including all20 new primary-access tests; both testing/customer Kotlin variants
+compile. All245 service/database/HTTP checks,68 browser checks,30 activation-worker
+checks and79 branding/builder checks pass. Package and syntax checks also pass.
+
+New native tests cover authenticated private binding storage, legacy confirmation
+without dropping sources, no gate teardown during submission, pinned identity,
+expired-trial/extra fallback, actual expiry despite auth=1, server-time bounds,
+monotonic grace, explicit-negative invalidation, no restart-created grace and
+primary-only access when the optional module is absent. Existing EPG/catalogue
+tests use explicit access fixtures rather than contacting a live validation host.
+
+Worker coverage checks read-only line status, nonce-bound request/response HMACs,
+credentials/expiry negatives and the reversible/idempotent targeted installer.
+PHP checks isolate localhost simulators from production: a production origin must
+never receive the test-credential primary-validation exemption. Config, .env and
+trial-history preservation are asserted by installer fixtures.
+
+Local Kotlin compilation skips only local cloud-secret validation. Release gates
+and existing GitHub workflows are not changed. Real-device expiry/renewal, PiP,
+background shutdown and retained data remain separate acceptance evidence before
+an approved customer release. No installed worker, live flag or APK is changed
+by these local tests. See the current run reports before claiming test counts.
+
+## Previous 0.24.1 archive/cache compatibility
 
 Package regression tests compare two adjacent versions: unchanged PHP file bytes
 must have strictly advancing ZIP timestamps, while repeated packaging of the same
