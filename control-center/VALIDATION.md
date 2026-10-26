@@ -1,4 +1,14 @@
-# Device management 0.24.0 monthly Add-ons — validation
+# Device management 0.24.1 archive/cache compatibility — validation
+
+Package regression tests compare two adjacent versions: unchanged PHP file bytes
+must have strictly advancing ZIP timestamps, while repeated packaging of the same
+version stays byte-identical. Private config/storage and every manifest remain
+protected. This does not bypass PHP installations with timestamp checks disabled;
+their operator must restart PHP. The live failure investigation confirmed frontend
+0.24.0 while the new public device add-on policy route fell through to login,
+consistent with an older router still executing (cache or incomplete extraction).
+
+## Previous 0.24.0 monthly Add-ons
 
 Full Android regression run: 907 tests, zero failures/errors, one existing skip;
 all 13 add-on policy/authorization/persistence tests pass. Testing and customer

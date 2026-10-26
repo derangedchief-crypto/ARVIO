@@ -1,0 +1,20 @@
+Extreme Control Center 0.24.1 — PHP update/cache compatibility
+
+Fixes the update ZIP's repeated PHP file timestamps. Archives remain deterministic,
+but every release now has a different timestamp so PHP OPcache can detect replaced
+files when timestamp validation is enabled. Licence behaviour and migration024
+are unchanged; do not reset keys or reissue subscriptions to fix an API404.
+
+1. Back up and extract this UPDATE ZIP over the existing website root:
+   /www/wwwroot/control.fecxbrfzku.net
+   Choose overwrite/replace existing files, not skip existing files.
+2. In aaPanel, restart the website's PHP8.4 service to clear any old cached code.
+   This is required when OPcache timestamp validation is disabled, and also clears
+   cached files from the previous equal-timestamp update. No terminal is needed.
+3. Hard-refresh the website. Website settings -> Apply database upgrade applies
+   migration024 if it is still pending; already applied migrations are not rerun.
+
+Add-ons should load its normal licence screen, not an HTML404. A migration that
+is still pending produces a JSON upgrade message, not a missing API route.
+No APK/worker update is included. Keep enforcement OFF until client testing.
+Private config, storage, existing subscription keys and trial history are preserved.

@@ -6,11 +6,20 @@ import re
 import sys
 import zipfile
 import argparse
+from datetime import datetime, timedelta
 
 ROOT = Path(__file__).resolve().parents[1]
 version = (ROOT / 'VERSION').read_text().strip()
 if not re.fullmatch(r'\d+\.\d+\.\d+', version):
     raise SystemExit('Invalid backend version')
+# Keep reproducible archives, but NEVER reuse one mtime across releases: PHP
+# OPcache timestamp validation otherwise keeps old routers after an overwrite.
+parts = tuple(map(int, version.split('.')))
+if any(part > 999 for part in parts):
+    raise SystemExit('Archive version components must be between 0 and 999')
+release_number = (parts[0] * 1000 + parts[1]) * 1000 + parts[2]
+stamp = datetime(2026, 1, 1) + timedelta(seconds=release_number * 2)
+archive_time = (stamp.year, stamp.month, stamp.day, stamp.hour, stamp.minute, stamp.second)
 parser = argparse.ArgumentParser()
 parser.add_argument('output', nargs='?')
 parser.add_argument('--update', action='store_true', help='Preserve the installed config.php by omitting it from the ZIP')
@@ -41,12 +50,12 @@ for name in entries:
         raise SystemExit(f'Refusing private/development file in delivery: {name}')
 with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
     if not args.update:
-        storage = zipfile.ZipInfo('storage/', (2026, 1, 1, 0, 0, 0))
+        storage = zipfile.ZipInfo('storage/', archive_time)
         storage.create_system = 3
         storage.external_attr = (0o40700 << 16) | 0x10
         archive.writestr(storage, b'')
     for name, data in sorted(entries.items()):
-        entry = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+        entry = zipfile.ZipInfo(name, archive_time)
         entry.create_system = 3
         entry.external_attr = (0o100600 if name.startswith('storage/') or name == 'config.php' else 0o100644) << 16
         entry.compress_type = zipfile.ZIP_DEFLATED

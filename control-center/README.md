@@ -7,7 +7,16 @@ Website changes are tested on `control-center-owner-trials` and synchronized int
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.24.0 monthly reseller Add-ons
+## Current source update — 0.24.1 PHP update/cache compatibility
+
+Release ZIPs now use distinct, reproducible timestamps per version instead of one
+shared timestamp. This lets PHP OPcache notice overwritten routers/classes when
+timestamp validation is enabled. Restart the website's PHP8.4 service after the
+affected update to clear any existing cache; installations that disable timestamp
+validation need a PHP restart on backend updates. See `deploy/UPDATE-0.24.1.txt`.
+No licence semantics, stored keys, migration024 or client APK changes are included.
+
+## Previous 0.24.0 monthly reseller Add-ons
 
 Extra Playlists is the first monthly workspace-wide module. Owner issues keys;
 resellers activate them for all their customers/devices. Owner renews, suspends,

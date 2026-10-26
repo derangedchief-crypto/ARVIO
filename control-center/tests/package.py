@@ -5,6 +5,7 @@ import hashlib
 import subprocess
 import tempfile
 import zipfile
+import shutil
 
 root = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode') as directory:
@@ -13,6 +14,27 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
     for target in [a, b]:
         subprocess.run(['python3', str(root / 'tools/package.py'), str(target)], check=True, capture_output=True)
     assert a.read_bytes() == b.read_bytes(), 'Package must be deterministic'
+    # A new release must invalidate existing PHP opcodes even when the extraction
+    # tool preserves ZIP timestamps. Same-version packaging stays deterministic.
+    copy = base / 'next-release' / 'control-center'
+    copy.mkdir(parents=True)
+    for folder in ['src','public','database','deploy','cli','tools']:
+        shutil.copytree(root / folder, copy / folder)
+    for name in ['README.md','VALIDATION.md']:
+        shutil.copyfile(root / name, copy / name)
+    shutil.copyfile(root.parent / 'LICENSE', copy.parent / 'LICENSE')
+    parts = list(map(int, (root / 'VERSION').read_text().strip().split('.')))
+    parts[2] += 1
+    if parts[2] == 1000: parts[1] += 1; parts[2] = 0
+    if parts[1] == 1000: parts[0] += 1; parts[1] = 0
+    (copy / 'VERSION').write_text('.'.join(map(str, parts)) + '\n')
+    newer = base / 'next.zip'
+    subprocess.run(['python3', str(copy / 'tools/package.py'), '--update', str(newer)], check=True, capture_output=True)
+    with zipfile.ZipFile(a) as old, zipfile.ZipFile(newer) as new:
+        for name in ['public/index.php','src/Application.php','src/ModuleLicences.php']:
+            assert new.getinfo(name).date_time > old.getinfo(name).date_time, name
+            assert old.getinfo(name).date_time != (2026, 1, 1, 0, 0, 0), 'Do not restore the stale shared timestamp'
+            assert old.read(name) == new.read(name), 'Timestamp refresh must not modify PHP source'
     with zipfile.ZipFile(a) as archive:
         names = archive.namelist()
         assert 'public/index.php' in names and 'database/migrations/001_foundation.sql' in names
@@ -57,4 +79,4 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         for line in archive.read('MANIFEST.sha256').decode().splitlines():
             checksum, name = line.split('  ', 1)
             assert hashlib.sha256(archive.read(name)).hexdigest() == checksum
-print('PASS fresh ZIP contains one blank-password config.php; update ZIP preserves it; deterministic manifests and private keys verified')
+print('PASS reproducible ZIPs use advancing release timestamps; update preserves config/storage/keys and all manifests verify')
