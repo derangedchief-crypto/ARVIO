@@ -148,6 +148,8 @@ require __DIR__.'/build-progress.php';
 buildProgressCases($tests,$app,$config,$owner,$alpha);
 require __DIR__.'/production-brands.php';
 productionBrandCases($tests,$app,$config,$owner);
+require __DIR__.'/owner-unlimited.php';
+ownerUnlimitedCases($tests,$app,$config,$owner,$alpha);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

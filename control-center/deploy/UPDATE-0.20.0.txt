@@ -1,0 +1,29 @@
+Extreme Control Center0.20.0 — owner unlimited daily trials and explicit publication inputs
+
+WEBSITE38.190.133.176 only. No APK rebuild or auth/activation/dispatcher update.
+Back up the website/database, then extract this UPDATE ZIP into the existing
+/www/wwwroot/control.fecxbrfzku.net root. config.php and storage are excluded.
+
+User explicitly authorized unlimited daily trials for their own existing owner app.
+As root in the same aaPanel WEBSITE terminal:
+  bash /www/wwwroot/control.fecxbrfzku.net/deploy/enable-owner-unlimited-trials.sh
+
+The helper disables CLI opcode/JIT caching (for this command only), backs up the
+original private config, verifies the existing owner brand/MarcPanel252 link and
+approved plan/build, and opts in ONLY that brand. It retains all original config,
+keys, ledger/contacts/budgets, approved plans and reseller settings. It preserves
+global/app opt-outs; an already-enabled owner offer is re-reviewed for unlimited
+daily capacity. It creates no account and never resets the spent trial history.
+There is no schema migration or new secret. The existing unsigned daily_limit
+column uses zero only for server-confirmed owner-unlimited publications; reseller
+zero values are rejected. The old pilot config remains to restrict other brands;
+only the verified owner brand is exempted by this explicit server policy.
+
+Hard-refresh the website. Owner trial controls show Unlimited instead of a numeric
+limit. Reseller controls show the actual allowed range and validate whole numbers
+before posting; backend errors distinguish invalid daily limit and offer revision.
+
+Unlimited means no owner-app daily total/lifetime pilot ceiling. One trial per
+customer/device/reseller, idempotent recovery, server authorization, device/IP
+anti-abuse rates and the global/app switches remain enforced. Existing subscriptions
+are unchanged. Do NOT create another trial simply to validate the new quota policy.

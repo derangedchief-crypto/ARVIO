@@ -1,4 +1,35 @@
-# Device management0.19.0 normal branded releases — validation
+# Device management0.20.0 owner unlimited daily trials — validation
+
+216 isolated database/service/HTTP cases, 57 browser checks and 79 builder checks
+pass. Publication-input unit checks, private-config/opt-out preservation tests for
+the owner setup helper, package-preservation, pilot-helper and shell-syntax checks
+also pass. No live trial account or new APK was created for this change.
+
+Owner unlimited policy is an explicit private opt-in for one verified owner brand.
+It removes only the owner daily total and the spent pilot ceiling; original pilot
+records, customer/device eligibility, idempotent recovery, contacts and budget rows
+are retained. Device/IP anti-abuse limits, owner/app/global switches, approved plans
+and active verified workspace admission still apply. Reseller daily caps/opt-outs
+are not changed, and a reseller brand cannot obtain this exception even if named
+in the private setting. Zero is a server-owned owner-unlimited publication sentinel,
+never a public/reseller request to bypass a quota.
+
+The isolated service tests cover two distinct eligible owner signups despite daily
+cap1, same-key recovery without another worker call, duplicate identity rejection,
+retained device/IP quotas, global/app pause, history preservation and role isolation.
+Synthetic worker responses are not live account creation evidence. Browser coverage
+checks an Unlimited owner view with no numeric input/hidden daily-limit POST field,
+typed revision, explicit permitted ranges for resellers and invalid inputs rejected
+before HTTP. Backend validation names the failing revision/daily field rather than
+returning the same generic numeric error. The prior live browser failure's exact
+request payload was not captured; CLI publication was a workaround, not its diagnosis.
+
+No APK or worker update is required. Deployment remains a separate explicit helper
+execution on the website; installing files alone never opts an owner into unlimited
+trials. The helper preserves original private config/keys and verifies history before
+atomically installing the owner-only opt-in. No account is created by setup.
+
+## Previous0.19.0 normal branded releases validation
 
 214 isolated MariaDB/service/HTTP cases pass. New coverage verifies separate-channel
 deduplication, clean normal package/version/filename, explicit production opt-in,

@@ -16,10 +16,11 @@ final class TrialBudgets
             $name='trial-ip-'.substr($session['ip_ref'],0,40);
             if(!$this->db->pdo->inTransaction()||(int)$this->db->query('SELECT IS_USED_LOCK(?)=CONNECTION_ID()',[$name])->fetchColumn()!==1)throw new \LogicException('Missing trial quota transaction lock.');
             $reseller=$offer['panel_reseller_id'];$device=$session['device_ref'];$ip=$session['ip_ref'];
-            $daily=(int)$this->db->query('SELECT COUNT(*) FROM trial_signup_budgets WHERE panel_reseller_id=? AND counted=1 AND created_at>=UTC_DATE()',[$reseller])->fetchColumn();
+            $unlimited=($offer['owner_unlimited']??false)===true&&$offer['daily_limit']===0;
+            $daily=$unlimited?0:(int)$this->db->query('SELECT COUNT(*) FROM trial_signup_budgets WHERE panel_reseller_id=? AND counted=1 AND created_at>=UTC_DATE()',[$reseller])->fetchColumn();
             $deviceCount=(int)$this->db->query('SELECT COUNT(*) FROM trial_signup_budgets WHERE panel_reseller_id=? AND device_ref=? AND counted=1 AND created_at>=UTC_DATE()',[$reseller,$device])->fetchColumn();
             $ipCount=(int)$this->db->query('SELECT COUNT(*) FROM trial_signup_budgets WHERE ip_ref=? AND counted=1 AND created_at>=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 HOUR)',[$ip])->fetchColumn();
-            if($daily>=$offer['daily_limit']||$deviceCount>=$this->config->number('trial_device_daily_limit',10,1,100)||$ipCount>=$this->config->number('trial_ip_hourly_limit',50,1,1000))throw new Problem(429,'No automatic trial capacity is available for this request right now.');
+            if((!$unlimited&&$daily>=$offer['daily_limit'])||$deviceCount>=$this->config->number('trial_device_daily_limit',10,1,100)||$ipCount>=$this->config->number('trial_ip_hourly_limit',50,1,1000))throw new Problem(429,'No automatic trial capacity is available for this request right now.');
             $this->db->query('INSERT INTO trial_signup_budgets (operation_id,panel_reseller_id,device_ref,ip_ref) VALUES (?,?,?,?)',[$operation['id'],$reseller,$device,$ip]);
     }
 }

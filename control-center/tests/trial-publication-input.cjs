@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const context={window:{}};vm.createContext(context);
+vm.runInContext(fs.readFileSync(__dirname+'/../public/assets/trial-workspace.js','utf8'),context);
+const make=context.window.TrialWorkspace.publicationInput;
+const plain=value=>JSON.parse(JSON.stringify(value));
+assert.deepEqual(plain(make({publication:{revision:'4'},daily_cap:1},'1')),{expected_revision:4,enabled:true,confirmed_public_mode:true,daily_limit:1});
+for(const value of ['100','0','',1.5,'not-a-number'])assert.throws(()=>make({publication:{revision:4},daily_cap:1},value),/whole-number daily trial limit from 1 to 1/);
+for(const revision of ['bad',-1,1.5,100001])assert.throws(()=>make({publication:{revision},daily_cap:1},'1'),/offer revision/);
+assert.deepEqual(plain(make({publication:{revision:'4',daily_limit:0},owner_unlimited:true,daily_cap:null},'')),{expected_revision:4,enabled:true,confirmed_public_mode:true});
+assert.deepEqual(plain(make({publication:{revision:4},daily_cap:100},'100')),{expected_revision:4,enabled:true,confirmed_public_mode:true,daily_limit:100});
+console.log('PASS publication inputs: integer revision/limits, precise invalid-field errors, no hidden owner numeric value, valid reseller100 when approved');
