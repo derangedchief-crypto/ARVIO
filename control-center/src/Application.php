@@ -20,6 +20,7 @@ final class Application
     public readonly TrialPolicies $trialPolicies;
     public readonly TrialContacts $trialContacts;
     public readonly TrialOffers $trialOffers;
+    public readonly TrialSetup $trialSetup;
     public readonly TrialPublicSessions $trialSessions;
     public readonly TrialSignupBroker $trialSignup;
     public readonly BrandBuilder $brandBuilder;
@@ -43,6 +44,7 @@ final class Application
         $trialWorker=new TrialWorker($config);$this->trialPolicies=new TrialPolicies($this->db,$this->management,$this->auth,$trialWorker);
         $this->trialContacts=new TrialContacts($this->db,$this->management,$this->auth,new Secrets($config),$config,$trialWorker);
         $secrets=new Secrets($config);$artifacts=new BrandArtifacts($this->db,$secrets,$config);$this->trialOffers=new TrialOffers($this->db,$config,$this->management,$this->auth,$secrets,$this->trialPolicies,$artifacts);
+        $this->trialSetup=new TrialSetup($this->db,$this->management,$this->auth,$this->trialPolicies,$this->trialOffers);
         $this->brandBuilder=new BrandBuilder($this->db,$config,$this->appBrands,$artifacts,$secrets,$this->auth);
         $this->brandDownloads=new BrandDownloads($config,$artifacts);
         $this->trialSessions=new TrialPublicSessions($this->db,$this->trialOffers,$secrets,$this->auth);$this->trialSignup=new TrialSignupBroker($this->db,$config,$secrets,$this->auth,$this->trialOffers,$this->trialSessions,new TrialBudgets($this->db,$config),$trialWorker,$this->trialContacts);
@@ -156,6 +158,9 @@ final class Application
         if($method==='GET'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/inputs$~D',$path,$m)){$file=$this->appBrands->downloadInputs($actor,$m[1]);header('Content-Type: application/json; charset=utf-8');header('Content-Disposition: attachment; filename="'.$file['filename'].'"');echo $file['body'];exit;}
         if($method==='POST'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/cancel$~D',$path,$m))Http::json($this->appBrands->cancelBuild($actor,$m[1],Http::body()));
         if($method==='GET'&&$path==='/api/trial-policy')Http::json($this->trialPolicies->get($actor,$_GET));
+        if($method==='GET'&&$path==='/api/trial-setup')Http::json($this->trialSetup->status($actor,$_GET));
+        if($method==='POST'&&$path==='/api/trial-setup/admin')Http::json($this->trialSetup->saveAdmin($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/trial-setup/app')Http::json($this->trialSetup->saveApp($actor,Http::body()));
         if($method==='GET'&&$path==='/api/trials/settings'){Input::keys($_GET,[]);Http::json($this->trialOffers->globalSettings($actor));}
         if($method==='POST'&&$path==='/api/trials/settings')Http::json($this->trialOffers->setGlobal($actor,Http::body()));
         if($method==='POST'&&$path==='/api/trial-policy/catalog')Http::json($this->trialPolicies->refresh($actor,Http::body()));
@@ -237,7 +242,7 @@ final class Application
         $days = $this->config->number('retention_days', 90, 7, 365);
         $commands = $this->db->query("DELETE FROM commands WHERE status IN ('succeeded','failed','expired','cancelled') AND finished_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
         $events = $this->db->query("DELETE FROM audit_events WHERE created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL $days DAY) LIMIT 1000")->rowCount();
-        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();$this->sources->maintain();$this->preferences->maintain();$this->support->maintain();$this->deviceProfiles->maintain();$this->appBrands->maintain();$this->trialContacts->maintain();$this->trialSignup->maintain();$this->brandBuilder->maintain();}
+        if((new Migrations($this->db,$this->config))->pending()===[]) {$this->enrollment->maintain();$this->presets->maintain();$this->layouts->maintain();$this->favourites->maintain();$this->sources->maintain();$this->preferences->maintain();$this->support->maintain();$this->deviceProfiles->maintain();$this->appBrands->maintain();$this->trialContacts->maintain();$this->trialSetup->maintain();$this->trialSignup->maintain();$this->brandBuilder->maintain();}
         return ['expired_sessions_removed' => $sessions, 'old_commands_removed' => $commands, 'old_audit_events_removed' => $events];
     }
 }

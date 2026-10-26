@@ -21,6 +21,7 @@
     }catch(e){if(epoch===state.epoch)box.append(el('p',e.message,'error'));}
   }
   async function render(epoch,hint){
+    if(root.SimpleTrialSetup)return root.SimpleTrialSetup.render(epoch,hint);
     const valid=()=>state.epoch===epoch&&!!state.user;const main=$('main');main.replaceChildren(heading('Trials & contacts','Choose approved trial defaults and keep contact details available for follow-up. No automated messages are sent.'));
     await globalControls(main,epoch);if(!valid())return;
     if(hint){await chooseWorkspace(hint);if(!valid())return;}
@@ -70,15 +71,18 @@
       if(Number(publication.publication?.enabled))offer.append(button('Unpublish trial offer',async()=>{if(!confirm('Stop new automatic trial signups? Already-created trials and normal activation/viewing are not revoked.'))return;await api('/api/trial-offer-publication',{tenant_id:tenant,expected_revision:Number(publication.publication.revision),enabled:false});if(valid())await route();},'danger'));
       offer.append(el('p','Publication requires a centrally verified current branded APK in the owner-selected channel. New artwork, approved-plan/default changes or a newer approved artifact require a fresh explicit review. Neither saving settings nor installing an upgrade silently publishes an offer.','hint'));main.append(offer);
     }
+    await renderContacts(main,tenant,valid,()=>policy.worker_configured);
+  }
+  async function renderContacts(main,tenant,valid,workerConfigured){
     const leads=panel('Trial contacts',el('p','Phone numbers are user-provided, not verified. Status follows the latest confirmed panel record; conversion does not prove a payment was collected.','hint'));const results=el('div');leads.append(results);main.append(leads);
     let contactTurn=0;async function showContact(id){const turn=++contactTurn,person=state.user?.id,beforeDialog=formCounter;const contact=await api('/api/trial-contacts/'+id);if(!valid()||state.user?.id!==person||turn!==contactTurn||beforeDialog!==formCounter)return;modal('Trial contact',[],async()=>{},'Close');const dialogTurn=formCounter,form=$('modal-form');form.querySelector('.form-actions button[type="button"]')?.remove();const view=el('div');view.append(detailRows([['First name',contact.first_name],['Phone',contact.phone||'Removed from this control system'],['Verification','User-provided — no SMS verification'],['Status',labels[contact.state]||'Unknown'],['Original trial expiry',contact.trial_expires_at?date(contact.trial_expires_at):'Not yet confirmed'],['Current account expiry',contact.expires_at?date(contact.expires_at):'Not yet confirmed'],['Last panel confirmation',date(contact.last_verified_at)],['Contact retained until',date(contact.contact_retention_until)]]));
       if(contact.phone&&/^\+[1-9][0-9]{7,14}$/.test(contact.phone)){const call=el('a','Call customer','contact-call');call.href='tel:'+contact.phone;view.append(call);}
-      const status=button('Refresh panel status',async()=>{await api('/api/trial-contacts/'+id+'/refresh',{});if(valid()&&dialogTurn===formCounter&&$('modal').open){$('modal').close();await showContact(id);}});status.disabled=!policy.worker_configured;view.append(status);
+      const status=button('Refresh panel status',async()=>{await api('/api/trial-contacts/'+id+'/refresh',{});if(valid()&&dialogTurn===formCounter&&$('modal').open){$('modal').close();await showContact(id);}});status.disabled=!workerConfigured();view.append(status);
       if(contact.contact_available)view.append(button('Remove contact details here',async()=>{if(!confirm('Remove this name and phone from the control system? Panel notes remain unchanged, and trial eligibility is NOT reset.'))return;await api('/api/trial-contacts/'+id+'/redact',{confirmed:true});if(dialogTurn===formCounter&&$('modal').open)$('modal').close();if(valid())await load();},'danger'));
       form.prepend(view);
     }
     async function load(page=1){const data=await api('/api/trial-contacts?tenant_id='+tenant+'&page='+page);if(!valid())return;const records=table(['Customer','Phone','Status','Trial expiry','Actions'],data.items.map(c=>[c.first_name,c.phone||'Removed',labels[c.state]||'Unknown',c.trial_expires_at?date(c.trial_expires_at):'Not yet confirmed',button('View contact',()=>showContact(c.id))]));records.classList.add('mobile-records');results.replaceChildren(records,pagination(data,load),el('p',`Control-system contact retention: ${data.retention_days} days after the known trial expiry, or creation while expiry is unknown. Removal here does not change IPTV panel notes. Minimal trial eligibility history is kept separately.`,'hint'));}
     await load();
   }
-  root.TrialWorkspace={render,publicationInput,isDirty:()=>[...drafts.values()].some(d=>d?.dirtyAdmin||d?.dirtyDefault),clear:()=>drafts.clear()};
+  root.TrialWorkspace={render,renderContacts,globalControls,publicationInput,isDirty:()=>[...drafts.values()].some(d=>d?.dirtyAdmin||d?.dirtyDefault)||!!root.SimpleTrialSetup?.isDirty(),clear:()=>{drafts.clear();root.SimpleTrialSetup?.clear();}};
 })(window);

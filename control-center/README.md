@@ -2,11 +2,38 @@
 
 PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 `https://control.fecxbrfzku.net`, delivered as an aaPanel Nginx upload/extract ZIP.
-Website and companion Android source fixes are isolated on `control-center-owner-trials`.
+Website changes are tested on `control-center-owner-trials` and synchronized into
+`staging/testing` and `main` without running the customer APK publication workflow.
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.18.0 (not yet deployed)
+## Current source update — 0.21.0 simple trial settings (installation required)
+
+The current UI replaces the old catalogue/default/publication setup cards:
+
+- Admin: select a workspace, turn **Allow trials** on, choose allowed packages and
+  a daily limit, then **Save trial access**.
+- Reseller (or admin acting for it): choose a **Trial package**, set **Show trial
+  button in this app**, then **Save trial settings**. One transaction saves the
+  default and its reviewed offer; no separate publication button or terminal step.
+- A single status panel states On, Off, Paused by admin, or the precise prerequisite
+  still missing. Existing contacts remain in the same page. The owner app keeps its
+  explicitly approved Unlimited policy; reseller quotas cannot be edited by a reseller.
+
+Migration022 deliberately leaves existing configuration-only approvals OFF for live
+reseller access. Explicit per-workspace admin approval supersedes the old owner-only
+pilot veto for THAT reseller; it never resets trial history or enables everyone.
+Package metadata refreshes automatically with bounded retries. Unchanged approved
+terms survive ordinary verified APK updates and cosmetic edits. Actual price/plan
+changes still require review; the artifact/signing registry, ownership, duplicate
+  eligibility, quotas, recovery and global/app opt-outs remain enforced independently.
+
+See `deploy/UPDATE-0.21.0.txt` for the one-time website-only upgrade. No native build,
+worker reinstall, new secret or trial account is needed. The older APIs/renderer
+remain compatible for a cached client during deployment, but are not shown by the
+new interface.
+
+## Previous source update — 0.18.0 build progress
 
 My app brand shows the latest build's live stage bar and rough remaining-time range.
 It refreshes the status/download region without replacing unsaved name/artwork edits

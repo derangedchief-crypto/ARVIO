@@ -25,12 +25,30 @@ final class TrialPolicies
             'configuration_ready'=>(bool)$ready,'live_offer_enabled'=>false,'offer_status'=>'Plan/default settings do not publish a trial offer. Public signup needs separate owner rollout approval and explicit offer publication.'];
     }
     public function refresh(array $actor,array $input):array {
-        Auth::owner($actor);Input::keys($input,['tenant_id']);$t=$this->tenant($actor,$input['tenant_id']??null);$link=$this->link($t['id']);if(!$link||$t['status']!=='active')throw new Problem(409,'An active verified reseller is required.');
-        $this->auth->limit('trial-catalog-refresh',$actor['id'],20,3600);$plans=$this->worker->catalog((string)$link['panel_id']);
-        return $this->db->transaction(function()use($actor,$t,$link,$plans):array {
+        Auth::owner($actor);return $this->refreshWorkspace($actor,$input);
+    }
+    /** Internal simple-setup reader: only the authenticated workspace, no grants,
+     * provisioning or publication. Never authorizes changed plan terms. */
+    public function ensureCurrent(array $actor,string $tenantId,bool $ahead=false):void {
+        $t=$this->tenant($actor,$tenantId);if(!$this->worker->configured()||!$this->link($t['id'])||$t['status']!=='active')return;
+        $catalog=$this->catalog($t['id']);if(!$this->fresh($catalog,$this->link($t['id']))||($ahead&&strtotime($catalog['expires_at'].' UTC')<time()+3600))$this->refreshWorkspace($actor,['tenant_id'=>$t['id']],true);
+    }
+    private function refreshWorkspace(array $actor,array $input,bool $automatic=false):array {
+        Input::keys($input,['tenant_id']);$t=$this->tenant($actor,$input['tenant_id']??null);$link=$this->link($t['id']);if(!$link||$t['status']!=='active')throw new Problem(409,'Link this workspace to an active panel reseller first.');
+        if($automatic&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['022_simple_reseller_trials.sql'])){
+            if($this->db->pdo->inTransaction())throw new \LogicException('Metadata refresh must not hold a trial transaction.');
+            $this->db->transaction(function()use($t):void {
+                $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$t['id']]);$row=$this->db->one('SELECT retry_after FROM trial_catalog_refreshes WHERE tenant_id=? FOR UPDATE',[$t['id']]);
+                if($row&&strtotime($row['retry_after'].' UTC')>time())throw new Problem(503,'Package check is retrying shortly.');
+                $this->db->query('INSERT INTO trial_catalog_refreshes (tenant_id,retry_after) VALUES (?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 60 SECOND)) ON DUPLICATE KEY UPDATE retry_after=VALUES(retry_after)',[$t['id']]);
+            });
+        }else $this->auth->limit($automatic?'trial-catalog-auto':'trial-catalog-refresh',$automatic?$t['id']:$actor['id'],$automatic?3:20,3600);
+        $plans=$this->worker->catalog((string)$link['panel_id']);
+        return $this->db->transaction(function()use($actor,$t,$link,$plans,$automatic):array {
             $current=$this->tenant($actor,$t['id'],true);$nowLink=$this->link($t['id']);if($current['status']!=='active'||!$nowLink||(string)$nowLink['panel_id']!==(string)$link['panel_id'])throw new Problem(409,'Reseller ownership changed; refresh again.');
             $id=Database::id();$this->db->query('INSERT INTO trial_plan_catalogs (tenant_id,catalog_id,panel_reseller_id,plans,expires_at) VALUES (?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY)) ON DUPLICATE KEY UPDATE catalog_id=VALUES(catalog_id),panel_reseller_id=VALUES(panel_reseller_id),plans=VALUES(plans),fetched_at=UTC_TIMESTAMP(),expires_at=VALUES(expires_at)',[$t['id'],$id,$link['panel_id'],json_encode($plans,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)]);
-            $this->auth->audit($actor,'trial.catalog_refreshed',$id,$t['id'],['plans'=>count($plans)]);return ['catalog_id'=>$id,'plans'=>count($plans),'accounts_created'=>false];
+            if($automatic&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['022_simple_reseller_trials.sql']))$this->db->query('UPDATE trial_catalog_refreshes SET retry_after=UTC_TIMESTAMP() WHERE tenant_id=?',[$t['id']]);
+            $this->auth->audit($automatic?null:$actor,$automatic?'trial.catalog_refreshed_auto':'trial.catalog_refreshed',$id,$t['id'],['plans'=>count($plans)]);return ['catalog_id'=>$id,'plans'=>count($plans),'accounts_created'=>false];
         });
     }
     public function grant(array $actor,array $input):array {

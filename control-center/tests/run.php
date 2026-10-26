@@ -150,6 +150,8 @@ require __DIR__.'/production-brands.php';
 productionBrandCases($tests,$app,$config,$owner);
 require __DIR__.'/owner-unlimited.php';
 ownerUnlimitedCases($tests,$app,$config,$owner,$alpha);
+require __DIR__.'/simple-trials.php';
+simpleTrialCases($tests,$app,$config,$owner,$alpha,$http,$password);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

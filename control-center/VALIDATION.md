@@ -1,4 +1,40 @@
-# Device management0.20.0 owner unlimited daily trials — validation
+# Device management0.21.0 simple reseller trial controls — validation
+
+224 isolated database/service/HTTP cases and 60 full browser checks pass, alongside
+79 builder tests, package/private-file preservation, publication-input unit checks,
+owner/pilot-helper compatibility and upgrade-shell syntax checks. The owner one-save
+standing-terms adoption is covered separately from preserving its existing approval
+on upgrade. These checks create no live panel account or distributable APK.
+
+224 isolated database/service/HTTP cases, 60 full browser checks and 79 builder
+tests pass. Package/private-file preservation, publication-input unit checks,
+owner-helper/pilot-helper compatibility and upgrade-shell syntax also pass. No
+native source change, live trial account or new APK was needed for this update.
+
+New coverage exercises explicit migration-default-OFF reseller permission, the
+owner-only pilot no longer vetoing an explicitly approved reseller, per-workspace
+daily caps instead of the legacy pilot cap, typed/closed/role/CSRF-scoped APIs and
+atomic default+offer rollback when a verified APK is missing. No settings action
+calls provisioning. No-op saves, ordinary verified APK updates, cosmetic brand
+edits and daily-limit changes preserve unchanged managed trial terms. The live
+artifact registry and actual approved plan fingerprint remain independently checked.
+
+Automatic signed metadata refresh, cooldown on failures, real-term changes failing
+closed, stale client fingerprints/revisions, retained app/global/admin opt-outs,
+unchanged owner Unlimited and trial-history preservation are covered. OFF remains
+usable despite worker failure or unfinished package/quota edits. Existing legacy
+controls are still tested as a cached-client compatibility path, not the new UI.
+
+Browser checks cover the one-save reseller flow, no publication/default-step cards,
+no reseller admin access, clear paused state, retained opt-outs, owner Unlimited,
+mobile overflow, contact privacy and stale-form refusal. Publication/worker receipts
+in local tests are synthetic: no live trial account or APK was created for this work.
+
+Deployment remains a one-time website update plus migration022/PHP reload. The ZIP
+excludes private config and storage; it never broadly enables already-approved
+resellers or changes the existing owner preference, consumed trial history or keys.
+
+## Previous0.20.0 owner unlimited daily trials validation
 
 216 isolated database/service/HTTP cases, 57 browser checks and 79 builder checks
 pass. Publication-input unit checks, private-config/opt-out preservation tests for

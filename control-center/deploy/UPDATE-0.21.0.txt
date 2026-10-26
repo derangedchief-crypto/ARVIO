@@ -1,0 +1,47 @@
+Extreme Control Center0.21.0 — simple admin/reseller trial controls
+
+WEBSITE38.190.133.176 only. No APK, worker reinstall, repinning or live trial test.
+Back up the website/database. Extract this UPDATE ZIP into the EXISTING
+/www/wwwroot/control.fecxbrfzku.net root. config.php and storage are excluded.
+
+In the same WEBSITE aaPanel terminal, as root:
+  bash /www/wwwroot/control.fecxbrfzku.net/deploy/upgrade-simple-trials.sh
+
+Migration022 adds per-workspace live permission, admin daily cap, settings revision
+and bounded metadata-refresh retry state. Existing grants remain configuration-only
+until the admin explicitly enables them. No contacts, trial eligibility/history,
+keys, worker connection, package approvals, app opt-outs or owner Unlimited setting
+are deleted or reset. Hard-refresh the website after the PHP restart.
+
+ADMIN: choose workspace -> Allow trials -> choose approved packages/daily limit ->
+Save trial access. Package data is checked automatically; no manual catalogue or
+separate publication steps. A verified panel link and signed branded APK remain
+required for actual signup; the status panel names the exact missing prerequisite.
+The legacy owner-only pilot flag no longer vetoes a reseller explicitly allowed
+by this new admin action. This is not a blanket rollout to all resellers.
+
+RESELLER: choose one approved Trial package -> Show trial button in this app ->
+Save trial settings. This atomically saves the default and publishes the offer.
+The admin can finish these same app settings on a selected reseller's behalf.
+The admin controls daily limits; the reseller does not need to edit quota numbers.
+Owner Unlimited remains Unlimited. Global pause always overrides an app ON setting.
+Existing owner offers are not reapproved silently on upgrade. Saving the owner
+app's settings in the new page adopts update-stable terms while retaining Unlimited.
+
+READINESS: current packages refresh automatically on authenticated settings reads,
+regular maintenance and eligible published-offer availability checks. Worker errors
+have a60-second per-workspace retry backoff and fail closed, never approving new
+terms. No worker HTTP call happens under a trial transaction or for an unmatched,
+disabled or unapproved public offer. Metadata checks never create a trial account.
+If actual duration/cost/connections change, explicit review is still required.
+
+CONTINUITY: ordinary centrally verified APK/branding revisions, unchanged admin
+saves and quota changes do not invalidate an unchanged managed trial plan. The
+verified artifact/package/signing registry is still checked independently on every
+admission. Removing a selected package or changing its actual terms stops new
+requests. Existing trial eligibility, original-operation recovery, contacts, ordinary
+activation/viewing and owner/app/global OFF preferences stay protected. Switching
+OFF is available even during worker outages or unfinished numeric/package edits.
+
+No terminal command is needed for individual reseller permission changes after
+this one website upgrade. Do NOT rerun old pilot setup or reset a consumed trial.
