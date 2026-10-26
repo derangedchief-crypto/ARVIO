@@ -102,7 +102,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByRole('button', { name: 'Refresh playlist', exact: true }).click();
     await page.locator('#action-status').filter({hasText:/Waiting for the app|Request sent/}).waitFor();
     await tab('Commands');
-    await page.getByRole('heading', { name: 'Recent actions', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Current requests', exact: true }).waitFor();
     await page.getByText('refresh playlist', { exact: true }).first().waitFor();
     assert(await page.locator('tbody .badge.pending').count() > 0);
     await page.screenshot({ path: path.join(output, 'device-commands-desktop.png'), fullPage: true });
@@ -141,7 +141,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     assert(/^[a-f0-9]{64}$/.test(queuedSettings.payload.expected_revision));
     page.once('dialog', dialog => dialog.accept());
     await settingsRow.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await page.locator('tr').filter({ hasText: 'Change channel sorting' }).locator('.badge.cancelled').waitFor();
+    await page.locator('#action-status').filter({hasText:'Request cancelled.'}).waitFor();assert.equal(await page.evaluate(async({device,id})=>(await(await fetch('/api/devices/'+device+'/commands/'+id)).json()).status,{device:credentials.device_id,id:queuedSettings.id}),'cancelled');
     done('preset application queues a revision-bound setting and queued cancellation is real');
     await tab('Categories');
     await page.getByRole('heading', { name: 'Channel groups', exact: true }).waitFor();

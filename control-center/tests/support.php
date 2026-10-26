@@ -26,6 +26,9 @@ function supportCases(array &$tests,ControlCenter\Application $app,array $owner,
         problem(422,fn()=> ControlCenter\Support::png(base64_encode($png(9999,9999))));
         problem(413,fn()=> ControlCenter\Support::png(str_repeat('a',175001)));
         $saved=$app->support->upload($token,$body+['consented'=>true]);same('image/png',$app->support->download($alpha,$d['id'],$saved['id'])['mime']);
+        same($saved['id'],$app->support->listing($alpha,$d['id'])['current_items'][0]['id']);
+        $app->db->query('UPDATE support_artifacts SET created_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 48 HOUR) WHERE id=?',[$saved['id']]);
+        same([],$app->support->listing($alpha,$d['id'])['current_items']);same(1,count($app->support->listing($alpha,$d['id'])['items']));same('image/png',$app->support->download($alpha,$d['id'],$saved['id'])['mime']);
         $app->db->query('UPDATE support_artifacts SET expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE id=?',[$saved['id']]);problem(404,fn()=> $app->support->download($alpha,$d['id'],$saved['id']));$app->support->maintain();same(0,count($app->support->listing($alpha,$d['id'])['items']));
     };
 }

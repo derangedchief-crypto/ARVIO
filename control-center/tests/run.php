@@ -154,6 +154,8 @@ require __DIR__.'/simple-trials.php';
 simpleTrialCases($tests,$app,$config,$owner,$alpha,$http,$password);
 require __DIR__.'/global-trials.php';
 globalTrialCases($tests,$app,$config,$owner,$http,$password);
+require __DIR__.'/current-activity.php';
+currentActivityCases($tests,$app,$owner,$alpha,$beta,$tenantA,$enrolled);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

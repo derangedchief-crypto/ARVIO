@@ -72,7 +72,7 @@ final class Sources
     public function listing(array $actor,string $device):array {
         $this->management->device($actor,$device);$rows=$this->db->all('SELECT id,command_id,profile_ref,revision,reason,protected,created_at FROM source_snapshots WHERE device_id=? ORDER BY created_at DESC,id DESC LIMIT 60',[$device]);
         $this->commands->expire($device);$commands=$this->db->all("SELECT * FROM commands WHERE device_id=? AND kind IN ('get_sources','apply_sources') ORDER BY created_at DESC,id DESC LIMIT 10",[$device]);
-        return ['items'=>$rows,'commands'=>array_map(Commands::publicCommand(...),$commands),'notice'=>'Up to 10 initial profile checkpoints are protected; 50 additional rolling versions are retained (90 days). URLs and credentials are never returned.'];
+        return ['items'=>$rows,'commands'=>array_map(Commands::publicCommand(...),$commands),'notice'=>'Up to 10 initial profile checkpoints are protected; 50 additional rolling versions are retained (90 days). URLs and credentials are never returned.']+$this->commands->currentState($actor,$device,['get_sources','apply_sources']);
     }
     public function view(array $actor,string $device,string $id):array {$this->management->device($actor,$device);$row=$this->snapshot($device,$id);$doc=$this->decode($row['payload_cipher']);unset($row['payload_cipher']);$row['entries']=$this->publicConfig($device,$doc['profile_ref'],$doc['config']);return $row;}
     public function preview(array $actor,string $device,array $input):array {

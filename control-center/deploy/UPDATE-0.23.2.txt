@@ -1,0 +1,20 @@
+Extreme Control Center 0.23.2 — current status, not growing logs
+
+Back up, then extract this UPDATE ZIP over the existing website root:
+/www/wwwroot/control.fecxbrfzku.net
+Hard-refresh the browser afterwards. From 0.23/0.23.1, no terminal command,
+database migration, APK build or worker update is needed.
+
+Playlists and favourites show active work first, otherwise just the latest
+result completed in the last 24 hours. Old command tables are no longer shown.
+Saved playlist state is dated separately; it is not claimed to be a fresh read.
+Support -> Current requests shows all active requests, five per page, or the
+latest result from the last 24 hours when nothing is active.
+Setup activity shows active/paused work and the latest recent result per device;
+the latest setup needing review remains visible even after 24 hours.
+Support downloads show only the latest report of each type from the last 24 hours.
+The Activity log shows a paginated last-24-hours feed.
+
+No stored audit history, protected backups, trial eligibility/history, account,
+private config, storage directory, key or device data is deleted or reset.
+The owner device-access choices introduced in 0.23.1 are included.

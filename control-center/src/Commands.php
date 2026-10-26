@@ -94,12 +94,27 @@ final class Commands
     }
     public function listing(array $actor, string $deviceId, array $input): array
     {
-        Input::keys($input, ['page']); $page = Input::page($input['page'] ?? 1); $offset = ($page - 1) * 25;
+        Input::keys($input, ['page','view']);$view=$input['view']??'history';if(!in_array($view,['history','current'],true))throw new Problem(422,'Invalid action view.');$page = Input::page($input['page'] ?? 1);
+        if($view==='current'){
+            $state=$this->currentState($actor,$deviceId);$total=$state['active_count']?:($state['current_request']?1:0);
+            $rows=$state['active_count']?$this->db->all("SELECT * FROM commands WHERE device_id=? AND status IN ('pending','delivered','running') ORDER BY created_at DESC,id DESC LIMIT 5 OFFSET ".(($page-1)*5),[$deviceId]):[];
+            return ['items'=>$state['active_count']?array_map(self::publicCommand(...),$rows):($page===1&&$state['current_request']?[$state['current_request']]:[]),'page'=>$page,'pages'=>max(1,(int)ceil($total/5)),'total'=>$total,'active_count'=>$state['active_count']];
+        }
+        $offset = ($page - 1) * 25;
         $this->management->device($actor, $deviceId);
         $this->expire($deviceId);
         $total = (int) $this->db->query('SELECT COUNT(*) FROM commands WHERE device_id = ?', [$deviceId])->fetchColumn();
         $rows = $this->db->all("SELECT * FROM commands WHERE device_id = ? ORDER BY created_at DESC, id DESC LIMIT 25 OFFSET $offset", [$deviceId]);
         return ['items' => array_map(self::publicCommand(...), $rows), 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total];
+    }
+    /** Live requests take priority; otherwise only the latest final result from
+     * the last 24 hours. This never deletes history or protected snapshots. */
+    public function currentState(array $actor,string $deviceId,array $kinds=[]):array {
+        $this->management->device($actor,$deviceId);$this->expire($deviceId);if(array_diff($kinds,self::KINDS))throw new \LogicException('Unsupported current-action scope.');
+        $where='device_id=?';$args=[$deviceId];if($kinds){$where.=' AND kind IN ('.implode(',',array_fill(0,count($kinds),'?')).')';array_push($args,...$kinds);}
+        $active=(int)$this->db->query("SELECT COUNT(*) FROM commands WHERE $where AND status IN ('pending','delivered','running')",$args)->fetchColumn();
+        $row=$active?$this->db->one("SELECT * FROM commands WHERE $where AND status IN ('pending','delivered','running') ORDER BY created_at DESC,id DESC LIMIT 1",$args):$this->db->one("SELECT * FROM commands WHERE $where AND status IN ('succeeded','failed','expired','cancelled') AND COALESCE(finished_at,created_at)>=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 24 HOUR) ORDER BY COALESCE(finished_at,created_at) DESC,id DESC LIMIT 1",$args);
+        return ['current_request'=>$row?self::publicCommand($row):null,'active_count'=>$active];
     }
     public function get(array $actor,string $deviceId,string $id):array {
         $this->management->device($actor,$deviceId);$this->expire($deviceId);$row=$this->db->one('SELECT * FROM commands WHERE id=? AND device_id=?',[Input::id($id),$deviceId]);if(!$row)throw new Problem(404,'Action not found.');return self::publicCommand($row);

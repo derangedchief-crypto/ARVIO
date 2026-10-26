@@ -7,7 +7,16 @@ Website changes are tested on `control-center-owner-trials` and synchronized int
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.23.1 visible device access actions
+## Current source update — 0.23.2 current status, not growing logs
+
+Working screens show active requests or just the latest result from the last
+24 hours, rather than old command tables. Active requests are paginated, current
+setup work remains actionable, and old support reports no longer fill the screen.
+The Activity log is a paginated last-24-hours view. Saved state, protected backups
+and full stored audit/command history are retained; nothing is erased to declutter
+the interface. See `deploy/UPDATE-0.23.2.txt`; extract-and-reload from 0.23/0.23.1.
+
+## Previous 0.23.1 visible device access actions
 
 Owner removal actions are now in an expanded **Device access** card on Device ->
 Overview, before customer notes, rather than buried in secondary details. Existing

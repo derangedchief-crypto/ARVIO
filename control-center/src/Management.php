@@ -277,9 +277,10 @@ final class Management
 
     public function audit(array $actor, array $input): array
     {
-        Input::keys($input, ['page','tenant_id']); $page = Input::page($input['page'] ?? 1); $offset = ($page - 1) * 25;
+        Input::keys($input, ['page','tenant_id','view']);$view=$input['view']??'history';if(!in_array($view,['current','history'],true))throw new Problem(422,'Invalid activity view.');$page = Input::page($input['page'] ?? 1); $offset = ($page - 1) * 25;
         $args = []; $scope = $this->scope($actor, 'tenant_id', $args);
         if(!empty($input['tenant_id'])){$tenant=$this->workspace($actor,$input['tenant_id']);$scope.=' AND tenant_id=?';$args[]=$tenant['id'];}
+        if($view==='current')$scope.=' AND created_at>=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 24 HOUR)';
         $total = (int) $this->db->query("SELECT COUNT(*) FROM audit_events WHERE $scope", $args)->fetchColumn();
         $rows = $this->db->all("SELECT id, action, resource_id, created_at, metadata FROM audit_events WHERE $scope ORDER BY id DESC LIMIT 25 OFFSET $offset", $args);
         return ['items' => $rows, 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total];

@@ -1,4 +1,20 @@
-# Device management0.23.1 visible device access actions — validation
+# Device management 0.23.2 current activity — validation
+
+234 service/database/HTTP checks and 67 full browser checks pass, plus the focused
+current-activity mobile browser check. PHP/JavaScript syntax and package checks pass.
+
+Current-view regressions cover old final results being hidden, recent final
+results being limited to one, active requests taking priority regardless of age,
+five-request pagination, reseller isolation, and retained full command/audit
+history. Setup activity retains active/paused jobs and the latest review-needed
+job. Support report tests distinguish current display from retained downloads.
+
+The focused mobile browser check verifies that ten obsolete playlist command
+rows never render, the current status links to active requests, and an empty
+status disappears. Deterministic update ZIP tests preserve config and storage.
+All fixtures are local/synthetic; no live trial, build or device action is created.
+
+## Previous 0.23.1 visible device access actions
 
 230 service/database/HTTP checks and 67 complete browser checks pass. The focused
 owner-removal test also passes independently. Update-package preservation checks

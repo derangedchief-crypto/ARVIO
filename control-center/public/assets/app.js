@@ -56,6 +56,7 @@ function helpDetails(title,text){const d=el('details',null,'inline-help');d.appe
 function workflowSteps(...steps){const row=el('div',null,'workflow-strip');row.setAttribute('aria-label','Workflow');steps.forEach((step,index)=>row.append(el('span',(index+1)+'. '+step)));return row;}
 function preferenceLabel(key){return ({default_audio_language:'Audio language',default_subtitle:'Subtitle language',subtitle_size:'Subtitle size',clock_format:'Clock format',auto_play_next:'Play next episode',show_loading_stats:'Show loading details',spoiler_blur:'Hide spoilers',smooth_scrolling:'Smooth scrolling',trailer_auto_play:'Autoplay trailers',volume_boost_db:'Volume boost (dB)'})[key]||key.replaceAll('_',' ');}
 function activityLabel(key){return ({'command.queued':'Device action queued','command.cancelled':'Device action cancelled','trial.global_gate_changed':'Global trial switch changed','trial.global_packages_saved':'Approved trial packages changed','trial.offer_published':'App trial settings saved','trial.offer_unpublished':'App trials switched off','brand.saved':'App artwork saved','brand.build_requested':'App build requested','reseller.created':'Reseller added','customer.created':'Customer added'})[key]||String(key).replace(/[._]/g,' ').replace(/^./,c=>c.toUpperCase());}
+function currentRequestBox(data,names={},goRequests=null){const box=el('div',null,'current-request');const r=data.current_request;box.hidden=!r;if(!r)return box;box.setAttribute('aria-label','Current request status');const active=['pending','delivered','running'].includes(r.status);const top=el('div',null,'actions');top.append(el('strong',names[r.kind]||r.kind.replaceAll('_',' ')),badge(r.status));if(data.active_count>1)top.append(el('span',data.active_count+' active','scope-label'));box.append(top,el('p',r.result?.summary||(active?'Waiting for the app':'No additional details'),'request-result'),el('span',(active?'Requested: ':'Finished: ')+date(r.finished_at||r.created_at),'scope-label'));if(data.active_count>1&&goRequests)box.append(button('View active requests',goRequests,'quiet'));return box;}
 function cellName(title, subtitle) { const n = el('div'); n.append(el('span', title, 'cell-name')); if (subtitle) n.append(el('span', subtitle, 'cell-sub')); return n; }
 function table(headers, rows) {
   const wrap = el('div', null, 'table-scroll');const cards=['Device','Line username / customer','Workspace','Action','Settings profile','Position','Layout','Profile','Device / recipe','Brand version'].includes(headers[0]);if(cards)wrap.classList.add('mobile-records');wrap.tabIndex=0;wrap.setAttribute('role','region');wrap.setAttribute('aria-label','Data table: '+headers.filter(Boolean).join(', '));const t = el('table');t.setAttribute('role','table');const head = el('thead'); const hr = el('tr'); headers.forEach(h => {const th=el('th',h);th.scope='col';hr.append(th);}); head.append(hr); t.append(head);
@@ -283,7 +284,7 @@ async function supportPanel(d,parent,isCurrent,reload) {
   box.append(el('p','Sharing a support image requires the customer’s permission. It cannot capture their screen or video.','notice'));
   for(const[kind,label]of [['get_support_bundle','Collect support report'],['capture_app_screen','Ask customer for support image']]){const b=button(label,()=>{if(kind==='capture_app_screen'&&!confirm('Ask the customer to share one safe app support panel? They may decline; there is no hidden/full-device/video capture.'))return;queue(d,kind).catch(e=>toast(e.message));});b.disabled=d.policy!=='active'||!d.capabilities.includes(kind);box.append(b);}
   box.append(button('Refresh support reports',reload));
-  try{const data=await api(`/api/devices/${d.id}/support`);if(!isCurrent())return;box.append(el('p',data.retention,'hint'),table(['Received','Artifact','Bytes','Expires','Private download'],data.items.map(r=>{const link=el('a',r.kind==='panel'?'Download consented panel PNG':'Download redacted JSON bundle');link.href=`/api/devices/${d.id}/support/${r.id}/download`;link.setAttribute('download','');return[date(r.created_at),r.kind,r.bytes,date(r.expires_at),link];})));}catch(e){if(isCurrent())box.append(el('p',e.message+' Apply database upgrade012 first.','error'));}
+  try{const data=await api(`/api/devices/${d.id}/support`);if(!isCurrent())return;box.append(table(['Received','Artifact','Bytes','Expires','Private download'],(data.current_items||[]).map(r=>{const link=el('a',r.kind==='panel'?'Download consented panel PNG':'Download redacted JSON bundle');link.href=`/api/devices/${d.id}/support/${r.id}/download`;link.setAttribute('download','');return[date(r.created_at),r.kind,r.bytes,date(r.expires_at),link];})),helpDetails('Report privacy and retention',data.retention));}catch(e){if(isCurrent())box.append(el('p',e.message,'error'));}
 }
 async function layoutTemplatesPanel(main, epoch) {
   const p = panel('Playlist/category layout templates', el('p', 'Organize a complete source in a device’s Categories draft editor, then Save as layout template. Templates match exact full category names, not device-specific IDs. Applying a template only edits the target draft until Push.', 'subtle'));
@@ -463,7 +464,7 @@ async function queue(device, kind, payload = {}) {
   try { await api(`/api/devices/${device.id}/commands`, { kind, payload }, { 'Idempotency-Key': key }); requestKeys.delete(fingerprint); toast('Action queued—not yet executed.'); await route(); }
   catch (error) { if (error.status && error.status < 500) requestKeys.delete(fingerprint); throw error; }
 }
-async function sourcesPanel(d, body, isCurrent, reload) {
+async function sourcesPanel(d, body, isCurrent, reload,goRequests=null) {
   const box = panel('Playlists',workflowSteps('Load playlists','Review edits','Apply changes')); body.append(box);
   box.append(el('p','Playlist changes can interrupt viewing. Review the changes before applying them.','notice'));
   box.append(helpDetails('Passwords and protected playlists','Existing passwords and URLs are never displayed. Blank replacement fields keep the saved values. The activation playlist stays first and its credentials are protected. At least one supported playlist must remain enabled.'));
@@ -472,9 +473,10 @@ async function sourcesPanel(d, body, isCurrent, reload) {
   actions.append(read, button('Refresh status', reload,'quiet'), button('Refresh playlist',()=>queue(d,'refresh_playlist').catch(e=>toast(e.message))),button('Reload EPG',()=>queue(d,'reload_epg').catch(e=>toast(e.message)))); box.append(actions);
   let history; try { history = await api(`/api/devices/${d.id}/sources`); } catch(e) { box.append(el('p', e.message + ' Apply database upgrade010 first.', 'error')); return; } if (!isCurrent()) return;
   box.append(helpDetails('Playlist backup and privacy',history.notice));
-  if(history.commands?.length)box.append(table(['Source action','State','Result'],history.commands.map(c=>[c.kind.replaceAll('_',' '),badge(c.status),c.result?.summary||'Waiting for app — not yet applied'])));
+  box.append(currentRequestBox(history,{get_sources:'Load playlist settings',apply_sources:'Apply playlist changes'},goRequests));
   const latest = history.items.find(r => ['read', 'confirmation'].includes(r.reason)) || history.items[0];
   if (!latest) { box.append(el('p', 'Open the app, then load its playlist settings.', 'notice')); return; }
+  box.append(el('p','Last loaded: '+date(latest.created_at),'scope-label'));
   let editor = state.sourceEditors.get(d.id);
   async function adopt() { const fresh = await api(`/api/devices/${d.id}/sources/${latest.id}`); if (!isCurrent()) return; editor = { id: latest.id, entries: fresh.entries, dirty: false, preview: null }; state.sourceEditors.set(d.id, editor); }
   if (!editor || (!editor.dirty && !editor.preview && !editor.busy && editor.id !== latest.id)) await adopt(); if (!isCurrent() || !editor) return;
@@ -529,7 +531,7 @@ async function favouritesPanel(d, body, isCurrent, reload) {
   if (!d.capabilities.includes('backup_favourites')) box.append(el('p', 'Update the testing app to 111 and let it check in to enable automatic backups and recovery. Existing saved server versions stay available.', 'notice'));
   let data; try { data = await api(`/api/devices/${d.id}/favourites`); } catch (e) { box.append(el('p', e.message + ' Apply the database upgrade under Enrollments first.', 'error')); return; } if (!isCurrent()) return;
   if (data.live.length) box.append(panel('Last app-reported favourites state', table(['Saved app context', 'Channels', 'Groups', 'Reported'], data.live.map((r,index) => ['Reported context '+(index+1), r.channel_count, r.group_count, date(r.updated_at)]))));
-  if (data.commands.length) box.append(table(['Recovery action', 'Status', 'Result'], data.commands.slice(0, 4).map(c => [c.kind.replaceAll('_', ' '), badge(c.status), c.result?.summary || 'Waiting for app check-in'])));
+  box.append(currentRequestBox(data,{backup_favourites:'Back up favourites',preview_favourites_restore:'Review favourites recovery',restore_favourites:'Restore favourites'}));
   const chosen = state.favouritesSelection.get(d.id) || data.items[0]?.id; if (chosen) state.favouritesSelection.set(d.id, chosen);
   box.append(table(['Saved version', 'Favourites', 'Protection', 'Recovery binding', 'Actions'], data.items.map(b => {
     const a = el('div', null, 'actions'); a.append(button('View / recover', () => { state.favouritesSelection.set(d.id, b.id); reload(); }), button('Label / protect', () => modal('Protect favourites backup', [
@@ -715,8 +717,9 @@ async function devicePage(id, epoch) {
 async function audit(epoch) {
   const main = $('main'); main.replaceChildren(heading('Activity log', ''));
   scopePicker(main);
+  main.append(el('span','Last 24 hours','scope-label'));
   const box=panel(null);main.append(box);
-  const load = async (page = 1) => { const result = await api('/api/audit?page=' + page+scopeQuery()); if (epoch !== state.epoch) return; box.replaceChildren(table(['Action','When','Details'],result.items.map(r=>{const details=el('details',null,'inline-help');details.append(el('summary','View details'),detailRows([['Event',r.action],['Record',r.resource_id||'—'],['Details',r.metadata||'—']]));return[activityLabel(r.action),date(r.created_at),details];})),pagination(result,load)); };
+  const load = async (page = 1) => { const result = await api('/api/audit?view=current&page=' + page+scopeQuery()); if (epoch !== state.epoch) return; box.replaceChildren(table(['Action','When','Details'],result.items.map(r=>{const details=el('details',null,'inline-help');details.append(el('summary','View details'),detailRows([['Event',r.action],['Record',r.resource_id||'—'],['Details',r.metadata||'—']]));return[activityLabel(r.action),date(r.created_at),details];})),pagination(result,load)); };
   await load();
 }
 async function morePage(epoch){const main=$('main');main.replaceChildren(heading('Tools',''));const links=[['Saved setups','library'],['Activity log','audit'],...(state.user.role==='owner'?[['Resellers','resellers'],['Website settings','enrollments']]:[])];const box=panel(null);for(const[title,hash]of links){const a=el('a',null,'workspace-tool-link');a.href='#'+hash;a.append(el('span',title),el('span','→'));box.append(a);}main.append(box);}
