@@ -2430,7 +2430,8 @@ class SettingsViewModel @Inject constructor(
 
             // Prevent duplicate auto-refresh from observer right after save.
             lastObservedIptvM3u = trimmedM3u
-            iptvRepository.saveConfig(trimmedM3u, trimmedEpg)
+            try { iptvRepository.saveConfig(trimmedM3u, trimmedEpg) }
+            catch (e: com.arflix.tv.management.ExtraPlaylistLicenceException) { extraPlaylistError(e);return@launch }
             // Push to cloud AFTER the DataStore write is confirmed, so all profiles
             // (not just the active one) have their latest IPTV config captured.
             syncLocalStateToCloud(silent = true)
@@ -2511,7 +2512,8 @@ class SettingsViewModel @Inject constructor(
         }
         if (updated == _uiState.value.iptvStalkerPortals) return
         viewModelScope.launch {
-            iptvRepository.saveStalkerPortals(updated)
+            try { iptvRepository.saveStalkerPortals(updated) }
+            catch (e: com.arflix.tv.management.ExtraPlaylistLicenceException) { extraPlaylistError(e);return@launch }
             _uiState.value = _uiState.value.copy(iptvStalkerPortals = updated)
             syncLocalStateToCloud(silent = true)
         }
@@ -2567,7 +2569,8 @@ class SettingsViewModel @Inject constructor(
 
     private fun persistStalkerPortals(portals: List<StalkerPortalEntry>) {
         viewModelScope.launch {
-            iptvRepository.saveStalkerPortals(portals)
+            try { iptvRepository.saveStalkerPortals(portals) }
+            catch (e: com.arflix.tv.management.ExtraPlaylistLicenceException) { extraPlaylistError(e);return@launch }
             _uiState.value = _uiState.value.copy(iptvStalkerPortals = portals)
             syncLocalStateToCloud(silent = true)
             refreshIptv(showToast = true, configured = true, force = true)
@@ -2611,7 +2614,8 @@ class SettingsViewModel @Inject constructor(
 
     fun saveIptvPlaylists(playlists: List<IptvPlaylistEntry>) {
         viewModelScope.launch {
-            iptvRepository.savePlaylists(playlists)
+            try { iptvRepository.savePlaylists(playlists) }
+            catch (e: com.arflix.tv.management.ExtraPlaylistLicenceException) { extraPlaylistError(e);return@launch }
             _uiState.value = _uiState.value.copy(
                 iptvPlaylists = playlists.filter { it.m3uUrl.isNotBlank() }
             )
@@ -2620,6 +2624,17 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    private fun extraPlaylistError(e: com.arflix.tv.management.ExtraPlaylistLicenceException) {
+        _uiState.value=_uiState.value.copy(toastMessage=e.message,toastType=ToastType.ERROR)
+    }
+    fun withExtraPlaylistAccess(primary: Boolean = false, open: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                if (!primary || _uiState.value.iptvPlaylists.isNotEmpty()) iptvRepository.checkExtraPlaylistAccess()
+                open()
+            } catch (e: com.arflix.tv.management.ExtraPlaylistLicenceException) { extraPlaylistError(e) }
+        }
+    }
     fun refreshIptv(showToast: Boolean = true, configured: Boolean = false, force: Boolean = true) {
         viewModelScope.launch {
             val currentConfig = iptvRepository.observeConfig().first()

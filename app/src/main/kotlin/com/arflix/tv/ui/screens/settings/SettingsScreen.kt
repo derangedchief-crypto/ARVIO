@@ -1103,7 +1103,7 @@ fun SettingsScreen(
                                                 when {
                                                     contentFocusIndex == 0 -> {
                                                         editingIptvIndex = -1
-                                                        showIptvInput = true
+                                                        viewModel.withExtraPlaylistAccess(primary=true) { showIptvInput = true }
                                                     }
                                                     contentFocusIndex in 1..m3uCount -> {
                                                         val idx = contentFocusIndex - 1
@@ -1144,7 +1144,7 @@ fun SettingsScreen(
                                                         stalkerEditPortal = ""
                                                         stalkerEditMac = ""
                                                         stalkerEditName = ""
-                                                        showStalkerInput = true
+                                                        viewModel.withExtraPlaylistAccess { showStalkerInput = true }
                                                     }
                                                     contentFocusIndex in stalkerStart..stalkerEnd -> {
                                                         val sIdx = contentFocusIndex - stalkerStart
@@ -1390,7 +1390,7 @@ fun SettingsScreen(
                 onSubtitleAiModelClick = { showAiModelDialog = true },
                 onSubtitleAiApiKeyClick = { showAiApiKeyDialog = true },
                 onSubtitleAiQrClick = { viewModel.startAiKeyServer() },
-                onAddIptvClick = { editingIptvIndex = -1; showIptvInput = true },
+                onAddIptvClick = { viewModel.withExtraPlaylistAccess(primary=true) { editingIptvIndex = -1; showIptvInput = true } },
                 onEditIptvClick = { idx -> editingIptvIndex = idx; showIptvInput = true },
                 onAddCatalogClick = { showCatalogInput = true },
                 onImportCatalogPackClick = { showCatalogPackInput = true },
@@ -1701,9 +1701,9 @@ fun SettingsScreen(
                             progressPercent = uiState.iptvProgressPercent,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             focusedActionIndex = iptvActionIndex,
-                            onConfigure = { editingIptvIndex = -1; showIptvInput = true },
+                            onConfigure = { viewModel.withExtraPlaylistAccess(primary=true) { editingIptvIndex = -1; showIptvInput = true } },
                             stalkerPortals = uiState.iptvStalkerPortals,
-                            onAddStalkerPortal = { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true },
+                            onAddStalkerPortal = { viewModel.withExtraPlaylistAccess { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true } },
                             onEditStalkerPortal = { portal -> stalkerEditId = portal.id; stalkerEditPortal = portal.portalUrl; stalkerEditMac = portal.macAddress; stalkerEditName = portal.name; showStalkerInput = true },
                             onToggleStalkerPortal = { id -> viewModel.onToggleStalkerPortal(id) },
                             onMoveStalkerPortalUp = { id -> viewModel.onMoveStalkerPortalUp(id) },
@@ -1758,9 +1758,9 @@ fun SettingsScreen(
                             progressPercent = uiState.iptvProgressPercent,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             focusedActionIndex = iptvActionIndex,
-                            onConfigure = { editingIptvIndex = -1; showIptvInput = true },
+                            onConfigure = { viewModel.withExtraPlaylistAccess(primary=true) { editingIptvIndex = -1; showIptvInput = true } },
                             stalkerPortals = uiState.iptvStalkerPortals,
-                            onAddStalkerPortal = { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true },
+                            onAddStalkerPortal = { viewModel.withExtraPlaylistAccess { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true } },
                             onEditStalkerPortal = { portal -> stalkerEditId = portal.id; stalkerEditPortal = portal.portalUrl; stalkerEditMac = portal.macAddress; stalkerEditName = portal.name; showStalkerInput = true },
                             onToggleStalkerPortal = { id -> viewModel.onToggleStalkerPortal(id) },
                             onMoveStalkerPortalUp = { id -> viewModel.onMoveStalkerPortalUp(id) },
@@ -4712,7 +4712,7 @@ private fun MobileSettingsSubPage(
                     focusedActionIndex = 0,
                     onConfigure = onAddIptvClick,
                     stalkerPortals = uiState.iptvStalkerPortals,
-                    onAddStalkerPortal = { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true },
+                    onAddStalkerPortal = { viewModel.withExtraPlaylistAccess { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true } },
                     onEditStalkerPortal = { portal -> stalkerEditId = portal.id; stalkerEditPortal = portal.portalUrl; stalkerEditMac = portal.macAddress; stalkerEditName = portal.name; showStalkerInput = true },
                     onToggleStalkerPortal = { id -> viewModel.onToggleStalkerPortal(id) },
                     onMoveStalkerPortalUp = { id -> viewModel.onMoveStalkerPortalUp(id) },

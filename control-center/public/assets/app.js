@@ -116,6 +116,7 @@ async function enter() {
     ['Saved setups', [['library','Channel layouts','layouts'],['library/settings','Playback settings','presets'],['library/profiles','Device setups','profiles'],['library/defaults','Automatic setup','defaults']]],
     ...(state.user.role==='owner'?[['Administration',[['resellers','Resellers','resellers'],['enrollments','Website settings','enrollments']]]]:[]),
     [state.user.role==='owner'?'Apps':'My app', [['branding','Name & artwork','profiles']]],
+    ['Subscriptions', [['addons','Add-ons','key']]],
     ['Account', [['audit','Activity','audit'],['more','Tools','more']]]
   ];
   groups.forEach(([title,links],index)=>{const group=el('section',null,'nav-group');const label=el('div',title,'nav-group-title');label.id='nav-group-'+index;group.setAttribute('aria-labelledby',label.id);group.append(label);links.forEach(([key,text,glyph])=>{const link=el('a');link.append(icon(glyph),el('span',text));link.href='#'+key;link.dataset.page=key;group.append(link);});nav.append(group);});setNavOpen(false,false);
@@ -474,6 +475,7 @@ async function sourcesPanel(d, body, isCurrent, reload,goRequests=null) {
   let history; try { history = await api(`/api/devices/${d.id}/sources`); } catch(e) { box.append(el('p', e.message + ' Apply database upgrade010 first.', 'error')); return; } if (!isCurrent()) return;
   box.append(helpDetails('Playlist backup and privacy',history.notice));
   box.append(currentRequestBox(history,{get_sources:'Load playlist settings',apply_sources:'Apply playlist changes'},goRequests));
+  if(history.addon?.allowed===false)box.append(el('p','Extra Playlists is locked for this reseller. Existing playlists still work.','notice'),button('Manage add-on',()=>{state.toolWorkspace=d.tenant_id;location.hash='addons';},'quiet'));
   const latest = history.items.find(r => ['read', 'confirmation'].includes(r.reason)) || history.items[0];
   if (!latest) { box.append(el('p', 'Open the app, then load its playlist settings.', 'notice')); return; }
   box.append(el('p','Last loaded: '+date(latest.created_at),'scope-label'));
@@ -486,6 +488,7 @@ async function sourcesPanel(d, body, isCurrent, reload,goRequests=null) {
   async function requestPreview(input){if(editor.busy)return;editor.busy=true;box.querySelectorAll('button').forEach(b=>{b.disabled=true;});try{const result=await api(`/api/devices/${d.id}/sources/preview`,input);if(state.sourceEditors.get(d.id)!==editor)return;editor.preview=result;for(const row of editor.entries)for(const key of secretKeys)delete row[key];}catch(e){if(isCurrent())toast(e.message);}finally{editor.busy=false;if(isCurrent())await reload();}}
   function clean(row) { const copy = { kind: row.kind, name: row.name, enabled: row.enabled }; if (row.ref) copy.ref = row.ref; for (const key of secretKeys) if (key in row) copy[key] = row[key]; return copy; }
   function edit(row = null, kind = 'm3u', method = 'url') {
+    if(!row&&history.addon?.allowed===false)return toast('An active Extra Playlists subscription is required.');
     kind = row?.kind || kind;
     const schema = [{ key: 'name', label: 'Playlist name', value: row?.name, max: 80 }, { key: 'enabled', label: 'Status', value: row?.enabled === false ? 'no' : 'yes', options: [['yes','Enabled'],['no','Disabled']] }];
     if(!row?.canonical)schema.push({key:'connection',label:'Connection',value:row?'keep':kind==='stalker'?'portal':method,options:[...(row?[['keep','Keep current connection']]:[]),...(kind==='stalker'?[['portal','Portal address and MAC']]:[['url','Playlist link'],['xtream','Xtream account']])]});
@@ -722,7 +725,7 @@ async function audit(epoch) {
   const load = async (page = 1) => { const result = await api('/api/audit?view=current&page=' + page+scopeQuery()); if (epoch !== state.epoch) return; box.replaceChildren(table(['Action','When','Details'],result.items.map(r=>{const details=el('details',null,'inline-help');details.append(el('summary','View details'),detailRows([['Event',r.action],['Record',r.resource_id||'—'],['Details',r.metadata||'—']]));return[activityLabel(r.action),date(r.created_at),details];})),pagination(result,load)); };
   await load();
 }
-async function morePage(epoch){const main=$('main');main.replaceChildren(heading('Tools',''));const links=[['Saved setups','library'],['Activity log','audit'],...(state.user.role==='owner'?[['Resellers','resellers'],['Website settings','enrollments']]:[])];const box=panel(null);for(const[title,hash]of links){const a=el('a',null,'workspace-tool-link');a.href='#'+hash;a.append(el('span',title),el('span','→'));box.append(a);}main.append(box);}
+async function morePage(epoch){const main=$('main');main.replaceChildren(heading('Tools',''));const links=[['Saved setups','library'],['Add-ons','addons'],['Activity log','audit'],...(state.user.role==='owner'?[['Resellers','resellers'],['Website settings','enrollments']]:[])];const box=panel(null);for(const[title,hash]of links){const a=el('a',null,'workspace-tool-link');a.href='#'+hash;a.append(el('span',title),el('span','→'));box.append(a);}main.append(box);}
 function downloadText(filename, content) {
   const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
   const a = el('a'); a.href = url; a.download = filename; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -803,6 +806,20 @@ async function enrollments(epoch) {
   }
   await load();
 }
+async function addonsPage(epoch){
+  const main=$('main'),owner=state.user.role==='owner';main.replaceChildren(heading('Add-ons','Monthly modules · all customers and devices in this workspace'));
+  if(owner)workspacePicker(main,'Add-on workspace',toolWorkspace(),async id=>{if(await chooseWorkspace(id))await route();});
+  const tenant=owner?toolWorkspace():state.workspaceSelf.id,data=await api('/api/addons?tenant_id='+tenant);if(epoch!==state.epoch)return;workspaceTitle(tenant);
+  const r=data.licence,box=panel('Extra Playlists'),actions=el('div',null,'actions');main.append(box);
+  box.append(badge(r?.effective_status||'locked'),detailRows([['Renewal','Monthly'],['Expires',r?.expires_at?date(r.expires_at):'Not activated'],['Key',r?.key_hint||'Not issued']]));
+  if(!data.policy.enforced)box.append(el('p','Licence enforcement is not active yet. Existing access is unchanged.','notice'));
+  let busy=false;async function action(work){if(busy)return;busy=true;actions.querySelectorAll('button').forEach(b=>b.disabled=true);try{await work();}finally{busy=false;if(epoch===state.epoch)actions.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+  if(owner&&(!r||r.status==='revoked'))actions.append(button('Generate key',()=>action(async()=>{const result=await api('/api/addons/issue',{tenant_id:tenant,module:'extra_playlists'});if(epoch!==state.epoch)return;actions.replaceChildren(button('Done — key saved',route));box.replaceChildren(el('h2','Extra Playlists'),badge('awaiting_activation'),actions);const label=el('label','New licence key — copy now; it cannot be retrieved again'),key=el('input');key.type='password';key.readOnly=true;key.value=result.key;key.autocomplete='off';key.id='generated-addon-key';label.htmlFor=key.id;box.append(label,key,button('Show / hide key',()=>{key.type=key.type==='password'?'text':'password';}),button('Copy key',async()=>{await navigator.clipboard.writeText(key.value);toast('Key copied.');}));})));
+  if(owner&&r&&r.status!=='revoked')for(const [name,kind,show]of [['Renew one month','renew',!!r.activated_at],['Suspend','suspend',r.status!=='suspended'],['Reactivate','reactivate',r.status==='suspended'],['Revoke','revoke',true]])if(show)actions.append(button(name,()=>action(async()=>{if(!confirm(kind==='revoke'?'Permanently revoke this key? Adding playlists will lock when enforcement is on. Existing playlists and viewing stay intact.':name+' for this workspace?'))return;await api('/api/addons/'+r.id,{action:kind,expected_revision:r.revision});if(epoch===state.epoch)await route();})));
+  if(!r||r.status==='awaiting_activation')actions.append(button('Enter licence key',()=>modal('Activate Extra Playlists',[{key:'key',label:'Licence key',type:'password',min:0,max:70}],async v=>{await api('/api/addons/redeem',{tenant_id:tenant,key:v.key});},'Activate monthly add-on')));
+  box.append(actions,helpDetails('What this unlocks','Adding M3U, Xtream and Stalker sources across this workspace. Expiry, suspension or revocation never removes saved playlists or cancels IPTV viewing. Renewals are managed by the administrator; this screen does not collect payment.'));
+  if(owner){const rollout=panel('Rollout',badge(data.policy.enforced?'enforcement on':'enforcement off'),el('p','Compatible client update required. Older APKs cannot enforce the device-side lock.','notice'));rollout.append(button(data.policy.enforced?'Turn enforcement off':'Turn enforcement on',async()=>{if(!confirm('Change Extra Playlists enforcement? Confirm the compatible client has been tested. Older clients remain unable to enforce this locally.'))return;await api('/api/addons/policy',{enforced:!data.policy.enforced,expected_revision:data.policy.revision,confirmed:true});if(epoch===state.epoch)await route();}));main.append(rollout);}
+}
 async function route() {
   $('main').classList.remove('fleet-page');
   if (!state.user||!state.workspaceSelf) return; const epoch = ++state.epoch; const hash = location.hash.slice(1) || 'overview'; const section = hash.startsWith('device/')||hash.startsWith('devices/') ? 'devices' : hash.startsWith('library')||hash==='presets'?'library':hash.startsWith('branding')?'branding':hash.startsWith('trials')?'trials':['resellers','enrollments','audit'].includes(hash)?'more':hash;
@@ -810,9 +827,10 @@ async function route() {
   const navKey=hash==='presets'?'library/settings':hash.startsWith('library/layout/')?'library':hash.startsWith('library/layouts')?'library':hash.startsWith('library/')?hash.split('/').slice(0,2).join('/'):['resellers','enrollments','audit'].includes(hash)?hash:section;
   document.querySelectorAll('#navigation a').forEach(a => a.classList.toggle('active', a.dataset.page === navKey));
   document.querySelectorAll('#bottom-nav a').forEach(a=>{const key=a.getAttribute('href').slice(1);a.classList.toggle('active',key===section||(key==='more'&&section==='library'));});
-  document.querySelectorAll('#navigation a').forEach(a=>{if(a.dataset.page===navKey)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});const titles={overview:'Dashboard',devices:'Devices',customers:'Customers',library:'Saved setups',more:'Tools',presets:'Saved setups',resellers:'Resellers',enrollments:'Website settings',audit:'Activity log'};$('section-name').textContent=hash.startsWith('device/')?'Device details':titles[hash]||titles[section]||'Workspace';document.title=$('section-name').textContent+' · Extreme Control';
+  document.querySelectorAll('#navigation a').forEach(a=>{if(a.dataset.page===navKey)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});const titles={addons:'Add-ons',overview:'Dashboard',devices:'Devices',customers:'Customers',library:'Saved setups',more:'Tools',presets:'Saved setups',resellers:'Resellers',enrollments:'Website settings',audit:'Activity log'};$('section-name').textContent=hash.startsWith('device/')?'Device details':titles[hash]||titles[section]||'Workspace';document.title=$('section-name').textContent+' · Extreme Control';
   try {
     if (hash === 'overview') await overview(epoch);
+    else if(hash==='addons')await addonsPage(epoch);
     else if (hash === 'devices' || hash === 'customers') await records(hash, epoch);
     else if (hash === 'resellers' && state.user.role === 'owner') await resellers(epoch);
     else if (hash === 'audit') await audit(epoch);

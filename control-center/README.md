@@ -7,7 +7,27 @@ Website changes are tested on `control-center-owner-trials` and synchronized int
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.23.2 current status, not growing logs
+## Current source update — 0.24.0 monthly reseller Add-ons
+
+Extra Playlists is the first monthly workspace-wide module. Owner issues keys;
+resellers activate them for all their customers/devices. Owner renews, suspends,
+reactivates or permanently revokes. Keys are shown once, stored hashed, scoped to
+one workspace/module and cannot renew themselves. UTC calendar months are clamped
+at month-end. No payment processor or automatic charging is included.
+
+Migration 024 defaults enforcement OFF. Only deliberately enable it after a
+compatible app update has been tested. New source previews, queueing and device
+contexts are server-checked; native additions/managed restores/cloud imports are
+checked at persistence too. Existing playlists, activation and viewing are not
+revoked by add-on expiry. No implicit owner exemption exists.
+
+See `deploy/UPDATE-0.24.0.txt`: extract the update and use the existing owner
+database-upgrade action. This does not publish a client APK, update workers, or
+retroactively protect existing customer 2.0.117 installations. A later signed
+client release needs a higher native version and separate publication approval.
+Client source is staged at 2.0.118 / 434; it is not a published customer update.
+
+## Previous 0.23.2 current status, not growing logs
 
 Working screens show active requests or just the latest result from the last
 24 hours, rather than old command tables. Active requests are paginated, current

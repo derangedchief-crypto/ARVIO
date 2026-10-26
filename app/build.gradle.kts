@@ -31,8 +31,8 @@ val brandProperties = brandDirectory?.let { directory ->
 }
 val brandId = brandProperties?.getProperty("brand_id") ?: ""
 val brandName = brandProperties?.getProperty("brand_name") ?: "Extreme TV"
-val platformVersionName = "2.0.117"
-val platformVersionCode = 433
+val platformVersionName = "2.0.118"
+val platformVersionCode = 434
 val brandRevision = brandProperties?.getProperty("brand_version")?.toIntOrNull() ?: 0
 if (brandDirectory != null) {
     require(brandId.matches(Regex("[a-f0-9]{32}"))) { "Invalid brand identity" }
@@ -62,8 +62,8 @@ android {
         minSdk = 26
         targetSdk = 36
         // Keep literals for the existing centrally signed publication workflows.
-        versionCode = 433
-        versionName = "2.0.117"
+        versionCode = 434
+        versionName = "2.0.118"
         if (brandDirectory != null) {
             versionCode = (platformVersionCode.toLong()*100000L+brandRevision).toInt()
             versionName = platformVersionName + "." + brandRevision

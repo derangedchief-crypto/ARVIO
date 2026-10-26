@@ -12,6 +12,18 @@ function sourceCases(array &$tests,ControlCenter\Application $app,array $owner,a
         $saved=$app->sources->capture($token,['command_id'=>$command['id'],'lease_token'=>$lease,'reason'=>'read','snapshot'=>$doc]);$app->commands->acknowledge($token,$command['id'],['status'=>'succeeded','lease_token'=>$lease]);
         return [$d,$token,$doc,$saved['id']];
     };
+    $tests['extra playlist licensing blocks direct previews stale queued drafts and revoked contexts without deleting sources']=function()use($app,$owner,$alpha,$tenantA,$fixture):void {
+        [$d,$token,$doc,$id]=$fixture();$s=$app->moduleLicences;$p=$s->policy();$s->setPolicy($owner,['enforced'=>true,'expected_revision'=>$p['revision'],'confirmed'=>true]);
+        try {
+            $entry=$app->sources->view($alpha,$d['id'],$id)['entries'][0];$rows=[['ref'=>$entry['ref'],'kind'=>'m3u','name'=>'TEST Main','enabled'=>true],['kind'=>'m3u','name'=>'TEST Extra','enabled'=>true,'replace_url'=>'https://extra.test/list.m3u']];
+            problem(403,fn()=> $app->sources->preview($alpha,$d['id'],['snapshot_id'=>$id,'entries'=>$rows]));
+            $key=$s->issue($owner,['tenant_id'=>$tenantA['id'],'module'=>'extra_playlists'])['key'];$r=$s->redeem($alpha,['key'=>$key])['licence'];$preview=$app->sources->preview($alpha,$d['id'],['snapshot_id'=>$id,'entries'=>$rows]);
+            $r=$s->change($owner,$r['id'],['action'=>'suspend','expected_revision'=>$r['revision']])['licence'];problem(403,fn()=> $app->commands->enqueue($alpha,$d['id'],['kind'=>'apply_sources','payload'=>['draft_id'=>$preview['id']]],bin2hex(random_bytes(16))));
+            $r=$s->change($owner,$r['id'],['action'=>'reactivate','expected_revision'=>$r['revision']])['licence'];$c=$app->commands->enqueue($alpha,$d['id'],['kind'=>'apply_sources','payload'=>['draft_id'=>$preview['id']]],bin2hex(random_bytes(16)));$delivery=$app->commands->checkIn($token,['capabilities'=>['get_sources','apply_sources']],'127.0.0.81')['commands'][0];
+            $s->change($owner,$r['id'],['action'=>'revoke','expected_revision'=>$r['revision']]);problem(403,fn()=> $app->sources->context($token,['command_id'=>$c['id'],'lease_token'=>$delivery['lease_token']]));
+            same($d['id'],$app->commands->deviceIdentity($token)['id']);same($id,$app->sources->view($alpha,$d['id'],$id)['id']);
+        } finally {$p=$s->policy();$s->setPolicy($owner,['enforced'=>false,'expected_revision'=>$p['revision'],'confirmed'=>true]);}
+    };
     $tests['private source snapshots are encrypted masked and tenant isolated'] = function()use($app,$alpha,$beta,$fixture):void {
         [$d,$token,$doc,$id]=$fixture();$view=$app->sources->view($alpha,$d['id'],$id);$text=json_encode($view);check(!str_contains($text,'private-secret'));check(!str_contains($text,'provider.test'));check(!str_contains($text,'list_1'));check(!isset($view['payload_cipher']));same(true,$view['entries'][0]['canonical']);
         $raw=$app->db->one('SELECT payload_cipher FROM source_snapshots WHERE id=?',[$id]);check(!str_contains($raw['payload_cipher'],'private-secret'));

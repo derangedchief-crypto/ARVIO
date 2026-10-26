@@ -359,7 +359,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.screenshot({ path: path.join(output, 'overview-mobile.png'), fullPage: true });
     await page.getByRole('button',{name:'Open navigation',exact:true}).click();
     assert.equal(await page.locator('#workspace').evaluate(n=>n.inert),true);
-    assert.equal(await page.locator('#navigation .nav-group-title').count(),6);
+    assert.equal(await page.locator('#navigation .nav-group-title').count(),7);
     assert.equal(await page.locator('#navigation a.active').count(),1);
     assert.equal(await page.locator('#navigation a[aria-current="page"]').getAttribute('href'),'#overview');
     assert.equal(await page.locator('#navigation a[href="#library/defaults"]').isVisible(),true);
@@ -499,7 +499,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
      await require('./trial-controls-legacy-browser.cjs')(browser,base,credentials,output,done);
      await require('./global-trials-browser.cjs')(browser,base,credentials,output,done);
      await require('./compact-browser.cjs')(browser,base,credentials,output,done);
-     await require('./device-access-browser.cjs')(browser,base,credentials,output,done);
+      await require('./device-access-browser.cjs')(browser,base,credentials,output,done);
+      await require('./addons-browser.cjs')(browser,base,credentials,output,done);
     await require('./build-progress-browser.cjs')(browser,base,credentials,output,done);
     await navigate('resellers');
     await page.getByRole('button', { name: 'Link panel reseller', exact: true }).first().click();

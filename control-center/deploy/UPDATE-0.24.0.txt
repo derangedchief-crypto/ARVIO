@@ -1,0 +1,38 @@
+Extreme Control Center 0.24.0 — monthly reseller Add-ons
+
+Back up the website/database. Extract the UPDATE ZIP over the existing root:
+/www/wwwroot/control.fecxbrfzku.net
+Reload, sign in as owner, then use Website settings -> Apply database upgrade for
+migration 024. No terminal command or worker update is needed. Config, storage,
+keys, accounts, credentials and trial history must stay intact.
+
+IMPORTANT: Enforcement starts OFF. Do not enable it until the compatible client
+update is tested. Customer 2.0.117 and earlier cannot enforce a new local lock.
+This website update never installs or publishes a client APK.
+Native source is prepared as 2.0.118 / 434 for a separately approved signed test
+build. Do not publish it to customers until device acceptance is confirmed.
+
+Add-ons is a new owner/reseller navigation section. Owner selects a workspace,
+generates a key and copies it ONCE. Only a hash and masked hint are stored.
+The reseller enters the key to activate Extra Playlists for all their devices
+and customers. One calendar month starts on activation (UTC, month-end clamped).
+Owner can Renew one month, Suspend, Reactivate or permanently Revoke. Re-entering
+a key does not renew, revive or transfer it. Renewal of a suspended subscription
+does not reactivate it. A revoked key is never reusable; issue a replacement.
+The owner workspace has no implicit paid-module exemption.
+
+This is manual subscription management, not automatic card charging or proof of
+payment. Record payment externally and deliberately renew the subscription.
+
+When enforcement is ON, new/replaced additional M3U/Xtream/Stalker sources need
+an active workspace licence. Existing playback, playlists, base activation and
+safe metadata/removal operations remain available. Compatible apps verify online
+when adding a source; a connection failure blocks only that addition.
+The API rechecks source previews, queueing and device contexts. Native persistence
+also guards additions from settings, managed restores and cloud-profile imports.
+No claims are made about old, unupdated or modified clients.
+
+For testing: issue a key, redeem it in the selected reseller, verify more than one
+customer/device, then test expiry/suspend/reactivate/revoke and preserved viewing
+with a separately approved signed testing client. Do not clear saved data or
+create unnecessary live trials. Leave enforcement OFF while preparing rollout.

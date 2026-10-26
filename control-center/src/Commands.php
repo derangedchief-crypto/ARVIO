@@ -67,6 +67,7 @@ final class Commands
             }
             if($kind==='preview_favourites_restore'&&!$this->db->one('SELECT id FROM favourites_backups WHERE id=? AND device_id=?',[$payload['backup_id'],$deviceId]))throw new Problem(404,'Backup not found.');
             if($kind==='apply_sources'&&!$this->db->one('SELECT id FROM source_drafts WHERE id=? AND device_id=? AND expires_at>UTC_TIMESTAMP()',[$payload['draft_id'],$deviceId]))throw new Problem(409,'Source preview expired or belongs to another device.');
+            if($kind==='apply_sources')(new Sources($this->db,$this->management,$this,$this->auth,$this->config))->authorizeDraft($device,$payload['draft_id']);
             if($kind==='apply_preferences'&&!$this->db->one('SELECT id FROM preference_drafts WHERE id=? AND device_id=? AND expires_at>UTC_TIMESTAMP()',[$payload['draft_id'],$deviceId]))throw new Problem(409,'Settings preview expired or belongs to another device.');
             if($kind==='restore_favourites') {
                 $preview=$this->db->one('SELECT preview FROM favourites_restore_previews WHERE command_id=? AND device_id=? AND expires_at>UTC_TIMESTAMP()',[$payload['preview_id'],$deviceId]);if(!$preview)throw new Problem(409,'Preview expired or does not belong to this device.');

@@ -1,4 +1,25 @@
-# Device management 0.23.2 current activity — validation
+# Device management 0.24.0 monthly Add-ons — validation
+
+Full Android regression run: 907 tests, zero failures/errors, one existing skip;
+all 13 add-on policy/authorization/persistence tests pass. Testing and customer
+Kotlin variants compile. The 79 branding/builder regression checks pass.
+All 242 isolated service/database/HTTP checks and 68 complete browser checks pass,
+including simultaneous redemption and the live UI lifecycle on local fixtures.
+Deterministic package tests preserve installed private config, storage and keys.
+
+New local acceptance coverage tests workspace key issuance/replay/privacy, monthly
+UTC boundaries, suspension/expiry/renewal/revocation, HTTP roles/CSRF/scope, fleet
+membership, direct source previews and stale queued contexts. Browser checks cover
+one-time key display, reseller redemption, owner controls and mobile layouts.
+
+Native tests exercise paid-source classification and atomic denial of local,
+Stalker, cloud-profile and managed-source additions while retaining saved state.
+Local compilation does not validate production cloud credentials; that check is
+skipped only for local compilation, not changed in source. No client APK or live
+restriction is published by validation. Real-device acceptance remains a separate
+step before enabling enforcement.
+
+## Previous 0.23.2 current activity
 
 234 service/database/HTTP checks and 67 full browser checks pass, plus the focused
 current-activity mobile browser check. PHP/JavaScript syntax and package checks pass.

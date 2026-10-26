@@ -26,12 +26,14 @@ final class Application
     public readonly TrialSignupBroker $trialSignup;
     public readonly BrandBuilder $brandBuilder;
     public readonly BrandDownloads $brandDownloads;
+    public readonly ModuleLicences $moduleLicences;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
         if ((new Migrations($this->db, $config))->installed()) $config->secret('application.key', false);
         $this->auth = new Auth($this->db, $config, new Secrets($config));
         $this->management = new Management($this->db, $config, $this->auth);
+        $this->moduleLicences=new ModuleLicences($this->db,$this->management,$this->auth);
         $this->commands = new Commands($this->db, $config, $this->auth, $this->management);
         $this->enrollment = new Enrollment($this->db,$config,$this->auth,$this->management,new Secrets($config));
         $this->presets=new SettingsPresets($this->db,$this->management,$this->auth,$config);
@@ -122,6 +124,8 @@ final class Application
         if($method==='POST'&&$path==='/api/device/preferences/context')Http::json($this->preferences->context(Http::bearer(),Http::body()));
         if($method==='POST'&&$path==='/api/device/support/upload')Http::json($this->support->upload(Http::bearer(),Http::body(262144)));
         $token = $_COOKIE[Http::COOKIE] ?? '';
+        if($method==='POST'&&$path==='/api/device/addons/policy'){Input::keys(Http::body(),[]);Http::json($this->moduleLicences->policy());}
+        if($method==='POST'&&$path==='/api/device/addons/authorize'){Input::keys(Http::body(),[]);$d=$this->commands->deviceIdentity(Http::bearer());$this->auth->limit('module-device-check',$d['id'],30,60);Http::json($this->moduleLicences->decision($d));}
         if (!is_string($token)) throw new Problem(401, 'Please sign in.');
         $actor = $this->auth->user($token);
         $this->auth->limit('web-session', $actor['id'], 300, 60);
@@ -130,6 +134,11 @@ final class Application
             $this->auth->verifyCsrf($token, $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
         }
         if ($method === 'GET' && $path === '/api/me') Http::json(['user' => $actor, 'csrf' => $this->auth->csrf($token)]);
+        if($method==='GET'&&$path==='/api/addons')Http::json($this->moduleLicences->status($actor,$_GET));
+        if($method==='POST'&&$path==='/api/addons/issue')Http::json($this->moduleLicences->issue($actor,Http::body()),201);
+        if($method==='POST'&&$path==='/api/addons/redeem')Http::json($this->moduleLicences->redeem($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/addons/policy')Http::json($this->moduleLicences->setPolicy($actor,Http::body()));
+        if($method==='POST'&&preg_match('~^/api/addons/([a-f0-9]{32})$~D',$path,$m))Http::json($this->moduleLicences->change($actor,$m[1],Http::body()));
         if($method==='GET'&&$path==='/api/workspace-context'){Input::keys($_GET,[]);Http::json(['workspace'=>$this->management->workspace($actor)]);}
         if($method==='GET'&&$path==='/api/system/status') { Auth::owner($actor); Http::json(['pending_migrations'=>$migrations->pending()]); }
         if($method==='POST'&&$path==='/api/system/migrate') {

@@ -251,8 +251,20 @@ class IptvRepository @Inject constructor(
     private val profileManager: ProfileManager,
     private val invalidationBus: CloudSyncInvalidationBus,
     private val epgPlaybackGate: IptvEpgPlaybackGate,
+    private val extraPlaylistLicence: com.arflix.tv.management.ExtraPlaylistLicence = com.arflix.tv.management.ExtraPlaylistLicence(context),
 ) {
     private val gson = Gson()
+    suspend fun checkExtraPlaylistAccess() = extraPlaylistLicence.authorize(observeConfig().first())
+    /** Called inside the serialized settings transaction so stale drafts and concurrent
+     * imports cannot reuse a decision for another account or source configuration. */
+    private suspend fun authorizeSourceChange(profileId: String, prefs: Preferences, target: IptvConfig, requireSelected: Boolean = true) {
+        val selected = profileManager.getProfileIdSync()
+        if (requireSelected && selected != profileId) throw com.arflix.tv.management.ExtraPlaylistLicenceException("Profile changed; reopen playlist settings.")
+        if (needsExtraPlaylistLicence(managedConfig(profileId, prefs), target)) {
+            extraPlaylistLicence.authorize(target)
+            if (profileManager.getProfileIdSync() != selected) throw com.arflix.tv.management.ExtraPlaylistLicenceException("Profile changed; retry playlist settings.")
+        }
+    }
     private val loadMutex = Mutex()
     private val stalkerApiMutex = Mutex()
     private val xtreamDataMutex = Mutex()
@@ -694,6 +706,7 @@ class IptvRepository @Inject constructor(
         context.settingsDataStore.edit { prefs ->
             val previous = decodePlaylists(prefs[playlistsKey()].orEmpty())
             val changedSourceIds = changedPlaylistSourceIds(previous, primary)
+            authorizeSourceChange(profileId, prefs, nextConfig)
             prefs[m3uUrlKey()] = encryptConfigValue(normalizedM3u)
             prefs[epgUrlKey()] = encryptConfigValue(normalizedEpg)
             prefs[playlistsKey()] = gson.toJson(primary)
@@ -731,6 +744,7 @@ class IptvRepository @Inject constructor(
         context.settingsDataStore.edit { prefs ->
             val previous = decodePlaylists(prefs[playlistsKey()].orEmpty())
             val changedSourceIds = changedPlaylistSourceIds(previous, normalized)
+            authorizeSourceChange(profileId, prefs, nextConfig)
             prefs[playlistsKey()] = gson.toJson(normalized)
             prefs[m3uUrlKey()] = encryptConfigValue(primary?.m3uUrl.orEmpty())
             prefs[epgUrlKey()] = encryptConfigValue(primary?.epgUrl.orEmpty())
@@ -876,6 +890,7 @@ class IptvRepository @Inject constructor(
         val previousSourceKey = epgIndexKey(profileId, previousConfig)
         val sourceChanged = buildSourceSignature(previousConfig) != buildSourceSignature(nextConfig)
         context.settingsDataStore.edit { prefs ->
+            authorizeSourceChange(profileId, prefs, nextConfig)
             prefs[stalkerPortalsKey()] = gson.toJson(nextPortals)
             // Clear legacy single-portal keys so the list store becomes the source of truth.
             prefs.remove(stalkerPortalUrlKey())
@@ -941,6 +956,7 @@ class IptvRepository @Inject constructor(
             .filterNot { id -> normalized.any { it.id == id } }
 
         context.settingsDataStore.edit { prefs ->
+            authorizeSourceChange(profileId, prefs, nextConfig)
             prefs[stalkerPortalsKey()] = gson.toJson(normalized)
             // Clear legacy single-portal keys so the list store stays authoritative.
             prefs.remove(stalkerPortalUrlKey())
@@ -1047,6 +1063,7 @@ class IptvRepository @Inject constructor(
             val current = managedConfig(profileId, prefs)
             if (profileManager.getProfileIdSync() != profileId || !accountMatches(current) ||
                 current.copy(sortOrder="provider") != expected || !accountMatches(requested)) return@edit
+            authorizeSourceChange(profileId, prefs, requested)
             prefs[playlistsKeyFor(profileId)] = gson.toJson(requested.playlists)
             prefs[m3uUrlKeyFor(profileId)] = encryptConfigValue(requested.m3uUrl)
             prefs[epgUrlKeyFor(profileId)] = encryptConfigValue(requested.epgUrl)
@@ -4500,6 +4517,7 @@ class IptvRepository @Inject constructor(
                 .takeLast(40),
         )
         context.settingsDataStore.edit { prefs ->
+            authorizeSourceChange(safeProfileId, prefs, IptvConfig(m3uUrl=effectivePlaylists.firstOrNull()?.m3uUrl.orEmpty(),epgUrl=effectivePlaylists.firstOrNull()?.epgUrl.orEmpty(),playlists=effectivePlaylists,stalkerPortals=normalizedStalkerPortals),requireSelected=false)
             prefs[m3uUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedM3u)
             prefs[epgUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedEpg)
             if (normalizedStalkerPortals.isEmpty()) {
