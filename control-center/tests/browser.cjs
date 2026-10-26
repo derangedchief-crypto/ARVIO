@@ -18,25 +18,25 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
   const done = name => { checks.push(name); console.log('PASS', name); };
   async function navigate(section,workspaceId=null){if(['resellers','enrollments','audit'].includes(section)){await page.locator('#navigation a[href="#more"]').click();await page.locator('#main a[href="#'+section+'"]').click();}else if(section==='presets'){await page.locator('#navigation a[href="#library"]').click();if(workspaceId)await page.getByLabel('Library workspace',{exact:true}).selectOption(workspaceId);await page.locator('#main a[href="#library/settings"]').click();}else await page.locator('#navigation a[href="#'+section+'"]').click();}
   async function expand(title){const summary=page.locator('summary').filter({hasText:title}).first();await summary.waitFor();if(!await summary.evaluate(n=>n.parentElement.open))await summary.click();}
-  async function tab(name){const mapped={Overview:'Summary',Settings:'Playback',Categories:'Channels & favourites',Favourites:'Channels & favourites',Playlists:'Playlists & guide',Logs:'Help & activity',Commands:'Help & activity'};if(page.viewportSize().width<=900)await page.getByLabel('Device section',{exact:true}).selectOption(mapped[name]||name);else await page.getByRole('button',{name:mapped[name]||name,exact:true}).first().click();if(name==='Favourites'||name==='Categories'){const b=page.getByRole('button',{name:name==='Favourites'?'Favourites & recovery':'Channel layout',exact:true});await b.waitFor();if(!((await b.getAttribute('class'))||'').includes('active'))await b.click();}if(name==='Logs')await expand('App diagnostics & technical details');}
+  async function tab(name){const mapped={Overview:'Summary',Settings:'Playback',Categories:'Channels & favourites',Favourites:'Channels & favourites',Playlists:'Playlists & guide',Logs:'Help & activity',Commands:'Help & activity'};const visible={Summary:'Overview','Channels & favourites':'Channels','Playlists & guide':'Playlists','Help & activity':'Support'};const key=mapped[name]||name;if(page.viewportSize().width<=900)await page.getByLabel('Device section',{exact:true}).selectOption(key);else await page.getByRole('button',{name:visible[key]||key,exact:true}).first().click();if(name==='Favourites'||name==='Categories'){const b=page.getByRole('button',{name:name==='Favourites'?'Favourites':'Channel groups',exact:true});await b.waitFor();if(!((await b.getAttribute('class'))||'').includes('active'))await b.click();}if(name==='Logs')await expand('App diagnostics & technical details');}
   try {
     await page.goto(base);
     await page.getByLabel('Email address').fill(credentials.email);
     await page.getByLabel('Password', { exact: true }).fill(credentials.password);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await page.getByRole('heading', { name: 'Operations overview', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Dashboard', exact: true }).waitFor();
     await page.screenshot({ path: path.join(output, 'overview-desktop.png'), fullPage: true });
     done('owner login and actual dashboard rendering');
     const ownerTenant = await page.evaluate(async () => (await (await fetch('/api/tenants')).json()).items.find(t => t.kind === 'owner').id);
 
     if (credentials.enrollment_request_id) {
       await navigate('enrollments');
-      await page.getByRole('heading', { name: 'Device enrollments', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Website settings', exact: true }).waitFor();
       const pending = page.locator('tr').filter({ hasText: 'TEST · Enrollment simulator' });
       await pending.getByRole('button', { name: 'Approve / assign', exact: true }).waitFor();
       await page.screenshot({ path: path.join(output, 'enrollment-review-desktop.png'), fullPage: true });
       const downloadPromise = page.waitForEvent('download');
-      await page.getByRole('button', { name: 'Download worker bridge settings', exact: true }).click();
+      await page.getByRole('button', { name: 'Download connection settings', exact: true }).click();
       const download = await downloadPromise;
       assert.equal(download.suggestedFilename(), 'management-bridge.env');
       const content = fs.readFileSync(await download.path(), 'utf8');
@@ -110,8 +110,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
 
     await tab('Settings');
     await page.getByRole('heading', { name: 'Playback', exact: true }).waitFor();
-    await page.getByText('Reported ', { exact: false }).first().waitFor();
-    await page.getByRole('button', { name: 'Send sorting change', exact: true }).waitFor();
+    await page.getByText('Last synced: ', { exact: false }).first().waitFor();
+    await page.getByRole('button', { name: 'Apply sorting', exact: true }).waitFor();
     await tab('Logs');
     await page.getByRole('button',{name:'Load app diagnostics',exact:true}).waitFor();
     done('settings and diagnostics require requested app snapshots, not fabricated live data');
@@ -133,7 +133,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByLabel('Sorting preset',{exact:true}).selectOption({label:presetName});
     await page.locator('#modal-form').getByRole('button', { name: 'Use in this draft', exact: true }).click();
     await page.locator('#modal').waitFor({ state: 'hidden' });
-    await page.getByRole('button',{name:'Send sorting change',exact:true}).click();await tab('Commands');
+    await page.getByRole('button',{name:'Apply sorting',exact:true}).click();await tab('Commands');
     const settingsRow = page.locator('tr').filter({ hasText: 'Change channel sorting' });
     await settingsRow.locator('.badge.pending').waitFor();
     const queuedSettings = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).items.find(c => c.kind === 'set_settings'), credentials.device_id);
@@ -144,7 +144,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.locator('tr').filter({ hasText: 'Change channel sorting' }).locator('.badge.cancelled').waitFor();
     done('preset application queues a revision-bound setting and queued cancellation is real');
     await tab('Categories');
-    await page.getByRole('heading', { name: 'Organize entire playlist/category layout', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Channel groups', exact: true }).waitFor();
     const categoryName = 'TEST <img src=x onerror="window.__categoryInjected=1">';
     await page.getByText(categoryName, { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__categoryInjected), undefined);
@@ -224,7 +224,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await navigate('devices');
     await page.locator(`tr[data-device-id="${credentials.device_id}"]`).getByRole('button', { name: 'View →' }).click();
     await tab('Favourites');
-    await page.getByRole('heading', { name: 'Favourites backups & recovery', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Favourites backups', exact: true }).waitFor();
     const recoveryBefore = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/favourites')).json()), credentials.device_id);
     assert.equal(recoveryBefore.total, 1); assert.equal(recoveryBefore.live[0].channel_count, 0); assert.equal(recoveryBefore.items[0].channel_count, 2); assert.equal(recoveryBefore.items[0].group_count, 1); assert(recoveryBefore.items[0].protected);
     await page.getByRole('button', { name: 'Preview recovery on the app', exact: true }).click();
@@ -259,7 +259,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await tab('Settings');
     assert.equal(await page.getByLabel('Live TV buffer', { exact: true }).inputValue(), '0');
     await page.getByLabel('Live TV buffer', { exact: true }).selectOption('5');
-    await page.getByRole('button', { name: 'Send buffer change', exact: true }).click();
+    await page.getByRole('button', { name: 'Apply buffer', exact: true }).click();
     const bufferDelivery = await syntheticDelivery('set_live_buffer');
     assert.equal(bufferDelivery.payload.prebuffer_seconds, '5');
     const pendingBuffer = await page.evaluate(async id => (await (await fetch('/api/devices/' + id + '/commands')).json()).items.find(c => c.kind === 'set_live_buffer'), credentials.device_id);
@@ -270,23 +270,28 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     assert.equal(await page.getByLabel('Live TV buffer', { exact: true }).inputValue(), '5');
     done('device Live TV pre-buffer defaults Off, queues a bounded revision-guarded setting and displays saved amount after receipt (synthetic driver)');
     await tab('Playlists');
-    await page.getByRole('heading',{name:'Playlist sources — local draft and one guarded push',exact:true}).waitFor();
+    await page.getByRole('heading',{name:'Playlists',exact:true}).waitFor();
     const sourceCommandsBefore=await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id);
     await page.locator('tr').filter({hasText:'TEST Main source'}).getByRole('button',{name:'Edit',exact:true}).click();
-    assert.equal(await page.getByLabel('New/replacement M3U URL (write-only)',{exact:true}).count(),0);
-    await page.getByLabel('Source name',{exact:true}).fill('TEST Renamed source');
-    await page.locator('#modal-form').getByRole('button',{name:'Save local source edit',exact:true}).click();
+    assert.equal(await page.getByLabel('Playlist URL',{exact:true}).count(),0);
+    assert.equal(await page.getByLabel('Status',{exact:true}).isDisabled(),true);
+    await page.getByLabel('Playlist name',{exact:true}).fill('TEST Renamed source');
+    await page.locator('#modal-form').getByRole('button',{name:'Save playlist draft',exact:true}).click();
     await page.locator('#modal').waitFor({state:'hidden'});
-    await page.getByRole('button',{name:'Add M3U / Xtream source',exact:true}).click();
-    await page.getByLabel('Source name',{exact:true}).fill('TEST Additional source');
-    await page.getByLabel('New/replacement M3U URL (write-only)',{exact:true}).fill('https://synthetic-extra.invalid/list?password=write-only-fixture');
-    await page.locator('#modal-form').getByRole('button',{name:'Save local source edit',exact:true}).click();
+    await page.getByRole('button',{name:'Add playlist link',exact:true}).click();
+    await page.getByLabel('Playlist name',{exact:true}).fill('TEST Additional source');
+    assert.equal(await page.getByLabel('Xtream username',{exact:true}).isVisible(),false);
+    await page.getByLabel('Connection',{exact:true}).selectOption('xtream');assert.equal(await page.getByLabel('Playlist URL',{exact:true}).isVisible(),false);assert.equal(await page.getByLabel('Xtream username',{exact:true}).isVisible(),true);await page.getByLabel('Connection',{exact:true}).selectOption('url');
+    await page.getByLabel('Playlist URL',{exact:true}).fill('https://synthetic-extra.invalid/list?password=write-only-fixture');
+    await page.locator('#modal-form').getByRole('button',{name:'Save playlist draft',exact:true}).click();
     await page.locator('#modal').waitFor({state:'hidden'});
     assert.equal(await page.evaluate(()=>document.querySelector('#modal-form input[name=url]')?.value||''),'');
     assert.equal(await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id),sourceCommandsBefore);
-    await page.getByRole('button',{name:'Preview complete source replacement',exact:true}).click();
-    await page.getByRole('button',{name:'Push reviewed source replacement',exact:true}).waitFor();
-    page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Push reviewed source replacement',exact:true}).click();
+    async function changeConnection(mode){await page.locator('tr').filter({hasText:'TEST Additional source'}).getByRole('button',{name:'Edit',exact:true}).click();await page.getByLabel('Connection',{exact:true}).selectOption(mode);if(mode==='xtream'){await page.getByLabel('Xtream server address',{exact:true}).fill('https://synthetic-extra.invalid');await page.getByLabel('Xtream username',{exact:true}).fill('ui-client');await page.getByLabel('Xtream password',{exact:true}).fill('ui-password');}else await page.getByLabel('Playlist URL',{exact:true}).fill('https://synthetic-extra.invalid/list?password=write-only-fixture');await page.locator('#modal-form').getByRole('button',{name:'Save playlist draft',exact:true}).click();await page.locator('#modal').waitFor({state:'hidden'});return page.evaluate(id=>{const row=state.sourceEditors.get(id).entries.find(r=>r.name==='TEST Additional source');return {url:!!row.replace_url,xtream:!!row.xtream_host};},credentials.device_id);}
+    assert.deepEqual(await changeConnection('xtream'),{url:false,xtream:true});assert.deepEqual(await changeConnection('url'),{url:true,xtream:false});assert.equal(await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id),sourceCommandsBefore);
+    await page.getByRole('button',{name:'Review playlist changes',exact:true}).click();
+    await page.getByRole('button',{name:'Apply playlist changes',exact:true}).waitFor();
+    page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Apply playlist changes',exact:true}).click();
     const sourceDelivery=await syntheticDelivery('apply_sources');
     const sourceContext=await page.evaluate(async({token,c})=>(await(await fetch('/api/device/sources/context',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({command_id:c.id,lease_token:c.lease_token})})).json()),{token:credentials.synthetic_device_token,c:sourceDelivery});
     assert.equal(sourceContext.target.playlists.length,2);
@@ -295,29 +300,29 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
         const r=await fetch('/api/device/sources/capture',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({command_id:c.id,lease_token:c.lease_token,reason,snapshot:{schema_version:1,profile_ref:context.profile_ref,revision,config}})});status.push(r.status);
       }return status;
     },{token:credentials.synthetic_device_token,c:sourceDelivery,context:sourceContext});assert.deepEqual(sourceCaptures,[200,200]);assert.equal((await ack(sourceDelivery,{})).status,200);
-    await page.getByRole('button',{name:'Refresh source results',exact:true}).click();
+    await page.getByRole('button',{name:'Refresh status',exact:true}).click();
     await page.getByText('TEST Renamed source',{exact:true}).first().waitFor();
     await page.getByText('TEST Additional source',{exact:true}).first().waitFor();
     const sourceViews=await page.evaluate(async id=>{const history=await(await fetch('/api/devices/'+id+'/sources')).json();return await(await fetch('/api/devices/'+id+'/sources/'+history.items.find(r=>r.reason==='confirmation').id)).json();},credentials.device_id);
     assert.equal(sourceViews.entries.length,2);assert(!JSON.stringify(sourceViews).includes('write-only-fixture'));assert(!JSON.stringify(sourceViews).includes('synthetic-only'));
-    const rollbackRow=page.locator('tr').filter({hasText:'pre_apply'});page.once('dialog',dialog=>dialog.accept());await rollbackRow.getByRole('button',{name:'Preview rollback to this version',exact:true}).click();
-    await page.getByRole('button',{name:'Push reviewed source replacement',exact:true}).waitFor();
+    await expand('Playlist backups');const rollbackRow=page.locator('tr').filter({hasText:'Before changes'});page.once('dialog',dialog=>dialog.accept());await rollbackRow.getByRole('button',{name:'Review restore',exact:true}).click();
+    await page.getByRole('button',{name:'Apply playlist changes',exact:true}).waitFor();
     await page.getByRole('button',{name:'Cancel preview (re-enter secret replacements to edit again)',exact:true}).click();
     done('whole source edits stay local, canonical credentials stay protected, write-only replacements are encrypted and one push requires safety/confirmation; rollback is previewed (synthetic driver)');
     await navigate('presets',ownerTenant);
-    await page.getByRole('button',{name:'Create broader settings profile',exact:true}).click();
+    await page.getByRole('button',{name:'Create playback settings',exact:true}).click();
     await page.getByLabel('Workspace / reseller',{exact:true}).selectOption(ownerTenant);
     await page.getByLabel('Settings profile name',{exact:true}).fill('TEST Browser broad profile');
-    await page.getByLabel('clock format',{exact:true}).selectOption('24h');
-    await page.locator('#modal-form').getByRole('button',{name:'Save profile — do not push',exact:true}).click();
+    await page.getByLabel('Clock format',{exact:true}).selectOption('24h');
+    await page.locator('#modal-form').getByRole('button',{name:'Save settings',exact:true}).click();
     await page.getByText('TEST Browser broad profile',{exact:true}).waitFor();
     const broadProfile=await page.evaluate(async()=>(await(await fetch('/api/preference-profiles?search=TEST%20Browser%20broad%20profile')).json()).items[0]);
     await navigate('devices');await page.locator(`tr[data-device-id="${credentials.device_id}"]`).getByRole('button',{name:'View →'}).click();
     await tab('Settings');await expand('Movie & series preferences, saved profiles and overrides');
     await page.getByLabel('Base settings profile',{exact:true}).selectOption(broadProfile.id);
     await page.getByLabel('Override clock_format',{exact:true}).selectOption('12h');
-    await page.getByRole('button',{name:'Preview effective settings changes',exact:true}).click();
-    await page.getByRole('button',{name:'Push reviewed settings policy',exact:true}).waitFor();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Push reviewed settings policy',exact:true}).click();
+    await page.getByRole('button',{name:'Review playback changes',exact:true}).click();
+    await page.getByRole('button',{name:'Apply playback settings',exact:true}).waitFor();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Apply playback settings',exact:true}).click();
     const prefDelivery=await syntheticDelivery('apply_preferences');
     const prefCaptured=await page.evaluate(async({token,c,id})=>{
       const ctx=await(await fetch('/api/device/preferences/context',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({command_id:c.id,lease_token:c.lease_token})})).json();
@@ -325,16 +330,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
       const base=ctx.target.base_values,overrides=ctx.target.overrides,values={...old.values,...base,...overrides},origins={};for(const key of Object.keys(old.values))origins[key]=key in overrides?'device_profile_override':key in base?'base_preset':'local';
       return (await fetch('/api/device/preferences/capture',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({command_id:c.id,lease_token:c.lease_token,document:{...old,...ctx.target,values,origins,revision:'e'.repeat(64)}})})).status;
     },{token:credentials.synthetic_device_token,c:prefDelivery,id:credentials.device_id});assert.equal(prefCaptured,200);assert.equal((await ack(prefDelivery,{})).status,200);
-    await page.getByRole('button',{name:'Refresh expanded settings results',exact:true}).click();
+    await page.getByRole('button',{name:'Refresh preferences',exact:true}).click();
     assert.equal(await page.getByLabel('Override clock_format',{exact:true}).inputValue(),'12h');
     done('versioned broader settings profile is saved without auto-push; explicit device/profile override wins after preview and matching receipt (synthetic driver)');
     await tab('Logs');
-    await page.getByRole('button',{name:'Request redacted support bundle',exact:true}).click();const supportDelivery=await syntheticDelivery('get_support_bundle');
+    await page.getByRole('button',{name:'Collect support report',exact:true}).click();const supportDelivery=await syntheticDelivery('get_support_bundle');
     const supportUploaded=await page.evaluate(async({token,c,snapshot})=>(await fetch('/api/device/support/upload',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({command_id:c.id,lease_token:c.lease_token,kind:'bundle',profile_ref:snapshot.profile_ref,document:{schema_version:1,profile_ref:snapshot.profile_ref,snapshot,events:[{code:'LIVE_RECOVERY',at_ms:Date.now()}]}})})).status,{token:credentials.synthetic_device_token,c:supportDelivery,snapshot:diagnosticsSnapshot});assert.equal(supportUploaded,200);assert.equal((await ack(supportDelivery,{})).status,200);
-    await page.getByRole('button',{name:'Refresh private support results',exact:true}).click();
+    await page.getByRole('button',{name:'Refresh support reports',exact:true}).click();
     const supportLink=page.getByRole('link',{name:'Download redacted JSON bundle',exact:true});await supportLink.waitFor();const download=await page.request.get(new URL(await supportLink.getAttribute('href'),base).href);assert.equal(download.status(),200);assert.equal((await download.json()).events[0].code,'LIVE_RECOVERY');
-    page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Request consented support-panel image',exact:true}).click();const panelDelivery=await syntheticDelivery('capture_app_screen');assert.equal((await ack(panelDelivery,{status:'failed',summary:'TEST synthetic customer declined — no image uploaded'})).status,200);
-    await page.getByRole('button',{name:'Refresh private support results',exact:true}).click();assert.equal(await page.getByRole('link',{name:'Download consented panel PNG',exact:true}).count(),0);
+    page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Ask customer for support image',exact:true}).click();const panelDelivery=await syntheticDelivery('capture_app_screen');assert.equal((await ack(panelDelivery,{status:'failed',summary:'TEST synthetic customer declined — no image uploaded'})).status,200);
+    await page.getByRole('button',{name:'Refresh support reports',exact:true}).click();assert.equal(await page.getByRole('link',{name:'Download consented panel PNG',exact:true}).count(),0);
     done('redacted private support export is session-authorized and a declined panel request produces no image link (synthetic driver)');
     await tab('Overview');await expand('Manage app access & assignment');assert.equal(await page.getByRole('button',{name:'Remove from reseller — keep app working',exact:true}).count(),0);
     const detachRecord=await page.evaluate(async id=>await(await fetch('/api/devices/'+id)).json(),credentials.reseller_device_id);await page.evaluate(id=>{location.hash='device/'+id;},credentials.reseller_device_id);await page.getByRole('heading',{name:detachRecord.line_username||detachRecord.customer_name,exact:true}).waitFor();await expand('Manage app access & assignment');
@@ -349,12 +354,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button',{name:'Open navigation',exact:true}).click();
     await navigate('overview');
-    await page.getByRole('heading', { name: 'Operations overview', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Dashboard', exact: true }).waitFor();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Mobile page overflow');
     await page.screenshot({ path: path.join(output, 'overview-mobile.png'), fullPage: true });
     await page.getByRole('button',{name:'Open navigation',exact:true}).click();
     assert.equal(await page.locator('#workspace').evaluate(n=>n.inert),true);
-    assert.equal(await page.locator('#navigation .nav-group-title').count(),7);
+    assert.equal(await page.locator('#navigation .nav-group-title').count(),6);
     assert.equal(await page.locator('#navigation a.active').count(),1);
     assert.equal(await page.locator('#navigation a[aria-current="page"]').getAttribute('href'),'#overview');
     assert.equal(await page.locator('#navigation a[href="#library/defaults"]').isVisible(),true);
@@ -367,7 +372,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.activeElement.id),'nav-toggle');
     assert.equal(await page.locator('#workspace').evaluate(n=>n.inert),false);
     await page.getByRole('button',{name:'Open navigation',exact:true}).click();
-    await page.getByRole('link',{name:'Devices',exact:true}).click();
+    await page.locator('#navigation').getByRole('link',{name:'Devices',exact:true}).click();
     await page.getByRole('heading',{name:'Devices',exact:true}).waitFor();
     assert.equal(await page.locator('#nav-toggle').getAttribute('aria-expanded'),'false');
     assert.equal(await page.locator('.mobile-records table').first().evaluate(n=>getComputedStyle(n).display),'block');
@@ -387,7 +392,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
     async function menuMatchesTheme(){const colors=await page.evaluate(()=>{const probe=document.createElement('span');probe.style.cssText='background:var(--panel);color:var(--accent);border-color:var(--accent-soft)';document.body.append(probe);const expected=getComputedStyle(probe),sidebar=getComputedStyle(document.getElementById('sidebar')),active=getComputedStyle(document.querySelector('#navigation a.active'));const result=[sidebar.backgroundColor,expected.backgroundColor,active.color,expected.color,active.backgroundColor,expected.borderTopColor];probe.remove();return result;});assert.equal(colors[0],colors[1]);assert.equal(colors[2],colors[3]);assert.equal(colors[4],colors[5]);}
     await menuMatchesTheme();
-    const themePage=await page.context().newPage();await themePage.goto(base);await themePage.getByRole('heading',{name:'Operations overview',exact:true}).waitFor();assert.equal(await themePage.evaluate(()=>document.documentElement.dataset.theme),'light');await themePage.close();
+    const themePage=await page.context().newPage();await themePage.goto(base);await themePage.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();assert.equal(await themePage.evaluate(()=>document.documentElement.dataset.theme),'light');await themePage.close();
     await page.screenshot({path:path.join(output,'device-settings-mobile-light.png'),fullPage:false});
     for(const width of [320,390,768,1024,1440]){await page.setViewportSize({width,height:950});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false,`Page overflows at ${width}px`);}
     await page.getByRole('button',{name:'Switch to dark theme',exact:true}).click();
@@ -400,29 +405,29 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
 
     await page.setViewportSize({width:1440,height:1000});await navigate('devices');await page.locator(`tr[data-device-id="${credentials.device_id}"]`).waitFor();await page.screenshot({path:path.join(output,'clean-devices-desktop-dark.png'),fullPage:false});await page.locator(`tr[data-device-id="${credentials.device_id}"]`).getByRole('button',{name:'View →'}).click();await tab('Settings');
     const acceptDiscard=d=>d.accept();page.on('dialog',acceptDiscard);await page.getByRole('button',{name:'Load device settings',exact:true}).click();page.off('dialog',acceptDiscard);const guidedRead=await syntheticDelivery('get_settings');assert.equal((await ack(guidedRead,{snapshot:bufferSnapshot})).status,200);
-    await page.getByText('Settings received. Choose a value and send your change.',{exact:true}).waitFor();assert.equal(await page.getByLabel('Live TV buffer',{exact:true}).inputValue(),'5');
+    await page.getByText('Settings loaded.',{exact:true}).waitFor();assert.equal(await page.getByLabel('Live TV buffer',{exact:true}).inputValue(),'5');
     done('guided Playback read completes in place after one Load action, without manual refresh or a separate command page');
 
     await page.locator('#navigation a[href="#library"]').click();await page.getByLabel('Library workspace',{exact:true}).selectOption(ownerTenant);
     const beforeLibraryActions=await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id);
-    await page.getByRole('button',{name:'Create layout',exact:true}).click();await page.getByLabel('Layout name',{exact:true}).fill('TEST new workspace layout');
+    await page.getByRole('button',{name:'Create channel layout',exact:true}).click();await page.getByLabel('Layout name',{exact:true}).fill('TEST new workspace layout');
     await page.getByRole('button',{name:'Add category rules',exact:true}).click();await page.getByLabel('Category names — one per line',{exact:true}).fill('News\nSports');await page.locator('#modal-form').getByRole('button',{name:'Save',exact:true}).click();await page.locator('#modal').waitFor({state:'hidden'});
-    await page.getByRole('button',{name:'Save layout',exact:true}).click();await page.getByText('Layout saved. Devices and pinned default profiles were not changed.',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Save channel layout',exact:true}).click();await page.getByText('Channel layout saved.',{exact:true}).waitFor();
     const makerLayout=await page.evaluate(async tenant=>(await(await fetch('/api/category-layout-templates?tenant_id='+tenant+'&search=TEST%20new%20workspace%20layout')).json()).items[0],ownerTenant);assert.equal(Number(makerLayout.version),1);
     assert.equal(await page.evaluate(async id=>(await(await fetch('/api/devices/'+id+'/commands')).json()).total,credentials.device_id),beforeLibraryActions);
     await page.screenshot({path:path.join(output,'task-workspace-layout-maker.png'),fullPage:true});await page.setViewportSize({width:390,height:950});await page.locator('.sidebar').waitFor({state:'hidden'});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);assert.equal(await page.locator('.mobile-records table').first().evaluate(n=>getComputedStyle(n).display),'block');await page.screenshot({path:path.join(output,'task-workspace-layout-maker-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1000});done('discoverable Library maker creates exact-name reusable layouts without sending device commands');
 
-    await page.locator('#main a[href="#library/profiles"]').click();await page.getByRole('button',{name:'Create device profile',exact:true}).click();await page.getByLabel('Device profile name',{exact:true}).fill('TEST new-device recipe');await page.getByLabel('Channel & playlist layout',{exact:true}).selectOption(makerLayout.id+'@1');await page.getByLabel('Compatible player/UI settings profile',{exact:true}).selectOption(broadProfile.id+'@1');await page.getByLabel('Live TV buffer — all profiles on the device',{exact:true}).selectOption('2');await page.locator('#modal-form').getByRole('button',{name:'Save profile — do not apply',exact:true}).click();await page.locator('#modal').waitFor({state:'hidden'});
+    await page.locator('#main a[href="#library/profiles"]').click();await page.getByRole('button',{name:'Create device setup',exact:true}).click();await page.getByLabel('Setup name',{exact:true}).fill('TEST new-device recipe');await page.getByLabel('Channel layout',{exact:true}).selectOption(makerLayout.id+'@1');await page.getByLabel('Playback settings',{exact:true}).selectOption(broadProfile.id+'@1');await page.getByLabel('Live TV buffer (whole device)',{exact:true}).selectOption('2');await page.locator('#modal-form').getByRole('button',{name:'Save device setup',exact:true}).click();await page.locator('#modal').waitFor({state:'hidden'});
     const recipe=await page.evaluate(async tenant=>(await(await fetch('/api/device-profiles?tenant_id='+tenant+'&search=TEST%20new-device%20recipe')).json()).items[0],ownerTenant);assert.equal(recipe.definition.layout.version,1);assert.equal(recipe.definition.prebuffer_seconds,'2');
-    await page.locator('#main a[href="#library/defaults"]').click();await page.getByLabel('Default device profile',{exact:true}).selectOption(recipe.id+'@1');await page.getByLabel('Use for newly managed devices',{exact:true}).check();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Review & save default',exact:true}).click();
+    await page.locator('#main a[href="#library/defaults"]').click();await page.getByLabel('Saved device setup',{exact:true}).selectOption(recipe.id+'@1');await page.getByLabel('Use for new devices',{exact:true}).check();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Save automatic setup',exact:true}).click();
     await page.waitForFunction(async tenant=>(await(await fetch('/api/device-defaults?tenant_id='+tenant)).json()).policy?.enabled===1,ownerTenant);
-    await page.getByText('Currently enabled:',{exact:false}).waitFor();
+    await page.getByText('On · TEST new-device recipe',{exact:false}).waitFor();
     const existingSetups=await page.evaluate(async id=>(await(await fetch('/api/device-setups?device_id='+id)).json()).total,credentials.device_id);assert.equal(existingSetups,0);
     await page.screenshot({path:path.join(output,'task-workspace-new-device-defaults.png'),fullPage:true});
-    await page.evaluate(id=>{location.hash='library/layout/'+id;},makerLayout.id);await page.getByLabel('Position of Sports',{exact:true}).fill('1');await page.getByLabel('Position of Sports',{exact:true}).press('Tab');await page.getByRole('button',{name:'Save layout',exact:true}).click();
+    await page.evaluate(id=>{location.hash='library/layout/'+id;},makerLayout.id);await page.getByLabel('Position of Sports',{exact:true}).fill('1');await page.getByLabel('Position of Sports',{exact:true}).press('Tab');await page.getByRole('button',{name:'Save channel layout',exact:true}).click();
     await page.waitForFunction(async id=>(await(await fetch('/api/category-layout-templates/'+id)).json()).version===2,makerLayout.id);
     const pinnedRecipe=await page.evaluate(async id=>await(await fetch('/api/device-profiles/'+id)).json(),recipe.id);assert.equal(pinnedRecipe.definition.layout.version,1);assert.equal(pinnedRecipe.definition.layout.entries[0].name,'News');
-    await page.locator('#main a[href="#library/defaults"]').click();await page.getByLabel('Use for newly managed devices',{exact:true}).uncheck();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Review & save default',exact:true}).click();
+    await page.locator('#main a[href="#library/defaults"]').click();await page.getByLabel('Use for new devices',{exact:true}).uncheck();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Save automatic setup',exact:true}).click();
     done('reseller defaults use an explicitly enabled version-pinned recipe, do not touch existing devices and do not silently follow template edits');
 
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -430,14 +435,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     // A separate verified reseller/session models the actual self-service role and
     // keeps independent scenarios within each actor's production request budget.
     const brandContext=await browser.newContext({viewport:{width:1440,height:1000}});const page=await brandContext.newPage();const ownerTenant=credentials.brand_tenant_id;
-    page.on('pageerror',error=>errors.push(error.message));await page.goto(base);await page.getByLabel('Email address').fill(credentials.brand_email);await page.getByLabel('Password',{exact:true}).fill(credentials.brand_password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('heading',{name:'Operations overview',exact:true}).waitFor();
+    page.on('pageerror',error=>errors.push(error.message));await page.goto(base);await page.getByLabel('Email address').fill(credentials.brand_email);await page.getByLabel('Password',{exact:true}).fill(credentials.brand_password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
     await page.locator('#navigation a[href="#branding"]').click();
     await page.getByLabel('Branded app name',{exact:true}).fill('TEST North TV');
     const brandImage=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jSuoAAAAASUVORK5CYII=','base64');
     for(const field of ['Loading image','In-app logo / TV banner','Launcher icon']){const uploaded=page.waitForResponse(r=>r.url().endsWith('/api/app-brand/assets')&&r.request().method()==='POST');await page.getByLabel(field,{exact:true}).setInputFiles({name:'test.png',mimeType:'image/png',buffer:brandImage});assert.equal((await uploaded).status(),201);await page.getByAltText(field+' preview',{exact:true}).waitFor();}
-    await page.getByRole('button',{name:'Save brand',exact:true}).click();await page.getByRole('heading',{name:'Edit your existing app brand',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Save brand',exact:true}).click();await page.getByRole('heading',{name:'Name & artwork',exact:true}).waitFor();
     const savedBrand=await page.evaluate(async t=>(await(await fetch('/api/app-brand?tenant_id='+t)).json()).brand,ownerTenant);
-    const buildResponse=page.waitForResponse(r=>r.url().endsWith('/api/app-brand/builds')&&r.request().method()==='POST',{timeout:10000});await page.getByRole('button',{name:'Request build of saved version',exact:true}).click();let buildReply;try{buildReply=await buildResponse;}catch(e){console.log('Brand action status:',await page.locator('#toast').textContent());throw e;}assert.equal(buildReply.status(),201,await buildReply.text());await page.getByText('Waiting for central builder',{exact:true}).waitFor();
+    const buildResponse=page.waitForResponse(r=>r.url().endsWith('/api/app-brand/builds')&&r.request().method()==='POST',{timeout:10000});await page.getByRole('button',{name:'Build app',exact:true}).click();let buildReply;try{buildReply=await buildResponse;}catch(e){console.log('Brand action status:',await page.locator('#toast').textContent());throw e;}assert.equal(buildReply.status(),201,await buildReply.text());await page.getByText('Queued',{exact:true}).first().waitFor();
     assert.equal(await page.getByRole('link',{name:'Download build inputs',exact:true}).count(),0);
     assert.equal(await page.locator('.brand-editor').evaluate(n=>n.open),false);await page.locator('.brand-editor>summary').click();await page.getByLabel('Branded app name',{exact:true}).fill('TEST Renamed North');await page.getByRole('button',{name:'Save brand',exact:true}).click();await page.waitForFunction(async t=>(await(await fetch('/api/app-brand?tenant_id='+t)).json()).brand.version===2,ownerTenant);
     const changedBrand=await page.evaluate(async t=>(await(await fetch('/api/app-brand?tenant_id='+t)).json()),ownerTenant);assert.equal(changedBrand.brand.id,savedBrand.id);assert.equal(changedBrand.brand.package_name,savedBrand.package_name);assert.equal(changedBrand.builds[0].brand_version,1);assert.equal(changedBrand.trial_creation_enabled,false);
@@ -446,8 +451,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     // Render publication responses without pretending a synthetic APK was signed.
     const siteApk='/downloads/apps/'+'a'.repeat(32)+'/Brand-2.0.115.3-test.apk';
     await page.route(/\/api\/app-brand(?:\?.*)?$/,async route=>{const response=await route.fetch();const data=await response.json();const current=data.builds[0];data.builds=[{...current,brand_version:8},...Array.from({length:7},(_,i)=>({...current,id:String(i+1).repeat(32),brand_version:7-i,state:'cancelled'}))];data.artifacts=[{channel:'testing',version_name:'2.0.115.3-test',package_name:savedBrand.package_name+'.test',apk_sha256:'b'.repeat(64),artifact_url:siteApk,download_ready:true},{channel:'production',version_name:'2.0.115.3',package_name:savedBrand.package_name,apk_sha256:'c'.repeat(64),artifact_url:'https://github.com/example/provider/private.apk',download_ready:true}];await route.fulfill({response,json:data});});
-    await page.evaluate(()=>{location.hash='overview';});await page.getByRole('heading',{name:'Operations overview',exact:true}).waitFor();await page.locator('#navigation a[href="#branding"]').click();await page.getByRole('link',{name:'Download testing APK 2.0.115.3-test',exact:true}).waitFor();
-    assert.equal(await page.getByRole('link',{name:'Download testing APK 2.0.115.3-test',exact:true}).getAttribute('href'),siteApk);assert.equal(await page.locator('a[href*="github"]').count(),0);assert.equal(await page.getByRole('link',{name:'Download production APK 2.0.115.3',exact:true}).count(),0);
+    await page.evaluate(()=>{location.hash='overview';});await page.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();await page.locator('#navigation a[href="#branding"]').click();await page.getByRole('link',{name:'Download test app 2.0.115.3-test',exact:true}).waitFor();
+    assert.equal(await page.getByRole('link',{name:'Download test app 2.0.115.3-test',exact:true}).getAttribute('href'),siteApk);assert.equal(await page.locator('a[href*="github"]').count(),0);assert.equal(await page.getByRole('link',{name:'Download app 2.0.115.3',exact:true}).count(),0);
     assert.equal(await page.locator('#main tbody tr').count(),1);assert.equal(await page.locator('#main tbody tr td').first().textContent(),'8');assert.equal(await page.locator('.brand-editor').evaluate(n=>n.open),false);assert.equal(await page.getByLabel('Branded app name',{exact:true}).isVisible(),false);
     await page.locator('.brand-editor>summary').click();await page.getByLabel('Branded app name',{exact:true}).waitFor();await page.locator('.brand-editor>summary').click();await page.setViewportSize({width:390,height:950});await page.locator('.sidebar').waitFor({state:'hidden'});assert.equal(await page.locator('.brand-editor').evaluate(n=>n.open),false);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);await page.screenshot({path:path.join(output,'branding-current-build-collapsed-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1000});await page.locator('.sidebar').waitFor({state:'visible'});await page.screenshot({path:path.join(output,'branding-current-build-collapsed-desktop.png'),fullPage:true});
     done('branding shows only the latest build from eight returned records and keeps the existing-brand editor collapsed until explicitly opened');
@@ -463,20 +468,20 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
       done('owner downloads immutable build inputs in-browser without a server terminal; reseller export remains unavailable');
     }
     {
-      const ownContext=await browser.newContext({viewport:{width:390,height:1000}});const own=await ownContext.newPage();own.on('pageerror',e=>errors.push(e.message));await own.route(/\/api\/tenants$/,async route=>{const response=await route.fetch();const data=await response.json();data.items=data.items.filter(t=>t.kind!=='owner'&&t.id!==credentials.brand_tenant_id);await route.fulfill({response,json:data});});await own.goto(base);await own.getByLabel('Email address').fill(credentials.email);await own.getByLabel('Password',{exact:true}).fill(credentials.password);await own.getByRole('button',{name:'Sign in',exact:true}).click();await own.getByRole('heading',{name:'Operations overview',exact:true}).waitFor();await own.evaluate(()=>{location.hash='branding';});await own.getByLabel('Branded app name',{exact:true}).waitFor();
+      const ownContext=await browser.newContext({viewport:{width:390,height:1000}});const own=await ownContext.newPage();own.on('pageerror',e=>errors.push(e.message));await own.route(/\/api\/tenants$/,async route=>{const response=await route.fetch();const data=await response.json();data.items=data.items.filter(t=>t.kind!=='owner'&&t.id!==credentials.brand_tenant_id);await route.fulfill({response,json:data});});await own.goto(base);await own.getByLabel('Email address').fill(credentials.email);await own.getByLabel('Password',{exact:true}).fill(credentials.password);await own.getByRole('button',{name:'Sign in',exact:true}).click();await own.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();await own.evaluate(()=>{location.hash='branding';});await own.getByLabel('Branded app name',{exact:true}).waitFor();
       const ownerSpace=await own.evaluate(async()=>(await(await fetch('/api/workspace-context')).json()).workspace);assert.equal(await own.getByLabel('Brand workspace',{exact:true}).inputValue(),ownerSpace.id);assert.equal(await own.getByLabel('Brand workspace',{exact:true}).locator('option:checked').textContent().then(t=>t.startsWith('My owner workspace')),true);
       await own.getByLabel('Branded app name',{exact:true}).fill('TEST Owner TV');const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jSuoAAAAASUVORK5CYII=','base64');for(const field of ['Loading image','In-app logo / TV banner','Launcher icon']){const uploaded=own.waitForResponse(r=>r.url().endsWith('/api/app-brand/assets')&&r.request().method()==='POST');await own.getByLabel(field,{exact:true}).setInputFiles({name:'owner.png',mimeType:'image/png',buffer:png});assert.equal((await uploaded).status(),201);}
-      await own.getByRole('button',{name:'Save brand',exact:true}).click();await own.getByRole('heading',{name:'Edit your existing app brand',exact:true}).waitFor();await own.getByRole('button',{name:'Request build of saved version',exact:true}).click();await own.getByRole('link',{name:'Download build inputs',exact:true}).waitFor();assert.equal(await own.getByRole('button',{name:'Open trials & contacts',exact:true}).count(),1);assert.equal(await own.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);await own.screenshot({path:path.join(output,'owner-branding-mobile.png'),fullPage:true});
+      await own.getByRole('button',{name:'Save brand',exact:true}).click();await own.getByRole('heading',{name:'Name & artwork',exact:true}).waitFor();await own.getByRole('button',{name:'Build app',exact:true}).click();await own.getByRole('link',{name:'Download build inputs',exact:true}).waitFor();assert.equal(await own.getByRole('button',{name:'Open trials & contacts',exact:true}).count(),1);assert.equal(await own.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);await own.screenshot({path:path.join(output,'owner-branding-mobile.png'),fullPage:true});
       const response=await own.evaluate(async()=>(await(await fetch('/api/app-brand')).json()));assert.equal(response.workspace_kind,'owner');assert.equal(response.tenant_id,ownerSpace.id);assert.equal(response.trial_creation_enabled,false);done('administrator can select the owner workspace by default and prepare a separate owner brand without a new reseller login');
-       await own.getByRole('button',{name:'Open trials & contacts',exact:true}).click();await own.getByLabel('Trial workspace',{exact:true}).waitFor();assert.equal(await own.getByLabel('Trial workspace',{exact:true}).inputValue(),ownerSpace.id);await own.getByText('The server trial connection needs admin setup.',{exact:true}).waitFor();assert.equal(await own.getByRole('switch',{name:'Show trial button in this app',exact:true}).isDisabled(),true);await own.screenshot({path:path.join(output,'owner-trials-blocked-mobile.png'),fullPage:true});await own.evaluate(()=>{location.hash='branding';});await own.getByRole('heading',{name:'Edit your existing app brand',exact:true}).waitFor();done('owner trial workspace is selectable without a reseller login and remains unpublished while its server connection and approved default are unavailable');
+       await own.getByRole('button',{name:'Open trials & contacts',exact:true}).click();await own.getByLabel('Trial workspace',{exact:true}).waitFor();assert.equal(await own.getByLabel('Trial workspace',{exact:true}).inputValue(),ownerSpace.id);await own.getByText('The server trial connection needs admin setup.',{exact:true}).waitFor();assert.equal(await own.getByRole('switch',{name:'Show trial button in this app',exact:true}).isDisabled(),true);await own.screenshot({path:path.join(output,'owner-trials-blocked-mobile.png'),fullPage:true});await own.evaluate(()=>{location.hash='branding';});await own.getByRole('heading',{name:'Name & artwork',exact:true}).waitFor();done('owner trial workspace is selectable without a reseller login and remains unpublished while its server connection and approved default are unavailable');
       await require('./owner-workspace-browser.cjs')(own,credentials,ownerSpace,output,done);
       let pendingBrandFetches=0;await own.route('**/api/app-brand?tenant_id=*',r=>{pendingBrandFetches++;return r.continue();});await own.route('**/api/system/status',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({pending_migrations:['014_reseller_app_brands.sql']})}));await own.reload();await own.getByRole('heading',{name:'Database upgrade required',exact:true}).waitFor();await own.getByRole('button',{name:'Open website upgrades',exact:true}).waitFor();assert.equal(pendingBrandFetches,0);await own.screenshot({path:path.join(output,'owner-branding-upgrade-required-mobile.png'),fullPage:true});await own.unroute('**/api/system/status');await own.unroute('**/api/app-brand?tenant_id=*');done('branding checks pending database upgrades before calling an endpoint that could fail behind an HTML error page');
-      await own.route('**/api/app-brand?tenant_id=*',r=>r.fulfill({status:503,contentType:'text/html',headers:{'X-Request-ID':'test_brand_503'},body:'<html>PRIVATE_SERVER_DETAIL_MUST_NOT_SHOW</html>'}));await own.reload();await own.getByRole('heading',{name:'Branding could not load',exact:true}).waitFor();await own.getByText(/HTTP 503.*Request ID: test_brand_503/).waitFor();assert.equal((await own.locator('body').textContent()).includes('PRIVATE_SERVER_DETAIL_MUST_NOT_SHOW'),false);await own.screenshot({path:path.join(output,'branding-html-error-mobile.png'),fullPage:true});await own.getByRole('button',{name:'Check website upgrades',exact:true}).click();await own.getByRole('heading',{name:'Device enrollments',exact:true}).waitFor();
+      await own.route('**/api/app-brand?tenant_id=*',r=>r.fulfill({status:503,contentType:'text/html',headers:{'X-Request-ID':'test_brand_503'},body:'<html>PRIVATE_SERVER_DETAIL_MUST_NOT_SHOW</html>'}));await own.reload();await own.getByRole('heading',{name:'Branding could not load',exact:true}).waitFor();await own.getByText(/HTTP 503.*Request ID: test_brand_503/).waitFor();assert.equal((await own.locator('body').textContent()).includes('PRIVATE_SERVER_DETAIL_MUST_NOT_SHOW'),false);await own.screenshot({path:path.join(output,'branding-html-error-mobile.png'),fullPage:true});await own.getByRole('button',{name:'Check website upgrades',exact:true}).click();await own.getByRole('heading',{name:'Website settings',exact:true}).waitFor();
       done('HTML error pages show safe HTTP status and request ID with a working upgrade link instead of blaming server configuration');await ownContext.close();
     }
     {
       const trialsContext=await browser.newContext({viewport:{width:1440,height:1000}});const tpage=await trialsContext.newPage();tpage.on('pageerror',e=>errors.push(e.message));
-      await tpage.goto(base);await tpage.getByLabel('Email address').fill(credentials.trial_email);await tpage.getByLabel('Password',{exact:true}).fill(credentials.trial_password);await tpage.getByRole('button',{name:'Sign in',exact:true}).click();await tpage.getByRole('heading',{name:'Operations overview',exact:true}).waitFor();
+      await tpage.goto(base);await tpage.getByLabel('Email address').fill(credentials.trial_email);await tpage.getByLabel('Password',{exact:true}).fill(credentials.trial_password);await tpage.getByRole('button',{name:'Sign in',exact:true}).click();await tpage.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
        await tpage.locator('#navigation a[href="#trials"]').click();await tpage.getByLabel('Trial package',{exact:true}).waitFor();assert.equal(await tpage.getByRole('heading',{name:'Trial access',exact:true}).count(),0);assert.equal(await tpage.getByLabel('Trial package',{exact:true}).locator('option[value="8"]').count(),0);
        await tpage.getByText('••••4001',{exact:true}).waitFor();assert.equal(await tpage.getByRole('switch',{name:'Show trial button in this app',exact:true}).isDisabled(),true);await tpage.getByText('The server trial connection needs admin setup.',{exact:true}).waitFor();assert.equal(await tpage.getByText('+15551234001',{exact:true}).count(),0);
       let releaseDetail;const detailGate=new Promise(resolve=>{releaseDetail=resolve;});const detailPattern='**/api/trial-contacts/'+credentials.trial_contact_id;await tpage.route(detailPattern,async route=>{await detailGate;await route.continue();});const delayed=tpage.waitForRequest(r=>r.url().endsWith('/api/trial-contacts/'+credentials.trial_contact_id));await tpage.getByRole('button',{name:'View contact',exact:true}).click();await delayed;await tpage.getByRole('button',{name:'Change password',exact:true}).click();await tpage.getByRole('heading',{name:'Change your password',exact:true}).waitFor();releaseDetail();await tpage.waitForLoadState('networkidle');await tpage.getByRole('heading',{name:'Change your password',exact:true}).waitFor();assert.equal(await tpage.getByText('+15551234001',{exact:true}).count(),0);await tpage.locator('#modal-form').getByRole('button',{name:'Cancel',exact:true}).click();await tpage.unroute(detailPattern);
@@ -493,6 +498,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
      await require('./trial-controls-browser.cjs')(browser,base,credentials,output,done);
      await require('./trial-controls-legacy-browser.cjs')(browser,base,credentials,output,done);
      await require('./global-trials-browser.cjs')(browser,base,credentials,output,done);
+     await require('./compact-browser.cjs')(browser,base,credentials,output,done);
     await require('./build-progress-browser.cjs')(browser,base,credentials,output,done);
     await navigate('resellers');
     await page.getByRole('button', { name: 'Link panel reseller', exact: true }).first().click();
@@ -503,10 +509,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     const email = 'browser-' + Date.now() + '@preview.test';
     const password = 'Browser-Test-Reseller-Password-46!';
     const company = 'TEST · Browser reseller ' + Date.now();
-    await page.getByLabel('Company / workspace name', { exact: true }).fill(company);
-    await page.getByLabel('Contact name', { exact: true }).fill('Test reseller');
-    await page.getByLabel('Reseller email', { exact: true }).fill(email);
-    await page.getByLabel('Initial password', { exact: true }).fill(password);
+    await page.getByLabel('Reseller name', { exact: true }).fill(company);
+    await page.getByLabel('Contact name (optional)', { exact: true }).fill('Test reseller');
+    await page.getByLabel('Sign-in email', { exact: true }).fill(email);
+    await page.getByLabel('Temporary password', { exact: true }).fill(password);
     await page.locator('#modal-form').getByRole('button', { name: 'Save', exact: true }).click();
     await page.locator('#modal').waitFor({ state: 'hidden' });
     await page.getByText(company, { exact: true }).waitFor();
@@ -518,7 +524,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByLabel('Email address').fill(email);
     await page.getByLabel('Password', { exact: true }).fill(password);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await page.getByRole('heading', { name: 'Operations overview', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Dashboard', exact: true }).waitFor();
     await navigate('more');assert.equal(await page.locator('#main a[href="#resellers"]').count(), 0);
     const denied = await page.evaluate(async tenant => (await fetch('/api/devices?tenant_id=' + tenant)).status, ownerTenant);
     assert.equal(denied, 404);

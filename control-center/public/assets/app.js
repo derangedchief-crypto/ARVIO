@@ -28,7 +28,7 @@ document.addEventListener('keydown',event=>{if(!navOpen)return;if(event.key==='E
 function el(tag, text, className = '') { const n = document.createElement(tag); if (text !== null && text !== undefined) n.textContent = String(text); if (className) n.className = className; return n; }
 function button(text, action, className = '') { const n = el('button', text, className); n.type = 'button'; n.addEventListener('click', event=>{try{Promise.resolve(action.call(n,event)).catch(error=>toast(error.message||'The action could not complete.'));}catch(error){toast(error.message||'The action could not complete.');}}); return n; }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6000); }
-function badge(value) { return el('span', String(value).replaceAll('_', ' '), 'badge ' + String(value).replace(/[^a-z_]/g, '')); }
+function badge(value) { const labels={online:'Seen recently',connected:'Seen recently',idle:'Away',pending:'Queued',delivered:'Received',running:'In progress',succeeded:'App confirmed',needs_review:'Needs attention',removed:'Access revoked'};return el('span', labels[value]||String(value).replaceAll('_', ' ').replace(/^./,c=>c.toUpperCase()), 'badge ' + String(value).replace(/[^a-z_]/g, '')); }
 function date(value) { return value ? new Date(value.replace(' ', 'T') + 'Z').toLocaleString() : 'Never'; }
 function uuid() { return crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''); }
 async function api(path, body, extra = {}) {
@@ -52,6 +52,10 @@ async function api(path, body, extra = {}) {
 }
 function panel(title, ...children) { const n = el('section', null, 'panel'); if (title) n.append(el('h2', title)); n.append(...children); return n; }
 function heading(title, description, actions = []) { const h = el('div', null, 'page-heading'); const left = el('div'); left.append(el('h1', title), el('p', description)); const right = el('div', null, 'actions'); right.append(...actions); h.append(left, right); return h; }
+function helpDetails(title,text){const d=el('details',null,'inline-help');d.append(el('summary',title),el('p',text));return d;}
+function workflowSteps(...steps){const row=el('div',null,'workflow-strip');row.setAttribute('aria-label','Workflow');steps.forEach((step,index)=>row.append(el('span',(index+1)+'. '+step)));return row;}
+function preferenceLabel(key){return ({default_audio_language:'Audio language',default_subtitle:'Subtitle language',subtitle_size:'Subtitle size',clock_format:'Clock format',auto_play_next:'Play next episode',show_loading_stats:'Show loading details',spoiler_blur:'Hide spoilers',smooth_scrolling:'Smooth scrolling',trailer_auto_play:'Autoplay trailers',volume_boost_db:'Volume boost (dB)'})[key]||key.replaceAll('_',' ');}
+function activityLabel(key){return ({'command.queued':'Device action queued','command.cancelled':'Device action cancelled','trial.global_gate_changed':'Global trial switch changed','trial.global_packages_saved':'Approved trial packages changed','trial.offer_published':'App trial settings saved','trial.offer_unpublished':'App trials switched off','brand.saved':'App artwork saved','brand.build_requested':'App build requested','reseller.created':'Reseller added','customer.created':'Customer added'})[key]||String(key).replace(/[._]/g,' ').replace(/^./,c=>c.toUpperCase());}
 function cellName(title, subtitle) { const n = el('div'); n.append(el('span', title, 'cell-name')); if (subtitle) n.append(el('span', subtitle, 'cell-sub')); return n; }
 function table(headers, rows) {
   const wrap = el('div', null, 'table-scroll');const cards=['Device','Line username / customer','Workspace','Action','Settings profile','Position','Layout','Profile','Device / recipe','Brand version'].includes(headers[0]);if(cards)wrap.classList.add('mobile-records');wrap.tabIndex=0;wrap.setAttribute('role','region');wrap.setAttribute('aria-label','Data table: '+headers.filter(Boolean).join(', '));const t = el('table');t.setAttribute('role','table');const head = el('thead'); const hr = el('tr'); headers.forEach(h => {const th=el('th',h);th.scope='col';hr.append(th);}); head.append(hr); t.append(head);
@@ -71,13 +75,13 @@ function fields(form, schema) {
     if (field.type === 'number') { input.min = 1; input.max = 100000; input.step = 1; }
     if (field.options) for (const [value, name] of field.options) { const option = el('option', name); option.value = value; input.append(option); }
     input.required = field.required !== false; if (field.value !== undefined && field.value !== null) input.value = field.value;
-    form.append(label, input); if (field.hint) form.append(el('p', field.hint, 'hint'));
+    form.append(label, input); if (field.hint) {input.title=field.hint;input.setAttribute('aria-description',field.hint);if(field.type==='password'&&['password','new_password'].includes(field.key)&&(field.min??14)>0)input.placeholder='14+ characters';}
   }
 }
 function formValues(form, schema) { const values = {}; for (const f of schema) values[f.key] = f.type === 'number' ? Number(form.elements.namedItem(f.key).value) : form.elements.namedItem(f.key).value; return values; }
 function closeModal(){ $('modal-form').querySelectorAll('input[type="password"],textarea[name="guides"]').forEach(input=>{input.value='';});$('modal').close(); }
 function modal(title, schema, save, label = 'Save') {
-  $('modal-title').textContent = title; const form = $('modal-form'); form.replaceChildren(); fields(form, schema); const error = el('p', '', 'error'); const actions = el('div', null, 'form-actions'); const submit = el('button', label, 'primary'); submit.type = 'submit'; actions.append(button('Cancel', closeModal), submit); form.append(error, actions);
+  $('modal-title').textContent = title; const form = $('modal-form'); form.replaceChildren(); fields(form, schema); const error = el('p', '', 'error');error.setAttribute('role','alert');const actions = el('div', null, 'form-actions'); const submit = el('button', label, 'primary'); submit.type = 'submit'; actions.append(button('Cancel', closeModal), submit); form.append(error, actions);
   const turn=formCounter,openedEpoch=state.epoch,openedUser=state.user?.id;
   form.onsubmit = async event => { event.preventDefault(); submit.disabled = true; error.textContent = ''; try { await save(formValues(form, schema)); if(turn!==formCounter||!$('modal').open||state.user?.id!==openedUser)return;closeModal();if(state.epoch!==openedEpoch)return;if(window.DeviceWorkspace?.isActive())await DeviceWorkspace.refresh();else await route(); } catch (e) { if(turn===formCounter&&$('modal').open)error.textContent = e.message;else if(state.user?.id===openedUser)toast(e.message); } finally { submit.disabled = false; } };
   $('modal').showModal();
@@ -107,14 +111,13 @@ async function enter() {
   const nav = $('navigation'); nav.replaceChildren();
   const groups = [
     ['Overview', [['overview','Dashboard','overview']]],
-    ['My clients', [['customers','Customers','customers'],['devices','Devices','devices'],['trials','Trials & contacts','profiles']]],
-    ['Device setup', [['library','Layouts & playlists','layouts'],['library/settings','Settings profiles','presets'],['library/profiles','Device profiles','profiles'],['library/defaults','New-device defaults','defaults']]],
-    ['Playlist editor', [['library/layout/new','Open template maker','editor']]],
-    ...(state.user.role==='owner'?[['Workspace management',[['resellers','Workspaces & panel links','resellers'],['enrollments','Enrollments & upgrades','enrollments']]]]:[]),
-    ['My app', [['branding','My app brand','profiles']]],
-    ['Workspace', [['audit','Activity log','audit'],['more','More tools','more']]]
+    ['Customers', [['customers','Customers','customers'],['devices','Devices','devices'],['trials','Trials & contacts','profiles']]],
+    ['Saved setups', [['library','Channel layouts','layouts'],['library/settings','Playback settings','presets'],['library/profiles','Device setups','profiles'],['library/defaults','Automatic setup','defaults']]],
+    ...(state.user.role==='owner'?[['Administration',[['resellers','Resellers','resellers'],['enrollments','Website settings','enrollments']]]]:[]),
+    [state.user.role==='owner'?'Apps':'My app', [['branding','Name & artwork','profiles']]],
+    ['Account', [['audit','Activity','audit'],['more','Tools','more']]]
   ];
-  groups.forEach(([title,links],index)=>{const group=el('section',null,'nav-group');const label=el('h2',title,'nav-group-title');label.id='nav-group-'+index;group.setAttribute('aria-labelledby',label.id);group.append(label);links.forEach(([key,text,glyph])=>{const link=el('a');link.append(icon(glyph),el('span',text));link.href='#'+key;link.dataset.page=key;group.append(link);});nav.append(group);});setNavOpen(false,false);
+  groups.forEach(([title,links],index)=>{const group=el('section',null,'nav-group');const label=el('div',title,'nav-group-title');label.id='nav-group-'+index;group.setAttribute('aria-labelledby',label.id);group.append(label);links.forEach(([key,text,glyph])=>{const link=el('a');link.append(icon(glyph),el('span',text));link.href='#'+key;link.dataset.page=key;group.append(link);});nav.append(group);});setNavOpen(false,false);
   await route();
 }
 function rememberWorkspace(t){if(!t||!t.id)return;const index=state.tenants.findIndex(w=>w.id===t.id);if(index<0)state.tenants.push(t);else state.tenants[index]={...state.tenants[index],...t};}
@@ -125,13 +128,14 @@ function toolWorkspace(){return workspaceOptions().find(t=>t.id===state.toolWork
 async function chooseWorkspace(id){const epoch=state.epoch,user=state.user?.id;const t=state.tenants.find(t=>t.id===id)||await api('/api/tenants/'+id);if(epoch!==state.epoch||user!==state.user?.id)return null;rememberWorkspace(t);state.toolWorkspace=t.id;workspaceTitle(t.id);return t.id;}
 function tenantField(){return {key:'tenant_id',label:'Workspace / reseller',value:toolWorkspace(),options:workspaceOptions(true).map(t=>[t.id,workspaceName(t)]),hint:'Your existing owner workspace is included. Use the page workspace search to find another workspace outside the initial list.'};}
 function workspacePicker(parent,label,value,change,{allowAll=false,activeOnly=false}={}){
+  if(state.user.role!=='owner'){workspaceTitle(value||state.workspaceSelf?.id);return null;}
   const row=el('div',null,'workspace-picker');const select=el('select');select.setAttribute('aria-label',label);
   if(allowAll&&state.user.role==='owner'){const all=el('option','All workspaces');all.value='';select.append(all);}
   const choices=workspaceOptions(activeOnly);const selected=workspaceOptions().find(t=>t.id===value);if(selected&&!choices.some(t=>t.id===selected.id))choices.push(selected);
   for(const t of choices){const option=el('option',workspaceName(t));option.value=t.id;if(activeOnly&&t.status!=='active')option.disabled=true;select.append(option);}select.value=value||'';
   const pick=async id=>{if(id&&!await chooseWorkspace(id))return;change(id);};select.onchange=()=>Promise.resolve(pick(select.value)).catch(e=>toast(e.message));row.append(select);
   if(state.user.role==='owner'){
-    row.append(button('Use my owner workspace',()=>pick(state.workspaceSelf.id),'quiet'));
+    const own=button('My account',()=>pick(state.workspaceSelf.id),'quiet');own.setAttribute('aria-label','Use my owner workspace');row.append(own);
     const search=el('details',null,'workspace-search');search.append(el('summary','Find another workspace'));const form=el('form',null,'filters');const input=el('input');input.type='search';input.setAttribute('aria-label','Find workspace name');input.placeholder='Workspace name';const submit=el('button','Find workspace');submit.type='submit';form.append(input,submit);const result=el('div');search.append(form,result);row.append(search);const epoch=state.epoch;let turn=0;
     async function load(page=1){const token=++turn;result.inert=true;result.setAttribute('aria-busy','true');try{const data=await api('/api/tenants?page='+page+'&search='+encodeURIComponent(input.value));if(epoch!==state.epoch||token!==turn)return;result.replaceChildren(table(['Workspace','Status','Actions'],data.items.filter(t=>!activeOnly||t.status==='active').map(t=>[workspaceName(t),t.status,button('Use workspace',async()=>{rememberWorkspace(t);await pick(t.id);})])),pagination(data,load));}catch(e){if(epoch===state.epoch&&token===turn)result.replaceChildren(el('p',e.message,'error'));}finally{if(epoch===state.epoch&&token===turn){result.inert=false;result.removeAttribute('aria-busy');}}}
     form.onsubmit=e=>{e.preventDefault();load(1);};search.ontoggle=()=>{if(search.open&&!result.childNodes.length)load(1);};
@@ -145,10 +149,10 @@ function customerForm(customer, tenant = null) {
   modal(customer ? 'Edit customer' : 'Add customer' + (tenant ? ' · ' + tenant.name : ''), schema, async values => { if (tenant) values.tenant_id = tenant.id; await api(customer ? '/api/customers/' + customer.id : '/api/customers', values); toast('Customer saved.'); });
 }
 function deviceForm(customer) { modal('Provision device record', [{ key: 'label', label: 'Device nickname' }, { key: 'notes', label: 'Private notes (optional)', type: 'textarea', required: false, hint: 'This creates a pending record only. It does not automatically pair an existing app.' }], async values => { await api('/api/devices', { ...values, customer_id: customer.id }); toast('Device record created; secure app enrollment is still pending.'); }); }
-function resellerForm() { modal('Create reseller', [{ key: 'company', label: 'Company / workspace name' }, { key: 'panel_username', label: 'Existing panel reseller username', required: false, max: 150, hint: 'Exact panel login username. Verified server-side and permanently linked by ID. Leave blank only for a workspace without automatic enrollment.' }, { key: 'name', label: 'Contact name' }, { key: 'email', label: 'Reseller email', type: 'email', max: 254 }, { key: 'password', label: 'Initial password', type: 'password', hint: 'Share securely. The reseller can change this after signing in.' }, { key: 'device_limit', label: 'Device allocation', type: 'number', value: 100 }], async values => { await api('/api/resellers', values); state.tenants = (await api('/api/tenants')).items; toast('Reseller workspace created.'); }); }
+function resellerForm() { modal('Create reseller', [{ key: 'company', label: 'Reseller name' }, { key: 'panel_username', label: 'Panel reseller username (optional)', required: false, max: 150, hint: 'Verified against the panel. If left blank, link the account before connecting customer devices.' }, { key: 'name', label: 'Contact name (optional)', required:false }, { key: 'email', label: 'Sign-in email', type: 'email', max: 254 }, { key: 'password', label: 'Temporary password', type: 'password', hint: 'Share securely. The reseller can change it after signing in.' }, { key: 'device_limit', label: 'Device allowance', type: 'number', value: 100 }], async values => { values.name=values.name||values.company;await api('/api/resellers', values); state.tenants = (await api('/api/tenants')).items; toast('Reseller added.'); }); }
 function connectionBadge(device) { const n = el('div'); n.append(badge(device.presence)); if (device.is_test) n.append(el('span', 'TEST', 'test-label')); return n; }
 function devicesTable(items) {
-  const result=table(['Device','Customer','App access','Connection','Actions'],items.map(d=>{
+  const result=table(['Device','Customer','App access','App contact','Actions'],items.map(d=>{
     const device=el('div',null,'fleet-device');const glyph=icon('devices');device.append(glyph,cellName(d.label,[d.model,d.app_version].filter(Boolean).join(' · ')||'App details awaiting check-in'));
     const customer=el('div',null,'fleet-customer');customer.append(el('span',d.line_username||d.customer_name,'username-chip'),el('span',d.tenant_name,'cell-sub'));
     const connection=connectionBadge(d);connection.classList.add('fleet-connection');connection.title='Last app check-in: '+date(d.last_seen_at);connection.append(el('span',d.last_seen_at?'Seen '+date(d.last_seen_at):'Not checked in','cell-sub'));
@@ -158,16 +162,16 @@ function devicesTable(items) {
 }
 async function overview(epoch) {
   const [stats, devices] = await Promise.all([api('/api/overview?'+scopeQuery().slice(1)), api('/api/devices?'+scopeQuery().slice(1))]); if (epoch !== state.epoch) return;
-  const main = $('main'); main.replaceChildren(heading('Operations overview', state.user.role==='owner'?'Use your owner workspace or review all reseller workspaces. Choose the scope below.':'Your customers and devices, in one workspace.', [button('Refresh', route)]));
+  const main = $('main'); main.replaceChildren(heading('Dashboard', '', [button('Refresh', route)]));
   scopePicker(main);
   const enrollmentNote=el('details',null,'context-note');enrollmentNote.append(el('summary','How enrollment and check-ins work'),el('p','Only devices from created, verified linked resellers enter this service. Unmatched resellers are quietly ignored: no pending device or customer is created. Existing owner-managed/unassigned inventory is retained. Local simulators remain labelled TEST.'));
-  const cards = el('div', null, 'stats'); [['Managed devices', stats.total, `${stats.not_enrolled} awaiting enrollment`], ['Recently connected', stats.connected, 'App check-ins, not device power state'], ['Customers', stats.customers, 'Visible to your account only'], ['Queued / in progress', stats.pending_commands, 'Delivery is not confirmation of execution']].forEach(([label, count, note]) => { const card = el('div', null, 'stat'); card.append(el('div', label, 'stat-label'), el('strong', count), el('span', note)); cards.append(card); });
-  const updateNote=el('section',null,'platform-note');const copy=el('div');copy.append(el('h2','One update source of truth'),el('p','Every customer and reseller app uses the platform owner’s update channel. Resellers cannot upload APKs, change update URLs or disable mandatory updates.'));updateNote.append(icon('enrollments'),copy);
-  main.append(cards,enrollmentNote,panel('Recent devices', devicesTable(devices.items)),updateNote);
+  const cards = el('div', null, 'stats'); [['Devices', stats.total, `${stats.not_enrolled} awaiting connection`], ['Apps seen recently', stats.connected, ''], ['Customers', stats.customers, ''], ['Pending actions', stats.pending_commands, '']].forEach(([label, count, note]) => { const card = el('div', null, 'stat'); card.append(el('div', label, 'stat-label'), el('strong', count));if(note)card.append(el('span', note));cards.append(card); });
+  const quick=el('div',null,'quick-links');for(const[label,hash,glyph]of [['Customers','customers','customers'],['Devices','devices','devices'],['My app',state.user.role==='owner'?'branding/'+state.workspaceSelf.id:'branding','profiles'],['Trials & contacts','trials','profiles']]){const a=el('a');a.href='#'+hash;a.append(icon(glyph),el('span',label));quick.append(a);}
+  main.append(cards,quick,panel('Recent devices', devicesTable(devices.items)),enrollmentNote);
 }
 async function records(resource, epoch,customerId=null) {
   if(resource==='devices')return fleetPage(epoch,customerId);
-  const main = $('main'); main.replaceChildren(heading(resource === 'devices' ? 'Devices' : 'Customers', resource === 'customers' ? 'Customers are created by verified enrollment. Line usernames are verified on app check-in; refresh after the 111 app reports in.' : 'Search, manage and inspect your assigned records.', [button('Refresh', route)]));
+  const main = $('main'); main.replaceChildren(heading(resource === 'devices' ? 'Devices' : 'Customers', '', [button('Refresh', route)]));
   scopePicker(main);
   const box = panel(null); const filters = el('form', null, 'filters'); const search = el('input'); search.placeholder = resource === 'devices' ? 'Search device, model, customer or ID…' : 'Search customer or reference…'; search.setAttribute('aria-label', 'Search');
   filters.append(search, button('Search', () => load(1))); filters.onsubmit = e => { e.preventDefault(); load(1); }; const resultBox = el('div'); box.append(filters, resultBox); main.append(box);
@@ -184,13 +188,13 @@ async function fleetPage(epoch,customerId=null){
   if(customerId){const customer=await api('/api/customers/'+customerId);if(epoch!==state.epoch)return;if(state.user.role==='owner'){await chooseWorkspace(customer.tenant_id);if(epoch!==state.epoch)return;state.workspaceScope=customer.tenant_id;}}
   const main=$('main');const count=el('p','Loading devices…','fleet-count');const head=heading('Devices','', [button('Refresh',()=>load())]);head.querySelector('p').replaceWith(count);main.replaceChildren(head);main.classList.add('fleet-page');
   scopePicker(main);
-  const form=el('form',null,'fleet-filters');const search=el('input');search.type='search';search.placeholder='Search device, model or customer username…';search.setAttribute('aria-label','Search');const policy=el('select');policy.setAttribute('aria-label','App access filter');for(const[value,text]of [['','Current enrollments'],['active','Active'],['suspended','Suspended'],['blocked','Blocked'],['removed','Revoked enrollments']]){const o=el('option',text);o.value=value;policy.append(o);}
-  const submit=el('button','Search');submit.type='submit';form.append(search,policy,submit);const results=el('div',null,'fleet-results');const note=el('p','Connection reflects app check-ins—not device power or stream health. Access changes and reseller removal are in the device’s Summary.','fleet-help');main.append(form,results,note);let page=1,serial=0;
+  const form=el('form',null,'fleet-filters');const search=el('input');search.type='search';search.placeholder='Search device, model or customer…';search.setAttribute('aria-label','Search');const policy=el('select');policy.setAttribute('aria-label','App access filter');for(const[value,text]of [['','All current devices'],['active','Active'],['suspended','Suspended'],['blocked','Blocked'],['removed','Access revoked']]){const o=el('option',text);o.value=value;policy.append(o);}
+  const submit=el('button','Search');submit.type='submit';form.append(search,policy,submit);const results=el('div',null,'fleet-results');main.append(form,results);let page=1,serial=0;
   async function load(next=page){const turn=++serial;page=next;results.setAttribute('aria-busy','true');try{const data=await api(`/api/devices?page=${page}&search=${encodeURIComponent(search.value)}&policy=${policy.value}${scopeQuery()}${customerId?'&customer_id='+encodeURIComponent(customerId):''}`);if(epoch!==state.epoch||turn!==serial)return;count.textContent=`${data.total} ${search.value||policy.value?'matching ':''}${data.total===1?'device':'devices'}${customerId?' for this customer':''}`;results.replaceChildren(devicesTable(data.items),pagination(data,load));}catch(e){if(epoch===state.epoch&&turn===serial)results.replaceChildren(panel('Could not load devices',el('p',e.message,'error'),button('Try again',()=>load())));}finally{if(turn===serial)results.removeAttribute('aria-busy');}}
   form.onsubmit=e=>{e.preventDefault();load(1);};policy.onchange=()=>load(1);await load(1);
 }
 async function resellers(epoch) {
-  const main = $('main'); main.replaceChildren(heading('Workspaces & panel links', 'Your existing owner workspace and isolated reseller workspaces.', [button('Create reseller', resellerForm, 'primary')]));
+  const main = $('main'); main.replaceChildren(heading('Resellers', '', [button('Create reseller', resellerForm, 'primary')]));
   const own=panel('My owner workspace');for(const[label,hash]of [['My customers','customers'],['My devices','devices'],['My app brand','branding/'+state.workspaceSelf.id],['My trials & contacts','trials/'+state.workspaceSelf.id],['My device defaults','library/defaults/workspace/'+state.workspaceSelf.id]])own.append(button(label,()=>{if(hash==='customers'||hash==='devices')state.workspaceScope=state.workspaceSelf.id;location.hash=hash;}));main.append(own);
   const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
   if (system.pending_migrations.length) { main.replaceChildren(heading('Database upgrade required', 'Open Enrollments and apply the database upgrade before linking panel resellers.')); return; }
@@ -208,9 +212,9 @@ async function resellers(epoch) {
         if (!linked) actions.append(button('Link panel reseller', () => modal('Link existing panel reseller', [{ key: 'username', label: 'Exact panel login username', value: t.name, max: 150, hint: 'The worker must verify this active account. This permanent ID link enables automatic device/customer enrollment. Existing ownership is never silently transferred.' }], async values => { await api('/api/tenants/' + t.id + '/panel-link', values); toast('Panel reseller verified and linked. Pending apps will retry with fresh ownership proofs.'); })));
         if (t.kind !== 'owner') actions.append(button('Manage', () => modal('Reseller policy', [{ key: 'status', label: 'Status', value: t.status, options: [['active', 'Active'], ['suspended', 'Suspended — signs reseller out']] }, { key: 'device_limit', label: 'Device allocation', type: 'number', value: t.device_limit }], async values => { if (values.status === 'suspended' && !confirm('Suspend this reseller and cancel pending device actions? This does not wipe customer data.')) throw new Error('No changes made.'); await api('/api/tenants/' + t.id, values); toast('Reseller policy saved.'); })));
         if(t.kind==='owner')actions.append(button('Owner device allocation',()=>modal('Owner device allocation',[{key:'device_limit',label:'Device allocation',type:'number',value:t.device_limit}],v=>api('/api/tenants/'+t.id,{status:'active',device_limit:v.device_limit}))));
-        return [cellName(workspaceName(t), linked ? `Panel: ${linked.username} · ID ${linked.panel_id}` : 'Panel not linked · manual review'), badge(t.status), `${t.devices_used} / ${t.device_limit}`, actions];
+         return [cellName(workspaceName(t), linked ? `Panel: ${linked.username}` : 'Panel account not linked'), badge(t.status), `${t.devices_used} / ${t.device_limit}`, actions];
       });
-      results.replaceChildren(table(['Workspace', 'Status', 'Allocation', 'Actions'], rows), pagination(data, load));
+       results.replaceChildren(table(['Workspace', 'Status', 'Devices used / allowance', 'Actions'], rows), pagination(data, load));
     } catch (error) { toast(error.message); }
   }
   await load();
@@ -243,23 +247,22 @@ async function presetsPage(epoch) {
   if (epoch === state.epoch) await preferenceProfilesPanel(main, epoch);
 }
 async function preferenceProfilesPanel(main,epoch,tenantId=null) {
-  const box=panel('Broader settings profiles — explicit application only');main.append(box);
-  box.append(el('p','Versioned workspace profiles manage only the listed allowlisted fields. Device/profile overrides win over the base. Saving or editing a profile never pushes changes automatically. Playback buffer/sorting/category controls remain in their dedicated device sections. Sources, credentials, entitlements, update URLs and decoder selection are not generic settings fields.','notice'));
+  const box=panel('Saved playback settings');main.append(box);
+  box.append(helpDetails('About saved settings','Save these settings for reuse. Applying them to a device is a separate action; an existing device override takes priority. Playlists, credentials, access and updates are not changed.'));
   const search=el('input');search.placeholder='Search broader settings profiles…';search.setAttribute('aria-label','Search broader settings profiles');const result=el('div');box.append(search,button('Search settings profiles',()=>load()),result);
   let rules={};
   function form(profile=null) {
-    const schema=[...(!profile&&state.user.role==='owner'?[{...tenantField(),value:tenantId||toolWorkspace()}]:[]),{key:'name',label:'Settings profile name',max:80,value:profile?.name||''},...Object.entries(rules).map(([key,choices])=>({key,label:key.replaceAll('_',' '),required:false,value:profile?.values[key]||'',options:[['','Not managed by this base profile'],...choices.map(v=>[v,v])]}))];
-    modal(profile?'Edit broader settings profile':'Create broader settings profile',schema,async v=>{const values={};for(const key of Object.keys(rules))if(v[key]!=='')values[key]=v[key];await api(profile?`/api/preference-profiles/${profile.id}`:'/api/preference-profiles',{name:v.name,values,...(profile?{expected_version:profile.version}:{...(v.tenant_id?{tenant_id:v.tenant_id}:{})})});},'Save profile — do not push');
+    const schema=[...(!profile&&state.user.role==='owner'?[{...tenantField(),value:tenantId||toolWorkspace()}]:[]),{key:'name',label:'Settings profile name',max:80,value:profile?.name||''},...Object.entries(rules).map(([key,choices])=>({key,label:preferenceLabel(key),required:false,value:profile?.values[key]||'',options:[['','Keep current setting'],...choices.map(v=>[v,v])]}))];
+    modal(profile?'Edit playback settings':'Create playback settings',schema,async v=>{const values={};for(const key of Object.keys(rules))if(v[key]!=='')values[key]=v[key];await api(profile?`/api/preference-profiles/${profile.id}`:'/api/preference-profiles',{name:v.name,values,...(profile?{expected_version:profile.version}:{...(v.tenant_id?{tenant_id:v.tenant_id}:{})})});},'Save settings');
   }
-  box.prepend(button('Create broader settings profile',()=>form(),'primary'));
-  async function load(page=1){try{const data=await api(`/api/preference-profiles?page=${page}&search=${encodeURIComponent(search.value)}${tenantId?'&tenant_id='+tenantId:''}`);if(epoch!==state.epoch)return;rules=data.rules;result.replaceChildren(table(['Settings profile','Workspace','Version','Fields','Actions'],data.items.map(p=>{const a=el('div',null,'actions');a.append(button('Edit profile',()=>form(p)),button('Archive profile',async()=>{if(confirm('Archive this profile? Existing device policy stays unchanged until explicitly replaced.')){try{await api(`/api/preference-profiles/${p.id}`,{name:p.name,values:p.values,expected_version:p.version,archived:true});await load(page);}catch(e){toast(e.message);}}}));return[p.name,p.tenant_name,p.version,Object.keys(p.values).length,a];})),pagination(data,load));}catch(e){result.replaceChildren(el('p',e.message+' Apply database upgrade011 first.','error'));}}
+  const create=button('Create playback settings',()=>form(),'primary');create.disabled=true;box.prepend(create);
+  async function load(page=1){try{const data=await api(`/api/preference-profiles?page=${page}&search=${encodeURIComponent(search.value)}${tenantId?'&tenant_id='+tenantId:''}`);if(epoch!==state.epoch)return;rules=data.rules||{};create.disabled=!Object.keys(rules).length;result.replaceChildren(table(['Settings profile','Workspace','Version','Fields','Actions'],data.items.map(p=>{const a=el('div',null,'actions');a.append(button('Edit profile',()=>form(p)),button('Archive profile',async()=>{if(confirm('Archive this profile? Existing device policy stays unchanged until explicitly replaced.')){try{await api(`/api/preference-profiles/${p.id}`,{name:p.name,values:p.values,expected_version:p.version,archived:true});await load(page);}catch(e){toast(e.message);}}}));return[p.name,p.tenant_name,p.version,Object.keys(p.values).length,a];})),pagination(data,load));}catch(e){result.replaceChildren(el('p',e.message,'error'),button('Try again',()=>load(page)));}}
   await load();
 }
 async function preferencesPanel(d,parent,isCurrent,reload) {
-  const box=panel('Effective settings profiles and device/profile overrides');parent.append(box);
-  box.append(el('p','Each value shows its origin. Explicit device/profile overrides win over a base profile. Local changes are detected; a stale preview is rejected. Clearing management restores the underlying local/Cloud choice only where it has not been changed locally. Managed overlays do not propagate through Cloud to other devices. UI/audio observers may apply immediately; no forced player restart.','notice'));
-  box.append(el('p','Audio/subtitle/player preferences use existing compatible/VOD player settings, not the embedded Live TV engine’s independent audio controls. Other fields follow existing Home/clock/UI settings reads. Saving confirms stored values, not that an active player has consumed them yet. Live TV pre-buffer has its own device-wide control above.','hint'));
-  const read=button('Read expanded effective settings',()=>queue(d,'get_preferences').catch(e=>toast(e.message)));read.disabled=d.policy!=='active';box.append(read,button('Refresh expanded settings results',reload));
+  const box=panel('Playback preferences',workflowSteps('Load preferences','Review changes','Apply to device'));parent.append(box);
+  box.append(helpDetails('Setting priority and scope','A device override takes priority over saved settings. Changes apply to the selected app profile, not other devices. These audio/subtitle preferences are separate from Live TV’s own audio controls.'));
+  const read=button('Load playback preferences',()=>queue(d,'get_preferences').catch(e=>toast(e.message)));read.disabled=d.policy!=='active';box.append(read,button('Refresh preferences',reload));
   let data,profiles;try{[data,profiles]=await Promise.all([api(`/api/devices/${d.id}/preferences`),api('/api/preference-profiles?tenant_id='+encodeURIComponent(d.tenant_id))]);}catch(e){box.append(el('p',e.message+' Apply database upgrade011 first.','error'));return;}if(!isCurrent())return;
   if(!data.snapshot){box.append(el('p','No expanded snapshot yet. Request one from the open app.','hint'));return;}
   const doc=data.snapshot.document;
@@ -272,14 +275,14 @@ async function preferencesPanel(d,parent,isCurrent,reload) {
   box.append(button('Discard settings draft / adopt latest read',()=>{if(!editor.dirty||confirm('Discard this local settings draft? No device settings will change.')){state.preferenceEditors.delete(d.id);reload();}}));
   const base=el('select');base.setAttribute('aria-label','Base settings profile');const options=[['','No base profile — underlying local values'],...profiles.items.map(p=>[p.id,`${p.name} · v${p.version}`])];if(editor.preset&&!options.some(([id])=>id===editor.preset))options.push([editor.preset,'Retired/unavailable base — choose an active profile or clear it']);for(const[value,label]of options){const o=el('option',label);o.value=value;base.append(o);}base.value=editor.preset;base.disabled=!!editor.preview||!!editor.busy;base.onchange=()=>{editor.preset=base.value;markDirty();};box.append(el('label','Base settings profile'),base);
   box.append(table(['Field (active profile)','Effective value','Origin','Explicit device/profile override'],Object.entries(data.rules).map(([key,choices])=>{const select=el('select');select.setAttribute('aria-label','Override '+key);for(const[value,label]of [['','No explicit override / reset'],...choices.map(v=>[v,v])]){const o=el('option',label);o.value=value;select.append(o);}select.value=editor.overrides[key]||'';select.disabled=!!editor.preview||!!editor.busy;select.onchange=()=>{if(select.value==='')delete editor.overrides[key];else editor.overrides[key]=select.value;markDirty();};return[key.replaceAll('_',' '),doc.values[key],String(doc.origins[key]).replaceAll('_',' '),select];})));
-  const preview=button('Preview effective settings changes',async()=>{if(editor.busy)return;editor.busy=true;box.querySelectorAll('button,select').forEach(n=>{n.disabled=true;});try{const result=await api(`/api/devices/${d.id}/preferences/preview`,{snapshot_id:editor.snapshot,base_preset_id:editor.preset,overrides:editor.overrides});if(state.preferenceEditors.get(d.id)===editor)editor.preview=result;}catch(e){if(isCurrent())toast(e.message);}finally{editor.busy=false;if(isCurrent())await reload();}});preview.disabled=!!editor.preview||!!editor.busy||!editor.dirty||d.policy!=='active';previewButton=preview;box.append(preview);
-  if(editor.preview){box.append(el('p',editor.preview.warning,'notice'),table(['Setting','Current','After apply','Origin'],editor.preview.changes.map(r=>[r.field,r.current,r.next,r.origin])));const apply=button('Push reviewed settings policy',async()=>{if(!confirm('Apply this complete reviewed base/override policy to the selected device/profile? Some UI/audio preferences can change immediately. Unrelated preferences, activation and update policy stay untouched.'))return;try{await queue(d,'apply_preferences',{draft_id:editor.preview.id});state.preferenceEditors.delete(d.id);await reload();}catch(e){toast(e.message);}},'primary');apply.disabled=d.policy!=='active';box.append(apply,button('Cancel settings preview',()=>{editor.preview=null;reload();}));}
+  const preview=button('Review playback changes',async()=>{if(editor.busy)return;editor.busy=true;box.querySelectorAll('button,select').forEach(n=>{n.disabled=true;});try{const result=await api(`/api/devices/${d.id}/preferences/preview`,{snapshot_id:editor.snapshot,base_preset_id:editor.preset,overrides:editor.overrides});if(state.preferenceEditors.get(d.id)===editor)editor.preview=result;}catch(e){if(isCurrent())toast(e.message);}finally{editor.busy=false;if(isCurrent())await reload();}});preview.disabled=!!editor.preview||!!editor.busy||!editor.dirty||d.policy!=='active';previewButton=preview;box.append(preview);
+  if(editor.preview){box.append(el('p',editor.preview.warning,'notice'),table(['Setting','Current','After apply','Origin'],editor.preview.changes.map(r=>[preferenceLabel(r.field),r.current,r.next,r.origin])));const apply=button('Apply playback settings',async()=>{if(!confirm('Apply this complete reviewed base/override policy to the selected device/profile? Some UI/audio preferences can change immediately. Unrelated preferences, activation and update policy stay untouched.'))return;try{await queue(d,'apply_preferences',{draft_id:editor.preview.id});state.preferenceEditors.delete(d.id);await reload();}catch(e){toast(e.message);}},'primary');apply.disabled=d.policy!=='active';box.append(apply,button('Cancel settings preview',()=>{editor.preview=null;reload();}));}
 }
 async function supportPanel(d,parent,isCurrent,reload) {
-  const box=panel('Private support history / customer-consented panel capture');parent.append(box);
-  box.append(el('p','Request a redacted support bundle with up to 128 fixed-code events and app diagnostics. No raw logcat, URLs, headers or credentials. Panel captures require the customer’s one-time foreground consent within 20 seconds; only a dedicated safe support panel is captured—not the current page, TV video, account screens or other apps. Android updates must be idle.','notice'));
-  for(const[kind,label]of [['get_support_bundle','Request redacted support bundle'],['capture_app_screen','Request consented support-panel image']]){const b=button(label,()=>{if(kind==='capture_app_screen'&&!confirm('Ask the customer to share one safe app support panel? They may decline; there is no hidden/full-device/video capture.'))return;queue(d,kind).catch(e=>toast(e.message));});b.disabled=d.policy!=='active'||!d.capabilities.includes(kind);box.append(b);}
-  box.append(button('Refresh private support results',reload));
+  const box=panel('Support reports');parent.append(box);
+  box.append(el('p','Sharing a support image requires the customer’s permission. It cannot capture their screen or video.','notice'));
+  for(const[kind,label]of [['get_support_bundle','Collect support report'],['capture_app_screen','Ask customer for support image']]){const b=button(label,()=>{if(kind==='capture_app_screen'&&!confirm('Ask the customer to share one safe app support panel? They may decline; there is no hidden/full-device/video capture.'))return;queue(d,kind).catch(e=>toast(e.message));});b.disabled=d.policy!=='active'||!d.capabilities.includes(kind);box.append(b);}
+  box.append(button('Refresh support reports',reload));
   try{const data=await api(`/api/devices/${d.id}/support`);if(!isCurrent())return;box.append(el('p',data.retention,'hint'),table(['Received','Artifact','Bytes','Expires','Private download'],data.items.map(r=>{const link=el('a',r.kind==='panel'?'Download consented panel PNG':'Download redacted JSON bundle');link.href=`/api/devices/${d.id}/support/${r.id}/download`;link.setAttribute('download','');return[date(r.created_at),r.kind,r.bytes,date(r.expires_at),link];})));}catch(e){if(isCurrent())box.append(el('p',e.message+' Apply database upgrade012 first.','error'));}
 }
 async function layoutTemplatesPanel(main, epoch) {
@@ -347,7 +350,7 @@ async function applyLayoutTemplate(d, draft) {
 async function layoutDraftPanel(d, body, isCurrent, goCommands) {
   let op = state.layoutEditors.get(d.id);
   if (!op) { op = { draft: null, readId: null, push: null, commands: [], message: '', available: null }; state.layoutEditors.set(d.id, op); }
-  const panelNode = panel('Organize entire playlist/category layout'); body.append(panelNode);
+  const panelNode = panel('Channel groups',workflowSteps('Load from device','Arrange groups','Apply changes')); body.append(panelNode);
   let timer = null, busy = false, localUi = null;
   const pending = () => op.commands.some(c => ['pending', 'delivered', 'running'].includes(c.status));
   const editingLocked = () => Boolean(op.push && !op.push.failed);
@@ -461,17 +464,17 @@ async function queue(device, kind, payload = {}) {
   catch (error) { if (error.status && error.status < 500) requestKeys.delete(fingerprint); throw error; }
 }
 async function sourcesPanel(d, body, isCurrent, reload) {
-  const box = panel('Playlist sources — local draft and one guarded push'); body.append(box);
-  box.append(el('p', 'Edit the whole source set locally. URLs, portal MACs and credentials are write-only and never read back. The verified activation source stays first with unchanged account credentials. Additional M3U/Xtream/Stalker sources, names, enabled state, order and guides can be edited. Source changes can interrupt viewing and make saved favourites unavailable, but good backup/guide history is retained.', 'notice'));
-  box.append(el('p','Keep at least one M3U/Xtream source enabled; the app’s legacy fallback is not changed. Use canonical M3U/xmltv URLs and URL-safe Xtream replacement credentials. The app refuses targets it would rewrite before any mutation. Profile source edits follow existing IPTV Cloud sync when enabled.','hint'));
+  const box = panel('Playlists',workflowSteps('Load playlists','Review edits','Apply changes')); body.append(box);
+  box.append(el('p','Playlist changes can interrupt viewing. Review the changes before applying them.','notice'));
+  box.append(helpDetails('Passwords and protected playlists','Existing passwords and URLs are never displayed. Blank replacement fields keep the saved values. The activation playlist stays first and its credentials are protected. At least one supported playlist must remain enabled.'));
   const actions = el('div', null, 'actions');
-  const read=button('Read fresh sources from app', () => queue(d, 'get_sources').catch(e => toast(e.message)), 'primary');read.disabled=d.policy!=='active';
-  actions.append(read, button('Refresh source results', reload), button('Refresh playlist',()=>queue(d,'refresh_playlist').catch(e=>toast(e.message))),button('Reload EPG',()=>queue(d,'reload_epg').catch(e=>toast(e.message)))); box.append(actions);
+  const read=button('Load playlist settings', () => queue(d, 'get_sources').catch(e => toast(e.message)), 'primary');read.disabled=d.policy!=='active';
+  actions.append(read, button('Refresh status', reload,'quiet'), button('Refresh playlist',()=>queue(d,'refresh_playlist').catch(e=>toast(e.message))),button('Reload EPG',()=>queue(d,'reload_epg').catch(e=>toast(e.message)))); box.append(actions);
   let history; try { history = await api(`/api/devices/${d.id}/sources`); } catch(e) { box.append(el('p', e.message + ' Apply database upgrade010 first.', 'error')); return; } if (!isCurrent()) return;
-  box.append(el('p', history.notice, 'hint'));
+  box.append(helpDetails('Playlist backup and privacy',history.notice));
   if(history.commands?.length)box.append(table(['Source action','State','Result'],history.commands.map(c=>[c.kind.replaceAll('_',' '),badge(c.status),c.result?.summary||'Waiting for app — not yet applied'])));
   const latest = history.items.find(r => ['read', 'confirmation'].includes(r.reason)) || history.items[0];
-  if (!latest) { box.append(el('p', 'No private source snapshot yet. Request a read while the app is open.', 'hint')); return; }
+  if (!latest) { box.append(el('p', 'Open the app, then load its playlist settings.', 'notice')); return; }
   let editor = state.sourceEditors.get(d.id);
   async function adopt() { const fresh = await api(`/api/devices/${d.id}/sources/${latest.id}`); if (!isCurrent()) return; editor = { id: latest.id, entries: fresh.entries, dirty: false, preview: null }; state.sourceEditors.set(d.id, editor); }
   if (!editor || (!editor.dirty && !editor.preview && !editor.busy && editor.id !== latest.id)) await adopt(); if (!isCurrent() || !editor) return;
@@ -480,24 +483,29 @@ async function sourcesPanel(d, body, isCurrent, reload) {
   const secretKeys = ['replace_url','replace_mac','replace_guides','xtream_host','xtream_username','xtream_password'];
   async function requestPreview(input){if(editor.busy)return;editor.busy=true;box.querySelectorAll('button').forEach(b=>{b.disabled=true;});try{const result=await api(`/api/devices/${d.id}/sources/preview`,input);if(state.sourceEditors.get(d.id)!==editor)return;editor.preview=result;for(const row of editor.entries)for(const key of secretKeys)delete row[key];}catch(e){if(isCurrent())toast(e.message);}finally{editor.busy=false;if(isCurrent())await reload();}}
   function clean(row) { const copy = { kind: row.kind, name: row.name, enabled: row.enabled }; if (row.ref) copy.ref = row.ref; for (const key of secretKeys) if (key in row) copy[key] = row[key]; return copy; }
-  function edit(row = null, kind = 'm3u') {
+  function edit(row = null, kind = 'm3u', method = 'url') {
     kind = row?.kind || kind;
-    const schema = [{ key: 'name', label: 'Source name', value: row?.name, max: 80 }, { key: 'enabled', label: 'Enabled', value: row?.enabled === false ? 'no' : 'yes', options: [['yes','Enabled'],['no','Disabled']] }];
-    if (!row?.canonical) schema.push({ key: 'url', label: kind === 'stalker' ? 'New/replacement portal URL (write-only)' : 'New/replacement M3U URL (write-only)', type: 'password', min: 0, max: 4096, required: false, hint: 'Blank preserves the existing value. For Xtream, use the host/username/password fields instead.' });
-    if (kind === 'stalker') schema.push({ key: 'mac', label: 'New/replacement portal MAC (write-only)', type: 'password', min: 0, max: 17, required: false });
+    const schema = [{ key: 'name', label: 'Playlist name', value: row?.name, max: 80 }, { key: 'enabled', label: 'Status', value: row?.enabled === false ? 'no' : 'yes', options: [['yes','Enabled'],['no','Disabled']] }];
+    if(!row?.canonical)schema.push({key:'connection',label:'Connection',value:row?'keep':kind==='stalker'?'portal':method,options:[...(row?[['keep','Keep current connection']]:[]),...(kind==='stalker'?[['portal','Portal address and MAC']]:[['url','Playlist link'],['xtream','Xtream account']])]});
+    if (!row?.canonical) schema.push({ key: 'url', label: kind === 'stalker' ? 'Portal address' : 'Playlist URL', type: 'password', min: 0, max: 4096, required: false });
+    if (kind === 'stalker') schema.push({ key: 'mac', label: 'Portal MAC address', type: 'password', min: 0, max: 17, required: false });
     if (kind === 'm3u') {
-      if (!row?.canonical) schema.push(...[['host','Xtream host'],['username','Xtream username'],['password','Xtream password']].map(([key,label]) => ({ key, label: label + ' (write-only)', type:'password', min:0, max:key==='host'?4096:256, required:false })));
-      schema.push({ key:'guide_action',label:'Guide URLs',options:[['keep','Keep existing guide preferences'],['replace','Replace guide URLs (empty clears only this source’s guide preference)']] }, {key:'guides',label:'Replacement guide URLs, one per line (write-only)',type:'textarea',max:41000,required:false});
+      if (!row?.canonical) schema.push(...[['host','Xtream server address'],['username','Xtream username'],['password','Xtream password']].map(([key,label]) => ({ key, label, type:'password', min:0, max:key==='host'?4096:256, required:false })));
+      schema.push({ key:'guide_action',label:'TV guide',options:[['keep','Keep saved guide links'],['replace','Replace guide links (blank clears them)']] }, {key:'guides',label:'Guide links — one per line',type:'textarea',max:41000,required:false});
     }
-    modal(row ? 'Edit source in local draft' : 'Add source to local draft', schema, async v => {
+    modal(row ? 'Edit playlist' : kind==='stalker'?'Add portal':method==='xtream'?'Add Xtream account':'Add playlist link', schema, async v => {
       const next = { ...(row || {kind, canonical:false}), name:v.name, enabled:v.enabled==='yes' };
+      if(v.connection&&v.connection!=='keep')for(const key of ['replace_url','replace_mac','xtream_host','xtream_username','xtream_password'])delete next[key];
       if (v.url) next.replace_url = v.url;
       if (v.mac) next.replace_mac = v.mac;
       if (v.host || v.username || v.password) { if (!v.host || !v.username || !v.password || v.url) throw new Error('Supply all Xtream fields OR an M3U URL, not both.'); next.xtream_host=v.host; next.xtream_username=v.username; next.xtream_password=v.password; }
       if (v.guide_action==='replace') next.replace_guides=v.guides.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
       if (row) editor.entries[editor.entries.indexOf(row)] = next; else if(kind==='m3u'){const firstPortal=editor.entries.findIndex(r=>r.kind==='stalker');editor.entries.splice(firstPortal<0?editor.entries.length:firstPortal,0,next);} else editor.entries.push(next);
       editor.dirty=true; editor.preview=null;
-    }, 'Save local source edit');
+    }, 'Save playlist draft');
+    const form=$('modal-form');if(row?.canonical){form.elements.namedItem('enabled').disabled=true;form.elements.namedItem('enabled').title='The activation playlist must stay enabled.';}function showField(name,shown,required=false){const input=form.elements.namedItem(name);if(!input)return;const label=form.querySelector('label[for="'+input.id+'"]');input.hidden=!shown;if(label)label.hidden=!shown;input.required=shown&&required;if(!shown)input.value='';}
+    function connectionFields(){const mode=form.elements.namedItem('connection')?.value||'keep';showField('url',mode==='url'||mode==='portal',true);showField('mac',mode==='portal',true);for(const key of ['host','username','password'])showField(key,mode==='xtream',true);showField('guides',form.elements.namedItem('guide_action')?.value==='replace');}
+    for(const key of ['connection','guide_action']){const field=form.elements.namedItem(key);if(field)field.onchange=connectionFields;}connectionFields();
   }
   const rows = editor.entries.map((row,index) => {
     const a = el('div',null,'actions'); const locked=!!editor.preview||!!editor.busy;
@@ -507,16 +515,16 @@ async function sourcesPanel(d, body, isCurrent, reload) {
     return [index+1,cellName(row.name,row.canonical?'Verified activation source — account protected':row.kind),row.enabled?'Enabled':'Disabled',secretKeys.some(k=>k in row)?'Replacement supplied (private)':'Existing secrets preserved',a];
   });
   box.append(table(['Order','Source','Status','Private values','Local actions'],rows));
-  for (const kind of ['m3u','stalker']) { const add=button(kind==='m3u'?'Add M3U / Xtream source':'Add Stalker portal',()=>edit(null,kind));add.disabled=!!editor.preview||!!editor.busy;box.append(add); }
-  const preview=button('Preview complete source replacement',()=>requestPreview({snapshot_id:editor.id,entries:editor.entries.map(clean)}));preview.disabled=!!editor.preview||!!editor.busy||!editor.dirty||d.policy!=='active';box.append(preview);
+  const addActions=el('div',null,'actions');for (const[label,kind,method]of [['Add playlist link','m3u','url'],['Add Xtream account','m3u','xtream'],['Add portal','stalker','portal']]) { const add=button(label,()=>edit(null,kind,method));add.disabled=!!editor.preview||!!editor.busy;addActions.append(add); }box.append(addActions);
+  const preview=button('Review playlist changes',()=>requestPreview({snapshot_id:editor.id,entries:editor.entries.map(clean)}),'primary');preview.disabled=!!editor.preview||!!editor.busy||!editor.dirty||d.policy!=='active';box.append(preview);
   if(editor.preview){box.append(el('p',editor.preview.warning,'notice'),table(['Preview source','Kind','Enabled','Identity'],editor.preview.entries.map(r=>[r.name,r.kind,r.enabled?'Yes':'No',r.identity_changed?'New/restored source identity — no guessed favourites migration':'Retained'])));
-    const push=button('Push reviewed source replacement',async()=>{if(!confirm('REPLACE the complete selected profile source set? Removed/disabled sources can stop viewing. A private safety checkpoint must succeed before one atomic write. Existing guide/favourite history is retained; this is not a provider-health check.'))return;try{await queue(d,'apply_sources',{draft_id:editor.preview.id});editor.dirty=false;editor.preview=null;await reload();}catch(e){toast(e.message);}},'primary');push.disabled=d.policy!=='active'||!d.capabilities.includes('apply_sources');box.append(push,button('Cancel preview (re-enter secret replacements to edit again)',()=>{editor.preview=null;reload();}));
+    const push=button('Apply playlist changes',async()=>{if(!confirm('REPLACE the complete selected profile source set? Removed/disabled sources can stop viewing. A private safety checkpoint must succeed before one atomic write. Existing guide/favourite history is retained; this is not a provider-health check.'))return;try{await queue(d,'apply_sources',{draft_id:editor.preview.id});editor.dirty=false;editor.preview=null;await reload();}catch(e){toast(e.message);}},'primary');push.disabled=d.policy!=='active'||!d.capabilities.includes('apply_sources');box.append(push,button('Cancel preview (re-enter secret replacements to edit again)',()=>{editor.preview=null;reload();}));
   }
-  box.append(panel('Private source checkpoints / guarded rollback',table(['Captured','Reason','Protection','Action'],history.items.slice(0,20).map(r=>[date(r.created_at),r.reason,r.protected?'Initial protected':'Rolling',button('Preview rollback to this version',async()=>{if(editor.busy||!confirm('Preview rollback using this checkpoint? A fresh current source read is required; no device change happens yet.'))return;await requestPreview({snapshot_id:editor.id,rollback_id:r.id});})]))));
+  const backups=el('details',null,'advanced-details');backups.append(el('summary','Playlist backups'),table(['Saved','Backup','Protection','Action'],history.items.slice(0,20).map(r=>[date(r.created_at),({initial:'Initial backup',read:'Loaded from device',pre_apply:'Before changes',confirmation:'After changes'})[r.reason]||r.reason,r.protected?'Protected':'Recent',button('Review restore',async()=>{if(editor.busy||!confirm('Review restoring this playlist backup? A fresh device read is required. Nothing is applied yet.'))return;await requestPreview({snapshot_id:editor.id,rollback_id:r.id});})])));box.append(backups);
 }
 async function favouritesPanel(d, body, isCurrent, reload) {
-  const box = panel('Favourites backups & recovery'); body.append(box);
-  box.append(el('p', 'Good nonempty versions are saved automatically while the managed app is open. Clearing favourites updates live status only—it never replaces a good backup. Recovery requires a version captured BEFORE the mistake.', 'subtle'));
+  const box = panel('Favourites backups'); body.append(box);
+  box.append(helpDetails('How backup protection works','Nonempty favourites are backed up automatically while the app is open. An empty list does not replace a good backup. To undo a mistake, choose a backup made before it happened.'));
   const actions = el('div', null, 'actions'); const capture = button('Back up current favourites now', () => queue(d, 'backup_favourites').catch(e => toast(e.message)), 'primary'); capture.disabled = d.policy !== 'active' || !d.capabilities.includes('backup_favourites'); actions.append(capture, button('Refresh backups / results', reload)); box.append(actions);
   if (!d.capabilities.includes('backup_favourites')) box.append(el('p', 'Update the testing app to 111 and let it check in to enable automatic backups and recovery. Existing saved server versions stay available.', 'notice'));
   let data; try { data = await api(`/api/devices/${d.id}/favourites`); } catch (e) { box.append(el('p', e.message + ' Apply the database upgrade under Enrollments first.', 'error')); return; } if (!isCurrent()) return;
@@ -705,13 +713,13 @@ async function devicePage(id, epoch) {
   await select(state.deviceTab?.id === id && names.includes(state.deviceTab.name) ? state.deviceTab.name : 'Overview');
 }
 async function audit(epoch) {
-  const main = $('main'); main.replaceChildren(heading('Activity log', 'Who changed what—without passwords, tokens or provider URLs.'));
+  const main = $('main'); main.replaceChildren(heading('Activity log', ''));
   scopePicker(main);
   const box=panel(null);main.append(box);
-  const load = async (page = 1) => { const result = await api('/api/audit?page=' + page+scopeQuery()); if (epoch !== state.epoch) return; box.replaceChildren(table(['Time', 'Action', 'Record', 'Details'], result.items.map(r => [date(r.created_at), r.action, el('span', r.resource_id || '—', 'mono'), r.metadata])), pagination(result, load)); };
+  const load = async (page = 1) => { const result = await api('/api/audit?page=' + page+scopeQuery()); if (epoch !== state.epoch) return; box.replaceChildren(table(['Action','When','Details'],result.items.map(r=>{const details=el('details',null,'inline-help');details.append(el('summary','View details'),detailRows([['Event',r.action],['Record',r.resource_id||'—'],['Details',r.metadata||'—']]));return[activityLabel(r.action),date(r.created_at),details];})),pagination(result,load)); };
   await load();
 }
-async function morePage(epoch){const main=$('main');main.replaceChildren(heading('Workspace tools','Saved configurations, activity and administration—separate from customer playback controls.'));const links=[['Library','Layouts, settings profiles and new-device defaults','library'],['Activity log','See who requested each action and its result','audit'],...(state.user.role==='owner'?[['Workspaces & panel links','Owner workspace, verified reseller links and device allocations','resellers'],['Enrollments & website upgrades','Owner enrollment tools and pending database upgrades','enrollments']]:[])];const box=panel('Tools');for(const[title,description,hash]of links){const a=el('a',null,'workspace-tool-link');a.href='#'+hash;a.append(cellName(title,description),el('span','→'));box.append(a);}main.append(box);}
+async function morePage(epoch){const main=$('main');main.replaceChildren(heading('Tools',''));const links=[['Saved setups','library'],['Activity log','audit'],...(state.user.role==='owner'?[['Resellers','resellers'],['Website settings','enrollments']]:[])];const box=panel(null);for(const[title,hash]of links){const a=el('a',null,'workspace-tool-link');a.href='#'+hash;a.append(el('span',title),el('span','→'));box.append(a);}main.append(box);}
 function downloadText(filename, content) {
   const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
   const a = el('a'); a.href = url; a.download = filename; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -747,7 +755,7 @@ async function approveEnrollment(request) {
   });
 }
 async function enrollments(epoch) {
-  const main = $('main'); main.replaceChildren(heading('Device enrollments', 'Only created, verified linked resellers are admitted. This list contains admitted ownership/allocation exceptions—not unmatched reseller devices.'));
+  const main = $('main'); main.replaceChildren(heading('Website settings', ''));
   const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
   if (system.pending_migrations.length) {
     main.append(panel('Database upgrade required', el('p', 'This release applies versioned schema changes without replacing existing accounts, devices or configuration. Back up the database and private storage before upgrading.', 'subtle'),
@@ -759,16 +767,15 @@ async function enrollments(epoch) {
   }
   const settings = await api('/api/enrollments/settings'); if (epoch !== state.epoch) return;
   const actions = el('div', null, 'actions');
-  actions.append(button('Download worker bridge settings', async () => {
+  actions.append(button('Download connection settings', async () => {
     try { const file = await api('/api/enrollments/bridge-configuration', {}); downloadText(file.filename, file.content); toast('Append these settings to the activation worker’s existing .env, then restart that worker after updating its code.'); }
     catch (e) { toast(e.message); }
   }), button(settings.enabled ? 'Pause new enrollment' : 'Enable new enrollment', async () => {
     if (!confirm(settings.enabled ? 'Pause new enrollment? Existing enrolled devices continue to check in.' : 'Have you updated the activation worker and added its downloaded bridge settings? Enable owner-reviewed enrollment?')) return;
     try { await api('/api/enrollments/settings', { enabled: !settings.enabled }); await route(); } catch (e) { toast(e.message); }
   }, settings.enabled ? '' : 'primary'));
-  main.append(panel('Activation bridge', el('p', 'The existing activation worker verifies active customer logins and issues a short-lived assertion. The app also proves possession of its own device key. No signing secret is embedded in APKs, and resellers cannot claim unassigned accounts.', 'subtle'),
-    el('p', settings.enabled ? 'New enrollment is enabled for created and linked resellers only. Unmatched resellers create no pending/device/customer record. Admitted ownership or allocation conflicts may require review.' : 'New enrollment is paused. Configure the worker bridge before enabling it.', 'notice'), actions));
-  const box = panel('Requests'); const filters = el('form', null, 'filters'); const status = el('select'); status.setAttribute('aria-label', 'Enrollment status');
+  main.append(panel('Device connections',el('p',settings.enabled?'On · verified reseller accounts only':'Paused · existing devices are unchanged','notice'),actions,helpDetails('Connection security','The activation server verifies account ownership and the app proves its device key. Unknown or unlinked resellers do not create customers, devices or review requests.')));
+  const box = panel('Connection requests'); const filters = el('form', null, 'filters'); const status = el('select'); status.setAttribute('aria-label', 'Enrollment status');
   for (const value of ['pending', 'approved', 'rejected']) { const option = el('option', value[0].toUpperCase() + value.slice(1)); option.value = value; status.append(option); }
   filters.append(status, button('Refresh requests', () => load(1))); filters.onsubmit = e => { e.preventDefault(); load(1); }; status.addEventListener('change', () => load(1));
   const results = el('div'); box.append(filters, results); main.append(box);
@@ -797,10 +804,10 @@ async function route() {
   $('main').classList.remove('fleet-page');
   if (!state.user||!state.workspaceSelf) return; const epoch = ++state.epoch; const hash = location.hash.slice(1) || 'overview'; const section = hash.startsWith('device/')||hash.startsWith('devices/') ? 'devices' : hash.startsWith('library')||hash==='presets'?'library':hash.startsWith('branding')?'branding':hash.startsWith('trials')?'trials':['resellers','enrollments','audit'].includes(hash)?'more':hash;
   workspaceTitle();
-  const navKey=hash==='presets'?'library/settings':hash.startsWith('library/layout/')?'library/layout/new':hash.startsWith('library/layouts')?'library':hash.startsWith('library/')?hash.split('/').slice(0,2).join('/'):['resellers','enrollments','audit'].includes(hash)?hash:section;
+  const navKey=hash==='presets'?'library/settings':hash.startsWith('library/layout/')?'library':hash.startsWith('library/layouts')?'library':hash.startsWith('library/')?hash.split('/').slice(0,2).join('/'):['resellers','enrollments','audit'].includes(hash)?hash:section;
   document.querySelectorAll('#navigation a').forEach(a => a.classList.toggle('active', a.dataset.page === navKey));
   document.querySelectorAll('#bottom-nav a').forEach(a=>{const key=a.getAttribute('href').slice(1);a.classList.toggle('active',key===section||(key==='more'&&section==='library'));});
-  document.querySelectorAll('#navigation a').forEach(a=>{if(a.dataset.page===navKey)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});const titles={overview:'Home',devices:'Devices',customers:'Customers',library:'Library',more:'Workspace tools',presets:'Library',resellers:'Resellers',enrollments:'Enrollments & upgrades',audit:'Activity log'};$('section-name').textContent=hash.startsWith('device/')?'Device details':titles[hash]||titles[section]||'Workspace';document.title=$('section-name').textContent+' · Extreme Control';
+  document.querySelectorAll('#navigation a').forEach(a=>{if(a.dataset.page===navKey)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});const titles={overview:'Dashboard',devices:'Devices',customers:'Customers',library:'Saved setups',more:'Tools',presets:'Saved setups',resellers:'Resellers',enrollments:'Website settings',audit:'Activity log'};$('section-name').textContent=hash.startsWith('device/')?'Device details':titles[hash]||titles[section]||'Workspace';document.title=$('section-name').textContent+' · Extreme Control';
   try {
     if (hash === 'overview') await overview(epoch);
     else if (hash === 'devices' || hash === 'customers') await records(hash, epoch);
@@ -809,7 +816,7 @@ async function route() {
     else if (hash === 'presets'||hash.startsWith('library')) {if(window.WorkspaceLibrary)await WorkspaceLibrary.render(hash,epoch);else await presetsPage(epoch);}
     else if(hash==='more')await morePage(epoch);
     else if(hash==='branding'||/^branding\/[a-f0-9]{32}$/.test(hash)){document.title='My app brand · Extreme Control';await AppBranding.render(epoch,hash.split('/')[1]);}
-    else if(hash==='trials'||/^trials\/[a-f0-9]{32}$/.test(hash)){document.title='Trials & contacts · Extreme Control';await TrialWorkspace.render(epoch,hash.split('/')[1]);}
+    else if(/^trials(?:\/[a-f0-9]{32})?(?:\/contacts)?$/.test(hash)){document.title='Trials & contacts · Extreme Control';const part=hash.split('/')[1];await TrialWorkspace.render(epoch,part==='contacts'?undefined:part);}
     else if(/^devices\/customer\/[a-f0-9]{32}$/.test(hash))await records('devices',epoch,hash.split('/')[2]);
     else if (hash === 'enrollments' && state.user.role === 'owner') await enrollments(epoch);
     else if (/^device\/[a-f0-9]{32}$/.test(hash)) await devicePage(hash.split('/')[1], epoch);
@@ -821,7 +828,7 @@ $('modal').addEventListener('close', () => { $('modal-form').replaceChildren(); 
 function hasUnsentDrafts(){return [...state.layoutEditors.values()].some(o=>o.draft?.dirty)||[...state.sourceEditors.values(),...state.preferenceEditors.values()].some(o=>o.dirty)||window.DeviceWorkspace?.isDirty()||window.WorkspaceLibrary?.isDirty()||window.AppBranding?.isDirty()||window.TrialWorkspace?.isDirty();}
 $('logout-button').addEventListener('click', async () => { if (hasUnsentDrafts() && !confirm('Discard unsent browser drafts and sign out? Save reusable layouts first if needed.')) return; try { await api('/api/logout', {}); signedOut(); } catch (e) { toast(e.message); } });
 window.addEventListener('beforeunload', e => { if (hasUnsentDrafts()) { e.preventDefault(); e.returnValue = ''; } });
-$('password-button').addEventListener('click', () => modal('Change your password', [{ key: 'current_password', label: 'Current password', type: 'password' }, { key: 'new_password', label: 'New password', type: 'password', hint: 'Changing your password signs out every session, including this one.' }], async values => { await api('/api/password', values); signedOut(); toast('Password changed. Sign in again.'); }, 'Change password'));
+$('password-button').addEventListener('click', () => modal('Change your password', [{ key: 'current_password', label: 'Current password', type: 'password' }, { key: 'new_password', label: 'New password', type: 'password', hint: 'Changing your password signs out every website session, including this one.' }], async values => { await api('/api/password', values); signedOut(); toast('Password changed. Sign in again.'); }, 'Change password & sign out'));
 window.addEventListener('hashchange', route);
 let lastVersionCheck=0;window.addEventListener('focus',()=>{if(!state.user||Date.now()-lastVersionCheck<60000)return;lastVersionCheck=Date.now();api('/api/status').then(status=>checkSiteVersion(status.version)).catch(()=>{});});
 (async () => {

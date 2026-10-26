@@ -7,7 +7,31 @@ Website changes are tested on `control-center-owner-trials` and synchronized int
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.22.0 global approval and reseller self-service
+## Current source update — 0.23.0 compact task-based interface
+
+Website-only presentation cleanup across dashboard, customer/device lists, device
+controls, app branding/downloads, saved layouts/settings/setups, trials/contacts,
+activity and owner tools. The existing blue light/dark palette is retained with
+smaller headings, cards, forms and navigation spacing. Mobile inputs retain readable
+text and44px action targets; data tables/long values stay inside their own containers.
+
+Navigation and primary actions use task names. Saved playback settings, saved device
+setups and automatic setup are distinct, and saving a template does not apply it.
+Device changes follow load -> review -> apply with actual receipt confirmation.
+Playlist forms show only the selected connection method rather than mixing link,
+Xtream and portal fields. Protected activation credentials remain non-editable.
+Trials and contacts have separate views. Repetitive static explanations leave the
+main workspace; optional details retain technical rules, while missing prerequisites,
+errors, consent and consequential action confirmations remain explicit.
+
+No backend policy change, new migration, APK or worker update. Global package/pause
+controls, reseller-owned switches/daily limits, owner Unlimited, signing/source gates,
+private credentials, trial/device history and tenant isolation remain unchanged.
+The normal0.22 ->0.23 update is extract-and-reload, with no terminal command.
+See `deploy/UPDATE-0.23.0.txt` for installation and `test-results/compact-metrics.json`
+for optional local before/after measurements (synthetic fixtures, never production).
+
+## Previous0.22.0 global approval and reseller self-service
 
 This supersedes0.21's per-reseller admin model, following the user's correction:
 

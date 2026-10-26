@@ -17,7 +17,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     await page.getByLabel('Email address').fill(credentials.email);
     await page.getByLabel('Password', { exact: true }).fill(credentials.password);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await page.getByRole('heading', { name: 'Operations overview', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Dashboard', exact: true }).waitFor();
     await page.screenshot({ path: path.join(output, 'preview-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));

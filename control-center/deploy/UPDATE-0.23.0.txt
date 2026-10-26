@@ -1,0 +1,34 @@
+Extreme Control Center0.23.0 — compact task-based website interface
+
+WEBSITE38.190.133.176 only. No APK build, worker update or live trial is needed.
+Back up the website/database, then extract this UPDATE ZIP into the existing
+/www/wwwroot/control.fecxbrfzku.net root. config.php and storage are excluded.
+When upgrading from the completed0.22 installation, no terminal command is needed:
+extract the files and hard-refresh the website. Existing unsaved browser drafts are not silently
+discarded; use the reload notice only after saving/discarding those edits.
+
+Presentation update over0.22; no new schema or policy migration. The owner keeps
+global trial/package controls and Unlimited. Resellers keep their own switch and
+daily limit. This helper does not change global approval, counters or preferences.
+If upgrading from before0.22, finish its explicit global-trial helper separately;
+installing interface files alone must not silently broaden trial permission.
+
+Optional recovery only: if an older installation has pending migrations or PHP
+needs a reload, the existing WEBSITE terminal can run:
+  bash /www/wwwroot/control.fecxbrfzku.net/deploy/upgrade-interface.sh
+This is not required for the normal0.22 ->0.23 interface update.
+
+Shared compact sizing, clearer navigation, grouped forms and consistent action
+labels cover dashboard/customers/devices, app artwork/downloads, saved layouts,
+playback settings, device setups/defaults, trials/contacts, activity and owner tools.
+Mobile tap targets remain usable; input text stays large enough to avoid iOS zoom.
+Light/dark blue theme is preserved. Secondary guidance moves into optional details,
+while actual status, missing prerequisites, privacy and destructive confirmations
+remain visible or explicitly confirmed at the action boundary.
+
+Playlist connection forms show the selected method only: playlist link, Xtream
+account, or portal. Existing private values stay write-only and the protected
+activation source cannot be disabled through the editor. Save draft, review and
+apply remain different actions; no command is sent by merely editing/saving a
+template. Device-scoped profiles/revisions, idempotency, consented support captures,
+tenant isolation, credential redaction and original receipt confirmation remain.

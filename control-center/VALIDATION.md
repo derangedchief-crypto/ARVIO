@@ -1,4 +1,36 @@
-# Device management0.22.0 global packages and reseller self-service — validation
+# Device management0.23.0 compact workflow interface — validation
+
+230 isolated service/database/HTTP cases and 66 complete browser checks pass.
+Focused before/after capture also passes: desktop heading34 ->25px, panel padding
+24 ->16px and sidebar282 ->236px, with mobile action targets kept at least44px.
+No business-service PHP or native APK source changes are part of this interface
+update. A normal0.22 ->0.23 installation needs only extraction and browser reload.
+
+Browser coverage additionally catches the settings-form race (Create waits for
+field definitions), no-op/incomplete branding saves, private connection-method
+switching without mixed URL/Xtream payloads, protected activation fields and the
+separate trial-settings/contact routes. All provider/receipt tests remain local
+synthetic fixtures, not new live accounts or device-install evidence.
+
+The presentation-only sweep preserves the existing service contracts. Browser tests
+use the new task labels while still proving tenant scope, local-only edits, reviewed
+atomic device application, private-value redaction, unsupported-device states, stale
+form refusal, draft preservation, global trial override and reseller opt-outs.
+Playlist connection-method controls hide and clear irrelevant private fields and
+keep the protected activation playlist enabled. Source/private payload schemas and
+server-side guards are unchanged. No command is sent by changing a form field or
+saving a reusable setup.
+
+Dedicated layout checks cover320/390/768/1440px, mobile44px targets, no horizontal
+page overflow, grouped artwork and saved-setup actions. An optional immutable0.22
+baseline capture compares actual computed heading/card/sidebar dimensions and
+screenshots against local synthetic fixtures. Static helper text is removed from
+the primary workspace or moved into optional details; actual status/errors and
+privacy/destructive-action boundaries stay explicit. Screenshot fixtures contain no
+real customer information or credentials. No storage/playback saving is inferred
+from smaller website widgets.
+
+## Previous0.22.0 global packages and reseller self-service validation
 
 230 isolated database/service/HTTP cases, 63 full browser checks and 79 builder
 checks pass. The corrected self-service UI also passes its focused browser run.
