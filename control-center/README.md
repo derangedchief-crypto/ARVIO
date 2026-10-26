@@ -7,7 +7,17 @@ Website changes are tested on `control-center-owner-trials` and synchronized int
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.23.0 compact task-based interface
+## Current source update — 0.23.1 visible device access actions
+
+Owner removal actions are now in an expanded **Device access** card on Device ->
+Overview, before customer notes, rather than buried in secondary details. Existing
+backend permissions and semantics are unchanged: unassigning keeps app access and
+an owner-managed record; removing enrollment revokes app access. Owner-managed or
+already-unassigned records explain why no reseller assignment needs removing.
+No inventory hard-delete or new no-block unenrollment operation is introduced.
+See `deploy/UPDATE-0.23.1.txt`; extract-and-reload only from0.23.
+
+## Previous0.23.0 compact task-based interface
 
 Website-only presentation cleanup across dashboard, customer/device lists, device
 controls, app branding/downloads, saved layouts/settings/setups, trials/contacts,

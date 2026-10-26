@@ -1,0 +1,20 @@
+Extreme Control Center0.23.1 — visible owner device removal choices
+
+Website-only, presentation-only follow-up to0.23. Back up/extract this UPDATE ZIP
+into the existing /www/wwwroot/control.fecxbrfzku.net root, then hard-refresh.
+No terminal command, database migration, APK or worker update is needed from0.23.
+
+Device -> Overview now has an always-expanded Device access card before Notes.
+For a reseller-assigned device, owner sees:
+ - Remove from reseller — keep app working: uses the EXISTING detach operation,
+   moving it to owner-only Unassigned devices, retaining app login/data/viewing
+   and removing former-reseller access. This is NOT permanent inventory deletion.
+ - Remove device — block app: uses the EXISTING policy=removed operation, revoking
+   enrollment credentials/app access, retaining data/history and requiring owner-
+   approved enrollment before returning. Confirmation states these consequences.
+
+Owner-managed/already-unassigned devices show why there is no reseller assignment
+to remove. They do not gain a misleading no-block inventory-delete button. Other
+existing suspend/reactivate/block controls remain in the secondary access details.
+Owner-only permissions and all backend semantics are unchanged. No live device is
+unassigned/blocked/deleted just by installing or testing these UI controls.

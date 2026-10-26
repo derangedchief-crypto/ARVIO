@@ -1,4 +1,18 @@
-# Device management0.23.0 compact workflow interface — validation
+# Device management0.23.1 visible device access actions — validation
+
+230 service/database/HTTP checks and 67 complete browser checks pass. The focused
+owner-removal test also passes independently. Update-package preservation checks
+confirm private config/storage are excluded. No backend/native source changed.
+
+The new owner browser check verifies both applicable removal choices are visible
+without expanding details, remain44px touch targets on mobile, and cancelled
+confirmations leave policy, reseller assignment and command history unchanged.
+Existing service coverage continues to enforce owner-only detachment/revocation,
+kept viewing/data on unassignment, revoked-token recovery constraints and tenant
+isolation. This is a visibility/wording fix, not permanent inventory deletion or
+a new backend removal mode. No live device was altered to validate the controls.
+
+## Previous0.23.0 compact workflow interface validation
 
 230 isolated service/database/HTTP cases and 66 complete browser checks pass.
 Focused before/after capture also passes: desktop heading34 ->25px, panel padding
