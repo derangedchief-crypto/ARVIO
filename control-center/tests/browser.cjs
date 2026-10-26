@@ -492,6 +492,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/tmp/opencode/con
     }
      await require('./trial-controls-browser.cjs')(browser,base,credentials,output,done);
      await require('./trial-controls-legacy-browser.cjs')(browser,base,credentials,output,done);
+     await require('./global-trials-browser.cjs')(browser,base,credentials,output,done);
     await require('./build-progress-browser.cjs')(browser,base,credentials,output,done);
     await navigate('resellers');
     await page.getByRole('button', { name: 'Link panel reseller', exact: true }).first().click();

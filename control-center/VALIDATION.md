@@ -1,4 +1,27 @@
-# Device management0.21.0 simple reseller trial controls — validation
+# Device management0.22.0 global packages and reseller self-service — validation
+
+230 isolated database/service/HTTP cases, 63 full browser checks and 79 builder
+checks pass. The corrected self-service UI also passes its focused browser run.
+Global-upgrade rerun/seed preservation, package/private-file checks and shell syntax
+are verified. No live trial account, APK, worker deployment or customer update was
+created for these checks.
+
+New coverage verifies global approval applied once, actual per-panel package
+availability, reseller ON with no grant row, stale per-reseller denials/caps ignored,
+independent self-chosen quotas, global pause retaining each opt-out, stale global
+reviews/fingerprints rejected, closed CSRF/role/scope contracts and removal of old
+per-reseller enable/default/publication HTTP steps. Owner legacy offer HMAC and
+Unlimited survive transition without a new approval or quota reset. No settings
+action calls provisioning. Helper tests verify owner-only initial import, rerun
+preservation and no private-config writes. No live panel trial or APK is created.
+
+The new UI is exercised separately from cached0.20/0.21 compatibility: global
+package approval has no tenant/daily field, reseller owns an editable daily limit
+and app switch, admin views another reseller's settings read-only, and global
+pause/resume retains saved settings. Old models are inactive after the explicit
+global upgrade. Historical checks below describe earlier versions, not current UX.
+
+## Previous0.21.0 per-reseller model validation (superseded)
 
 224 isolated database/service/HTTP cases and 60 full browser checks pass, alongside
 79 builder tests, package/private-file preservation, publication-input unit checks,

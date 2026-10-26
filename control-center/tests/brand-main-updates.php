@@ -38,7 +38,10 @@ function brandMainUpdateCases(array &$tests,ControlCenter\Application $app,Contr
         problem(409,fn()=> $builder->claim(['build_id'=>$id,'channel'=>'testing','source_sha'=>str_repeat('0',40)]));
     };
     $tests['main sourced APK follows existing signer receipt and monotonic publication checks']=function()use($app,$builder,$brands,$owner,$input,$artifacts,&$jobs):void {
-        $job=$jobs[0];$ctx=$builder->claim(['build_id'=>$job['id'],'channel'=>'testing','source_sha'=>$input['source_sha'],'runner_run_id'=>'456']);same(43200000+(int)$job['brand_version'],$ctx['expected']['version_code']);
+        // Random IDs must not select a brand whose earlier synthetic recovery
+        // case intentionally left an uncertain publication. Preserve that fence.
+        $job=null;foreach($jobs as $candidate)if(!$app->db->one("SELECT id FROM app_brand_builds WHERE brand_id=? AND build_channel='testing' AND id<>? AND state IN ('publishing','publication_review')",[$candidate['brand_id'],$candidate['id']])){$job=$candidate;break;}check($job!==null,'A clean synthetic main publication fixture is required.');
+        $ctx=$builder->claim(['build_id'=>$job['id'],'channel'=>'testing','source_sha'=>$input['source_sha'],'runner_run_id'=>'456']);same(43200000+(int)$job['brand_version'],$ctx['expected']['version_code']);
         $manifest=json_decode($job['manifest'],true);same($manifest['package_name'].'.test',$ctx['expected']['package_name']);same($manifest['app_name'],$ctx['bundle']['manifest']['app_name']);
         $receipt=$ctx['expected'];unset($receipt['release_tag'],$receipt['asset_name']);$receipt+=['source_sha'=>$input['source_sha'],'apk_sha256'=>str_repeat('8',64),'apk_size_bytes'=>150000000,'provenance_sha256'=>str_repeat('9',64)];$lease=['build_id'=>$job['id'],'lease_token'=>$ctx['lease_token']];
         problem(409,fn()=> $builder->prepared($lease+['receipt'=>array_replace($receipt,['signer_sha256'=>str_repeat('0',64)])]));$builder->prepared($lease+['receipt'=>$receipt]);$builder->authorize($lease+['confirmed_publication'=>true]);same('published',$builder->finish($lease+['receipt'=>$receipt])['state']);same(43200000+(int)$job['brand_version'],(int)$artifacts->approved($job['brand_id'],'testing')['version_code']);

@@ -13,16 +13,22 @@ final class TrialPolicies
         $c=$this->db->one('SELECT * FROM trial_plan_catalogs WHERE tenant_id=?',[$tenant]);if($c)$c['plans']=json_decode($c['plans'],true,12,JSON_THROW_ON_ERROR);return $c;
     }
     private function fresh(?array $catalog,?array $link):bool {return $catalog&&$link&&(string)$catalog['panel_reseller_id']===(string)$link['panel_id']&&strtotime($catalog['expires_at'].' UTC')>time();}
+    public function globalApproval():?array {
+        if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['023_global_trial_packages.sql']))return null;
+        $row=$this->db->one('SELECT * FROM trial_global_packages WHERE id=1'.($this->db->pdo->inTransaction()?' FOR UPDATE':''));
+        if(!$row||!$row['enabled'])return null;$row['allowed_plans']=json_decode($row['allowed_plans'],true,8,JSON_THROW_ON_ERROR);return $row;
+    }
     public function get(array $actor,array $input):array {
         Input::keys($input,['tenant_id']);$t=$this->tenant($actor,$input['tenant_id']??null);$catalog=$this->catalog($t['id']);$link=$this->link($t['id']);$fresh=$this->fresh($catalog,$link);
-        $grant=$this->db->one('SELECT * FROM trial_plan_grants WHERE tenant_id=?',[$t['id']]);$allowed=$grant?json_decode($grant['allowed_plans'],true,8,JSON_THROW_ON_ERROR):[];
+        $grant=$this->db->one('SELECT * FROM trial_plan_grants WHERE tenant_id=?',[$t['id']]);$global=$this->globalApproval();$allowed=$global?$global['allowed_plans']:($grant?json_decode($grant['allowed_plans'],true,8,JSON_THROW_ON_ERROR):[]);
         $default=$this->db->one('SELECT * FROM trial_reseller_defaults WHERE tenant_id=?',[$t['id']]);$plans=array_values(array_filter($catalog['plans']??[],static fn($p)=>isset($allowed[(string)$p['id']])&&hash_equals($allowed[(string)$p['id']],$p['fingerprint'])));
+        if($global){$legacyOwner=$t['kind']==='owner'&&$grant&&!($default['global_opt_in']??false);$grant=['version'=>$legacyOwner?(int)$grant['version']:(int)$global['revision'],'enabled'=>(bool)$allowed];}
         $selected=null;foreach($plans as $plan)if($default&&(int)$default['plan_id']===$plan['id']&&hash_equals($default['plan_fingerprint'],$plan['fingerprint']))$selected=$plan;
         $brand=$this->db->one('SELECT enabled FROM app_brands WHERE tenant_id=?',[$t['id']]);
-        $ready=$this->worker->configured()&&$t['status']==='active'&&$fresh&&$grant&&$grant['enabled']&&$default&&$default['enabled']&&(int)$grant['version']===(int)$default['grant_version']&&$selected&&$brand&&$brand['enabled'];
+        $ready=$this->worker->configured()&&$t['status']==='active'&&$fresh&&$grant&&$grant['enabled']&&$default&&$default['enabled']&&($global?($t['kind']==='owner'||$default['global_opt_in']):(int)$grant['version']===(int)$default['grant_version'])&&$selected&&$brand&&$brand['enabled'];
         return ['tenant_id'=>$t['id'],'grant'=>$grant?['version'=>(int)$grant['version'],'enabled'=>(bool)$grant['enabled'],'allowed_plan_ids'=>array_map('intval',array_keys($allowed))]:null,
             'default'=>$default,'plans'=>$plans,'catalog'=>$actor['role']==='owner'?$catalog:null,'catalog_fresh'=>$fresh,'worker_configured'=>$this->worker->configured(),
-            'configuration_ready'=>(bool)$ready,'live_offer_enabled'=>false,'offer_status'=>'Plan/default settings do not publish a trial offer. Public signup needs separate owner rollout approval and explicit offer publication.'];
+            'configuration_ready'=>(bool)$ready,'global_packages'=>$global!==null,'live_offer_enabled'=>false,'offer_status'=>$global?'Choose a globally approved package, your daily limit and your app switch.':'Plan/default settings do not publish a trial offer. Public signup needs separate owner rollout approval and explicit offer publication.'];
     }
     public function refresh(array $actor,array $input):array {
         Auth::owner($actor);return $this->refreshWorkspace($actor,$input);
@@ -53,6 +59,7 @@ final class TrialPolicies
     }
     public function grant(array $actor,array $input):array {
         Auth::owner($actor);Input::keys($input,['tenant_id','expected_version','catalog_id','allowed_plan_ids','enabled']);if(!is_bool($input['enabled']??null))throw new Problem(422,'Choose an admin trial-policy state.');
+        if($this->globalApproval())throw new Problem(410,'Package approvals are global now. Use Global approved trial packages.');
         $ids=$input['allowed_plan_ids']??null;if(!is_array($ids)||!array_is_list($ids)||count($ids)>20||count(array_unique($ids,SORT_REGULAR))!==count($ids))throw new Problem(422,'Choose up to 20 unique trial plans.');foreach($ids as $id)Input::integer($id,1,2147483647);
         if($input['enabled']&&!$ids)throw new Problem(422,'Allow at least one trial plan first.');
         return $this->db->transaction(function()use($actor,$input,$ids):array {

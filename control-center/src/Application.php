@@ -21,6 +21,7 @@ final class Application
     public readonly TrialContacts $trialContacts;
     public readonly TrialOffers $trialOffers;
     public readonly TrialSetup $trialSetup;
+    public readonly TrialSelfService $trialSelfService;
     public readonly TrialPublicSessions $trialSessions;
     public readonly TrialSignupBroker $trialSignup;
     public readonly BrandBuilder $brandBuilder;
@@ -45,6 +46,7 @@ final class Application
         $this->trialContacts=new TrialContacts($this->db,$this->management,$this->auth,new Secrets($config),$config,$trialWorker);
         $secrets=new Secrets($config);$artifacts=new BrandArtifacts($this->db,$secrets,$config);$this->trialOffers=new TrialOffers($this->db,$config,$this->management,$this->auth,$secrets,$this->trialPolicies,$artifacts);
         $this->trialSetup=new TrialSetup($this->db,$this->management,$this->auth,$this->trialPolicies,$this->trialOffers);
+        $this->trialSelfService=new TrialSelfService($this->db,$this->management,$this->auth,$this->trialPolicies,$this->trialOffers);
         $this->brandBuilder=new BrandBuilder($this->db,$config,$this->appBrands,$artifacts,$secrets,$this->auth);
         $this->brandDownloads=new BrandDownloads($config,$artifacts);
         $this->trialSessions=new TrialPublicSessions($this->db,$this->trialOffers,$secrets,$this->auth);$this->trialSignup=new TrialSignupBroker($this->db,$config,$secrets,$this->auth,$this->trialOffers,$this->trialSessions,new TrialBudgets($this->db,$config),$trialWorker,$this->trialContacts);
@@ -158,16 +160,19 @@ final class Application
         if($method==='GET'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/inputs$~D',$path,$m)){$file=$this->appBrands->downloadInputs($actor,$m[1]);header('Content-Type: application/json; charset=utf-8');header('Content-Disposition: attachment; filename="'.$file['filename'].'"');echo $file['body'];exit;}
         if($method==='POST'&&preg_match('~^/api/app-brand/builds/([a-f0-9]{32})/cancel$~D',$path,$m))Http::json($this->appBrands->cancelBuild($actor,$m[1],Http::body()));
         if($method==='GET'&&$path==='/api/trial-policy')Http::json($this->trialPolicies->get($actor,$_GET));
-        if($method==='GET'&&$path==='/api/trial-setup')Http::json($this->trialSetup->status($actor,$_GET));
-        if($method==='POST'&&$path==='/api/trial-setup/admin')Http::json($this->trialSetup->saveAdmin($actor,Http::body()));
-        if($method==='POST'&&$path==='/api/trial-setup/app')Http::json($this->trialSetup->saveApp($actor,Http::body()));
+        if($method==='GET'&&$path==='/api/trial-setup/model'){Input::keys($_GET,[]);Http::json(['global'=>$this->trialOffers->globalReady()]);}
+        if($method==='GET'&&$path==='/api/trial-setup/packages'){Input::keys($_GET,[]);Http::json($this->trialSelfService->packages($actor));}
+        if($method==='POST'&&$path==='/api/trial-setup/packages')Http::json($this->trialSelfService->savePackages($actor,Http::body()));
+        if($method==='GET'&&$path==='/api/trial-setup')Http::json($this->trialOffers->globalReady()?$this->trialSelfService->status($actor,$_GET):$this->trialSetup->status($actor,$_GET));
+        if($method==='POST'&&$path==='/api/trial-setup/admin'){if($this->trialOffers->globalReady())throw new Problem(410,'Per-reseller trial permissions were removed. Use Global approved trial packages.');Http::json($this->trialSetup->saveAdmin($actor,Http::body()));}
+        if($method==='POST'&&$path==='/api/trial-setup/app')Http::json($this->trialOffers->globalReady()?$this->trialSelfService->saveApp($actor,Http::body()):$this->trialSetup->saveApp($actor,Http::body()));
         if($method==='GET'&&$path==='/api/trials/settings'){Input::keys($_GET,[]);Http::json($this->trialOffers->globalSettings($actor));}
         if($method==='POST'&&$path==='/api/trials/settings')Http::json($this->trialOffers->setGlobal($actor,Http::body()));
         if($method==='POST'&&$path==='/api/trial-policy/catalog')Http::json($this->trialPolicies->refresh($actor,Http::body()));
         if($method==='POST'&&$path==='/api/trial-policy/grants')Http::json($this->trialPolicies->grant($actor,Http::body()));
-        if($method==='POST'&&$path==='/api/trial-policy/default')Http::json($this->trialPolicies->setDefault($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/trial-policy/default'){if($this->trialOffers->globalReady())throw new Problem(410,'Use App trial settings to save your package, daily limit and app switch together.');Http::json($this->trialPolicies->setDefault($actor,Http::body()));}
         if($method==='GET'&&$path==='/api/trial-offer-publication')Http::json($this->trialOffers->managerState($actor,$_GET));
-        if($method==='POST'&&$path==='/api/trial-offer-publication')Http::json($this->trialOffers->publish($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/trial-offer-publication'){if($this->trialOffers->globalReady())throw new Problem(410,'Separate offer publication is no longer needed. Use App trial settings.');Http::json($this->trialOffers->publish($actor,Http::body()));}
         if($method==='GET'&&$path==='/api/trial-contacts')Http::json($this->trialContacts->listing($actor,$_GET));
         if($method==='GET'&&preg_match('~^/api/trial-contacts/([a-f0-9]{32})$~D',$path,$m))Http::json($this->trialContacts->detail($actor,$m[1]));
         if($method==='POST'&&preg_match('~^/api/trial-contacts/([a-f0-9]{32})/redact$~D',$path,$m))Http::json($this->trialContacts->redact($actor,$m[1],Http::body()));

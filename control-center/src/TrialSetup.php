@@ -86,7 +86,7 @@ final class TrialSetup
     }
     public function maintain():void {
         if(!$this->offers->simpleReady())return;$owner=$this->db->one("SELECT id,role,tenant_id FROM users WHERE role='owner' AND active=1 ORDER BY id LIMIT 1");if(!$owner)return;
-        $rows=$this->db->all("SELECT g.tenant_id FROM trial_plan_grants g JOIN tenants t ON t.id=g.tenant_id JOIN panel_resellers r ON r.tenant_id=t.id LEFT JOIN trial_plan_catalogs c ON c.tenant_id=t.id WHERE g.enabled=1 AND t.status='active' AND (g.live_enabled=1 OR t.kind='owner') AND (c.expires_at IS NULL OR c.expires_at<DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR)) ORDER BY c.expires_at LIMIT 5");
+        $rows=$this->offers->globalReady()?$this->db->all("SELECT p.tenant_id FROM trial_offer_publications p JOIN tenants t ON t.id=p.tenant_id JOIN panel_resellers r ON r.tenant_id=t.id LEFT JOIN trial_plan_catalogs c ON c.tenant_id=t.id WHERE p.enabled=1 AND t.status='active' AND (c.expires_at IS NULL OR c.expires_at<DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR)) ORDER BY c.expires_at LIMIT 5"):$this->db->all("SELECT g.tenant_id FROM trial_plan_grants g JOIN tenants t ON t.id=g.tenant_id JOIN panel_resellers r ON r.tenant_id=t.id LEFT JOIN trial_plan_catalogs c ON c.tenant_id=t.id WHERE g.enabled=1 AND t.status='active' AND (g.live_enabled=1 OR t.kind='owner') AND (c.expires_at IS NULL OR c.expires_at<DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR)) ORDER BY c.expires_at LIMIT 5");
         foreach($rows as $row)try{$this->policies->ensureCurrent($owner,$row['tenant_id'],true);}catch(\Throwable){/* Fail closed and surface the exact readiness state in the UI. */}
     }
 }

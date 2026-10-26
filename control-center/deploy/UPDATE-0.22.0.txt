@@ -1,0 +1,44 @@
+Extreme Control Center0.22.0 — global package approvals and reseller self-service
+
+CORRECTED USER POLICY. This supersedes the uninstalled0.21 per-reseller admin model.
+Install0.22 DIRECTLY over the existing site; no separate0.21 installation is needed.
+
+WEBSITE38.190.133.176 only. Back up the site/database, then extract this UPDATE ZIP
+into /www/wwwroot/control.fecxbrfzku.net. Private config.php/storage are excluded.
+In the WEBSITE aaPanel terminal, as root:
+  bash /www/wwwroot/control.fecxbrfzku.net/deploy/upgrade-global-trials.sh
+
+The helper applies pending migrations022/023, enables the corrected global model,
+imports ONLY the existing verified owner's already-approved package terms once,
+preserves any subsequent global edits on reruns, and reloads PHP. It never changes
+the global pause, app switches, existing owner Unlimited flag, secrets or trial
+history and never provisions an account. No APK/worker update is required.
+
+ADMIN: one GLOBAL pause/resume switch and one GLOBAL approved package list. Approve
+packages once, not once per reseller. There is NO per-reseller admin enable switch
+and NO admin daily-quota assignment. Viewing a reseller's settings is read-only.
+Global package approval is still bound to actual worker-verified price/duration/
+connection/group fingerprints. A reseller sees only globally approved packages
+that its verified panel account is actually allowed to use.
+
+RESELLER: choose an approved Trial package, choose My daily trial limit (1–1000),
+set Show trial button in this app, then Save my trial settings. No further admin
+approval or publication step. Every active verified linked workspace can do this;
+no trial_plan_grants row or old pilot enable flag is required. New apps remain OFF
+until their reseller saves its own settings. Explicit already-ON0.21 apps retain
+their chosen limit where their plan is globally approved; opt-outs remain OFF.
+
+OWNER: the existing owner offer/Unlimited setting is preserved on transition. The
+owner's own app uses the same self-service screen with Unlimited instead of a daily
+number. The owner cannot change another reseller's switch or daily limit through
+the self-service API. The owner still manages roster/panel links and global control.
+
+All previous safety checks remain: verified membership and signed APK registration,
+per-customer/device/reseller uniqueness, same-operation recovery, real panel package
+availability, global pause and device/IP anti-abuse controls. Trial history is not
+reset and existing subscriptions/viewing are not revoked. Metadata refreshes safely
+and automatically; actual term changes still require GLOBAL review. Old per-reseller
+enable/default/publication web endpoints direct cached clients to the new controls.
+
+Hard-refresh the website. After this one upgrade, no terminal command or reseller-
+specific admin toggle is required for a reseller to choose its trial settings.

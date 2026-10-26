@@ -3,6 +3,7 @@
   const drafts=new Map();
   const terms=p=>`${p.duration} ${p.period} · ${p.max_connections} connection(s) · ${p.credits} credits`;
   async function render(epoch,hint){
+    if(root.TrialSelfService){const model=await api('/api/trial-setup/model');if(state.epoch!==epoch||!state.user)return;if(model.global)return root.TrialSelfService.render(epoch,hint);}
     const valid=()=>state.epoch===epoch&&!!state.user,main=$('main');
     main.replaceChildren(heading('Trials & contacts','Allow trials, choose a package, and manage follow-up contacts.'));
     await root.TrialWorkspace.globalControls(main,epoch);if(!valid())return;
@@ -42,5 +43,5 @@
     },'primary'));main.append(app);
     await root.TrialWorkspace.renderContacts(main,tenant,valid,()=>setup.worker_configured);
   }
-  root.SimpleTrialSetup={render,isDirty:()=>[...drafts.values()].some(d=>d.adminDirty||d.appDirty),clear:()=>drafts.clear()};
+  root.SimpleTrialSetup={render,isDirty:()=>[...drafts.values()].some(d=>d.adminDirty||d.appDirty)||!!root.TrialSelfService?.isDirty(),clear:()=>{drafts.clear();root.TrialSelfService?.clear();}};
 })(window);

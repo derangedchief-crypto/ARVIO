@@ -7,7 +7,29 @@ Website changes are tested on `control-center-owner-trials` and synchronized int
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## Current source update — 0.21.0 simple trial settings (installation required)
+## Current source update — 0.22.0 global approval and reseller self-service
+
+This supersedes0.21's per-reseller admin model, following the user's correction:
+
+- Admin controls **one global pause/resume switch** and **one global approved
+  trial-package list**. Approve packages once. There is no reseller enable step
+  and no admin-assigned reseller daily limit.
+- Every active, verified, panel-linked reseller chooses an available globally
+  approved package, **My daily trial limit**, and its own app ON/OFF setting,
+  then **Save my trial settings**. A registered signed branded APK is still needed.
+- Owner app stays Unlimited. Global pause overrides all app preferences without
+  deleting them. Existing trial history, contacts and anti-duplicate rules remain.
+
+Global approval intersects the real package list available to each reseller's
+panel account; it never bypasses panel group restrictions or changed costs. The
+upgrade imports existing owner-approved terms once, not a union of arbitrary
+reseller approvals, and never overwrites later global edits on reruns. New apps
+are not automatically switched on. Ordinary unchanged terms remain update-stable.
+
+Install0.22 directly over0.20 or0.21 using `deploy/UPDATE-0.22.0.txt` and its one-time
+website helper. Private config/storage are excluded; no APK or worker update needed.
+
+## Previous0.21.0 model — superseded, do not use for new setup
 
 The current UI replaces the old catalogue/default/publication setup cards:
 

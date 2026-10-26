@@ -24,13 +24,17 @@ final class TrialOffers
     }
     private function ready():void {if(!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']))throw new Problem(503,'Apply the public-trial database upgrade first.');}
     public function simpleReady():bool {return (bool)$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['022_simple_reseller_trials.sql']);}
+    public function globalReady():bool {return $this->policies->globalApproval()!==null;}
     private function resellerLive(string $brandId):bool {
+        if($this->globalReady())return (bool)$this->db->one("SELECT b.id FROM app_brands b JOIN tenants t ON t.id=b.tenant_id JOIN panel_resellers r ON r.tenant_id=t.id WHERE b.id=? AND b.enabled=1 AND t.kind='reseller' AND t.status='active'",[$brandId]);
         return $this->simpleReady()&&(bool)$this->db->one("SELECT b.id FROM app_brands b JOIN tenants t ON t.id=b.tenant_id JOIN panel_resellers r ON r.tenant_id=t.id JOIN trial_plan_grants g ON g.tenant_id=t.id WHERE b.id=? AND b.enabled=1 AND t.kind='reseller' AND t.status='active' AND g.enabled=1 AND g.live_enabled=1",[$brandId]);
     }
     private function adminPaused(string $brandId):bool {
+        if($this->globalReady())return false;
         return $this->simpleReady()&&(bool)$this->db->one("SELECT b.id FROM app_brands b JOIN tenants t ON t.id=b.tenant_id JOIN trial_plan_grants g ON g.tenant_id=t.id WHERE b.id=? AND t.kind='reseller' AND g.setup_revision>0 AND (g.live_enabled=0 OR g.enabled=0)",[$brandId]);
     }
     public function dailyCap(?string $tenantId=null):int {
+        if($tenantId!==null&&$this->globalReady()&&$this->db->one("SELECT id FROM tenants WHERE id=? AND kind='reseller'",[$tenantId]))return 1000;
         if($tenantId!==null&&$this->simpleReady()){$row=$this->db->one("SELECT g.daily_cap FROM trial_plan_grants g JOIN tenants t ON t.id=g.tenant_id WHERE g.tenant_id=? AND t.kind='reseller' AND g.live_enabled=1",[$tenantId]);if($row)return Input::integer((int)$row['daily_cap'],1,1000);}
         return $this->config->number('trial_reseller_daily_limit',50,1,1000);
     }
@@ -68,7 +72,7 @@ final class TrialOffers
         $brand=$this->db->one('SELECT * FROM app_brands WHERE tenant_id=?',[$tenantId]);$link=$this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$tenantId]);$channel=$this->config->get('trial_channel','production');if(!in_array($channel,['production','testing'],true))throw new Problem(503,'Invalid trial rollout channel.');
         $artifact=$this->artifacts->approved($brand['id'],$channel);$revision=[];
         $reseller=$this->resellerLive($brand['id']);$unlimited=$this->ownerUnlimited($brand['id']);
-        $managed=$reseller||($unlimited&&$this->simpleReady()&&(bool)$this->db->one('SELECT tenant_id FROM trial_plan_grants WHERE tenant_id=? AND enabled=1 AND live_enabled=1',[$tenantId]));
+        $managed=$reseller||($unlimited&&(($this->globalReady()&&(bool)($p['default']['global_opt_in']??false))||($this->simpleReady()&&(bool)$this->db->one('SELECT tenant_id FROM trial_plan_grants WHERE tenant_id=? AND enabled=1 AND live_enabled=1',[$tenantId]))));
         if(!$artifact||$artifact['trial_protocol']<1||!preg_match('/^\d+\.\d+\.\d+\.([1-9][0-9]{0,4})(?:-test)?$/D',$artifact['version_name'],$revision)||(!$managed&&(int)$revision[1]!== (int)$brand['version'])||($managed&&(int)$revision[1]>(int)$brand['version'])||$artifact['package_name']!==$brand['package_name'].($channel==='testing'?'.test':''))throw new Problem(409,'Publish a verified branded APK before enabling app trials.');$plan=null;foreach($p['plans'] as $candidate)if($candidate['id']===(int)$p['default']['plan_id'])$plan=$candidate;
         if(!$plan||!$link)throw new Problem(409,'Verified trial offer is unavailable.');
         return ['brand_id'=>$brand['id'],'tenant_id'=>$tenantId,'brand_name'=>$brand['name'],'brand_version'=>(int)$brand['version'],'panel_reseller_id'=>(string)$link['panel_id'],'artifact_id'=>$artifact['id'],'grant_version'=>$p['grant']['version'],'default_revision'=>(int)$p['default']['revision'],'plan'=>$plan,'mode'=>'public_brand_signup','notice_version'=>1,'owner_unlimited'=>$unlimited,'reseller_live'=>$reseller,'standing_terms'=>$managed];
