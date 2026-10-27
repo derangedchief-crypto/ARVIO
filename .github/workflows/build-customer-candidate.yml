@@ -1,0 +1,78 @@
+name: Build Unpublished Customer Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact approved customer source commit (no publishing)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_sha }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Prepare customer configuration and central signing
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL: ${{ secrets.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, base64
+          from pathlib import Path
+          keys = ['TMDB_API_KEY', 'ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL', 'SENTRY_DSN', 'SUPABASE_URL', 'SUPABASE_ANON_KEY']
+          lines = Path('secrets.defaults.properties').read_text().splitlines()
+          for key in keys:
+              value = os.environ.get(key, '')
+              if value:
+                  lines = [line for line in lines if not line.startswith(key + '=')]
+                  lines.append(key + '=' + value)
+          Path('secrets.properties').write_text('\n'.join(lines) + '\n')
+          for key in ['RELEASE_KEYSTORE_BASE64', 'RELEASE_KEYSTORE_PASSWORD', 'RELEASE_KEY_ALIAS', 'RELEASE_KEY_PASSWORD']:
+              if not os.environ.get(key):
+                  raise SystemExit('Missing required signing secret: ' + key)
+          Path('app/release.keystore').write_bytes(base64.b64decode(os.environ['RELEASE_KEYSTORE_BASE64']))
+          Path('keystore.properties').write_text('storeFile=release.keystore\n' + '\n'.join(
+              name + '=' + os.environ[key] for name, key in [
+                  ('storePassword', 'RELEASE_KEYSTORE_PASSWORD'),
+                  ('keyAlias', 'RELEASE_KEY_ALIAS'),
+                  ('keyPassword', 'RELEASE_KEY_PASSWORD')]) + '\n')
+          PY
+      - name: Build customer variant without publication
+        run: ./gradlew :app:assembleSideloadStaging -x :app:validateReleaseCloudSecrets --no-daemon --stacktrace
+      - name: Record source and APK digest
+        run: |
+          git rev-parse HEAD > customer-candidate-source.txt
+          sha256sum app/build/outputs/apk/sideload/staging/*.apk > customer-candidate-sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unpublished-customer-candidate
+          path: |
+            app/build/outputs/apk/sideload/staging/*.apk
+            customer-candidate-source.txt
+            customer-candidate-sha256.txt
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unpublished-customer-mapping
+          path: app/build/outputs/mapping/sideloadStaging/mapping.txt
+          retention-days: 30
