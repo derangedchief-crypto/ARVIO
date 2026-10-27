@@ -15,6 +15,28 @@ import javax.crypto.spec.SecretKeySpec
 @ConscryptMode(ConscryptMode.Mode.OFF)
 @Config(sdk=[28],application=Application::class,manifest=Config.NONE)
 class ActivationVaultTest {
+    @Test fun incompleteInitialWriteIsNotTreatedAsFreshActivation(){
+        val context=ApplicationProvider.getApplicationContext<Application>()
+        val pending=File(context.noBackupFilesDir,"verified-primary-v1.enc.new")
+        pending.writeText("incomplete ciphertext")
+        try{
+            try{ActivationVault(context).load();fail("Pending data must not become a fresh install")}
+            catch(_:IllegalStateException){}
+            assertTrue(pending.exists())
+        }finally{pending.delete()}
+    }
+    @Test fun interruptedWriteBackupIsRecoveredWithoutNewActivation(){
+        val context=ApplicationProvider.getApplicationContext<Application>()
+        val key=SecretKeySpec(ByteArray(32){(it+1).toByte()},"AES")
+        val anchor=ActivationAnchor("existing-customer","existing-password")
+        val vault=ActivationVault(context){key}
+        vault.save(anchor)
+        val file=File(context.noBackupFilesDir,"verified-primary-v1.enc")
+        val backup=File(file.path+".bak")
+        assertTrue(file.renameTo(backup))
+        assertEquals(anchor,ActivationVault(context){key}.load())
+        assertTrue(file.exists())
+    }
     @Test fun primaryBindingIsEncryptedPrivateAndAuthenticatedRatherThanCloudPreferences(){
         val context=ApplicationProvider.getApplicationContext<Application>()
         val key=SecretKeySpec(ByteArray(32){(it+1).toByte()},"AES")

@@ -38,8 +38,21 @@ fun PrimaryActivationGate(controller:PrimaryAccessRepository,content: @Composabl
                 }
             }
             PrimaryGatePage.ACCOUNT_INACTIVE -> AccountAccessNotice(inactive=true)
+            PrimaryGatePage.ACCOUNT_RECOVERY -> AccountRecoveryNotice()
             PrimaryGatePage.VERIFICATION_UNAVAILABLE -> AccountAccessNotice(inactive=false)
             PrimaryGatePage.CONTENT -> key(state.restrictionEpoch){content()}
+        }
+    }
+}
+
+@Composable
+private fun AccountRecoveryNotice(){
+    BackHandler{}
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),contentAlignment=Alignment.Center){
+        Column(Modifier.widthIn(max=680.dp).padding(32.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(20.dp)){
+            Text("Unable to restore account access",style=MaterialTheme.typography.headlineMedium,textAlign=TextAlign.Center)
+            Text("Your saved account could not be safely restored. We’ll check again automatically. If this continues, please contact your provider.",style=MaterialTheme.typography.bodyLarge,textAlign=TextAlign.Center)
+            Text("Do not uninstall the app or clear its data.",style=MaterialTheme.typography.bodyMedium,textAlign=TextAlign.Center)
         }
     }
 }
