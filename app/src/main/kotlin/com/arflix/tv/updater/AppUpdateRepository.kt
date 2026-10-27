@@ -113,13 +113,7 @@ class AppUpdateRepository @Inject constructor(
                     } else {
                         dto.name?.takeIf { it.isNotBlank() } ?: tag
                     }
-                    val candidates = if (BuildConfig.BRAND_ID.isNotBlank()) {
-                        val expectedName = ReleaseVersionPolicy.brandAssetName(displayVersion)
-                            ?: error("Invalid branded update version")
-                        // Rolling channels retain immutable older APKs. Never let ABI
-                        // selection choose another revision or a generic package.
-                        dto.assets.filter { it.name == expectedName }
-                    } else dto.assets
+                    val candidates = UpdateAssetPolicy.candidates(dto.assets,channelTag,displayVersion,branded)
                     val asset = AbiSelector.chooseBestApkAsset(candidates)
                         ?: error(context.getString(R.string.update_error_no_apk_asset))
                     if (branded && !BrandUpdatePolicy.acceptsAsset(asset.browserDownloadUrl, displayVersion)) {
