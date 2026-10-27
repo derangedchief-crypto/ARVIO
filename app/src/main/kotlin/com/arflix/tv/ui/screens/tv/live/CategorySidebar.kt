@@ -470,27 +470,7 @@ fun CategorySidebar(
                     )
                 }
             }
-            if (tree.hidden.categories.isNotEmpty()) {
-                item { SectionHeader(liveSectionLabel(tree.hidden.label), expanded) }
-                itemsIndexed(tree.hidden.categories, key = { index, cat -> "hidden:${cat.id}:$index" }) { _, cat ->
-                    SidebarRow(
-                        label = liveCategoryLabel(cat.label),
-                        count = cat.count,
-                        icon = Icons.Filled.VisibilityOff,
-                        active = false,
-                        expanded = expanded,
-                        focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
-                        onFocused = { onCategoryFocused() },
-                        onLongClick = {
-                            openCategoryMenu(cat, hidden = true)
-                        },
-                        onClick = {
-                            val groupName = cat.playlistGroupName ?: return@SidebarRow
-                            onUnhideCategory(cat.playlistId, groupName)
-                        },
-                    )
-                }
-            }
+            // Restore hidden categories in Settings, not in the browsing sidebar.
             if (tree.countries.categories.isNotEmpty()) {
                 item { SectionHeader(liveSectionLabel(tree.countries.label), expanded) }
                 itemsIndexed(tree.countries.categories, key = { index, country -> "country:${country.id}:$index" }) { _, country ->

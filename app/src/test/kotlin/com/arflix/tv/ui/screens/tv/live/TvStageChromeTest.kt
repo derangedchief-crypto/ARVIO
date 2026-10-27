@@ -154,11 +154,17 @@ class TvStageChromeTest {
         File("/tmp/opencode/tv-stage-desktop.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
-    @Test fun hiddenFoldersStayManagementOnly() {
-        val hidden = news.copy(id = "hidden-news")
+    @Test fun hiddenFoldersAreAbsentFromTvNavigation() {
+        val hidden = news.copy(id = "hidden-news", label = "Secret category")
         val entries = tvStageFolders(tree.copy(hidden = LiveSection("hidden", "HIDDEN", listOf(hidden))), emptyList())
-        assertTrue(entries.single { it.category.id == hidden.id }.hidden)
+        assertTrue(entries.none { it.category.id == hidden.id || it.hidden || it.section == "HIDDEN" })
         assertEquals(entries.size, entries.map { it.category.id }.distinct().size)
+        compose.setContent {
+            OwnTvCategoryPanel(tree.copy(hidden = LiveSection("hidden", "HIDDEN", listOf(hidden))), "all",
+                expanded = true, listState = rememberLazyListState(), onSelect = {}, onOpenSearch = {})
+        }
+        compose.onNodeWithText("Secret category").assertDoesNotExist()
+        compose.onNodeWithText("Hidden").assertDoesNotExist()
     }
 
     @Test fun fullscreenControlsKeepPlayerCallbacks() {

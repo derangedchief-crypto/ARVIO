@@ -244,8 +244,7 @@ internal fun tvStageFolders(tree: LiveCategoryTree, playlists: List<PlaylistCate
         tree.global.categories.forEach { append(it, tree.global.label) }
         tree.countries.categories.forEach { append(it, tree.countries.label) }
     }
-    // Hidden folders are management entries, never selectable channel categories.
-    tree.hidden.categories.forEach { append(it, tree.hidden.label, hidden = true) }
+    // Hidden categories belong only in Settings management, never TV navigation.
     return folders
 }
 
