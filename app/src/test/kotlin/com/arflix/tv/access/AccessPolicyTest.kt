@@ -70,7 +70,20 @@ class AccessPolicyTest {
     }
     @Test fun confirmedInvalidCannotUsePriorGraceEvenIfTheNextRequestFails()=runBlocking {
         val r=repo();r.refresh();assertTrue(r.primaryAllowed());coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Invalid;r.refresh();assertFalse(r.primaryAllowed())
+        assertEquals(PrimaryGatePage.ACCOUNT_INACTIVE,r.state.value.gatePage())
         coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Unknown;r.refresh();assertFalse(r.primaryAllowed());assertFalse(r.extrasAllowed())
+        assertEquals(PrimaryGatePage.ACCOUNT_INACTIVE,r.state.value.gatePage())
+    }
+    @Test fun restoredAccountReturnsAutomaticallyWithoutAnotherCodeOrBindingWrite()=runBlocking {
+        val r=repo();r.refresh();coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Invalid;r.refresh()
+        assertEquals(PrimaryGatePage.ACCOUNT_INACTIVE,r.state.value.gatePage())
+        coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Valid(900);r.refresh()
+        assertEquals(PrimaryGatePage.CONTENT,r.state.value.gatePage());assertTrue(r.state.value.bound)
+        verify(exactly=0){anyConstructed<ActivationVault>().save(any())}
+    }
+    @Test fun unavailableValidationForASavedBindingDoesNotAskForActivationAgain()=runBlocking {
+        coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Unknown
+        val r=repo();r.refresh();assertEquals(PrimaryGatePage.VERIFICATION_UNAVAILABLE,r.state.value.gatePage());assertFalse(r.state.value.accountInactive)
     }
     @Test fun signedControlCenterPrimaryNegativeOverridesAnOtherwiseStaleProviderPositive()=runBlocking {
         coEvery{anyConstructed<ExtraPlaylistLicence>().decision(any())}returns ExtraPlaylistDecision(false,primaryInvalid=true)

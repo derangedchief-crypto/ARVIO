@@ -93,4 +93,14 @@ data class PrimaryAccessState(
     val message:String="Checking activation line",
     val restrictionEpoch:Long=0,
     val bindingRevision:Long=0,
+    val accountInactive:Boolean=false,
 )
+
+internal enum class PrimaryGatePage { CHECKING, ACTIVATION, ACCOUNT_INACTIVE, VERIFICATION_UNAVAILABLE, CONTENT }
+internal fun PrimaryAccessState.gatePage():PrimaryGatePage=when {
+    checking -> PrimaryGatePage.CHECKING
+    primaryAllowed -> PrimaryGatePage.CONTENT
+    !bound -> PrimaryGatePage.ACTIVATION
+    accountInactive -> PrimaryGatePage.ACCOUNT_INACTIVE
+    else -> PrimaryGatePage.VERIFICATION_UNAVAILABLE
+}
