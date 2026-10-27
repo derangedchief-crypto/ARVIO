@@ -314,6 +314,7 @@ class StreamRepository @Inject constructor(
     private val telegramSourceResolver: TelegramSourceResolver
 ) {
     private val gson = Gson()
+    fun requirePrimaryPlayback(expectedBinding:Long?=null)=iptvRepository.requirePrimaryPlayback(expectedBinding)
     private val TAG = "StreamRepository"
     private val openSubtitlesUrl = "https://opensubtitles-v3.strem.io/subtitles"
     private data class CachedStreamResult(
@@ -327,7 +328,8 @@ class StreamRepository @Inject constructor(
     )
     private data class CachedResolvedStream(
         val stream: StreamSource,
-        val createdAtMs: Long
+        val createdAtMs: Long,
+        val bindingRevision:Long,
     )
     data class LastGoodPlaybackPreference(
         val addonId: String = "",
@@ -1164,12 +1166,15 @@ class StreamRepository @Inject constructor(
             prefs.registerOnSharedPreferenceChangeListener(listener)
             trySend(trackedCloudAddonId())
             awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
-        }) { addons, trackedId ->
-            hasEntitledExtremeCloudSource(addons, Constants.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL, trackedId)
+        },iptvRepository.primaryAccessState) { addons, trackedId, primary ->
+            primary.primaryAllowed&&iptvRepository.primaryPlaybackAllowed()&&hasEntitledExtremeCloudSource(addons, Constants.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL, trackedId)
         }.catch { emit(false) }
 
     suspend fun hasExtremeCloudAccess(): Boolean = try {
-        hasEntitledExtremeCloudSource(installedAddons.first(), Constants.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL, trackedCloudAddonId())
+        if(!iptvRepository.primaryPlaybackAllowed())false else {
+            val addons=installedAddons.first()
+            iptvRepository.primaryPlaybackAllowed()&&hasEntitledExtremeCloudSource(addons, Constants.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL, trackedCloudAddonId())
+        }
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Exception) {
@@ -2237,8 +2242,9 @@ class StreamRepository @Inject constructor(
         tmdbId: Int? = null,
         vodSources: List<StreamSource>? = null,
     ): StreamResult = withContext(Dispatchers.IO) {
+        val binding=requirePrimaryPlayback()
         val vod = vodSources ?: vodForSourceDiscovery { verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId) }
-        fun includeVod(result: StreamResult) = result.copy(streams = mergeVodAndBackupSources(vod, result.streams))
+        fun includeVod(result: StreamResult):StreamResult {requirePrimaryPlayback(binding);return result.copy(streams = mergeVodAndBackupSources(vod, result.streams))}
         if (!hasExtremeCloudAccess()) return@withContext StreamResult(vod, emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
@@ -2266,11 +2272,13 @@ class StreamRepository @Inject constructor(
 
         val prioritizedAddons = streamAddons.sortedByDescending { getAddonHealthBias(it.id) }
         val movieRequest = MovieRuntimeRequest(imdbId = imdbId, title = title, year = year)
+        requirePrimaryPlayback(binding)
         val streams = addonRuntimeAggregator.resolveMovieStreams(
             stremioAddons = prioritizedAddons,
             request = movieRequest
         )
         val filteredStreams = applyQualityRegexFilters(streams)
+        requirePrimaryPlayback(binding)
 
         // Cache only Cloud results. Merge this request's VOD links on output,
         // so cached backups never replace or stale-cache the VOD lookup.
@@ -2297,13 +2305,14 @@ class StreamRepository @Inject constructor(
         vodSources: List<StreamSource>? = null,
     ): Flow<ProgressiveStreamResult> = callbackFlow {
         launch {
+            val binding=try{requirePrimaryPlayback()}catch(e:com.arflix.tv.access.PrimaryPlaybackDeniedException){close(e);return@launch}
             val vod = try {
                 vodSources ?: vodForSourceDiscovery { verifyMovieVodBeforeFallback(imdbId, title, year, tmdbId) }
             } catch (error: Exception) {
                 close(error)
                 return@launch
             }
-            fun publish(result: ProgressiveStreamResult) = trySend(result.copy(streams = mergeVodAndBackupSources(vod, result.streams)))
+            fun publish(result: ProgressiveStreamResult):kotlinx.coroutines.channels.ChannelResult<Unit> {requirePrimaryPlayback(binding);return trySend(result.copy(streams = mergeVodAndBackupSources(vod, result.streams)))}
             val cloudAllowed = hasExtremeCloudAccess()
             if (vod.isNotEmpty()) publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, !cloudAllowed))
             if (!cloudAllowed) {
@@ -2403,6 +2412,7 @@ class StreamRepository @Inject constructor(
             publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, totalAddons, false))
 
             suspend fun sendProgress() {
+                requirePrimaryPlayback(binding)
                 // Dedup is scoped PER ADDON (addonId in the key, here and at every other stream
                 // merge site): aggregators (AIOStreams) legitimately return the same debrid
                 // resolve-URLs as the standalone addons they wrap (Torrentio/Debridio on the same
@@ -2499,21 +2509,27 @@ class StreamRepository @Inject constructor(
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {
+        if(error is com.arflix.tv.access.PrimaryPlaybackDeniedException)throw error
+        requirePrimaryPlayback()
         if (!hasExtremeCloudAccess()) throw error
         emptyList()
     }
 
     /** Brand fresh and cached backup results without changing provider identity or debrid handling. */
     private suspend fun presentExtremeCloudSources(sources: List<StreamSource>): List<StreamSource> {
+        val binding=requirePrimaryPlayback()
         fun local(source: StreamSource) = source.addonId == "iptv_xtream_vod" || source.addonId == HomeServerRepository.ADDON_ID
         if (sources.all(::local)) return sources
-        if (!hasExtremeCloudAccess()) return sources.filter(::local)
+        val cloudAllowed=hasExtremeCloudAccess()
+        requirePrimaryPlayback(binding)
+        if (!cloudAllowed) return sources.filter(::local)
         return sources.map { if (local(it)) it else it.copy(displayAddonName = "Extreme Cloud") }
     }
 
     suspend fun verifyEpisodeVodBeforeFallback(
         imdbId: String?, title: String, season: Int, episode: Int, tmdbId: Int? = null,
     ): List<StreamSource> = withContext(Dispatchers.IO) {
+        val binding=requirePrimaryPlayback()
         val source = iptvRepository.vodLookupScopeKey()
         val result = vodLookups.get(sourceLookupKey(source, "episode-vod", imdbId, title, season, episode, tmdbId)) {
             withTimeoutOrNull(90_000L) {
@@ -2521,6 +2537,7 @@ class StreamRepository @Inject constructor(
             } ?: throw VodVerificationException()
         }
         if (source != iptvRepository.vodLookupScopeKey()) throw CancellationException("VOD lookup source changed")
+        requirePrimaryPlayback(binding)
         result
     }
 
@@ -2531,6 +2548,7 @@ class StreamRepository @Inject constructor(
         year: Int?,
         tmdbId: Int? = null,
     ): List<StreamSource> = withContext(Dispatchers.IO) {
+        val binding=requirePrimaryPlayback()
         val source = iptvRepository.vodLookupScopeKey()
         val result = vodLookups.get(sourceLookupKey(source, "movie-vod", imdbId, title, year, tmdbId)) {
             withTimeoutOrNull(90_000L) {
@@ -2539,6 +2557,7 @@ class StreamRepository @Inject constructor(
             } ?: throw VodVerificationException()
         }
         if (source != iptvRepository.vodLookupScopeKey()) throw CancellationException("VOD lookup source changed")
+        requirePrimaryPlayback(binding)
         result
     }
 
@@ -2736,8 +2755,9 @@ class StreamRepository @Inject constructor(
         airDate: String? = null,
         vodSources: List<StreamSource>? = null,
     ): StreamResult = withContext(Dispatchers.IO) {
+        val binding=requirePrimaryPlayback()
         val vod = vodSources ?: vodForSourceDiscovery { verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId) }
-        fun includeVod(result: StreamResult) = result.copy(streams = mergeVodAndBackupSources(vod, result.streams))
+        fun includeVod(result: StreamResult):StreamResult {requirePrimaryPlayback(binding);return result.copy(streams = mergeVodAndBackupSources(vod, result.streams))}
         if (!hasExtremeCloudAccess()) return@withContext StreamResult(vod, emptyList())
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
@@ -2782,11 +2802,13 @@ class StreamRepository @Inject constructor(
             airDate = airDate,
             animeQueryOverride = animeQueryOverride
         )
+        requirePrimaryPlayback(binding)
         val streams = addonRuntimeAggregator.resolveEpisodeStreams(
             stremioAddons = prioritizedAddons,
             request = episodeRequest
         )
         val filteredStreams = applyQualityRegexFilters(streams)
+        requirePrimaryPlayback(binding)
 
         // Store Cloud metadata separately; keep the current VOD result on every output.
 
@@ -2812,13 +2834,14 @@ class StreamRepository @Inject constructor(
         vodSources: List<StreamSource>? = null,
     ): Flow<ProgressiveStreamResult> = callbackFlow {
         launch {
+            val binding=try{requirePrimaryPlayback()}catch(e:com.arflix.tv.access.PrimaryPlaybackDeniedException){close(e);return@launch}
             val vod = try {
                 vodSources ?: vodForSourceDiscovery { verifyEpisodeVodBeforeFallback(imdbId, title, season, episode, tmdbId) }
             } catch (error: Exception) {
                 close(error)
                 return@launch
             }
-            fun publish(result: ProgressiveStreamResult) = trySend(result.copy(streams = mergeVodAndBackupSources(vod, result.streams)))
+            fun publish(result: ProgressiveStreamResult):kotlinx.coroutines.channels.ChannelResult<Unit> {requirePrimaryPlayback(binding);return trySend(result.copy(streams = mergeVodAndBackupSources(vod, result.streams)))}
             val cloudAllowed = hasExtremeCloudAccess()
             if (vod.isNotEmpty()) publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, !cloudAllowed))
             if (!cloudAllowed) {
@@ -2909,6 +2932,7 @@ class StreamRepository @Inject constructor(
             publish(ProgressiveStreamResult(emptyList(), emptyList(), 0, totalAddons, false))
 
             suspend fun sendProgress() {
+                requirePrimaryPlayback(binding)
                 // Dedup is scoped PER ADDON (addonId in the key, here and at every other stream
                 // merge site): aggregators (AIOStreams) legitimately return the same debrid
                 // resolve-URLs as the standalone addons they wrap (Torrentio/Debridio on the same
@@ -3445,8 +3469,9 @@ class StreamRepository @Inject constructor(
         }
     }
 
-    private fun cachedResolvedStream(stream: StreamSource): StreamSource? {
+    private fun cachedResolvedStream(stream: StreamSource,binding:Long): StreamSource? {
         val cached = resolvedStreamCache[resolvedStreamCacheKey(stream)] ?: return null
+        if(cached.bindingRevision!=binding)return null
         val ageMs = System.currentTimeMillis() - cached.createdAtMs
         return if (ageMs <= resolvedStreamCacheTtlMs(cached.stream)) {
             cached.stream
@@ -3736,22 +3761,26 @@ class StreamRepository @Inject constructor(
      * Resolve a single stream for playback - with timeout to prevent hanging forever
      */
     suspend fun resolveStreamForPlayback(stream: StreamSource): StreamSource? = withContext(Dispatchers.IO) {
+        val binding=requirePrimaryPlayback()
         val protectedIptv=stream.addonId=="iptv_xtream_vod"
         if(protectedIptv&&!iptvRepository.canPlayIptvStream(stream.url.orEmpty()))return@withContext null
-        cachedResolvedStream(stream)?.let {
+        cachedResolvedStream(stream,binding)?.let {
+            requirePrimaryPlayback(binding)
             if(protectedIptv)iptvRepository.registerResolvedPrimary(stream.url.orEmpty(),it.url.orEmpty())
             return@withContext it.copy(displayAddonName = stream.displayAddonName ?: it.displayAddonName)
         }
         try {
             withTimeout(STREAM_RESOLUTION_TIMEOUT_MS) {
                 resolveStreamInternal(stream)?.also { resolved ->
+                    requirePrimaryPlayback(binding)
                     if(protectedIptv){
                         if(!iptvRepository.canPlayIptvStream(stream.url.orEmpty()))return@withTimeout null
                         iptvRepository.registerResolvedPrimary(stream.url.orEmpty(),resolved.url.orEmpty())
                     }
                     resolvedStreamCache[resolvedStreamCacheKey(stream)] = CachedResolvedStream(
                         stream = resolved,
-                        createdAtMs = System.currentTimeMillis()
+                        createdAtMs = System.currentTimeMillis(),
+                        bindingRevision = binding,
                     )
                 }
             }
@@ -3763,6 +3792,7 @@ class StreamRepository @Inject constructor(
             )
             null
         } catch (e: Exception) {
+            if(e is com.arflix.tv.access.PrimaryPlaybackDeniedException)throw e
             if (e is kotlinx.coroutines.CancellationException) throw e
 
             AppLogger.breadcrumb(
@@ -3778,11 +3808,14 @@ class StreamRepository @Inject constructor(
         stream: StreamSource,
         allowNetworkWarmup: Boolean = true
     ): StreamSource? = withContext(Dispatchers.IO) {
+        val binding=requirePrimaryPlayback()
         if (!canPrewarmWithoutSideEffects(stream)) return@withContext null
         val resolved = resolveStreamForPlayback(stream) ?: return@withContext null
+        requirePrimaryPlayback(binding)
         if (allowNetworkWarmup && canPrewarmWithoutSideEffects(resolved)) {
             warmHttpConnection(resolved)
         }
+        requirePrimaryPlayback(binding)
         resolved
     }
 
@@ -3911,7 +3944,8 @@ class StreamRepository @Inject constructor(
 
     suspend fun isHttpStreamReachable(stream: StreamSource, timeoutMs: Long = 2_500L): Boolean =
         withContext(Dispatchers.IO) {
-            val resolved = resolveStreamInternal(stream) ?: return@withContext false
+            requirePrimaryPlayback()
+            val resolved = resolveStreamForPlayback(stream) ?: return@withContext false
             val rawUrl = resolved.url?.trim().orEmpty()
             if (rawUrl.isBlank()) return@withContext false
             if (!(rawUrl.startsWith("http://", true) || rawUrl.startsWith("https://", true))) {

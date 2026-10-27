@@ -580,6 +580,7 @@ class PlayerViewModel @Inject constructor(
 
         viewModelScope.launch {
             // Autoplay should always use the current highest-ranked source list.
+            val primaryBinding=primaryPlaybackBinding()?:return@launch
             // Explicit source navigation still passes preferred fields or a URL below.
             val preferredAudioLanguage = resolvePreferredAudioLanguage()
             val frameRateMatchingMode = resolveFrameRateMatchingMode()
@@ -673,11 +674,15 @@ class PlayerViewModel @Inject constructor(
             val preResolvedHubStream = if (providedIsHubPage) {
                 _uiState.value = _uiState.value.copy(streamLoadPhase = "Preparing stream")
                 providedStreamCandidate?.let { stream ->
-                    runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrNull()
+                    runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrElse { error ->
+                        if(error is com.arflix.tv.access.PrimaryPlaybackDeniedException){blockPrimaryPlayback();return@launch}
+                        null
+                    }
                 }
             } else {
                 null
             }
+            if(primaryPlaybackBinding(primaryBinding)==null)return@launch
             if (providedIsHubPage && preResolvedHubStream == null) {
                 AppLogger.breadcrumb(
                     tag = "Sources",
@@ -710,10 +715,14 @@ class PlayerViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(streamLoadPhase = "Preparing stream")
                 }
                 val resolvedProvidedStream = preResolvedHubStream ?: providedStream?.let { stream ->
-                    runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrNull() ?: stream
+                    runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrElse { error ->
+                        if(error is com.arflix.tv.access.PrimaryPlaybackDeniedException){blockPrimaryPlayback();return@launch}
+                        null
+                    } ?: stream
                 }
                 val resolvedProvidedUrl = resolvedProvidedStream?.url
                     ?: if (isMagnet) null else effectiveProvidedStreamUrl
+                if(primaryPlaybackBinding(primaryBinding)==null)return@launch
                 playbackDiag(
                     "providedStream resolved=${streamDiag(resolvedProvidedStream)} " +
                         "host=${hostFromUrl(resolvedProvidedUrl)}"
@@ -1887,6 +1896,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun onSelectedStreamPlaybackFailure() {
+        if(primaryPlaybackBinding()==null)return
         val addonId = _uiState.value.selectedStream?.addonId?.trim()
             .takeUnless { it.isNullOrBlank() }
             ?: currentPreferredAddonId.orEmpty()
@@ -2354,10 +2364,17 @@ class PlayerViewModel @Inject constructor(
     /**
      * Select a stream for playback
      */
+    private fun blockPrimaryPlayback(){
+        _uiState.value=_uiState.value.copy(selectedStream=null,selectedStreamUrl=null,isLoading=false,isLoadingStreams=false,sourceSearchActive=false,streamProgress=null,streamLoadPhase=null,error="Primary activation is not verified. Verification retries automatically.")
+    }
+    private fun primaryPlaybackBinding(expected:Long?=null):Long?=try{streamRepository.requirePrimaryPlayback(expected)}catch(_:com.arflix.tv.access.PrimaryPlaybackDeniedException){blockPrimaryPlayback();null}
+
     fun selectStream(stream: StreamSource, resumePositionMs: Long? = null) {
+        val primaryBinding=primaryPlaybackBinding()?:return
         streamSelectionJob?.cancel()
         playbackErrorReportJob?.cancel()
         streamSelectionJob = viewModelScope.launch {
+            if(primaryPlaybackBinding(primaryBinding)==null)return@launch
             val selectionStartMs = System.currentTimeMillis()
             val requestedResumePosition = resumePositionMs?.coerceAtLeast(0L)
             var selectedOriginal = stream
@@ -2374,6 +2391,8 @@ class PlayerViewModel @Inject constructor(
             val resolvedResult = runCatching {
                 streamRepository.resolveStreamForPlayback(stream)
             }
+            if(resolvedResult.exceptionOrNull() is com.arflix.tv.access.PrimaryPlaybackDeniedException){blockPrimaryPlayback();return@launch}
+            if(primaryPlaybackBinding(primaryBinding)==null)return@launch
             resolvedResult.onFailure { error ->
                 AppLogger.recordException(
                     throwable = error,
@@ -2381,11 +2400,12 @@ class PlayerViewModel @Inject constructor(
                 )
             }
             val directResolvedStream = resolvedResult.getOrNull()
-            val selection = when {
+            val selection = try { when {
                 directResolvedStream != null -> ReachableStreamSelection(stream, directResolvedStream)
                 isHubCloudPageUrl(stream.url.orEmpty()) -> findFirstResolvableAlternative(stream)
                 else -> ReachableStreamSelection(stream, stream)
-            }
+            }}catch(_:com.arflix.tv.access.PrimaryPlaybackDeniedException){blockPrimaryPlayback();return@launch}
+            if(primaryPlaybackBinding(primaryBinding)==null)return@launch
             if (selection == null) {
                 AppLogger.recordException(
                     throwable = IllegalStateException("HubCloud source could not be resolved"),
@@ -2403,6 +2423,7 @@ class PlayerViewModel @Inject constructor(
             }
             selectedOriginal = selection.original
             val resolvedStream = selection.resolved
+            if(primaryPlaybackBinding(primaryBinding)==null)return@launch
             val resolveMs = System.currentTimeMillis() - selectionStartMs
             val url = resolvedStream.url
             if (url.isNullOrBlank()) {
@@ -2483,6 +2504,7 @@ class PlayerViewModel @Inject constructor(
             translationManager.isEnabled = false
 
             // Direct URL - use immediately (ExoPlayer handles redirects)
+            if(primaryPlaybackBinding(primaryBinding)==null)return@launch
             _uiState.value = _uiState.value.copy(
                 selectedStream = resolvedStream,
                 selectedStreamUrl = url,
@@ -2553,6 +2575,7 @@ class PlayerViewModel @Inject constructor(
         selected: StreamSource,
         maxAttempts: Int = 4
     ): ReachableStreamSelection? {
+        val primaryBinding=streamRepository.requirePrimaryPlayback()
         val streams = _uiState.value.streams
         if (streams.isEmpty()) return null
 
@@ -2571,9 +2594,14 @@ class PlayerViewModel @Inject constructor(
             .take(maxAttempts)
 
         for (candidate in candidates) {
+            streamRepository.requirePrimaryPlayback(primaryBinding)
             val resolved = runCatching {
                 streamRepository.resolveStreamForPlayback(candidate)
-            }.getOrNull()
+            }.let { result ->
+                (result.exceptionOrNull() as? com.arflix.tv.access.PrimaryPlaybackDeniedException)?.let{throw it}
+                result.getOrNull()
+            }
+            streamRepository.requirePrimaryPlayback(primaryBinding)
             if (resolved != null) return ReachableStreamSelection(candidate, resolved)
 
             // Preserve the existing raw-URL fallback for ordinary HTTP streams, but never
@@ -4527,6 +4555,7 @@ class PlayerViewModel @Inject constructor(
         providedImdbId: String?,
         playbackUrl: String,
     ) {
+        val primaryBinding=primaryPlaybackBinding()?:return
         try {
             val cachedImdbId = currentImdbId ?: mediaRepository.getCachedImdbId(mediaType, mediaId)
             val imdbId = when {
@@ -4576,6 +4605,7 @@ class PlayerViewModel @Inject constructor(
 
             if (currentMediaId != mediaId || currentMediaType != mediaType ||
                 currentSeason != seasonNumber || currentEpisode != episodeNumber) return
+            if(primaryPlaybackBinding(primaryBinding)==null)return
             val allStreams = result.streams
                 .filter { stream ->
                     val u = stream.url?.trim().orEmpty()
@@ -4617,6 +4647,8 @@ class PlayerViewModel @Inject constructor(
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
+        } catch (_:com.arflix.tv.access.PrimaryPlaybackDeniedException) {
+            blockPrimaryPlayback()
         } catch (_: Exception) {
             _uiState.value = _uiState.value.copy(
                 isLoadingStreams = false,

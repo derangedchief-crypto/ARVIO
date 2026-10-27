@@ -9,6 +9,7 @@ import java.security.MessageDigest
 
 internal const val OUTAGE_GRACE_MS=15*60_000L
 internal const val PRIMARY_HOST="https://tv.extremeiptv.net"
+class PrimaryPlaybackDeniedException:IllegalStateException("Primary activation is not currently verified. Verification retries automatically in the background.")
 
 /** Only the official activation-code flow creates this binding. Never infer it
  * from playlist order, an editable source ID, or whichever account still works. */

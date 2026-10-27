@@ -27,7 +27,6 @@ fun PrimaryActivationGate(controller:PrimaryAccessRepository,content: @Composabl
                 BackHandler{}
                 Column(Modifier.fillMaxSize().padding(16.dp)){
                     Text(state.message)
-                    TextButton(onClick=controller::retry){Text("Retry primary verification")}
                     Box(Modifier.weight(1f)){XtreamGateScreen(allowTrial=!state.bound,onLoginSuccess={controller.finishActivation();controller.retry()},onSkip={})}
                 }
             }

@@ -55,6 +55,10 @@ class PrimaryAccessRepository @Inject constructor(@ApplicationContext context:Co
     fun foreground(active:Boolean){foreground=active;if(active)retry()}
     fun watchPlayback():()->Unit {playbackConsumers.incrementAndGet();return {playbackConsumers.decrementAndGet()}}
     fun primaryAllowed():Boolean {val a=anchor?:return false;return primary?.valid(a.identity,SystemClock.elapsedRealtime())==true}
+    fun requirePlayback(expectedBinding:Long?=null):Long {
+        if(!primaryAllowed()||(expectedBinding!=null&&expectedBinding!=bindingRevision))throw PrimaryPlaybackDeniedException()
+        return bindingRevision
+    }
     fun extrasAllowed():Boolean {val a=anchor?:return false;return primaryAllowed()&&extras?.valid(a.identity,SystemClock.elapsedRealtime())==true}
     private fun publish(){
         if(activationPending)return
@@ -114,7 +118,7 @@ class PrimaryAccessRepository @Inject constructor(@ApplicationContext context:Co
         val a=anchor
         if(a==null){initialValidationPending=false;publish();return@withLock}
         when(val result=verify(a)){
-            is LineDecision.Valid->{primary=AccessLease.grant(a.identity,SystemClock.elapsedRealtime(),result.seconds);primaryMessage="Primary validation is temporarily unavailable. Retry when connected."}
+            is LineDecision.Valid->{primary=AccessLease.grant(a.identity,SystemClock.elapsedRealtime(),result.seconds);primaryMessage="Primary validation is temporarily unavailable. Verification retries automatically."}
             LineDecision.Invalid->{primary=null;extras=null;primaryMessage="Your primary activation line is expired, disabled or invalid. Renew it or enter a valid activation code."}
             LineDecision.Unknown->{primaryMessage="Primary validation is unavailable. The 15-minute outage grace has ended, or no prior valid check exists."}
         }

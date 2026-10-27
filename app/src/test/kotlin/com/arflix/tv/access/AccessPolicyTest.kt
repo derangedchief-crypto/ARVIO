@@ -32,6 +32,15 @@ class AccessPolicyTest {
     }
     @After fun cleanup(){unmockkAll()}
     private fun repo()=PrimaryAccessRepository(ApplicationProvider.getApplicationContext())
+    @Test fun primaryVerificationGateContainsNoManualRetryOrSyncControl(){
+        val source=java.io.File("src/main/kotlin/com/arflix/tv/ui/components/PrimaryActivationGate.kt").readText()
+        assertFalse(source.contains("TextButton("));assertFalse(source.contains("onClick"));assertFalse(source.contains("Retry primary verification"))
+    }
+    @Test fun allPlaybackRequiresALivePrimaryLeaseEvenForCloudLinks()=runBlocking {
+        val r=repo();r.refresh();val binding=r.requirePlayback();assertEquals(binding,r.requirePlayback(binding))
+        coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Invalid;r.refresh()
+        try{r.requirePlayback(binding);fail("Cloud and cached URLs must not bypass the primary")}catch(_:PrimaryPlaybackDeniedException){}
+    }
     @Test fun authActiveButExpiredIsInvalid(){assertEquals(LineDecision.Invalid,parsePrimaryDecision(response(expiry=999),null,0))}
     @Test fun disabledBannedAndInvalidCredentialsAreImmediateNegatives(){for(status in listOf("Expired","Banned","Disabled"))assertEquals(LineDecision.Invalid,parsePrimaryDecision(response(status=status),null,0));assertEquals(LineDecision.Invalid,parsePrimaryDecision(response(auth=0),null,0))}
     @Test fun malformedOrMissingExpiryIsNotAValidLine(){val j=response();j.getJSONObject("user_info").remove("exp_date");assertEquals(LineDecision.Unknown,parsePrimaryDecision(j,null,0));assertEquals(LineDecision.Unknown,parsePrimaryDecision(response(expiry="garbage"),null,0))}

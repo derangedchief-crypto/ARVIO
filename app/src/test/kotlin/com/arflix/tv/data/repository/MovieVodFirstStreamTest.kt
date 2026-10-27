@@ -62,12 +62,27 @@ class MovieVodFirstStreamTest {
     @Test fun cloudFailureDoesNotRemoveVod() = fixture(found = true, cloudFails = true)
     @Test fun detailsCanShareMovieVodLookupWithSourceDiscovery() = fixture(found = true, prechecked = true)
     @Test fun detailsCanShareEpisodeVodLookupWithSourceDiscovery() = fixture(found = true, isEpisode = true, prechecked = true)
+    @Test fun invalidPrimaryCannotStartMovieCloudFallback()=fixture(primaryInitiallyActive=false)
+    @Test fun invalidPrimaryCannotStartEpisodeCloudFallback()=fixture(primaryInitiallyActive=false,isEpisode=true)
+    @Test fun invalidPrimaryCannotReturnNonProgressiveCloudSources()=fixture(primaryInitiallyActive=false,nonProgressive=true)
+    @Test fun primaryFailureDuringVodDoesNotTurnIntoCloudFallback()=fixture(invalidateInVod=true)
+    @Test fun primaryFailureDuringCloudCannotPublishLinks()=fixture(invalidateDuringCloud=true)
+    @Test fun primaryFailureDuringEpisodeCloudCannotPublishLinks()=fixture(invalidateDuringCloud=true,isEpisode=true)
+    @Test fun expiredPrimaryCannotReuseCachedMovieCloudSources()=fixture(denyAfterFirst=true,nonProgressive=true)
+    @Test fun expiredPrimaryCannotReuseCachedEpisodeCloudSources()=fixture(denyAfterFirst=true,isEpisode=true,nonProgressive=true)
+    @Test fun expiredPrimaryCannotReuseResolvedDirectCloudUrl()=fixture(resolvedCacheMode=true)
+    @Test fun cloudVisibilityTracksPrimaryInvalidationWithoutRemovingTheAddon()=fixture(observePrimaryRevocation=true)
 
     private fun fixture(found: Boolean = false, unavailable: Boolean = false, cancelLookup: Boolean = false,
         nonProgressive: Boolean = false, isEpisode: Boolean = false, cloudAccess: Boolean = true,
         cloudStateFailure: Boolean = false, repeatLookup: Boolean = false, revokeAfterFirst: Boolean = false,
         observeRevocation: Boolean = false, holdCloud: Boolean = false, cloudFails: Boolean = false,
-        prechecked: Boolean = false) = runBlocking { supervisorScope {
+        prechecked: Boolean = false,primaryInitiallyActive:Boolean=true,invalidateInVod:Boolean=false,
+        invalidateDuringCloud:Boolean=false,denyAfterFirst:Boolean=false,resolvedCacheMode:Boolean=false,
+        observePrimaryRevocation:Boolean=false) = runBlocking { supervisorScope {
+        val primaryActive=java.util.concurrent.atomic.AtomicBoolean(primaryInitiallyActive)
+        val primaryState=MutableStateFlow(com.arflix.tv.access.PrimaryAccessState(checking=false,bound=true,primaryAllowed=primaryInitiallyActive))
+        fun invalidate(){primaryActive.set(false);primaryState.value=primaryState.value.copy(primaryAllowed=false)}
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val cloudStarted = CompletableDeferred<Unit>()
@@ -77,12 +92,18 @@ class MovieVodFirstStreamTest {
         var verified = false
         val calls = java.util.concurrent.atomic.AtomicInteger(0)
         val iptv = mockk<IptvRepository>()
+        fun checkPrimary():Long {if(!primaryActive.get())throw com.arflix.tv.access.PrimaryPlaybackDeniedException();return 1L}
+        every{iptv.requirePrimaryPlayback(null)}answers{checkPrimary()}
+        every{iptv.requirePrimaryPlayback(1L)}answers{checkPrimary()}
+        every{iptv.primaryPlaybackAllowed()}answers{primaryActive.get()}
+        every{iptv.primaryAccessState}returns primaryState
         coEvery { iptv.vodLookupScopeKey() } returns "fixture-vod-account"
         suspend fun lookup(): List<StreamSource> {
             lookups.incrementAndGet()
             started.complete(Unit)
             release.await()
             verified = true
+            if(invalidateInVod){invalidate();throw VodVerificationException()}
             if (unavailable) throw VodVerificationException()
             return if (found) listOf(vod) else emptyList()
         }
@@ -96,6 +117,7 @@ class MovieVodFirstStreamTest {
             cloudStarted.complete(Unit)
             if (holdCloud) cloudRelease.await()
             if (cloudFails) throw java.io.IOException("Cloud temporarily unavailable")
+            if(invalidateDuringCloud)invalidate()
             return listOf(cloud)
         }
         coEvery { runtime.resolveMovieStreams(any(), any(), any(), any()) } coAnswers {
@@ -132,6 +154,20 @@ class MovieVodFirstStreamTest {
             else -> repository.resolveMovieStreamsProgressive("tt1234567", "Masterplan", 2026, tmdbId = 12345, vodSources = known).onEach { emissions.send(it) }.toList().last().streams
         }
         try {
+            if(!primaryInitiallyActive){
+                try{resolve();fail("Invalid primary must deny Cloud discovery")}catch(_:com.arflix.tv.access.PrimaryPlaybackDeniedException){}
+                assertEquals(0,calls.get());assertEquals(0,lookups.get());return@supervisorScope
+            }
+            if(resolvedCacheMode){
+                assertNotNull(repository.resolveStreamForPlayback(cloud));invalidate()
+                try{repository.resolveStreamForPlayback(cloud);fail("Resolved cache must not bypass primary access")}catch(_:com.arflix.tv.access.PrimaryPlaybackDeniedException){}
+                return@supervisorScope
+            }
+            if(observePrimaryRevocation){
+                val observed=kotlinx.coroutines.channels.Channel<Boolean>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                val observer=launch{repository.extremeCloudAccess.distinctUntilChanged().take(2).collect{observed.send(it)}}
+                assertTrue(withTimeout(5000){observed.receive()});invalidate();assertFalse(withTimeout(5000){observed.receive()});observer.join();return@supervisorScope
+            }
             if (observeRevocation) {
                 val observed = kotlinx.coroutines.channels.Channel<Boolean>(kotlinx.coroutines.channels.Channel.UNLIMITED)
                 val observer = launch { repository.extremeCloudAccess.distinctUntilChanged().take(2).collect { observed.send(it) } }
@@ -158,6 +194,7 @@ class MovieVodFirstStreamTest {
                 }
                 try {
                     val sources = result.await()
+                    assertFalse(invalidateInVod||invalidateDuringCloud)
                     assertFalse(unavailable && !cloudAccess)
                     val expectedVod = if (found && !unavailable) listOf(vod) else emptyList()
                     val expectedCloud = if (cloudAccess && !cloudFails) listOf(cloud.copy(displayAddonName = "Extreme Cloud")) else emptyList()
@@ -167,9 +204,11 @@ class MovieVodFirstStreamTest {
                         prefs.edit().remove("granted_addon_id:cloud_stream").commit()
                         assertEquals(expectedVod, resolve())
                     }
+                    if(denyAfterFirst){invalidate();try{resolve();fail("Cached sources require a valid primary")}catch(_:com.arflix.tv.access.PrimaryPlaybackDeniedException){}}
                 } catch (error: VodVerificationException) { if (!unavailable) throw error }
+                catch(error:com.arflix.tv.access.PrimaryPlaybackDeniedException){if(!invalidateInVod&&!invalidateDuringCloud)throw error}
             }
-            assertEquals(if (cancelLookup || !cloudAccess) 0 else 1, calls.get())
+            assertEquals(if (cancelLookup || !cloudAccess||invalidateInVod) 0 else 1, calls.get())
             if (prechecked) assertEquals(0, lookups.get())
         } finally {
             val field = StreamRepository::class.java.getDeclaredField("repositoryScope").apply { isAccessible = true }

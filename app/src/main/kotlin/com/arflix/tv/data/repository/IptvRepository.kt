@@ -270,6 +270,9 @@ class IptvRepository @Inject constructor(
         else c.playlists.any{it.enabled&&id.startsWith("${it.id}:")}
     }
     fun canPlayIptvStream(url:String)=primaryAccess.permitsIptvUrl(url)
+    val primaryAccessState get()=primaryAccess.state
+    fun primaryPlaybackAllowed()=primaryAccess.primaryAllowed()
+    fun requirePrimaryPlayback(expectedBinding:Long?=null)=primaryAccess.requirePlayback(expectedBinding)
     fun registerResolvedPrimary(original:String,resolved:String)=primaryAccess.registerResolvedPrimary(original,resolved)
     /** Retain every saved source and its ID; a legacy extra named list_1 never
      * becomes the activation authority. The new binding is verified separately. */
