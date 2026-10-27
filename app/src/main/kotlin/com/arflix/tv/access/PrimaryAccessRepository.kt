@@ -26,6 +26,7 @@ import javax.inject.Singleton
 @Singleton
 class PrimaryAccessRepository @Inject constructor(@ApplicationContext context:Context) {
     private val vault=ActivationVault(context)
+    private val legacyRecovery=LegacyActivationRecovery(context)
     private val licences=ExtraPlaylistLicence(context)
     private val verifier=PrimaryLineVerifier()
     private val mutex=Mutex()
@@ -38,6 +39,7 @@ class PrimaryAccessRepository @Inject constructor(@ApplicationContext context:Co
     @Volatile private var initialValidationPending=true
     @Volatile private var activationPending=false
     @Volatile private var accountInactive=false
+    @Volatile private var recoveryRequired=false
     @Volatile private var bindingRevision=0L
     @Volatile private var primaryMessage="Confirm your activation code to secure this installation. Saved playlists and favourites stay intact."
     private var started=false
@@ -65,7 +67,7 @@ class PrimaryAccessRepository @Inject constructor(@ApplicationContext context:Co
         if(activationPending)return
         val old=_state.value;val allowed=primaryAllowed();val extra=extrasAllowed()
         val epoch=old.restrictionEpoch+if((old.primaryAllowed&&!allowed)||old.bindingRevision!=bindingRevision)1 else 0
-        _state.value=PrimaryAccessState(!initialized||initialValidationPending,anchor!=null,allowed,extra,if(allowed)"Activation line verified" else primaryMessage,epoch,bindingRevision,accountInactive)
+        _state.value=PrimaryAccessState((!initialized&&!recoveryRequired)||initialValidationPending,anchor!=null,allowed,extra,if(allowed)"Activation line verified" else primaryMessage,epoch,bindingRevision,accountInactive,recoveryRequired)
     }
     private fun canonical(a:ActivationAnchor)=IptvPlaylistEntry("list_1","Primary activation",
         "$PRIMARY_HOST/get.php?username=${java.net.URLEncoder.encode(a.username,"UTF-8")}&password=${java.net.URLEncoder.encode(a.password,"UTF-8")}&type=m3u_plus&output=ts")
@@ -109,13 +111,29 @@ class PrimaryAccessRepository @Inject constructor(@ApplicationContext context:Co
             saveConfig()
             vault.save(candidate)
             anchor=candidate;primary=lease;extras=null;extrasGraceEligible=false;bindingRevision++
-            initialized=true;initialValidationPending=false;accountInactive=false;primaryMessage="Activation line verified"
+            initialized=true;initialValidationPending=false;accountInactive=false;recoveryRequired=false;primaryMessage="Activation line verified"
         }catch(e:Throwable){activationPending=false;publish();throw e}
     }
     fun finishActivation(){activationPending=false;if(!primaryAllowed())primaryMessage="The primary verification expired during sign-in. Retry or renew the activation line.";publish()}
     suspend fun refresh()=mutex.withLock {
         if(activationPending)return@withLock
-        if(!initialized){anchor=runCatching{vault.load()}.getOrNull();initialized=true}
+        if(!initialized){
+            try {
+                val existing=vault.load()
+                if(existing!=null){anchor=existing;recoveryRequired=false;initialized=true}
+                else when(val recovered=legacyRecovery.recover()){
+                    LegacyRecovery.Fresh->{recoveryRequired=false;initialized=true}
+                    LegacyRecovery.Unresolved->{recoveryRequired=true}
+                    is LegacyRecovery.Identified->{
+                        // Persist the identified account BEFORE checking activity. Never
+                        // fall through to an active extra if this primary is expired.
+                        vault.save(recovered.anchor)
+                        anchor=recovered.anchor;recoveryRequired=false;initialized=true
+                    }
+                }
+            }catch(e:CancellationException){throw e}
+            catch(_:Exception){recoveryRequired=true}
+        }
         val a=anchor
         if(a==null){initialValidationPending=false;publish();return@withLock}
         when(val result=verify(a)){

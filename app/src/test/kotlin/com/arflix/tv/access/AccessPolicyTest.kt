@@ -24,7 +24,8 @@ class AccessPolicyTest {
     private val anchor=ActivationAnchor("primary","secret")
     private fun response(auth:Int=1,status:String="Active",expiry:Any=1060)=JSONObject().put("user_info",JSONObject().put("auth",auth).put("status",status).put("exp_date",expiry)).put("server_info",JSONObject().put("timestamp_now",1000))
     @Before fun setup(){
-        mockkConstructor(ActivationVault::class,PrimaryLineVerifier::class,ExtraPlaylistLicence::class)
+        mockkConstructor(ActivationVault::class,PrimaryLineVerifier::class,ExtraPlaylistLicence::class,LegacyActivationRecovery::class)
+        coEvery{anyConstructed<LegacyActivationRecovery>().recover()}returns LegacyRecovery.Fresh
         every{anyConstructed<ActivationVault>().load()}returns anchor
         every{anyConstructed<ActivationVault>().save(any())}just Runs
         coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Valid(900)
@@ -108,7 +109,82 @@ class AccessPolicyTest {
         val old=repo();old.refresh();assertTrue(old.primaryAllowed());coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Unknown
         val restarted=repo();restarted.refresh();assertFalse(restarted.primaryAllowed())
     }
-    @Test fun noTrustedLegacyBindingMeansActivationConfirmationNotPlaylistAdoption()=runBlocking {
+    @Test fun genuinelyFreshInstallationDoesNotAdoptAnArbitraryPlaybackConfig()=runBlocking {
         every{anyConstructed<ActivationVault>().load()}returns null;val r=repo();r.refresh();assertFalse(r.state.value.bound);assertFalse(r.primaryAllowed());assertEquals(IptvConfig(),r.playbackConfig(IptvConfig(m3uUrl="https://tv.extremeiptv.net extra pass")))
+    }
+    @Test fun legacy117ApprovedAccountMigratesWithoutActivationOrConfigReplacement()=runBlocking {
+        every{anyConstructed<ActivationVault>().load()}returns null
+        coEvery{anyConstructed<LegacyActivationRecovery>().recover()}returns LegacyRecovery.Identified(anchor)
+        val r=repo();r.refresh()
+        assertEquals(PrimaryGatePage.CONTENT,r.state.value.gatePage())
+        verify(exactly=1){anyConstructed<ActivationVault>().save(anchor)}
+        val saved=IptvConfig(playlists=listOf(IptvPlaylistEntry("old-primary-id","Old label","https://tv.extremeiptv.net primary secret")))
+        assertEquals("old-primary-id",r.playbackConfig(saved).playlists.single().id)
+    }
+    @Test fun legacyExpiredAccountDoesNotFallBackToActivationOrExtra()=runBlocking {
+        every{anyConstructed<ActivationVault>().load()}returns null
+        coEvery{anyConstructed<LegacyActivationRecovery>().recover()}returns LegacyRecovery.Identified(anchor)
+        coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Invalid
+        val r=repo();r.refresh();assertEquals(PrimaryGatePage.ACCOUNT_INACTIVE,r.state.value.gatePage())
+        assertFalse(r.primaryAllowed());verify(exactly=1){anyConstructed<ActivationVault>().save(anchor)}
+    }
+    @Test fun migratedAccountOutageShowsConnectionNoticeAndRecoversWithoutCode()=runBlocking {
+        every{anyConstructed<ActivationVault>().load()}returns null
+        coEvery{anyConstructed<LegacyActivationRecovery>().recover()}returns LegacyRecovery.Identified(anchor)
+        coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Unknown
+        val r=repo();r.refresh();assertEquals(PrimaryGatePage.VERIFICATION_UNAVAILABLE,r.state.value.gatePage())
+        coEvery{anyConstructed<PrimaryLineVerifier>().check(any())}returns LineDecision.Valid(900)
+        r.refresh();assertEquals(PrimaryGatePage.CONTENT,r.state.value.gatePage())
+        verify(exactly=1){anyConstructed<ActivationVault>().save(anchor)}
+    }
+    @Test fun unreadableBindingDoesNotBecomeFreshActivationOrAdoptAPlaylist()=runBlocking {
+        every{anyConstructed<ActivationVault>().load()}throws java.io.IOException("Unreadable")
+        val r=repo();r.refresh();assertEquals(PrimaryGatePage.ACCOUNT_RECOVERY,r.state.value.gatePage())
+        coVerify(exactly=0){anyConstructed<LegacyActivationRecovery>().recover()}
+        verify(exactly=0){anyConstructed<ActivationVault>().save(any())}
+        every{anyConstructed<ActivationVault>().load()}returns anchor
+        r.refresh();assertEquals(PrimaryGatePage.CONTENT,r.state.value.gatePage())
+    }
+    @Test fun failedMigrationWriteIsRetryableAndNeverOpensFirstActivation()=runBlocking {
+        every{anyConstructed<ActivationVault>().load()}returns null
+        coEvery{anyConstructed<LegacyActivationRecovery>().recover()}returns LegacyRecovery.Identified(anchor)
+        every{anyConstructed<ActivationVault>().save(any())}throws java.io.IOException("Write failed")
+        val r=repo();r.refresh();assertEquals(PrimaryGatePage.ACCOUNT_RECOVERY,r.state.value.gatePage());assertFalse(r.primaryAllowed())
+        every{anyConstructed<ActivationVault>().save(any())}just Runs
+        r.refresh();assertEquals(PrimaryGatePage.CONTENT,r.state.value.gatePage())
+    }
+    @Test fun unresolvedLegacyAccountNeverShowsActivationAndDoesNotOverwriteAnything()=runBlocking {
+        every{anyConstructed<ActivationVault>().load()}returns null
+        coEvery{anyConstructed<LegacyActivationRecovery>().recover()}returns LegacyRecovery.Unresolved
+        val r=repo();repeat(2){r.refresh();assertEquals(PrimaryGatePage.ACCOUNT_RECOVERY,r.state.value.gatePage())}
+        verify(exactly=0){anyConstructed<ActivationVault>().save(any())}
+    }
+    @Test fun existing123BindingSkipsLegacyMigrationEntirely()=runBlocking {
+        val r=repo();r.refresh();assertEquals(PrimaryGatePage.CONTENT,r.state.value.gatePage())
+        coVerify(exactly=0){anyConstructed<LegacyActivationRecovery>().recover()}
+        verify(exactly=0){anyConstructed<ActivationVault>().save(any())}
+    }
+    @Test fun migrated117BindingSurvivesNextProcessAndNextUpdateWithoutReactivation()=runBlocking {
+        var stored:ActivationAnchor?=null
+        every{anyConstructed<ActivationVault>().load()}answers{stored}
+        every{anyConstructed<ActivationVault>().save(any())}answers{stored=firstArg()}
+        coEvery{anyConstructed<LegacyActivationRecovery>().recover()}returns LegacyRecovery.Identified(anchor)
+        val first=repo();first.refresh();assertEquals(PrimaryGatePage.CONTENT,first.state.value.gatePage())
+        val saved=IptvConfig(playlists=listOf(
+            IptvPlaylistEntry("list_1","Extra before primary","https://foreign.test/saved.m3u"),
+            IptvPlaylistEntry("original-primary-id","Original label","https://tv.extremeiptv.net primary secret")))
+        val original=saved.copy(playlists=saved.playlists.toList())
+        val restarted=repo();restarted.refresh()
+        assertEquals(PrimaryGatePage.CONTENT,restarted.state.value.gatePage())
+        assertEquals("original-primary-id",restarted.playbackConfig(saved).playlists.single().id)
+        assertEquals(original,saved)
+        coVerify(exactly=1){anyConstructed<LegacyActivationRecovery>().recover()}
+        verify(exactly=1){anyConstructed<ActivationVault>().save(any())}
+    }
+    @Test fun unreadableLegacyPreferencesRemainRecoveryNotFreshActivation()=runBlocking {
+        every{anyConstructed<ActivationVault>().load()}returns null
+        coEvery{anyConstructed<LegacyActivationRecovery>().recover()}throws java.io.IOException("Unreadable legacy settings")
+        val r=repo();r.refresh();assertEquals(PrimaryGatePage.ACCOUNT_RECOVERY,r.state.value.gatePage())
+        verify(exactly=0){anyConstructed<ActivationVault>().save(any())}
     }
 }

@@ -27,7 +27,10 @@ internal class ActivationVault(context:Context,private val keyProvider:((Boolean
         }.generateKey()
     }
     fun load():ActivationAnchor? {
-        if(!file.baseFile.exists())return null
+        if(!file.baseFile.exists() && !File(file.baseFile.path+".bak").exists()){
+            check(!File(file.baseFile.path+".new").exists()){"Interrupted primary activation write"}
+            return null
+        }
         val bytes=file.readFully();check(bytes.size in 29..8192&&bytes[0]==1.toByte())
         val cipher=Cipher.getInstance("AES/GCM/NoPadding").apply{init(Cipher.DECRYPT_MODE,key(false),GCMParameterSpec(128,bytes.copyOfRange(1,13)));updateAAD("verified-primary-v1".toByteArray())}
         val json=JSONObject(String(cipher.doFinal(bytes.copyOfRange(13,bytes.size)),Charsets.UTF_8))
