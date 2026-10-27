@@ -1,4 +1,4 @@
-name: Publish Customer Release
+name: Build Unpublished Customer Candidate
 
 # Builds the sideloadStaging APK (release-grade: R8 + resource shrinking +
 # baseline profile) and publishes it as a GitHub Release. This is the build
@@ -37,15 +37,17 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   publish-release:
-    name: Build and publish release APK
+    name: Build customer APK artifact only (publication disabled)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: 875bb03c7c2f376295252a235d578fe2b4355a89
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -167,12 +169,5 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Extreme TV ${{ steps.version.outputs.name }}
-          body: ${{ github.event.inputs.release_notes || format('Automated release build from {0}.', github.ref_name) }}
-          draft: false
-          prerelease: false
-          files: ${{ steps.apk.outputs.path }}
+      # Staging-only compatibility run: artifact upload is the final operation.
+      # No release creation and no repository write permission.
