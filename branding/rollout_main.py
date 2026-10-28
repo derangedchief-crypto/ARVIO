@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trusted operator driver for owner-approved main-to-brand fanout. No signing here."""
+"""Fan out only a successfully published customer release. No signing here."""
 import base64
 import json
 import os
@@ -24,6 +24,34 @@ def platform(text):
 def gh_json(path):return json.loads(command(['gh','api','repos/'+REPO+'/'+path]))
 
 
+def published_customer_source(run_id):
+    if not re.fullmatch('[1-9][0-9]{0,19}',run_id):raise ValueError('A customer publication run is required.')
+    run=gh_json('actions/runs/'+run_id)
+    if (str(run.get('id'))!=run_id or run.get('status')!='completed' or run.get('conclusion')!='success'
+            or run.get('event')!='workflow_dispatch' or run.get('head_branch')!='main'
+            or run.get('path')!='.github/workflows/publish-release.yml'
+            or run.get('head_repository',{}).get('full_name')!=REPO
+            or run.get('repository',{}).get('full_name')!=REPO):
+        raise ValueError('Only a successful main customer publication may update brands.')
+    source=run.get('head_sha','')
+    if not re.fullmatch('[a-f0-9]{40}',source):raise ValueError('Invalid released source.')
+    document=gh_json('contents/app/build.gradle.kts?ref='+source)
+    identity=platform(base64.b64decode(document['content'],validate=False).decode())
+    if identity is None:raise ValueError('Released source is not branding-compatible.')
+    version,code=identity
+    tag='v'+version
+    release=gh_json('releases/tags/'+tag)
+    assets=[a for a in release.get('assets',[]) if a.get('name','').lower().endswith('.apk')]
+    if (release.get('tag_name')!=tag or release.get('draft') is not False or release.get('prerelease') is not False
+            or not release.get('published_at') or len(assets)!=1
+            or assets[0].get('name')!='ExtremeTV-'+version+'.apk' or assets[0].get('state')!='uploaded'
+            or type(assets[0].get('size')) is not int or assets[0]['size']<=0
+            or not re.fullmatch('sha256:[a-f0-9]{64}',assets[0].get('digest',''))):
+        raise ValueError('A completed customer APK publication is required.')
+    if gh_json('commits/'+tag).get('sha')!=source:raise ValueError('Customer release tag/source mismatch.')
+    return source,version,code
+
+
 def immutable_tag(tag, sha):
     path='repos/'+REPO+'/git/ref/tags/'+tag
     result=subprocess.run(['gh','api',path],capture_output=True,timeout=60)
@@ -36,18 +64,14 @@ def immutable_tag(tag, sha):
 
 def main():
     os.umask(0o077)
-    source=os.environ.get('BRAND_MAIN_SOURCE_SHA','');operator=os.environ.get('BRAND_OPERATOR_SHA','')
-    channel=os.environ.get('BRAND_MAIN_UPDATE_CHANNEL','testing')
-    if channel not in ('testing','production'):raise ValueError('Invalid owner main rollout channel.')
-    if not re.fullmatch('[a-f0-9]{40}',source) or not re.fullmatch('[a-f0-9]{40}',operator):raise ValueError('Reviewed source identities required.')
+    operator=os.environ.get('BRAND_OPERATOR_SHA','')
+    channel=os.environ.get('BRAND_MAIN_UPDATE_CHANNEL','production')
+    if channel!='production':raise ValueError('Customer releases update production brands only.')
+    if not re.fullmatch('[a-f0-9]{40}',operator):raise ValueError('Reviewed operator identity required.')
     if command(['git','rev-parse','HEAD']).strip()!=operator:raise ValueError('Operator checkout must match the protected source pin.')
-    if gh_json('git/ref/heads/main').get('object',{}).get('sha')!=source:raise ValueError('Main moved; only the current exact main source may register a new rollout.')
-    document=gh_json('contents/app/build.gradle.kts?ref='+source)
-    identity=platform(base64.b64decode(document['content'],validate=False).decode())
-    if identity is None:
-        print('Main is older or not branding-compatible. No branded downgrade, tag or build queued.');return
+    source,version,code=published_customer_source(os.environ.get('BRAND_CUSTOMER_RELEASE_RUN_ID',''))
     gh_json('contents/branding/central_builder.py?ref='+source)
-    version,code=identity;tag='brand-source-'+version+'-'+source
+    tag='brand-source-'+version+'-'+source
     immutable_tag(tag,source)
     temp=Path(os.environ['RUNNER_TEMP'])
     key=temp/'brand-main-bridge-key';hosts=temp/'brand-main-known-hosts'

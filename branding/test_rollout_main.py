@@ -24,6 +24,17 @@ val platformVersionCode = 432
         versionName = "2.0.116"
 '''
 
+def customer_api(path):
+    if path=='actions/runs/123':return {'id':123,'status':'completed','conclusion':'success','event':'workflow_dispatch',
+        'head_branch':'main','path':'.github/workflows/publish-release.yml','head_sha':SHA,
+        'head_repository':{'full_name':rollout.REPO},'repository':{'full_name':rollout.REPO}}
+    if path=='contents/app/build.gradle.kts?ref='+SHA:return {'content':base64.b64encode(GRADLE.encode()).decode()}
+    if path=='releases/tags/v2.0.116':return {'tag_name':'v2.0.116','draft':False,'prerelease':False,
+        'published_at':'2026-10-28T00:00:00Z','assets':[{'name':'ExtremeTV-2.0.116.apk','state':'uploaded','size':123,'digest':'sha256:'+'d'*64}]}
+    if path=='commits/v2.0.116':return {'sha':SHA}
+    if path=='contents/branding/central_builder.py?ref='+SHA:return {'content':''}
+    raise AssertionError('Unexpected API call: '+path)
+
 
 class MainRolloutTests(unittest.TestCase):
     def test_platform_requires_brand_support_and_increasing_aligned_versions(self):
@@ -38,23 +49,58 @@ class MainRolloutTests(unittest.TestCase):
                 with self.assertRaises((ValueError,RuntimeError)):rollout.immutable_tag(TAG,SHA)
                 command.assert_not_called()
 
-    def test_older_main_causes_no_tag_no_bridge_no_build(self):
-        def api(path):return {'object':{'sha':SHA}} if path=='git/ref/heads/main' else {'content':base64.b64encode(GRADLE.replace('432','431').encode()).decode()}
-        with patch.dict(os.environ,{'BRAND_MAIN_SOURCE_SHA':SHA,'BRAND_OPERATOR_SHA':SHA}),patch.object(rollout,'command',return_value=SHA),patch.object(rollout,'gh_json',side_effect=api),patch.object(rollout,'immutable_tag') as tag,patch.object(rollout,'Bridge') as bridge,redirect_stdout(io.StringIO()):
-            rollout.main();tag.assert_not_called();bridge.assert_not_called()
+    def test_missing_publication_run_causes_no_tag_no_bridge_no_build(self):
+        with patch.dict(os.environ,{'BRAND_CUSTOMER_RELEASE_RUN_ID':'','BRAND_OPERATOR_SHA':SHA}),patch.object(rollout,'command',return_value=SHA),patch.object(rollout,'gh_json') as api,patch.object(rollout,'immutable_tag') as tag,patch.object(rollout,'Bridge') as bridge:
+            with self.assertRaises(ValueError):rollout.main()
+            api.assert_not_called();tag.assert_not_called();bridge.assert_not_called()
 
-    def test_fanout_is_bounded_private_and_uses_only_testing_bridge_action(self):
-        def api(path):return {'object':{'sha':SHA}} if path=='git/ref/heads/main' else {'content':base64.b64encode(GRADLE.encode()).decode()}
+    def test_published_customer_fanout_is_bounded_private_and_production_only(self):
         with tempfile.TemporaryDirectory() as directory:
-            env={'BRAND_MAIN_SOURCE_SHA':SHA,'BRAND_OPERATOR_SHA':SHA,'RUNNER_TEMP':directory,'BRAND_BUILDER_SSH_PRIVATE_KEY':'SYNTHETIC-PRIVATE\n','BRAND_BUILDER_SSH_KNOWN_HOSTS':'SYNTHETIC-PIN\n'}
+            env={'BRAND_CUSTOMER_RELEASE_RUN_ID':'123','BRAND_OPERATOR_SHA':SHA,'BRAND_MAIN_UPDATE_CHANNEL':'production','RUNNER_TEMP':directory,'BRAND_BUILDER_SSH_PRIVATE_KEY':'SYNTHETIC-PRIVATE\n','BRAND_BUILDER_SSH_KNOWN_HOSTS':'SYNTHETIC-PIN\n'}
             def call(action,value):
-                self.assertEqual('fanout',action);self.assertEqual({'source_sha':SHA,'workflow_ref':TAG,'app_version':'2.0.116','version_code':432},value)
+                self.assertEqual('fanout',action);self.assertEqual({'source_sha':SHA,'workflow_ref':TAG,'app_version':'2.0.116','version_code':432,'channel':'production'},value)
                 self.assertEqual(0o600,(Path(directory)/'brand-main-bridge-key').stat().st_mode&0o777)
                 self.assertEqual('SYNTHETIC-PRIVATE\n',(Path(directory)/'brand-main-bridge-key').read_text())
                 return {'complete':True,'queued':2}
-            with patch.dict(os.environ,env),patch.object(rollout,'command',return_value=SHA),patch.object(rollout,'gh_json',side_effect=api),patch.object(rollout,'immutable_tag') as tag,patch.object(rollout,'Bridge') as bridge,redirect_stdout(io.StringIO()):
+            with patch.dict(os.environ,env),patch.object(rollout,'command',return_value=SHA),patch.object(rollout,'gh_json',side_effect=customer_api),patch.object(rollout,'immutable_tag') as tag,patch.object(rollout,'Bridge') as bridge,redirect_stdout(io.StringIO()):
                 bridge.return_value.call.side_effect=call;rollout.main();tag.assert_called_once_with(TAG,SHA);bridge.return_value.call.assert_called_once()
             self.assertEqual([],list(Path(directory).iterdir()))
+
+    def test_failed_cancelled_testing_fork_and_build_only_runs_are_rejected(self):
+        for override in [{'conclusion':'failure'},{'conclusion':'cancelled'},{'status':'in_progress'},
+                         {'head_branch':'staging/testing'},{'event':'push'},
+                         {'path':'.github/workflows/publish-testing-apk.yml'},
+                         {'head_repository':{'full_name':'other/fork'}},{'repository':{'full_name':'other/repo'}}]:
+            with self.subTest(override=override):
+                def api(path):return dict(customer_api(path),**override) if path=='actions/runs/123' else customer_api(path)
+                with patch.object(rollout,'gh_json',side_effect=api):
+                    with self.assertRaises(ValueError):rollout.published_customer_source('123')
+
+    def test_no_draft_prerelease_missing_or_wrong_apk_can_queue_brands(self):
+        for override in [{'draft':True},{'prerelease':True},{'published_at':None},{'assets':[]},
+                         {'assets':[{'name':'ExtremeTV-Test-latest.apk'}]},
+                         {'assets':[{'name':'ExtremeTV-2.0.116.apk','state':'uploaded','size':0,'digest':'sha256:'+'d'*64}]}]:
+            with self.subTest(override=override):
+                def api(path):return dict(customer_api(path),**override) if path=='releases/tags/v2.0.116' else customer_api(path)
+                with patch.object(rollout,'gh_json',side_effect=api):
+                    with self.assertRaises(ValueError):rollout.published_customer_source('123')
+
+    def test_tag_must_match_released_sha_not_whichever_commit_is_now_main(self):
+        with patch.object(rollout,'gh_json',side_effect=customer_api) as api:
+            self.assertEqual((SHA,'2.0.116',432),rollout.published_customer_source('123'))
+            self.assertNotIn(unittest.mock.call('git/ref/heads/main'),api.call_args_list)
+        def wrong_tag(path):return {'sha':'f'*40} if path=='commits/v2.0.116' else customer_api(path)
+        with patch.object(rollout,'gh_json',side_effect=wrong_tag):
+            with self.assertRaises(ValueError):rollout.published_customer_source('123')
+
+    def test_workflow_triggers_on_customer_completion_not_main_push(self):
+        source=(Path(__file__).parent.parent/'.github/workflows/central-brand-builder.yml').read_text()
+        self.assertIn('workflow_run:',source)
+        self.assertIn('workflows: [Publish Customer Release]',source)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'",source)
+        self.assertIn('BRAND_CUSTOMER_RELEASE_RUN_ID:',source)
+        self.assertIn('BRAND_MAIN_UPDATE_CHANNEL: production',source)
+        self.assertNotIn('  push:',source)
 
     def test_main_queue_accepts_only_exact_version_sha_tag_and_testing_channel(self):
         class Response(io.BytesIO):status=200

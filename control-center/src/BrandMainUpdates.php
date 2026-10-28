@@ -21,11 +21,25 @@ final class BrandMainUpdates
     }
     private function verifySource(array $input):void {
         if($this->verify){($this->verify)($input);return;}
-        $main=$this->github('git/ref/heads/main');$tag=$this->github('git/ref/tags/'.$input['workflow_ref']);
-        if(($main['object']['sha']??null)!==$input['source_sha']||($tag['object']['sha']??null)!==$input['source_sha']||($tag['object']['type']??null)!=='commit')throw new Problem(409,'Rollout must use the exact current main commit and its immutable source tag.');
+        $tag=$this->github('git/ref/tags/'.$input['workflow_ref']);
+        if(($tag['object']['sha']??null)!==$input['source_sha']||($tag['object']['type']??null)!=='commit')throw new Problem(409,'Rollout requires its exact immutable source tag.');
+        if(($input['channel']??'testing')==='production'){
+            $release=$this->github('releases/tags/v'.$input['app_version']);$commit=$this->github('commits/v'.$input['app_version']);
+            if(!self::publishedCustomerMatches($input,$release,$commit))throw new Problem(409,'Production brands require the published customer APK and exact released source.');
+        }else{
+            $main=$this->github('git/ref/heads/main');
+            if(($main['object']['sha']??null)!==$input['source_sha'])throw new Problem(409,'Testing rollout requires current main.');
+        }
         $file=$this->github('contents/app/build.gradle.kts?ref='.$input['source_sha']);$text=base64_decode($file['content']??'',true);
         if(!is_string($text)||!str_contains($text,'val brandDirectory')||!preg_match('/^val platformVersionName = "([0-9.]+)"$/m',$text,$name)||!preg_match('/^val platformVersionCode = ([0-9]+)$/m',$text,$code)||$name[1]!==$input['app_version']||(int)$code[1]!==$input['version_code']||!preg_match('/^\s*versionCode = '.$input['version_code'].'$/m',$text)||!preg_match('/^\s*versionName = "'.preg_quote($input['app_version'],'/').'"$/m',$text))throw new Problem(409,'Main has not integrated compatible branded-build support and the declared release identity.');
         $this->github('contents/branding/central_builder.py?ref='.$input['source_sha']);
+    }
+    public static function publishedCustomerMatches(array $input,array $release,array $commit):bool {
+        $assets=array_values(array_filter($release['assets']??[],static fn($asset)=>str_ends_with(strtolower($asset['name']??''),'.apk')));
+        return ($release['tag_name']??null)==='v'.$input['app_version']&&($release['draft']??null)===false&&($release['prerelease']??null)===false
+            &&is_string($release['published_at']??null)&&$release['published_at']!==''&&($commit['sha']??null)===$input['source_sha']
+            &&count($assets)===1&&($assets[0]['name']??null)==='ExtremeTV-'.$input['app_version'].'.apk'&&($assets[0]['state']??null)==='uploaded'
+            &&is_int($assets[0]['size']??null)&&$assets[0]['size']>0&&is_string($assets[0]['digest']??null)&&preg_match('/^sha256:[a-f0-9]{64}$/D',$assets[0]['digest'])===1;
     }
     public function fanout(array $input):array {
         Input::keys($input,['source_sha','workflow_ref','app_version','version_code','channel']);$channel=$input['channel']??'testing';if(!is_string($channel)||!in_array($channel,['testing','production'],true))throw new Problem(422,'Invalid main rollout channel.');
@@ -34,8 +48,8 @@ final class BrandMainUpdates
         $sha=$input['source_sha']??null;$version=$input['app_version']??null;$code=$input['version_code']??null;
         if(!is_string($sha)||!preg_match('/^[a-f0-9]{40}$/D',$sha)||!is_string($version)||strlen($version)>24||!preg_match('/^[0-9]+\.[0-9]+\.[0-9]+$/D',$version)||version_compare($version,'2.0.115','<=')||!is_int($code)||$code<=431||$code>21474||($input['workflow_ref']??null)!=='brand-source-'.$version.'-'.$sha)throw new Problem(409,'Main update requires a newer platform name/code and exact immutable source identity.');
         $existing=$this->db->one('SELECT * FROM brand_main_sources WHERE source_sha=?',[$sha]);
-        if(!$existing)$this->verifySource($input);
-        elseif($existing['app_version']!==$version||(int)$existing['version_code']!==$code||$existing['workflow_ref']!==$input['workflow_ref'])throw new Problem(409,'Main-source identity is immutable.');
+        if(!$existing||$channel==='production')$this->verifySource($input);
+        if($existing&&($existing['app_version']!==$version||(int)$existing['version_code']!==$code||$existing['workflow_ref']!==$input['workflow_ref']))throw new Problem(409,'Main-source identity is immutable.');
         return $this->serialized(fn()=> $this->db->transaction(function()use($input,$sha,$version,$code,$channel,$modern):array {
             // The database advisory lock serializes registration/catch-up batches;
             // ordinary account and enrollment operations never need that lock.
