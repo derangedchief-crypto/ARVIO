@@ -52,6 +52,14 @@ try {
             $policy=$app->trialPolicies->get($owner,['tenant_id'=>$space['id']]);
             echo json_encode(['workspace'=>'owner','panel_username'=>$link['username'],'panel_id'=>$link['panel_id'],'plans'=>$policy['catalog']['plans']??[],'accounts_created'=>false,'offer_settings_changed'=>false],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)."\n";
             break;
+        case 'fresh-checkins':
+            if(count($argv)!==3||$argv[2]!=='--all-workspaces')throw new RuntimeException('Usage: php cli/console.php fresh-checkins --all-workspaces');
+            $app=new Application($config);
+            $owner=$app->db->one("SELECT * FROM users WHERE role='owner' AND active=1 ORDER BY id LIMIT 1");
+            if(!$owner)throw new RuntimeException('Active owner required.');
+            $result=(new ControlCenter\DeviceListWindow($app->db,$app->auth))->reset($owner,['scope'=>'all_workspaces','confirm'=>true]);
+            echo json_encode($result+['records_deleted'=>false,'credentials_revoked'=>false,'scope'=>'all_workspaces'],JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR)."\n";
+            break;
         case 'brand-export':
             if(count($argv)!==4)throw new RuntimeException('Usage: php cli/console.php brand-export BUILD_ID PRIVATE_OUTPUT_FILE');
             $app=new Application($config);$bundle=$app->appBrands->export($argv[2]);$mask=umask(0077);
@@ -61,7 +69,7 @@ try {
             echo "Pinned brand inputs exported. No APK built or published.\n";
             break;
         default:
-            echo "Usage: php cli/console.php preflight|migrate|maintenance|recover-owner|brand-export|owner-trial-catalog\n";
+            echo "Usage: php cli/console.php preflight|migrate|maintenance|recover-owner|brand-export|owner-trial-catalog|fresh-checkins\n";
     }
 } catch (Throwable $error) {
     // Database exceptions can contain SQL/customer identifiers: do not echo them.

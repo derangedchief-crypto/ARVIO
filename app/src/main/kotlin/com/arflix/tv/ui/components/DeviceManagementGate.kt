@@ -36,15 +36,16 @@ val LocalDeviceManagementCheckIn = staticCompositionLocalOf<() -> Unit> { {} }
  * Unknown/offline enrollment is informational, not a new activation requirement. */
 @Composable
 fun DeviceManagementGate(state: DeviceManagementState, onDismissMessage: (String) -> Unit, content: @Composable () -> Unit) {
+    val recovering=state.recoveryPending&&state.policy=="suspended"
     if (state.checkingLocalState || state.restricted) {
         BackHandler { /* A known provider restriction cannot expose playback. */ }
         Box(Modifier.fillMaxSize().background(Color(0xFF090D15)), contentAlignment = Alignment.Center) {
             Column(Modifier.widthIn(max = 620.dp).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                Text(when (state.policy) { "suspended" -> "Service suspended"; "blocked" -> "Device blocked"; "removed" -> "Device enrollment removed"; else -> "Checking device status" },
+                Text(if(recovering)"Reconnecting this device" else when (state.policy) { "suspended" -> "Service suspended"; "blocked" -> "Device blocked"; "removed" -> "Device enrollment removed"; else -> "Checking device status" },
                     color = Color.White, fontSize = 28.sp, textAlign = TextAlign.Center)
                 if (state.restricted) {
-                    Text("Contact your provider. Your login, profiles and saved favourites have not been erased.", color = Color(0xFFD5DBE5), fontSize = 18.sp, textAlign = TextAlign.Center)
+                    Text(if(recovering)"We’re checking the previous device record. This may take a few minutes. Do not reinstall again or clear data. If it does not complete, contact your provider." else "Contact your provider. Your login, profiles and saved favourites have not been erased.", color = Color(0xFFD5DBE5), fontSize = 18.sp, textAlign = TextAlign.Center)
                     Text("Device ID: ${state.installationId}", color = Color(0xFF9AA8BC), fontSize = 13.sp, textAlign = TextAlign.Center)
                     Text(state.status, color = Color(0xFF9AA8BC), fontSize = 13.sp, textAlign = TextAlign.Center)
                 } else CircularProgressIndicator()

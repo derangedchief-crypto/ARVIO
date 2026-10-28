@@ -150,7 +150,7 @@ final class Commands
 
     public function checkIn(string $token, array $input, string $ip): array
     {
-        Input::keys($input, ['schema_version', 'model', 'os_version', 'app_version', 'activity_state', 'capabilities', 'storage_total', 'storage_free', 'account_username']);
+        Input::keys($input, ['schema_version', 'model', 'os_version', 'app_version', 'activity_state', 'capabilities', 'storage_total', 'storage_free', 'account_username','recovery_hint','recovery_signature']);
         Input::integer($input['schema_version'] ?? 1, 1, 1);
         $device = $this->deviceIdentity($token);
         $this->auth->limit('device-check-in', $device['id'], 20, 60);
@@ -167,6 +167,10 @@ final class Commands
         if ($free !== null && ($total === null || $free > $total)) throw new Problem(422, 'Invalid storage snapshot.');
         $ip = filter_var($ip, FILTER_VALIDATE_IP) ? $ip : null;
         $username=array_key_exists('account_username',$input)?Input::text($input['account_username'],'line username',256):null;
+        if(isset($input['recovery_hint'])||isset($input['recovery_signature'])){
+            (new DeviceRecovery($this->db,$this->config,new Secrets($this->config),$this->auth))->report($device,
+                EnrollmentProof::hex($input['recovery_hint']??null,64),Input::text($input['recovery_signature']??null,'recovery signature',128));
+        }
         return $this->db->transaction(function () use ($token, $device, $model, $os, $version, $activity, $caps, $total, $free, $ip, $username): array {
             $this->db->one('SELECT id FROM devices WHERE id = ? FOR UPDATE', [$device['id']]);
             // Recheck credentials/policy after taking the delivery lock.
@@ -180,7 +184,8 @@ final class Commands
                 if($owned)$this->db->query('INSERT INTO verified_line_usernames (account_ref,username) VALUES (?,?) ON DUPLICATE KEY UPDATE username=VALUES(username),verified_at=UTC_TIMESTAMP()',[$ref,$username]);
             }
             $this->expire($current['id']);
-            $this->db->query('UPDATE devices SET model = ?, os_version = ?, app_version = ?, activity_state = ?, capabilities = ?, storage_total = ?, storage_free = ?, last_ip = ?, last_seen_at = UTC_TIMESTAMP() WHERE id = ?',
+            $window=DeviceListWindow::installed($this->db)?',checkin_generation=(SELECT device_list_generation FROM platform_settings WHERE id=1)':'';
+            $this->db->query('UPDATE devices SET model = ?, os_version = ?, app_version = ?, activity_state = ?, capabilities = ?, storage_total = ?, storage_free = ?, last_ip = ?, last_seen_at = UTC_TIMESTAMP()'.$window.' WHERE id = ?',
                 [$model, $os, $version, $activity, json_encode($caps, JSON_THROW_ON_ERROR), $total, $free, $ip, $current['id']]);
             $policy = $current['tenant_status'] === 'active' ? $current['policy'] : 'suspended';
             $deliveries = [];
@@ -201,7 +206,8 @@ final class Commands
             }
             $heartbeat=$this->config->number('heartbeat_seconds',60,15,300);
             if($deliveries)$heartbeat=min($heartbeat,$this->config->number('interactive_heartbeat_seconds',15,15,300));
-            return ['schema_version' => 1, 'device_id'=>$current['id'], 'policy' => $policy, 'heartbeat_seconds' => $heartbeat, 'commands' => $deliveries,
+            $hints=(new DeviceRecovery($this->db,$this->config,new Secrets($this->config),$this->auth))->supportsReport($current);
+            return ['schema_version' => 1, 'device_id'=>$current['id'], 'policy' => $policy, 'heartbeat_seconds' => $heartbeat, 'commands' => $deliveries,'device_recovery_version'=>$hints?1:0,
                 'update_policy' => ['managed_by' => 'platform_owner', 'source' => 'existing_central_channel']];
         });
     }

@@ -73,8 +73,9 @@ final class EnrollmentProof
         if(!$details||$details['type']!==OPENSSL_KEYTYPE_EC||($details['ec']['curve_name']??'')!=='prime256v1') throw new Problem(422,'Use a P-256 device key.');
         return ['key'=>$key,'fingerprint'=>hash('sha256',$der)];
     }
-    public static function signingText(string $nonce, string $proof, string $install, string $package, string $fingerprint): string
+    public static function signingText(string $nonce, string $proof, string $install, string $package, string $fingerprint,?string $recoveryHint=null): string
     {
+        if($recoveryHint!==null)return "ECENROLL2\n$nonce\n".hash('sha256',$proof)."\n$install\n$package\n$fingerprint\n$recoveryHint";
         return "ECENROLL1\n$nonce\n".hash('sha256',$proof)."\n$install\n$package\n$fingerprint";
     }
     public static function verifyDeviceSignature(array $key, string $signature, string $text): void

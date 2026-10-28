@@ -28,6 +28,15 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class DeviceManagementGateTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun pendingRecoveryHasItsOwnMessageAndCannotExposePlaybackUntilAuthenticated(){
+        val state=mutableStateOf(DeviceManagementState(false,policy="suspended",recoveryPending=true))
+        compose.setContent{DeviceManagementGate(state.value,{}){Text("Recovered app content")}}
+        compose.onNodeWithText("Reconnecting this device").assertExists()
+        compose.onNodeWithText("Service suspended").assertDoesNotExist()
+        compose.onNodeWithText("Recovered app content").assertDoesNotExist()
+        compose.runOnIdle{state.value=state.value.copy(policy="active",recoveryPending=false)}
+        compose.onNodeWithText("Recovered app content").assertExists()
+    }
     @Test fun settingsCanExplicitlyRetryManagementWithoutChangingActivation() {
         var retries=0
         compose.setContent {

@@ -64,9 +64,11 @@ class DeviceManagementAgent @Inject constructor(
         var status = "Connecting to control center"
         var heartbeat = 60
         var nextRenew = 0L
+        var recoveryHintsSupported = false
         var favouritesStatus = "Waiting for managed check-in"
     }
     @Volatile private var active: Active? = null
+    private val recoveryHint by lazy { DeviceRecoveryHint.read(context) }
 
     fun onInteraction() { lastInteraction = SystemClock.elapsedRealtime() }
     fun checkInNow() {
@@ -108,7 +110,7 @@ class DeviceManagementAgent @Inject constructor(
     private fun publish(current: Active) {
         if (active !== current) return
         _state.value = DeviceManagementState(false, current.session.installationId, current.status, current.session.policy,
-            current.session.message?.takeIf { it.expiresAtMs - System.currentTimeMillis() in 1..3600_000L },current.favouritesStatus)
+            current.session.message?.takeIf { it.expiresAtMs - System.currentTimeMillis() in 1..3600_000L },current.favouritesStatus,current.session.recoveryPending)
     }
     suspend fun runWhileStarted(): Unit = withContext(Dispatchers.IO) {
         runner.withLock {
@@ -178,12 +180,15 @@ class DeviceManagementAgent @Inject constructor(
         require(challenge.getInt("schema_version") == 1)
         val nonce = challenge.getString("challenge").also { require(it.matches(Regex("[a-f0-9]{64}"))) }
         val proof = api.proof(current.account, session.installationId, session.keyFingerprint, context.packageName, nonce)
-        val signature = vault.sign(current.account.scope, enrollmentSigningText(nonce, proof, session.installationId, context.packageName, session.keyFingerprint))
+        val hint=if(challenge.optInt("device_recovery_version")==1)recoveryHint else null
+        val signature = vault.sign(current.account.scope, enrollmentSigningText(nonce, proof, session.installationId, context.packageName, session.keyFingerprint,hint))
         val result = api.control("/api/device/enrollment/register", JSONObject().put("schema_version", 1).put("challenge", nonce)
             .put("proof", proof).put("public_key", Base64.encodeToString(current.publicKey, Base64.NO_WRAP)).put("signature", signature)
             .put("label", "${Build.MANUFACTURER} ${Build.MODEL}".take(120)).put("model", Build.MODEL.take(120))
-            .put("os_version", "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})").put("app_version", BuildConfig.VERSION_NAME))
+             .put("os_version", "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})").put("app_version", BuildConfig.VERSION_NAME)
+             .apply { if(hint!=null)put("recovery_hint",hint) })
         require(result.getInt("schema_version") == 1 && result.getString("installation_id") == session.installationId)
+        recoveryPolicy(current,result)
         if (result.optString("status") == "not_managed") {
             change(current) { it.copy(requestId = null, pollToken = null, unmanagedUntilMs = System.currentTimeMillis() + result.optInt("retry_after_seconds", 3600).coerceIn(300, 86400) * 1000L) }
             current.status = "Device management is not enabled for this reseller"
@@ -196,13 +201,25 @@ class DeviceManagementAgent @Inject constructor(
         change(current) { it.copy(requestId = id, pollToken = token, unmanagedUntilMs = 0) }
     }
     private fun delivery(session: ManagementSession) = JSONObject().put("schema_version", 1).put("request_id", session.requestId).put("poll_token", session.pollToken)
+    private suspend fun recoveryPolicy(current:Active,result:JSONObject){
+        val policy=result.optString("recovery_policy")
+        if(policy in setOf("blocked","suspended","removed"))change(current){it.copy(policy=policy,
+            recoveryPending=result.optString("status")=="pending"&&policy=="suspended"&&result.optString("recovery_state")!="restricted")}
+    }
     private suspend fun poll(current: Active) {
         val session = current.session
         try {
             val result = api.control("/api/device/enrollment/poll", delivery(session))
             require(result.getInt("schema_version") == 1 && result.getString("request_id") == session.requestId && result.getString("installation_id") == session.installationId)
+            recoveryPolicy(current,result)
             when (result.getString("status")) {
-                "pending" -> { current.status = "Awaiting provider approval"; current.heartbeat = 60 }
+                "pending" -> {
+                    if(result.optString("recovery_state").isNotBlank()){
+                        current.status="Checking previous device identity"
+                        current.heartbeat=300
+                        if(result.optBoolean("recovery_retry"))change(current){it.copy(requestId=null,pollToken=null)}
+                    }else { current.status = "Awaiting provider approval"; current.heartbeat = 60 }
+                }
                 "rejected" -> { current.status = "Enrollment declined — contact your provider"; current.heartbeat = 300 }
                 "approved" -> {
                     val id = result.getString("device_id").also { require(it.matches(Regex("[a-f0-9]{32}"))) }
@@ -248,16 +265,26 @@ class DeviceManagementAgent @Inject constructor(
             try { enroll(current); poll(current) } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { /* retain usable credential */ }
         }
         val storage = StatFs(context.filesDir.absolutePath)
-        val response = api.control("/api/device/check-in", JSONObject().put("schema_version", 1).put("model", "${Build.MANUFACTURER} ${Build.MODEL}".take(120))
+        val report = JSONObject().put("schema_version", 1).put("model", "${Build.MANUFACTURER} ${Build.MODEL}".take(120))
             .put("account_username",current.account.username)
             .put("os_version", "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})").put("app_version", BuildConfig.VERSION_NAME)
             .put("activity_state", if (SystemClock.elapsedRealtime() - lastInteraction >= 300_000) "idle" else "active")
-            .put("capabilities", JSONArray(MANAGEMENT_CAPABILITIES)).put("storage_total", storage.totalBytes).put("storage_free", storage.availableBytes), current.session.credential)
+            .put("capabilities", JSONArray(MANAGEMENT_CAPABILITIES)).put("storage_total", storage.totalBytes).put("storage_free", storage.availableBytes)
+            .apply { val hint=recoveryHint;val id=current.session.deviceId
+                if(current.recoveryHintsSupported&&hint!=null&&id!=null){
+                    put("recovery_hint",hint).put("recovery_signature",vault.sign(current.account.scope,DeviceRecoveryHint.signingText(id,context.packageName,hint)))
+                }
+            }
+        val response=optionalRecoveryCheckIn(report.has("recovery_hint")){includeHint->
+            if(!includeHint){report.remove("recovery_hint");report.remove("recovery_signature")}
+            api.control("/api/device/check-in",report,current.session.credential)
+        }
         require(response.getInt("schema_version") == 1 && response.getString("device_id") == current.session.deviceId)
+        current.recoveryHintsSupported=response.optInt("device_recovery_version")==1
         val policy = response.getString("policy").also { require(it in MANAGEMENT_POLICIES) }
         current.heartbeat = response.optInt("heartbeat_seconds", 60).coerceIn(15, 300)
         current.status = if (policy == "active") "Connected to provider control center" else "Provider policy: $policy"
-        change(current) { it.copy(policy = policy, message = if (policy == "active") it.message else null) }
+        change(current) { it.copy(policy = policy, recoveryPending=false, message = if (policy == "active") it.message else null) }
         if (policy == "removed") {
             ManagementEvents.unbind()
             change(current) { it.copy(credential = null, requestId = null, pollToken = null) }

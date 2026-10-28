@@ -78,37 +78,42 @@ final class Enrollment
         $this->auth->limit('enrollment-challenge',$ip,120,3600);
         $nonce=bin2hex(random_bytes(32));
         $this->db->query('INSERT INTO enrollment_challenges (nonce_hash,installation_id,key_fingerprint,app_package,expires_at) VALUES (?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 2 MINUTE))',[hash('sha256',$nonce),$install,$key,$package]);
-        return ['schema_version'=>1,'challenge'=>$nonce,'expires_in'=>120];
+        return ['schema_version'=>1,'challenge'=>$nonce,'expires_in'=>120,'device_recovery_version'=>DeviceListWindow::installed($this->db)?1:0];
     }
 
     public function register(array $input, string $ip): array
     {
         $enabled=$this->enabled(false);
-        Input::keys($input,['schema_version','challenge','proof','public_key','signature','label','model','os_version','app_version']);
+        Input::keys($input,['schema_version','challenge','proof','public_key','signature','label','model','os_version','app_version','recovery_hint']);
         Input::integer($input['schema_version']??1,1,1);
         $nonce=EnrollmentProof::hex($input['challenge']??null,64);
         $token=Input::text($input['proof']??null,'enrollment proof',4096);
         $claim=$this->proofs->verify($token);
+        $recovery=new DeviceRecovery($this->db,$this->config,$this->secrets,$this->auth);
+        $hint=isset($input['recovery_hint'])?EnrollmentProof::hex($input['recovery_hint'],64):null;
+        if($hint!==null&&!$recovery->available())throw new Problem(503,'Device recovery upgrade required.');
+        $hintHash=$hint!==null&&isset($claim['panel'])?$recovery->hash($hint,$claim['sub'],$claim['package'],$claim['panel']['reseller_id']):null;
         $encoded=Input::text($input['public_key']??null,'public key',256);
         $key=EnrollmentProof::publicKey($encoded);
         if(!hash_equals($key['fingerprint'],$claim['key'])||!hash_equals(hash('sha256',$nonce),$claim['challenge'])) throw new Problem(403,'Enrollment proof is bound to a different device/challenge.');
         EnrollmentProof::verifyDeviceSignature($key,Input::text($input['signature']??null,'signature',128),
-            EnrollmentProof::signingText($nonce,$token,$claim['install'],$claim['package'],$claim['key']));
+            EnrollmentProof::signingText($nonce,$token,$claim['install'],$claim['package'],$claim['key'],$hint));
         $label=Input::text($input['label']??'Android device','device label',120);
         $model=Input::text($input['model']??'','model',120,false);
         $os=Input::text($input['os_version']??'','OS version',80,false);
         $version=Input::text($input['app_version']??'','app version',40,false);
         $this->auth->limit('enrollment-register-ip',$ip,120,3600);
         $this->auth->limit('enrollment-register-account',$claim['sub'],20,3600);
-        return $this->db->transaction(function () use($nonce,$claim,$encoded,$label,$model,$os,$version,$enabled):array {
+        return $this->db->transaction(function () use($nonce,$claim,$encoded,$label,$model,$os,$version,$enabled,$recovery,$hintHash):array {
             if(!$enabled&&!$this->db->one("SELECT r.id FROM enrollment_requests r JOIN devices d ON d.id=r.device_id WHERE r.installation_id=? AND r.key_fingerprint=? AND r.account_ref=? AND r.app_package=? AND r.status='approved' AND d.policy!='removed'",[$claim['install'],$claim['key'],$claim['sub'],$claim['package']])) {
                 throw new Problem(503,'New device enrollment is paused by the owner.');
             }
             $nonceHash=hash('sha256',$nonce);
             $challenge=$this->db->one('SELECT * FROM enrollment_challenges WHERE nonce_hash=? AND expires_at>UTC_TIMESTAMP() FOR UPDATE',[$nonceHash]);
             if(!$challenge||$challenge['installation_id']!==$claim['install']||$challenge['key_fingerprint']!==$claim['key']||$challenge['app_package']!==$claim['package']) throw new Problem(403,'Enrollment challenge expired or does not match.');
-            $known=$this->db->one('SELECT d.reseller_detached,t.kind FROM enrollment_requests r JOIN devices d ON d.id=r.device_id JOIN tenants t ON t.id=d.tenant_id WHERE r.installation_id=? AND r.key_fingerprint=? AND r.account_ref=? AND r.app_package=?',[$claim['install'],$claim['key'],$claim['sub'],$claim['package']]);
-            $ownerManaged=$known&&($known['reseller_detached']||$known['kind']==='owner');
+            $known=$this->db->one("SELECT d.reseller_detached,t.kind FROM enrollment_requests r JOIN devices d ON d.id=r.device_id JOIN tenants t ON t.id=d.tenant_id WHERE r.installation_id=? AND r.key_fingerprint=? AND r.account_ref=? AND r.app_package=? AND r.status='approved' AND d.installation_id=r.installation_id AND d.key_fingerprint=r.key_fingerprint AND d.app_package=r.app_package",[$claim['install'],$claim['key'],$claim['sub'],$claim['package']]);
+            $match=$known?null:$recovery->inspect($claim,$hintHash);
+            $ownerManaged=($known&&($known['reseller_detached']||$known['kind']==='owner'))||isset($match['device']);
             $linked=isset($claim['panel'])?$this->db->one("SELECT p.tenant_id FROM panel_resellers p JOIN tenants t ON t.id=p.tenant_id WHERE p.panel_id=? AND t.status='active'",[$claim['panel']['reseller_id']]):null;
             if(!$ownerManaged&&!$linked) {
                 // Not an invitation queue. Non-member devices never create a
@@ -116,6 +121,7 @@ final class Enrollment
                 $this->db->query('DELETE FROM enrollment_challenges WHERE nonce_hash=?',[$nonceHash]);
                 return ['schema_version'=>1,'status'=>'not_managed','installation_id'=>$claim['install'],'retry_after_seconds'=>3600];
             }
+            if($recovery->available())$recovery->lockScope($claim['sub'],$claim['package']);
             if($challenge['used_at']!==null) {
                 $used=$this->db->one('SELECT nonce_hash FROM enrollment_proofs WHERE proof_id=?',[$claim['jti']]);
                 if(!$used||$used['nonce_hash']!==$nonceHash||!$challenge['request_id']) throw new Problem(409,'Enrollment challenge was already used. Request another challenge.');
@@ -134,6 +140,19 @@ final class Enrollment
             }
             $this->db->query('UPDATE enrollment_requests SET label=?,model=?,os_version=?,app_version=?,last_request_at=UTC_TIMESTAMP() WHERE id=?',[$label,$model,$os,$version,$row['id']]);
             if($linked)$this->db->query('UPDATE enrollment_requests SET panel_reseller_id=?,panel_customer_id=? WHERE id=?',[$claim['panel']['reseller_id'],$claim['panel']['customer_id'],$row['id']]);
+            if($recovery->available()){
+                $this->db->query('UPDATE enrollment_requests SET recovery_hint_hash=? WHERE id=?',[$hintHash,$row['id']]);
+                if($match!==null&&$row['status']==='pending'){
+                    if($match['state']==='recover'){
+                        $recovery->reconnect($row,$match['device']);
+                        $this->mintCredential($row['id'],$match['device']['id']);
+                    }else{
+                        $target=isset($match['device'])&&in_array($match['device']['policy'],['blocked','suspended','removed'],true)?$match['device']['id']:null;
+                        $this->db->query('UPDATE enrollment_requests SET recovery_state=?,device_id=? WHERE id=?',[$match['state'],$target,$row['id']]);
+                    }
+                    $row=$this->db->one('SELECT *,0 AS credential_expired FROM enrollment_requests WHERE id=?',[$row['id']]);
+                }
+            }
             if($row['status']==='approved'&&$row['device_id']) {
                 $detached=$this->db->one('SELECT reseller_detached FROM devices WHERE id=?',[$row['device_id']]);
                 if(isset($claim['panel'])&&empty($detached['reseller_detached'])) {
@@ -152,16 +171,30 @@ final class Enrollment
                     $this->db->query("UPDATE enrollment_requests SET status='pending',credential_cipher=NULL,reviewed_by=NULL WHERE id=?",[$row['id']]);
                 }
             }
-            if($enabled&&isset($claim['panel'])&&$row['status']==='pending'&&$row['device_id']===null) $this->autoApprove($row,$claim['panel']);
+            if($enabled&&isset($claim['panel'])&&$row['status']==='pending'&&$row['device_id']===null&&$match===null&&empty($row['recovery_state'])) $this->autoApprove($row,$claim['panel']);
             $this->db->query('UPDATE enrollment_challenges SET used_at=UTC_TIMESTAMP(),request_id=? WHERE nonce_hash=?',[$row['id'],$nonceHash]);
             if($row['id']===$candidate) $this->auth->audit(null,'enrollment.requested',$row['id'],null,['app_package'=>$claim['package']]);
-            return $this->registrationResponse($this->db->one('SELECT * FROM enrollment_requests WHERE id=?',[$row['id']]));
+            $fresh=$this->db->one('SELECT * FROM enrollment_requests WHERE id=?',[$row['id']]);
+            $recovery->storeForRequest($fresh);
+            return $this->registrationResponse($fresh);
         });
     }
     private function registrationResponse(array $row): array
     {
         return ['schema_version'=>1,'request_id'=>$row['id'],'installation_id'=>$row['installation_id'],
-            'poll_token'=>$this->secrets->decrypt($row['poll_cipher']),'status'=>$row['status']];
+            'poll_token'=>$this->secrets->decrypt($row['poll_cipher']),'status'=>$row['status']]+$this->recoveryResponse($row);
+    }
+    private function recoveryResponse(array $row):array {
+        if(empty($row['recovery_state']))return [];
+        $policy=null;
+        if($row['device_id']){
+            $d=$this->db->one('SELECT d.policy,t.status FROM devices d JOIN tenants t ON t.id=d.tenant_id WHERE d.id=?',[$row['device_id']]);
+            if($d)$policy=$d['status']==='active'?$d['policy']:'suspended';
+        }
+        // A held identity cannot bypass a prior restriction by behaving like a
+        // brand-new unmanaged installation. Do not alter the OLD device policy.
+        if($row['status']==='pending'&&($policy===null||$policy==='active'))$policy='suspended';
+        return ['recovery_state'=>$row['recovery_state'],'recovery_retry'=>$row['status']==='pending'&&$row['recovery_state']!=='restricted','recovery_policy'=>$policy,'retry_after_seconds'=>300];
     }
     /** Called only inside the proof-consuming transaction. No app ownership fields
      * or workspace display-name comparisons are authorization. */
@@ -215,7 +248,7 @@ final class Enrollment
                 $this->db->query('UPDATE enrollment_requests SET credential_cipher=NULL,poll_cipher=NULL,confirmed_at=COALESCE(confirmed_at,UTC_TIMESTAMP()) WHERE id=?',[$id]);
                 return ['schema_version'=>1,'confirmed'=>true,'device_id'=>$row['device_id']];
             }
-            $response=['schema_version'=>1,'status'=>$row['status'],'request_id'=>$id,'installation_id'=>$row['installation_id'],'poll_after_seconds'=>60];
+            $response=['schema_version'=>1,'status'=>$row['status'],'request_id'=>$id,'installation_id'=>$row['installation_id'],'poll_after_seconds'=>60]+$this->recoveryResponse($row);
             if($row['status']==='approved') {
                 if($row['credential_cipher']===null) throw new Problem(409,'Enrollment delivery was already confirmed.');
                 $device=$this->db->one('SELECT policy FROM devices WHERE id=?',[$row['device_id']]);
