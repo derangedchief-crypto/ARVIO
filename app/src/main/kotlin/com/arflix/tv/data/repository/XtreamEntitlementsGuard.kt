@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -33,6 +35,7 @@ private const val PREFS_NAME = "arvio_entitlement_guard"
 private const val KEY_LAST_CHECK = "last_check_at"
 private const val KEY_TRACKED_DEFINITION_IDS = "tracked_definition_ids"
 private const val ADDON_ID_KEY_PREFIX = "granted_addon_id:"
+private const val KEY_RETIRED_ADDON_IDS = "retired_grant_addon_ids"
 
 /** Warm foregrounds are throttled; a cold start passes 0 and always runs. */
 private const val DEFAULT_MIN_INTERVAL_MS = 30 * 60_000L
@@ -84,6 +87,7 @@ class XtreamEntitlementsGuard @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
+    private var checkJob: Job? = null
 
     /** Main-thread only (ActivityLifecycleCallbacks are always dispatched there). */
     private var startedActivities = 0
@@ -136,31 +140,37 @@ class XtreamEntitlementsGuard @Inject constructor(
     }
 
     /** Fire-and-forget. Never throws into the caller. */
-    fun scheduleCheck(
+    @Synchronized fun scheduleCheck(
         reason: String,
         initialDelayMs: Long = 0L,
         minIntervalMs: Long = DEFAULT_MIN_INTERVAL_MS
     ) {
-        scope.launch {
+        if (checkJob?.isActive == true) return
+        checkJob = scope.launch {
             if (initialDelayMs > 0L) delay(initialDelayMs)
-            runCatching { enforce(reason, minIntervalMs) }
-                .onFailure { error -> Log.w(TAG, "check failed ($reason): ${error.message}") }
+            repeat(3) { attempt ->
+                val complete = try { enforce(reason,minIntervalMs) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { Log.w(TAG,"check unavailable ($reason)"); false }
+                if (complete) return@launch
+                if (attempt < 2) delay(30_000L)
+            }
         }
     }
 
-    private suspend fun enforce(reason: String, minIntervalMs: Long) = mutex.withLock {
+    internal suspend fun enforce(reason: String, minIntervalMs: Long): Boolean = mutex.withLock {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         val last = prefs.getLong(KEY_LAST_CHECK, 0L)
         // The `in 0 until` guard also covers a clock that jumped backwards.
         if (minIntervalMs > 0L && last != 0L && (now - last) in 0L until minIntervalMs) {
-            return@withLock
+            return@withLock true
         }
 
         val credentials = readCredentials()
         if (credentials == null) {
             Log.i(TAG, "no Xtream playlist configured; skipping ($reason)")
-            return@withLock
+            return@withLock false
         }
 
         val login = iptvRepository.verifyXtreamLogin(
@@ -172,24 +182,24 @@ class XtreamEntitlementsGuard @Inject constructor(
             // Could be an expired line, could be a dead DNS lookup. Not
             // distinguishable here, so nothing is revoked.
             Log.i(TAG, "login check not conclusive ($reason): ${login.message}; addons unchanged")
-            return@withLock
+            return@withLock false
         }
 
         val labels = collectLabels(credentials)
         if (labels == null) {
             Log.i(TAG, "category read failed ($reason); addons unchanged")
-            return@withLock
+            return@withLock false
         }
         if (labels.isEmpty()) {
             Log.i(TAG, "no categories returned ($reason); addons unchanged")
-            return@withLock
+            return@withLock false
         }
 
-        prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
-
-        when (val lookup = entitlementsRepository.resolve(labels + login.packageLabels)) {
-            is XtreamEntitlementsResult.Unresolved ->
+        val complete = when (val lookup = entitlementsRepository.resolve(labels + login.packageLabels)) {
+            is XtreamEntitlementsResult.Unresolved -> {
                 Log.i(TAG, "unresolved (${lookup.reason}) ($reason); addons unchanged")
+                false
+            }
 
             is XtreamEntitlementsResult.Resolved -> {
                 Log.i(
@@ -200,10 +210,13 @@ class XtreamEntitlementsGuard @Inject constructor(
                 applyResolved(lookup)
             }
         }
+        // A failed manifest fetch must not suppress repair for another 30 minutes.
+        if (complete) prefs.edit().putLong(KEY_LAST_CHECK,now).apply()
+        complete
     }
 
-    private suspend fun applyResolved(resolved: XtreamEntitlementsResult.Resolved) {
-        if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return
+    internal suspend fun applyResolved(resolved: XtreamEntitlementsResult.Resolved): Boolean {
+        if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return true
 
         val repository = streamRepository.get()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -215,51 +228,22 @@ class XtreamEntitlementsGuard @Inject constructor(
         // whatever URL happens to be configured right now.
         val trackedDefinitionIds = prefs.getStringSet(KEY_TRACKED_DEFINITION_IDS, emptySet()).orEmpty()
         val grantedDefinitionIds = resolved.granted.map { it.id }.toSet()
-
-        // Wipe-then-add, unconditionally: whatever addon id was recorded for a
-        // granted definition last time gets removed FIRST, no "is it actually
-        // different" comparison at all — then the current manifest url gets
-        // installed fresh right below. Every check does this, not just ones
-        // where something changed, which costs a small, harmless re-fetch of
-        // the manifest but removes any chance of a stale entry ever surviving.
-        resolved.granted.forEach { entitlement ->
+        val retiredIds = prefs.getStringSet(KEY_RETIRED_ADDON_IDS,emptySet()).orEmpty().toMutableSet()
+        var complete = true
+        // Install/confirm first. Never remove a working grant before its
+        // replacement is usable; a transient outage must preserve that identity.
+        for (entitlement in resolved.granted) {
             val addonIdKey = ADDON_ID_KEY_PREFIX + entitlement.id
-            val previousAddonId = prefs.getString(addonIdKey, null)
-            if (previousAddonId != null) {
-                withTimeoutOrNull(REMOVE_TIMEOUT_MS) { runCatching { repository.removeAddon(previousAddonId) } }
-                prefs.edit().remove(addonIdKey).apply()
-            }
-        }
-
-        if (resolved.granted.isNotEmpty()) {
-            val results = withTimeoutOrNull(INSTALL_TIMEOUT_MS) {
-                repository.ensureCustomAddons(resolved.granted.map { it.manifestUrl })
-            }
-            if (results == null) {
-                Log.w(TAG, "addon install timed out")
-            } else if (results.size != resolved.granted.size) {
-                // ensureCustomAddons distinct()s/filters its input internally;
-                // a size mismatch means position-based pairing can't be
-                // trusted. Only matters once a second definition exists —
-                // today there's exactly one ("cloud_stream"), so this never
-                // actually fires; addons still install, just without recording
-                // their id for next check's wipe step.
-                Log.w(TAG, "addon results size (${results.size}) != granted size (${resolved.granted.size}); ids not recorded this check")
-                results.forEach { result ->
-                    result.onSuccess { addon -> Log.i(TAG, "addon ready: ${addon.name} (${addon.id})") }
-                        .onFailure { error -> Log.w(TAG, "addon install failed: ${error.message}") }
-                }
-            } else {
-                resolved.granted.forEachIndexed { index, entitlement ->
-                    val result = results.getOrNull(index) ?: return@forEachIndexed
-                    result.onSuccess { addon ->
-                        Log.i(TAG, "addon ready: ${addon.name} (${addon.id})")
-                        prefs.edit().putString(ADDON_ID_KEY_PREFIX + entitlement.id, addon.id).apply()
-                    }.onFailure { error ->
-                        Log.w(TAG, "addon install failed: ${error.message}")
-                    }
-                }
-            }
+            val previousAddonId = prefs.getString(addonIdKey,null)
+            val result = try {
+                withTimeoutOrNull(INSTALL_TIMEOUT_MS) { repository.ensureCustomAddons(listOf(entitlement.manifestUrl)).singleOrNull() }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+            (result?.exceptionOrNull() as? CancellationException)?.let { throw it }
+            val addon = result?.getOrNull()
+            if (addon == null) { complete=false;Log.w(TAG,"addon refresh unavailable; existing grant retained");continue }
+            if(previousAddonId!=null&&previousAddonId!=addon.id)retiredIds+=previousAddonId
+            prefs.edit().putString(addonIdKey,addon.id).putStringSet(KEY_RETIRED_ADDON_IDS,retiredIds.toSet()).apply()
         }
 
         // A definition that WAS granted on some earlier check but is not
@@ -270,8 +254,8 @@ class XtreamEntitlementsGuard @Inject constructor(
             val addonIdKey = ADDON_ID_KEY_PREFIX + definitionId
             val addonId = prefs.getString(addonIdKey, null)
             if (addonId != null) {
-                withTimeoutOrNull(REMOVE_TIMEOUT_MS) { runCatching { repository.removeAddon(addonId) } }
-                prefs.edit().remove(addonIdKey).apply()
+                val removed=withTimeoutOrNull(REMOVE_TIMEOUT_MS) { repository.removeAddon(addonId);true }
+                if(removed==true)prefs.edit().remove(addonIdKey).apply() else complete=false
             }
         }
 
@@ -280,7 +264,7 @@ class XtreamEntitlementsGuard @Inject constructor(
                 repository.removeCustomAddonsByUrl(resolved.revoked)
             }
             when (removed) {
-                null -> Log.w(TAG, "addon removal timed out")
+                null -> { complete=false;Log.w(TAG, "addon removal timed out") }
                 // false means nothing matched — either already gone, or the
                 // stored addon url differs from the configured manifest url.
                 false -> Log.i(TAG, "nothing to remove for ${resolved.revoked.size} revoked url(s)")
@@ -288,7 +272,14 @@ class XtreamEntitlementsGuard @Inject constructor(
             }
         }
 
-        prefs.edit().putStringSet(KEY_TRACKED_DEFINITION_IDS, trackedDefinitionIds + grantedDefinitionIds).apply()
+        for(id in retiredIds.toList()){
+            if(prefs.all.any{(key,value)->key.startsWith(ADDON_ID_KEY_PREFIX)&&value==id})continue
+            val removed=withTimeoutOrNull(REMOVE_TIMEOUT_MS){repository.removeAddon(id);true}
+            if(removed==true)retiredIds-=id else complete=false
+        }
+        prefs.edit().putStringSet(KEY_RETIRED_ADDON_IDS,retiredIds.toSet())
+            .putStringSet(KEY_TRACKED_DEFINITION_IDS, trackedDefinitionIds + grantedDefinitionIds).apply()
+        return complete
     }
 
     /**
@@ -298,7 +289,11 @@ class XtreamEntitlementsGuard @Inject constructor(
      */
     private suspend fun readCredentials(): Credentials? {
         val config = withTimeoutOrNull(CONFIG_READ_TIMEOUT_MS) {
-            iptvRepository.observeActivationConfig().first()
+            // The first startup emission can be empty while the activation vault
+            // is restored. Wait for real credentials, not just any first value.
+            iptvRepository.observeActivationConfig().first { config ->
+                config.playlists.any { it.enabled && parseCredentials(it.m3uUrl) != null } || parseCredentials(config.m3uUrl) != null
+            }
         } ?: return null
 
         val candidates = buildList {

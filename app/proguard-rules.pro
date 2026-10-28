@@ -3,6 +3,14 @@
 # Production-ready optimization rules
 # ============================================
 
+# The hardware-first factory reflectively adds only the bundled FFmpeg fallbacks.
+-keep class androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer {
+    public <init>(android.os.Handler, androidx.media3.exoplayer.audio.AudioRendererEventListener, androidx.media3.exoplayer.audio.AudioSink);
+}
+-keep class androidx.media3.decoder.ffmpeg.ExperimentalFfmpegVideoRenderer {
+    public <init>(long, android.os.Handler, androidx.media3.exoplayer.video.VideoRendererEventListener, int);
+}
+
 # ============================================
 # General Android optimizations
 # ============================================

@@ -27,7 +27,7 @@ class AiSubtitleRenderersFactory(
     context: Context,
     private val translationManager: SubtitleTranslationManager,
     private val scope: CoroutineScope
-) : DefaultRenderersFactory(context) {
+) : HardwareFirstRenderersFactory(context) {
 
     val syncOffsetUs = java.util.concurrent.atomic.AtomicLong(0L)
 

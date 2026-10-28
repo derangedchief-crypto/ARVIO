@@ -44,10 +44,15 @@ class EpisodeVodVerificationTest {
     @Test fun ambiguousSeasonDoesNotBecomeAConfirmedAbsence() = fixture(series = listOf("[]"),
         files = """[{"stream_id":77,"name":"Harbour Watch E02","tmdb":"12345","container_extension":"mp4"}]""", unavailable = true)
 
+    @Test fun malformedUnrelatedSeriesDoesNotHideAVerifiedExactEpisode() = fixture(
+        series = listOf("""[{"series_id":41,"name":"Harbour Watch","tmdb":"12345"},{"name":"Broken unrelated row"}]"""), repeatCheck = false)
+    @Test fun partialSeriesCatalogueStillCannotProveAbsenceOrPermitFallback() = fixture(
+        series = listOf("""[{"name":"Broken row"}]"""), unavailable = true)
+
     private fun fixture(series: List<String> = listOf(show), info: String = episode,
         files: String = "[]", season: Int = 1, missing: Boolean = false, unavailable: Boolean = false,
         host: String = "p0.example.test", fileEpisode: Boolean = false, alternateVariant: Boolean = false,
-        seedShow: Boolean = false) = runBlocking {
+        seedShow: Boolean = false, repeatCheck: Boolean = true) = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         val playlists = series.indices.map { index -> IptvPlaylistEntry("provider-$index", "Provider $index",
             "https://p$index.example.test/get.php?username=fixture-user&password=fixture-pass&type=m3u_plus", "") }
@@ -87,8 +92,10 @@ class EpisodeVodVerificationTest {
                 if (fileEpisode) "$host/movie/fixture-user/fixture-pass/77.mp4" else "$host/series/fixture-user/fixture-pass/502.mp4"))
             val afterFirst = requests
             if (seedShow) assertEquals(1, afterFirst)
-            assertEquals(result, repository.verifyEpisodeVodBeforeFallback("Harbour Watch", season, 2, tmdbId = 12345))
-            assertEquals("Confirmed results must not re-fetch during the same check", afterFirst, requests)
+            if (repeatCheck) {
+                assertEquals(result, repository.verifyEpisodeVodBeforeFallback("Harbour Watch", season, 2, tmdbId = 12345))
+                assertEquals("Confirmed results must not re-fetch during the same check", afterFirst, requests)
+            }
         } catch (error: VodVerificationException) {
             if (!unavailable) throw error
         }
