@@ -102,6 +102,12 @@ class MainRolloutTests(unittest.TestCase):
         self.assertIn('BRAND_MAIN_UPDATE_CHANNEL: production',source)
         self.assertNotIn('  push:',source)
 
+    def test_fanout_token_can_read_the_customer_workflow_run(self):
+        source=(Path(__file__).parent.parent/'.github/workflows/central-brand-builder.yml').read_text()
+        fanout=source.split('  main-fanout:',1)[1].split('  branded-apk:',1)[0]
+        self.assertIn('      contents: write',fanout)
+        self.assertIn('      actions: read',fanout)
+
     def test_main_queue_accepts_only_exact_version_sha_tag_and_testing_channel(self):
         class Response(io.BytesIO):status=200
         good={'state':'queued','build_id':'b'*32,'channel':'testing','source_sha':SHA,'workflow_ref':TAG,'mode':'publish'}

@@ -51,6 +51,7 @@ jobs:
     environment: brand-build-only
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Require owner-pinned trusted operator source
         env:
