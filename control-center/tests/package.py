@@ -41,6 +41,10 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         assert 'deploy/INSTALL-AAPANEL.txt' in names and 'cli/console.php' in names
         assert 'database/migrations/013_device_setup_profiles.sql' in names
         assert 'src/DeviceProfiles.php' in names
+        assert 'src/DeviceRecovery.php' in names and 'src/DeviceListWindow.php' in names
+        assert 'database/migrations/025_device_recovery.sql' in names
+        assert 'deploy/DEVICE-RECOVERY-AAPANEL.txt' in names
+        assert b'fresh-checkins' in archive.read('cli/console.php')
         assert 'src/AppBrands.php' in names and 'database/migrations/014_reseller_app_brands.sql' in names
         assert 'src/TrialPolicies.php' in names and 'src/TrialContacts.php' in names and 'database/migrations/015_trial_policies_contacts.sql' in names
         assert 'src/TrialSignupBroker.php' in names and 'database/migrations/016_public_trial_signup.sql' in names

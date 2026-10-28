@@ -1,0 +1,48 @@
+CONTROL CENTER 0.26.0 — FRESH CHECK-INS AND AUTOMATIC DEVICE RECOVERY
+
+WEBSITE ONLY: control.fecxbrfzku.net, /www/wwwroot/control.fecxbrfzku.net
+This is NOT the separate activation/EPG/management worker. No worker update.
+
+FRESH DEVICE LIST (owner and all resellers; user-approved visibility reset):
+
+1. Take your normal aaPanel website/database backup.
+2. Upload/extract Extreme-Control-Center-0.26.0-Update.zip into the EXISTING website
+   folder /www/wwwroot/control.fecxbrfzku.net. Update ZIP omits config.php/storage.
+   Do not create a new application or replace private config, keys or accounts.
+3. In the WEBSITE server's aaPanel terminal:
+
+   cd /www/wwwroot/control.fecxbrfzku.net
+   /www/server/php/84/bin/php -d opcache.enable_cli=0 cli/console.php migrate
+   /www/server/php/84/bin/php -d opcache.enable_cli=0 cli/console.php fresh-checkins --all-workspaces
+
+   The second command increments visibility only. It does NOT delete any device,
+   revoke credentials, erase notes/history, change restrictions or free allocation.
+   Run it once: running again deliberately starts another fresh check-in window.
+4. If PHP opcode caching retains old code, reload this website's PHP handler in
+   aaPanel. Hard-refresh the console. Do not restart unrelated services/workers.
+5. Devices reappear after their next successful ordinary check-in. Closed/offline
+   apps will not reappear until they contact the website. Use Refresh on the page.
+   All retained records can still be viewed explicitly and remain tenant-scoped.
+   Existing apps, including125, can use this visibility reset with no reinstall.
+
+AUTOMATIC RESET/REINSTALL RECONNECTION:
+
+This is a separate new app feature, NOT yet in previously published125 APKs.
+Automatic reconnection defaults OFF. Leave it OFF until a compatible new app has
+been tested and deployed, and existing installations have checked in to establish
+their matching hint (first response advertises support; a following check-in sends
+the existing-key signature). No new phone/MAC permission or worker patch is needed.
+
+After app acceptance, the OWNER can enable Automatic reconnection on Devices.
+Resellers need not match/approve each normal unique recovery. Same verified
+account/reseller/package + unique prior hint + quiet old installation are required.
+Notes/history/assignment/restrictions remain. Old management credentials retire.
+Busy/conflicting/unidentified cases are held rather than merged. Compatible apps
+show Reconnecting this device while verifying, not a fresh activation/data reset.
+
+The hint is not hardware authentication. Factory reset/Android-user changes,
+unavailable IDs, shared/spoofed values and missing historical hints are limitations.
+No 100% physical-device recognition or restoration of locally erased data is claimed.
+
+Send migration/fresh-list command output for read-only verification. Do not send
+passwords, private config, signing keys, raw Android IDs or connection secrets.

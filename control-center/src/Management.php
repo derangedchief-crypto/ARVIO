@@ -222,7 +222,7 @@ final class Management
 
     public function listing(array $actor, string $resource, array $input): array
     {
-        Input::keys($input, array_merge(['page','search','tenant_id','policy'],$resource==='devices'?['customer_id']:[]));
+        Input::keys($input, array_merge(['page','search','tenant_id','policy'],$resource==='devices'?['customer_id','visibility']:[]));
         $page = Input::page($input['page'] ?? 1);
         $offset = ($page - 1) * 25;
         $args = [];
@@ -233,6 +233,9 @@ final class Management
         }
         $search = Input::text($input['search'] ?? '', 'search', 120, false);
         if ($resource === 'devices') {
+            $visibility=$input['visibility']??'current';
+            if(!in_array($visibility,['current','all'],true))throw new Problem(422,'Invalid device visibility.');
+            if($visibility==='current')$scope.=' AND '.DeviceListWindow::condition($this->db,'r');
             if(isset($input['customer_id'])){$customer=$this->customer($actor,Input::id($input['customer_id']));$scope.=' AND r.customer_id=?';$args[]=$customer['id'];}
             if (isset($input['policy']) && $input['policy'] !== '') {
                 if (!in_array($input['policy'], ['active','suspended','blocked','removed'], true)) throw new Problem(422, 'Invalid policy filter.');
@@ -254,7 +257,8 @@ final class Management
         $total = (int) $this->db->query("SELECT COUNT(*) FROM $joins WHERE $scope", $args)->fetchColumn();
         $rows = $this->db->all("SELECT $fields FROM $joins WHERE $scope ORDER BY r.created_at DESC, r.id LIMIT 25 OFFSET $offset", $args);
         if ($resource === 'devices') $rows = array_map($this->publicDevice(...), $rows);
-        return ['items' => $rows, 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total];
+        return ['items' => $rows, 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total]
+            +($resource==='devices'?['list_window'=>(new DeviceListWindow($this->db,$this->auth))->state()]:[]);
     }
     private function deviceUsernameSql(string $alias):string
     {
@@ -269,7 +273,8 @@ final class Management
         $args = []; $scope = $this->scope($actor, 'tenant_id', $args);
         if(!empty($input['tenant_id'])){$tenant=$this->workspace($actor,$input['tenant_id']);$scope.=' AND tenant_id=?';$args[]=$tenant['id'];}
         $threshold = $this->config->number('offline_after_seconds', 180, 60, 1800);
-        $stats = $this->db->one("SELECT COUNT(*) AS total, COALESCE(SUM(enrolled_at IS NULL),0) AS not_enrolled, COALESCE(SUM(last_seen_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL $threshold SECOND)),0) AS connected, COALESCE(SUM(policy != 'active'),0) AS restricted FROM devices WHERE $scope AND policy != 'removed'", $args);
+        $visible=DeviceListWindow::condition($this->db,'devices');
+        $stats = $this->db->one("SELECT COUNT(*) AS total, COALESCE(SUM(enrolled_at IS NULL),0) AS not_enrolled, COALESCE(SUM(last_seen_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL $threshold SECOND)),0) AS connected, COALESCE(SUM(policy != 'active'),0) AS restricted FROM devices WHERE $scope AND policy != 'removed' AND $visible", $args);
         $stats['customers'] = (int) $this->db->query("SELECT COUNT(*) FROM customers WHERE $scope", $args)->fetchColumn();
         $stats['pending_commands'] = (int) $this->db->query("SELECT COUNT(*) FROM commands WHERE $scope AND status IN ('pending','delivered','running') AND expires_at > UTC_TIMESTAMP()", $args)->fetchColumn();
         return $stats;

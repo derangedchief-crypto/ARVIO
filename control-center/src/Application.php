@@ -161,6 +161,9 @@ final class Application
             Http::cookie($this->config, ''); Http::json(['ok' => true]);
         }
         if ($method === 'GET' && $path === '/api/overview') Http::json($this->management->overview($actor,$_GET));
+        if($method==='GET'&&$path==='/api/device-list-window'){Input::keys($_GET,[]);Http::json((new DeviceListWindow($this->db,$this->auth))->state());}
+        if($method==='POST'&&$path==='/api/device-list-window')Http::json((new DeviceListWindow($this->db,$this->auth))->reset($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/device-recovery/settings')Http::json((new DeviceListWindow($this->db,$this->auth))->setRecovery($actor,Http::body()));
         if($method==='GET'&&$path==='/api/app-brand')Http::json($this->appBrands->get($actor,$_GET));
         if($method==='POST'&&$path==='/api/app-brand')Http::json($this->appBrands->save($actor,Http::body()));
         if($method==='POST'&&$path==='/api/app-brand/assets')Http::json($this->appBrands->upload($actor,Http::body(1500000)),201);

@@ -31,8 +31,9 @@ internal fun managementAccount(config: IptvConfig): ManagementAccount? {
     return null
 }
 
-internal fun enrollmentSigningText(nonce: String, proof: String, install: String, appPackage: String, fingerprint: String): String =
-    "ECENROLL1\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint"
+internal fun enrollmentSigningText(nonce: String, proof: String, install: String, appPackage: String, fingerprint: String,recoveryHint:String?=null): String =
+    if(recoveryHint==null)"ECENROLL1\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint"
+    else "ECENROLL2\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint\n$recoveryHint"
 
 internal val MANAGEMENT_POLICIES = setOf("active", "suspended", "blocked", "removed")
 internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories", "get_category_layout", "apply_category_layout", "backup_favourites", "preview_favourites_restore", "restore_favourites", "set_live_buffer", "clear_cache", "restart_app", "get_sources", "apply_sources", "get_preferences", "apply_preferences", "get_support_bundle", "capture_app_screen")
@@ -58,6 +59,7 @@ data class DeviceManagementState(
     val policy: String? = null,
     val message: ManagementMessage? = null,
     val favouritesBackupStatus: String = "Waiting for managed check-in",
+    val recoveryPending: Boolean = false,
 ) {
     val restricted: Boolean get() = policy in setOf("suspended", "blocked", "removed")
 }
@@ -66,7 +68,7 @@ data class DeviceManagementState(
  * emission during activation must not remove the NavHost and cancel its ViewModel. */
 internal fun preparingManagementAccount(previous: DeviceManagementState, sameAccount: Boolean): DeviceManagementState =
     DeviceManagementState(previous.checkingLocalState, if (sameAccount) previous.installationId else "",
-        "Checking saved device policy", if (sameAccount) previous.policy else null)
+        "Checking saved device policy", if (sameAccount) previous.policy else null,recoveryPending=sameAccount&&previous.recoveryPending)
 
 @Keep
 internal data class CommandReceipt(val id: String, val status: String, val summary: String, val snapshot: Map<String,String>? = null,
@@ -93,6 +95,7 @@ internal data class ManagementSession(
     val catalogSecret: String? = null,
     val favouritesSync: Map<String,String>? = null,
     val lastReopenAtMs: Long = 0,
+    val recoveryPending: Boolean = false,
 ) {
     override fun toString() = "ManagementSession([redacted])"
 }

@@ -1,4 +1,24 @@
-# Device management 0.25.0 primary safeguards — validation
+# Device management 0.26.0 recovery and fresh check-ins — validation
+
+Final local checks: 1,016 Android tests (zero failures/errors, one existing skip),
+both testing/customer Kotlin variants compiled; 261 isolated MariaDB/service checks,
+5 focused browser checks, 83 branding checks and delivery-package checks passed.
+Logs are `/tmp/opencode/device-recovery-native-acceptance.log` and
+`/tmp/opencode/device-recovery-web-acceptance.log`.
+
+Checks cover unique inactive recovery, two simultaneous reset claims, preserved
+notes/assignment/restrictions, old credential retirement, same allocation slot,
+owner-unassigned retention, signed hint backfill, collision/legacy holds, tenant
+boundaries and fresh-list visibility with no deletion/logout. Browser checks verify
+cancelled confirmation, same-ID return after check-in, owner-only controls, retained
+record access and mobile/desktop layout. Matching hints are not hardware proof.
+
+No physical reinstall/reset test or live device-list reset has been performed.
+Automatic recovery defaults OFF and requires a compatible APK plus prior backfill.
+Existing125 apps support the server-only fresh visibility window but not hints.
+Follow `deploy/DEVICE-RECOVERY-AAPANEL.txt`; update ZIP excludes config/storage.
+
+## Historical 0.25.0 primary safeguards validation
 
 Final local validation: 927 Android tests (zero failures/errors, one existing skip),
 including all20 new primary-access tests; both testing/customer Kotlin variants

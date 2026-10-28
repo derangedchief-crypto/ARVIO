@@ -15,7 +15,9 @@ function concurrentOperations(string $fixture, array $input): array
         $pipes=[];
         $process=proc_open(testPhpArguments($fixture.'/tests/concurrency-worker.php'), [0=>['pipe','r'],1=>['pipe','w'],2=>['file',$fixture.'/workers.log','a']],$pipes,$fixture);
         if (!is_resource($process)) throw new RuntimeException('Could not start concurrency fixture');
-        fwrite($pipes[0], json_encode($input,JSON_THROW_ON_ERROR)); fclose($pipes[0]);
+        $payload=$input;
+        if(($input['operation']??null)==='recovery-register'){$payload['body']=$input['bodies'][$i];unset($payload['bodies']);}
+        fwrite($pipes[0], json_encode($payload,JSON_THROW_ON_ERROR)); fclose($pipes[0]);
         $processes[]=[$process,$pipes[1]];
     }
     $results=[];
