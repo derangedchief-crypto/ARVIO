@@ -62,7 +62,7 @@ class MainRolloutTests(unittest.TestCase):
                 self.assertEqual(0o600,(Path(directory)/'brand-main-bridge-key').stat().st_mode&0o777)
                 self.assertEqual('SYNTHETIC-PRIVATE\n',(Path(directory)/'brand-main-bridge-key').read_text())
                 return {'complete':True,'queued':2}
-            with patch.dict(os.environ,env),patch.object(rollout,'command',return_value=SHA),patch.object(rollout,'gh_json',side_effect=customer_api),patch.object(rollout,'immutable_tag') as tag,patch.object(rollout,'Bridge') as bridge,redirect_stdout(io.StringIO()):
+            with patch.dict(os.environ,env),patch.object(rollout,'command',return_value=SHA),patch.object(rollout,'gh_json',side_effect=customer_api),patch.object(rollout,'verify_immutable_tag') as tag,patch.object(rollout,'Bridge') as bridge,redirect_stdout(io.StringIO()):
                 bridge.return_value.call.side_effect=call;rollout.main();tag.assert_called_once_with(TAG,SHA);bridge.return_value.call.assert_called_once()
             self.assertEqual([],list(Path(directory).iterdir()))
 
@@ -105,8 +105,14 @@ class MainRolloutTests(unittest.TestCase):
     def test_fanout_token_can_read_the_customer_workflow_run(self):
         source=(Path(__file__).parent.parent/'.github/workflows/central-brand-builder.yml').read_text()
         fanout=source.split('  main-fanout:',1)[1].split('  branded-apk:',1)[0]
-        self.assertIn('      contents: write',fanout)
+        self.assertIn('      contents: read',fanout)
         self.assertIn('      actions: read',fanout)
+
+    def test_fanout_never_creates_or_overwrites_source_tags(self):
+        with patch.object(rollout,'gh_json',return_value={'object':{'sha':SHA,'type':'commit'}}),patch.object(rollout,'command') as command:
+            rollout.verify_immutable_tag(TAG,SHA);command.assert_not_called()
+        with patch.object(rollout,'gh_json',return_value={'object':{'sha':'f'*40,'type':'commit'}}):
+            with self.assertRaises(ValueError):rollout.verify_immutable_tag(TAG,SHA)
 
     def test_main_queue_accepts_only_exact_version_sha_tag_and_testing_channel(self):
         class Response(io.BytesIO):status=200

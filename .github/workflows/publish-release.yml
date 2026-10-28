@@ -67,6 +67,11 @@ jobs:
           echo "tag=v$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "Releasing version $VERSION_NAME as tag v$VERSION_NAME"
 
+      - name: Pin exact customer and branded core source before building
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 branding/prepare_customer_source.py
+
       - name: Prepare build configuration
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
@@ -167,10 +172,16 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
+      - name: Recheck frozen source and customer tag before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 branding/prepare_customer_source.py --verify
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: Extreme TV ${{ steps.version.outputs.name }}
           body: ${{ github.event.inputs.release_notes || format('Automated release build from {0}.', github.ref_name) }}
           draft: false

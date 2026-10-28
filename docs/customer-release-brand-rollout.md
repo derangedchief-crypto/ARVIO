@@ -16,6 +16,12 @@ update only after their brand-specific APK is built, verified and published.
 
 ## Trigger and verification
 
+Before building, the customer workflow pins `brand-source-VERSION-SHA` while its
+approved commit is still current main. If main has already moved, pinning fails
+before customer publication. It rechecks the frozen tag immediately before
+publishing and sets the customer release's target commit explicitly. An existing
+customer version/tag belonging to a different commit is refused, never retargeted.
+
 `Central Branded APK` now subscribes to `workflow_run: completed` for the customer
 workflow on main. It requires success, the same repository and the owner rollout
 enable flag. It checks out only the protected operator SHA, not the triggering code.
@@ -24,6 +30,10 @@ The operator reads the original run through GitHub's API, verifies the exact kno
 customer workflow path, main branch, workflow_dispatch event, completion, success
 and repository. It then verifies the stable customer release, its single correct
 uploaded APK/digest and the release tag's exact commit. It queues production only.
+Its token has only contents/read and actions/read. It verifies the already-pinned
+brand-source tag rather than trying to create an older workflow-bearing tag with
+the post-publication Actions token. The approved 124 catch-up needed its missing
+source tag pinned once by the authorized operator; no release assets were changed.
 
 The website independently checks that production sources correspond to a published
 customer APK and immutable source tag; it no longer substitutes current main for
@@ -36,8 +46,8 @@ jobs on retry. Existing monotonic checks reject older rollouts after a newer one
 
 ## Activation / deployment — NOT performed by this staging change
 
-Validation: all 83 branding/builder checks and all 246 isolated MariaDB service
-checks pass; actionlint passes for the changed workflow. Coverage includes failed,
+Validation: all 92 branding/builder checks and all 246 isolated MariaDB service
+checks pass; actionlint passes for both changed workflows. Coverage includes failed,
 cancelled, foreign-repository and testing runs, unpublished/draft/wrong APKs, exact
 release SHA matching, preserved branding snapshots and duplicate-safe queueing.
 An already-registered testing source cannot bypass production publication checks.

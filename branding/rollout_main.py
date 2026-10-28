@@ -62,6 +62,12 @@ def immutable_tag(tag, sha):
     if actual.get('object',{}).get('sha')!=sha or actual.get('object',{}).get('type')!='commit':raise ValueError('Immutable main source tag conflict.')
 
 
+def verify_immutable_tag(tag,sha):
+    actual=gh_json('git/ref/tags/'+tag)
+    if actual.get('object',{}).get('sha')!=sha or actual.get('object',{}).get('type')!='commit':
+        raise ValueError('Customer publication must first pin the exact immutable branded source.')
+
+
 def main():
     os.umask(0o077)
     operator=os.environ.get('BRAND_OPERATOR_SHA','')
@@ -74,7 +80,7 @@ def main():
     gh_json('contents/branding/central_builder.py?ref='+source)
     tag='brand-source-'+version+'-'+source
     print('Verifying immutable released-source tag.',flush=True)
-    immutable_tag(tag,source)
+    verify_immutable_tag(tag,source)
     temp=Path(os.environ['RUNNER_TEMP'])
     key=temp/'brand-main-bridge-key';hosts=temp/'brand-main-known-hosts'
     try:
