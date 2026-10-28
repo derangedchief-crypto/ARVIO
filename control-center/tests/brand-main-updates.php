@@ -1,6 +1,15 @@
 <?php
 declare(strict_types=1);
 function brandMainUpdateCases(array &$tests,ControlCenter\Application $app,ControlCenter\Config $config,array $owner):void {
+    $tests['production fanout follows exact published customer source not unpublished main']=static function():void {
+        $input=['app_version'=>'2.0.124','source_sha'=>str_repeat('a',40)];$commit=['sha'=>$input['source_sha']];
+        $apk=['name'=>'ExtremeTV-2.0.124.apk','state'=>'uploaded','size'=>123,'digest'=>'sha256:'.str_repeat('b',64)];
+        $release=['tag_name'=>'v2.0.124','draft'=>false,'prerelease'=>false,'published_at'=>'2026-10-28T00:00:00Z','assets'=>[$apk]];
+        same(true,ControlCenter\BrandMainUpdates::publishedCustomerMatches($input,$release,$commit));
+        foreach([['draft'=>true],['prerelease'=>true],['published_at'=>null],['assets'=>[]],['tag_name'=>'staging-testing'],['assets'=>[array_replace($apk,['name'=>'ExtremeTV-Test-latest.apk'])]],['assets'=>[$apk,$apk]]] as $override)
+            same(false,ControlCenter\BrandMainUpdates::publishedCustomerMatches($input,array_replace($release,$override),$commit));
+        same(false,ControlCenter\BrandMainUpdates::publishedCustomerMatches($input,$release,['sha'=>str_repeat('c',40)]));
+    };
     $sha=str_repeat('6',40);$token=str_repeat('7',64);$checks=0;$jobs=[];
     $input=['source_sha'=>$sha,'workflow_ref'=>'brand-source-2.0.116-'.$sha,'app_version'=>'2.0.116','version_code'=>432];
     $c=new ControlCenter\Config($config->root,array_replace($config->values,['brand_main_updates'=>['testing_enabled'=>true],'brand_builder'=>['enabled'=>true,'publication_enabled'=>true,'automatic_testing_publication'=>true,'channels'=>['testing','production'],'sources'=>['9.9.9'=>str_repeat('a',40)]],'brand_dispatch'=>['enabled'=>true,'token_sha256'=>hash('sha256',$token)]]));
