@@ -249,6 +249,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             // (the card surface background is the fallback visual).
             .error(android.R.color.transparent)
             .components {
+                add(com.arflix.tv.util.LegacyWebpGuard())
                 add(SvgDecoder.Factory())
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     add(ImageDecoderDecoder.Factory())

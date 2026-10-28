@@ -48,7 +48,8 @@ fun RequiredUpdateGate(
             if (update == null) {
                 CircularProgressIndicator()
             } else {
-                Text(com.arflix.tv.branding.AppBrand.text("Version ${update.tag.removePrefix("v")} is available. You need to update to continue using Extreme Hub."),
+                val message = remember(update.tag) { com.arflix.tv.branding.AppBrand.text("Version ${update.tag.removePrefix("v")} is available. You need to update to continue using Extreme Hub.") }
+                Text(message,
                     color = Color(0xFFD5DBE5), fontSize = 18.sp, textAlign = TextAlign.Center)
                 when {
                     state.permissionRequired -> Text(com.arflix.tv.branding.AppBrand.text("Allow Extreme Hub to install updates in Android settings, then return here."), color = Color.White)

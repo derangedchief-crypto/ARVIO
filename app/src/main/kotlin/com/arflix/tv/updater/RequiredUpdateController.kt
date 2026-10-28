@@ -175,9 +175,7 @@ class RequiredUpdateController @Inject constructor(
                 ApkInstaller.checkSignatureConflict(context, file)?.let { error(it) }
                 if (_state.value.update != update) return@launch
                 statuses.updateStatus(UpdateStatus.Installing(update))
-                withContext(Dispatchers.Main) {
-                    check(ApkInstaller.launchInstall(context, file)) { "Android could not open the installer. Please retry." }
-                }
+                check(ApkInstaller.launchInstall(context, file)) { "Android could not open the installer. Please retry." }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 apkFile = null

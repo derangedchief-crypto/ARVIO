@@ -5245,18 +5245,17 @@ class HomeViewModel @Inject constructor(
             // launchInstall handles falling back to Intent.ACTION_VIEW
         }
 
-        val conflictMsg = com.arflix.tv.updater.ApkInstaller.checkSignatureConflict(context, apkFile)
-        if (conflictMsg != null) {
-            updateStatusManager.updateStatus(com.arflix.tv.updater.UpdateStatus.Failure(conflictMsg, update))
-            return
-        }
-
-        com.arflix.tv.updater.ApkInstaller.launchInstall(context, apkFile)
         updateStatusManager.updateStatus(com.arflix.tv.updater.UpdateStatus.Installing(update))
-
-        // Mark this release as ignored so it doesn't pop up again if the user cancels the install
-        viewModelScope.launch {
-            updatePreferences.setIgnoredTag(update.tag)
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                com.arflix.tv.updater.ApkInstaller.checkSignatureConflict(context, apkFile)?.let { error(it) }
+                check(com.arflix.tv.updater.ApkInstaller.launchInstall(context, apkFile)) { "Android could not open the installer. Please retry." }
+                updatePreferences.setIgnoredTag(update.tag)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                updateStatusManager.updateStatus(com.arflix.tv.updater.UpdateStatus.Failure(error.message ?: "Unable to install update.", update))
+            }
         }
     }
 

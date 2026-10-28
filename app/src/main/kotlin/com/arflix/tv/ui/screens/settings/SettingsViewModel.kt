@@ -3755,17 +3755,17 @@ class SettingsViewModel @Inject constructor(
             return
         }
 
-        val conflictMsg = ApkInstaller.checkSignatureConflict(context, apkFile)
-        if (conflictMsg != null) {
-            updateStatusManager.updateStatus(com.arflix.tv.updater.UpdateStatus.Failure(conflictMsg, update))
-            return
-        }
-
-        ApkInstaller.launchInstall(context, apkFile)
         updateStatusManager.updateStatus(com.arflix.tv.updater.UpdateStatus.Installing(update))
-
-        viewModelScope.launch {
-            updatePreferences.setIgnoredTag(update.tag)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                ApkInstaller.checkSignatureConflict(context, apkFile)?.let { error(it) }
+                check(ApkInstaller.launchInstall(context, apkFile)) { "Android could not open the installer. Please retry." }
+                updatePreferences.setIgnoredTag(update.tag)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                updateStatusManager.updateStatus(com.arflix.tv.updater.UpdateStatus.Failure(error.message ?: "Unable to install update.", update))
+            }
         }
     }
 

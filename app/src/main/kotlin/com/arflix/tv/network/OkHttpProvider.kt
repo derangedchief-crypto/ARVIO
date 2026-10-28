@@ -525,6 +525,7 @@ object OkHttpProvider {
             .respectCacheHeaders(false)
             .allowRgb565(true)
             .components {
+                add(com.arflix.tv.util.LegacyWebpGuard())
                 add(SvgDecoder.Factory())
             }
             .build()

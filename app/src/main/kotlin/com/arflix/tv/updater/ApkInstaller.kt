@@ -13,6 +13,11 @@ import com.arflix.tv.BuildConfig
 import com.arflix.tv.R
 import java.io.File
 import java.io.FileInputStream
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 object ApkInstaller {
     fun canRequestPackageInstalls(context: Context): Boolean {
@@ -107,9 +112,11 @@ object ApkInstaller {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
-    fun launchInstall(context: Context, apkFile: File): Boolean {
+    suspend fun launchInstall(context: Context, apkFile: File): Boolean = withContext(Dispatchers.IO) {
         // Try session-based installer first (smoother UX on Android 5+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            var sessionId: Int? = null
+            var committed = false
             try {
                 val pm = context.packageManager
                 val installer = pm.packageInstaller
@@ -117,26 +124,27 @@ object ApkInstaller {
                 params.setSize(apkFile.length())
                 params.setAppPackageName(context.packageName)
 
-                val sessionId = installer.createSession(params)
-                val session = installer.openSession(sessionId)
-
-                session.openWrite("app_update", 0, apkFile.length()).use { out ->
-                    FileInputStream(apkFile).use { input ->
-                        input.copyTo(out)
+                val id = installer.createSession(params)
+                sessionId = id
+                installer.openSession(id).use { session ->
+                    session.openWrite("app_update", 0, apkFile.length()).use { out ->
+                        FileInputStream(apkFile).use { input -> input.copyTo(out) }
+                        session.fsync(out)
                     }
-                    session.fsync(out)
+                    currentCoroutineContext().ensureActive()
+                    // Retain the explicit activity callback across process replacement.
+                    val pendingIntent = UpdateRelaunch.createStatusCallback(context.applicationContext, id)
+                    session.commit(pendingIntent.intentSender)
+                    committed = true
                 }
-
-                // A receiver -> startActivity trampoline is not a reliable
-                // post-update launch on modern Android. The system retains an
-                // explicit activity callback across replacement/process death.
-                val pendingIntent = UpdateRelaunch.createStatusCallback(context.applicationContext, sessionId)
-
-                session.commit(pendingIntent.intentSender)
-                session.close()
-                return true
+                return@withContext true
             } catch (e: Exception) {
-                System.err.println("[ApkInstaller] Session install failed, falling back to ACTION_VIEW: ${e.message}")
+                // Never leak half-written sessions or start a second installer after
+                // an accepted commit merely because closing its handle failed.
+                if (!committed) sessionId?.let { id -> runCatching { context.packageManager.packageInstaller.abandonSession(id) } }
+                if (e is CancellationException) throw e
+                if (committed) return@withContext true
+                System.err.println("[ApkInstaller] Session install failed; using ACTION_VIEW (${e.javaClass.simpleName})")
             }
         }
 
@@ -148,11 +156,12 @@ object ApkInstaller {
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-            context.startActivity(intent)
-            return true
+            withContext(Dispatchers.Main) { context.startActivity(intent) }
+            return@withContext true
         } catch (e: Exception) {
-            System.err.println("[ApkInstaller] Fallback ACTION_VIEW install failed: ${e.message}")
-            return false
+            if (e is CancellationException) throw e
+            System.err.println("[ApkInstaller] ACTION_VIEW failed (${e.javaClass.simpleName})")
+            return@withContext false
         }
     }
 }

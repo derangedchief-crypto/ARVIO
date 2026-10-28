@@ -245,6 +245,8 @@ class DetailsViewModel @Inject constructor(
     private var loadStreamsJob: kotlinx.coroutines.Job? = null
     private var activePluginScraperJob: kotlinx.coroutines.Job? = null
     private var cloudFallbackActive = false
+    private data class SourcesRequest(val type:MediaType,val id:Int,val imdbId:String?,val identity:EpisodeIdentity?,val profile:String)
+    private var lastSourcesRequest:SourcesRequest?=null
     private var loadStreamsRequestId: Long = 0L
     private var focusedStreamPrewarmJob: kotlinx.coroutines.Job? = null
     private var streamListPrewarmJob: kotlinx.coroutines.Job? = null
@@ -1804,7 +1806,21 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
-    fun loadStreams(imdbId: String?, identity: EpisodeIdentity? = null) {
+    /** Only used for an already-open Sources/Play request after entitlement
+     * restoration. Never switches the item/episode or erases visible VOD hits. */
+    fun retrySourcesAfterCloudRestoration(){
+        val request=lastSourcesRequest?:return
+        // An in-flight VOD check will read the latest Cloud access before it
+        // finishes. Do not cancel/restart that potentially expensive lookup.
+        if(loadStreamsJob?.isActive==true)return
+        if(cloudFallbackActive||request.type!=currentMediaType||request.id!=currentMediaId||request.profile!=profileManager.getProfileIdSync())return
+        loadStreams(request.imdbId,request.identity,preserveExisting=true)
+    }
+
+    fun loadStreams(imdbId: String?, identity: EpisodeIdentity? = null, preserveExisting:Boolean=false) {
+        val retainedStreams=if(preserveExisting)_uiState.value.streams else emptyList()
+        val retainedSubtitles=if(preserveExisting)_uiState.value.subtitles else emptyList()
+        lastSourcesRequest=SourcesRequest(currentMediaType,currentMediaId,imdbId,identity,profileManager.getProfileIdSync())
         prefetchJob?.cancel()
         loadStreamsJob?.cancel()
         activePluginScraperJob?.cancel()
@@ -1818,8 +1834,8 @@ class DetailsViewModel @Inject constructor(
             isLoadingStreams = true,
             completedAddons = 0,
             totalAddons = 0,
-            streams = emptyList(),
-            subtitles = emptyList(),
+            streams = retainedStreams,
+            subtitles = retainedSubtitles,
             streamSearchStartTime = System.currentTimeMillis(),
             pluginScrapersLoading = false
         )
@@ -1864,8 +1880,8 @@ class DetailsViewModel @Inject constructor(
                 isLoadingStreams = true,
                 completedAddons = 0,
                 totalAddons = 0,
-                streams = emptyList(),
-                subtitles = emptyList(),
+                streams = retainedStreams,
+                subtitles = retainedSubtitles,
                 addonOrderedIds = orderedAddonIds,
                 streamSearchStartTime = System.currentTimeMillis(),
                 pluginScrapersLoading = false

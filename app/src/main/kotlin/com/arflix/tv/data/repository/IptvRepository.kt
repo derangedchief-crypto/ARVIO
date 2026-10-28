@@ -5900,20 +5900,25 @@ class IptvRepository @Inject constructor(
                 else requestJson(root + "get_series",
                     TypeToken.getParameterized(List::class.java, XtreamSeriesItem::class.java).type, launchCatalogHttpClient)
             ensureCurrent()
-            if (series == null || series.any { it.seriesId == null || it.name.isNullOrBlank() }) incomplete = true
+            if (series == null) incomplete = true
             else {
-                if (series !== cachedSeries) {
+                val complete = series.none { it.seriesId == null || it.name.isNullOrBlank() }
+                if (!complete) incomplete = true
+                if (complete && series !== cachedSeries) {
                     ensureXtreamVodCacheOwnership(creds)
                     cachedXtreamSeries = series
                     xtreamSeriesLoadedAtMs = System.currentTimeMillis()
                     writeDiskCache(seriesDiskCacheFile(creds), xtreamSeriesLoadedAtMs, series)
                     verifiedVodCatalogs.mark(seriesKey, xtreamSeriesLoadedAtMs)
                 }
-                for (candidate in candidates(series)) {
+                // A broken unrelated row cannot hide an independently verified
+                // exact episode. Partial catalogues NEVER prove absence or get
+                // cached as complete; the paid/cloud fallback gate stays closed.
+                for (candidate in candidates(series.filter { it.seriesId != null && !it.name.isNullOrBlank() })) {
                     val rows = episodeInfo(creds, candidate.seriesId)
                     if (rows == null) { incomplete = true; continue }
                     val hit = sources(creds, rows)
-                    if (hit.isNotEmpty()) return@withLock sortVodSources(hit)
+                    if (hit.isNotEmpty()) { ensureCurrent(); return@withLock sortVodSources(hit) }
                 }
             }
             // Some providers store individual episodes in their movie/VOD list.

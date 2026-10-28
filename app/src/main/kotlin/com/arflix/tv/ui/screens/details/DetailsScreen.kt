@@ -264,6 +264,15 @@ fun DetailsScreen(
     KeepScreenOn(active = showTrailerPlayer)
     var pendingAutoPlayRequest by remember { mutableStateOf<PendingAutoPlayRequest?>(null) }
     var autoPlayWaitTick by remember { mutableIntStateOf(0) }
+    val cloudAvailable by viewModel.canSearchExtremeCloud.collectAsStateWithLifecycle()
+    var previousCloudAvailable by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(cloudAvailable,showStreamSelector,pendingAutoPlayRequest!=null,mediaType,mediaId){
+        val previous=previousCloudAvailable
+        previousCloudAvailable=cloudAvailable
+        if(shouldRetryRestoredCloudSources(previous,cloudAvailable,showStreamSelector||pendingAutoPlayRequest!=null)){
+            viewModel.retrySourcesAfterCloudRestoration()
+        }
+    }
 
     // Episode Context Menu state
     var showEpisodeContextMenu by remember { mutableStateOf(false) }
