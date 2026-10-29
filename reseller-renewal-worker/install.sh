@@ -151,30 +151,45 @@ PY
 systemctl daemon-reload
 systemctl start iptv-renewal-worker.service
 "$bootstrap" -I -S - "$environment" <<'PY'
-import hashlib,hmac,json,secrets,sys,time,urllib.request
+import hashlib,hmac,http.client,json,secrets,sys,time
 from pathlib import Path
 key=dict(line.split('=',1) for line in Path(sys.argv[1]).read_text().splitlines() if line and not line.startswith('#'))['RENEWAL_BRIDGE_SECRET']
-class NoRedirect(urllib.request.HTTPRedirectHandler):
- def redirect_request(self,*args,**kwargs):return None
-opener=urllib.request.build_opener(NoRedirect)
 deadline=time.monotonic()+180
+last={}
 while True:
+ connection=None
  try:
   stamp=str(int(time.time()));nonce=secrets.token_hex(16);raw=b'{}'
   sig=hmac.new(key.encode(),b'branded-renewal-request-v1\n'+stamp.encode()+b'\n'+nonce.encode()+b'\n'+raw,hashlib.sha256).hexdigest()
-  request=urllib.request.Request('http://127.0.0.1:9093/branded-renewals/status',data=raw,headers={'Content-Type':'application/json','X-Renewal-Timestamp':stamp,'X-Renewal-Nonce':nonce,'X-Renewal-Signature':sig})
-  with opener.open(request,timeout=3) as response:e=json.load(response)
+  # A loopback health check must NEVER inherit HTTP_PROXY/ALL_PROXY settings.
+  connection=http.client.HTTPConnection('127.0.0.1',9093,timeout=3)
+  connection.request('POST','/branded-renewals/status',body=raw,headers={'Content-Type':'application/json','X-Renewal-Timestamp':stamp,'X-Renewal-Nonce':nonce,'X-Renewal-Signature':sig})
+  response=connection.getresponse();last={'http_status':response.status}
+  if response.status!=200:raise RuntimeError('http-status')
+  e=json.loads(response.read(65537))
+  last['phase']='response-signature'
   expected=hmac.new(key.encode(),('branded-renewal-result-v1\n'+stamp+'\n'+nonce+'\n'+e['payload']).encode(),hashlib.sha256).hexdigest()
   if not hmac.compare_digest(expected,e['signature']):raise RuntimeError()
   value=json.loads(e['payload'])
+  last['phase']='response-capabilities'
   if value.get('mode')!='renewals' or value.get('writes_enabled') is not True or value.get('atomic_renewal')!=1 or value.get('current_package_only') is not True:raise RuntimeError()
   break
- except Exception:
-  if time.monotonic()>=deadline:
+ except Exception as error:
+  last['error_type']=type(error).__name__
+  if isinstance(error,OSError):last['errno']=error.errno
+  if time.monotonic()>=deadline or 'http_status' in last:
+   print(json.dumps({'loopback_readiness':last}))
+   import subprocess
+   for property in ['ActiveState','SubState','MainPID','ExecMainStatus']:
+    result=subprocess.run(['systemctl','show','iptv-renewal-worker.service','-p',property,'--value'],capture_output=True,text=True)
+    text=result.stdout.strip()
+    if text and all(c.isalnum() or c in '-_' for c in text):print(property+'='+text)
    try:print(Path('/var/lib/iptv-renewal-worker/startup-status.json').read_text())
    except OSError:pass
    raise SystemExit('New renewal service failed readiness; private values omitted') from None
   time.sleep(1)
+ finally:
+  if connection is not None:connection.close()
 PY
 [[ "$auth_env_before" == "$(sha256sum "$auth/.env")" && "$auth_config_before" == "$(sha256sum "$auth/config.py")" && "$auth_main_before" == "$(sha256sum "$auth/main.py")" ]] || { echo 'Auth files changed concurrently; investigate before proceeding.' >&2; exit 1; }
 if [[ "$auth_was_active" == true ]]; then systemctl is-active --quiet iptv-auth-worker.service;fi

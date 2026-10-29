@@ -12,6 +12,30 @@ ROOT=Path(__file__).resolve().parent.parent
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_actual_installer_loopback_handshake_bypasses_inherited_proxy(self):
+        import hmac,http.server,json,os,threading
+        secret='a'*64
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_POST(self):
+                raw=self.rfile.read(int(self.headers['Content-Length']))
+                stamp=self.headers['X-Renewal-Timestamp'];nonce=self.headers['X-Renewal-Nonce']
+                expected=hmac.new(secret.encode(),b'branded-renewal-request-v1\n'+stamp.encode()+b'\n'+nonce.encode()+b'\n'+raw,hashlib.sha256).hexdigest()
+                if self.headers['X-Renewal-Signature']!=expected:self.send_error(403);return
+                payload=json.dumps({'mode':'renewals','writes_enabled':True,'atomic_renewal':1,'current_package_only':True})
+                reply=json.dumps({'payload':payload,'signature':hmac.new(secret.encode(),('branded-renewal-result-v1\n'+stamp+'\n'+nonce+'\n'+payload).encode(),hashlib.sha256).hexdigest()}).encode()
+                self.send_response(200);self.send_header('Content-Length',str(len(reply)));self.end_headers();self.wfile.write(reply)
+        server=http.server.HTTPServer(('127.0.0.1',0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            script=(ROOT/'reseller-renewal-worker/install.sh').read_text()
+            block=next(b for b in re.findall(r"<<'PY'\n(.*?)\nPY",script,re.S) if 'loopback_readiness' in b)
+            block=block.replace("HTTPConnection('127.0.0.1',9093",f"HTTPConnection('127.0.0.1',{server.server_port}")
+            with tempfile.TemporaryDirectory(dir='/tmp/opencode') as folder:
+                envfile=Path(folder)/'environment';envfile.write_text('RENEWAL_BRIDGE_SECRET='+secret+'\n')
+                env={**os.environ,'http_proxy':'http://127.0.0.1:1','HTTP_PROXY':'http://127.0.0.1:1','ALL_PROXY':'http://127.0.0.1:1','no_proxy':'','NO_PROXY':''}
+                result=subprocess.run(['/usr/bin/python3','-I','-S','-',str(envfile)],input=block,text=True,capture_output=True,env=env,timeout=10)
+                self.assertEqual(0,result.returncode,result.stderr);self.assertNotIn(secret,result.stdout+result.stderr)
+        finally:server.shutdown();server.server_close();thread.join()
     def test_new_bundle_has_no_original_config_env_trial_or_legacy_portal_app(self):
         with tempfile.TemporaryDirectory(dir='/tmp/opencode') as folder:
             target=Path(folder)/'new.zip'
