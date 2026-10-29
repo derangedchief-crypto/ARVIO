@@ -13,6 +13,7 @@ final class RenewalSettings {
     public function setPolicy(array $actor,array $input):array {
         Auth::owner($actor);$this->ready();Input::keys($input,['enabled','testing_only']);
         if(!is_bool($input['enabled']??null)||!is_bool($input['testing_only']??null))throw new Problem(422,'Invalid renewal rollout policy.');
+        if($input['enabled']&&($this->config->get('renewal_worker',[])['mode']??null)==='catalogue_only')throw new Problem(409,'Catalogue-only connection cannot enable payments or renewal writes.');
         $this->db->query('UPDATE renewal_policy SET enabled=?,testing_only=? WHERE id=1',[(int)$input['enabled'],(int)$input['testing_only']]);
         $this->auth->audit($actor,'renewals.policy_changed',null,null,$input);return $this->policy();
     }
@@ -28,7 +29,7 @@ final class RenewalSettings {
         Input::keys($input,['tenant_id']);$t=$this->workspace($actor,$input['tenant_id']??null);$c=$this->connection($t['id']);
         $plans=$this->db->all('SELECT id,name,currency,amount_minor,package_id,package_snapshot,plan_fingerprint,revision,enabled FROM renewal_plans WHERE tenant_id=? ORDER BY created_at,id',[$t['id']]);
         foreach($plans as &$p){$p['amount_minor']=(int)$p['amount_minor'];$p['package_id']=(int)$p['package_id'];$p['revision']=(int)$p['revision'];$p['enabled']=(bool)$p['enabled'];$p['package']=json_decode($p['package_snapshot'],true,16,JSON_THROW_ON_ERROR);unset($p['package_snapshot']);}unset($p);
-        return ['tenant_id'=>$t['id'],'policy'=>$this->policy(),'connection'=>$c?['id'=>$c['id'],'merchant_id'=>$c['merchant_id'],'business_name'=>$c['business_name'],'mode'=>$c['mode'],'api_key_saved'=>true,'webhook_secret_saved'=>true,'webhook_url'=>$this->config->origin().'/api/renewals/webhooks/'.$c['id']]:null,'prices'=>$plans,'simulation_allowed'=>$this->gateway->mockAllowed()];
+        return ['tenant_id'=>$t['id'],'policy'=>$this->policy(),'catalogue_only'=>($this->config->get('renewal_worker',[])['mode']??null)==='catalogue_only','connection'=>$c?['id'=>$c['id'],'merchant_id'=>$c['merchant_id'],'business_name'=>$c['business_name'],'mode'=>$c['mode'],'api_key_saved'=>true,'webhook_secret_saved'=>true,'webhook_url'=>$this->config->origin().'/api/renewals/webhooks/'.$c['id']]:null,'prices'=>$plans,'simulation_allowed'=>$this->gateway->mockAllowed()];
     }
     public function saveConnection(array $actor,array $input):array {
         Input::keys($input,['tenant_id','api_key','webhook_secret','mode']);$t=$this->workspace($actor,$input['tenant_id']??null);

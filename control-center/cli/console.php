@@ -64,6 +64,10 @@ try {
             if(count($argv)!==2)throw new RuntimeException('Usage: php cli/console.php renewal-jobs');
             $app=new Application($config);echo json_encode($app->renewalPayments->processOne(),JSON_THROW_ON_ERROR)."\n";
             break;
+        case 'renewal-catalogue-check':
+            if(count($argv)!==2)throw new RuntimeException('Usage: php cli/console.php renewal-catalogue-check');
+            $app=new Application($config);echo json_encode(ControlCenter\RenewalCatalogueConnection::probe($app,$config),JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR)."\n";
+            break;
         case 'queue-brand-testing':
             if(count($argv)!==6||!preg_match('/^[1-9][0-9]{0,4}$/D',$argv[5]))throw new RuntimeException('Usage: php cli/console.php queue-brand-testing BRAND_ID EXACT_STAGING_SHA VERSION CODE');
             $app=new Application($config);$artifacts=new ControlCenter\BrandArtifacts($app->db,new ControlCenter\Secrets($config),$config);
@@ -78,7 +82,7 @@ try {
             echo "Pinned brand inputs exported. No APK built or published.\n";
             break;
         default:
-            echo "Usage: php cli/console.php preflight|migrate|maintenance|recover-owner|brand-export|owner-trial-catalog|fresh-checkins|renewal-jobs|queue-brand-testing\n";
+            echo "Usage: php cli/console.php preflight|migrate|maintenance|recover-owner|brand-export|owner-trial-catalog|fresh-checkins|renewal-jobs|renewal-catalogue-check|queue-brand-testing\n";
     }
 } catch (Throwable $error) {
     // Database exceptions can contain SQL/customer identifiers: do not echo them.

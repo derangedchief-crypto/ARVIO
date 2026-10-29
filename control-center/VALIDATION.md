@@ -1,5 +1,21 @@
 # Control Center validation
 
+## 0.27.3 catalogue-only connection
+
+283 isolated service checks, eight focused browser checks and71 auth-worker
+offline/HTTP/deployment checks pass. New coverage proves signed read-only status,
+owned offered packages/credit costs, READ ONLY transactions with rollback,
+unconditional refusal of renewal/checkout even with a write environment flag,
+preserved original health/trial routes and exact additive source-hook fencing.
+Configuration merge preserves unrelated credentials/builder/trial settings and
+refuses key conflicts; website mode blocks outbound renewal and enabling payment
+rollout. The catalogue-only UI shows explicit OFF status without enablement controls.
+Both archives are allowlisted, manifest-checked and exclude original configs/keys.
+
+Live root installation, service restart/rollback and the private host-to-host file
+transfer still require the user's server execution. No live connection/package
+count, charge, account creation or renewal is claimed from these offline checks.
+
 ## 0.27.2 current-package-only pricing
 
 280 isolated service checks and seven focused browser checks pass. Reseller

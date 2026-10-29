@@ -19,6 +19,22 @@ for the installed site's exact testing job. 277 expanded service checks pass.
 
 ## Added
 
+The owner authorized the INITIAL read-only connection to the existing auth worker.
+Website0.27.3 and the catalogue-only worker bundle support that separate phase.
+The additive source hook accepts only the reviewed original worker plus its exact
+established trial hook. No original main/config/trial module, paid adapter or
+operation ledger is shipped. Native scope helpers are reused in a transaction
+started READ ONLY and rolled back. Renew/eligibility are always denied even if an
+environment write flag is changed. A separate random key is exported root0600 for
+direct private host-to-host transfer; the website checks signed read-only status
+and the verified owner's packages before atomic import. Website mode also denies
+outbound checkout/renew calls, payment rollout is off, and live Rampex/simulation
+calls are disabled. Other secrets/config/ACLs, trial history and builder policies
+are preserved. Only the existing auth-worker service restarts, with code/override
+rollback on failed original health, trial authentication or signed readiness.
+No deployed connection is claimed until the user runs both host steps and returns
+the safe catalogue result. No real payment or renewal is authorized in this phase.
+
 Website0.27.2 implements the user's corrected pricing model: the panel alone
 defines offered packages and credit costs; resellers set money prices only.
 Customers renew their CURRENT assigned package, not a reseller-created plan or a

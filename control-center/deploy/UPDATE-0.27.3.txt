@@ -1,0 +1,37 @@
+CONTROL CENTER 0.27.3 — AUTHENTICATED CATALOGUE-ONLY CONNECTION
+
+Website host38.190.133.176: /www/wwwroot/control.fecxbrfzku.net.
+Auth worker host38.190.133.171: /opt/iptv-auth-worker. These are SEPARATE servers.
+
+1. Back up/extract the WEBSITE UPDATE ZIP into the existing website folder. It
+   excludes private config.php/storage. No new APK or customer/main publication.
+2. On the AUTH host, install the separately verified read-only catalogue bundle.
+   It preserves the established worker, credentials, trial module/state and service
+   identity. Only that worker service restarts, with rollback on failed readiness.
+   Unknown modified source is refused, not overwritten. No paid adapter is shipped.
+3. Transfer /root/brand-renewal-website-connection.json directly from AUTH to
+   /root/ on WEBSITE using normal trusted SSH/SFTP. Root0600. NEVER paste or upload
+   it under the website/public directory. This is a new independent catalogue key,
+   not your trial secret, panel credentials or Rampex key.
+4. On WEBSITE:
+
+   chmod 600 /root/brand-renewal-website-connection.json
+   bash /www/wwwroot/control.fecxbrfzku.net/deploy/connect-renewal-catalogue.sh
+
+   The importer applies any pending website migrations (027 affects simulator
+   assignment only), makes payment rollout OFF, checks signed read-only worker
+   status and real offered packages, then atomically imports the separate connection
+   preserving every unrelated setting, credential, source pin, key and file ACL.
+   Conflicting existing connection secrets fail closed instead of rotating them.
+   Config renewal_worker.mode=catalogue_only also denies outbound checkout/renewal.
+   Live Rampex calls and simulations remain disabled. Trial/builder settings stay.
+5. Hard-refresh Customer renewals. Your real panel's offered packages and credit
+   costs should appear; set only their customer money prices. No packages created.
+
+Optional later READ-ONLY check:
+ /www/server/php/84/bin/php -d opcache.enable_cli=0 /www/wwwroot/control.fecxbrfzku.net/cli/console.php renewal-catalogue-check
+
+Send safe JSON output, not the private file/config. If public route readiness fails,
+check only the existing reseller worker's proxy mapping; do not restart/replace
+other workers, regenerate keys or alter original portal/trial operations.
+No fresh-checkins reset, APK requeue, live payment or real renewal is part of setup.

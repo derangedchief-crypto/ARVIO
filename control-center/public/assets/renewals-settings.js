@@ -6,14 +6,15 @@ window.Renewals={async render(epoch){
   try{
     const data=await api('/api/renewals/settings?tenant_id='+encodeURIComponent(tenant));if(epoch!==state.epoch)return;
     const connection=data.connection;box.append(el('p',connection?`${connection.business_name} · ${connection.merchant_id} · ${connection.mode==='mock'?'DEMO ONLY':'Live merchant'}`:'No merchant connected. Each reseller uses its own account.'));
+    if(data.catalogue_only)box.append(el('p','Catalogue-only connection: package reads are enabled; payments and renewal writes remain OFF. No Rampex key is needed to set package prices.','scope-label'));
     box.append(el('p','API key and webhook secret are write-only and encrypted. Replacing a connection preserves its old orders.','scope-label'));
     if(connection){box.append(el('p','Configure this webhook URL in this merchant’s Rampex settings:'),el('code',connection.webhook_url,'brand-download'));}
-    box.append(button(connection?'Replace merchant connection':'Connect Rampex',()=>modal('Rampex connection · '+(state.tenants.find(t=>t.id===tenant)?.name||'Your workspace'),[
+    if(!data.catalogue_only)box.append(button(connection?'Replace merchant connection':'Connect Rampex',()=>modal('Rampex connection · '+(state.tenants.find(t=>t.id===tenant)?.name||'Your workspace'),[
       {key:'mode',label:'Mode',value:data.simulation_allowed?'mock':'live',options:data.simulation_allowed?[['mock','DEMO — isolated simulator'],['live','Live — requires separate operator approval']]:[['live','Live — requires operator approval']]},
       {key:'api_key',label:'Rampex API key',type:'password',max:512,hint:data.simulation_allowed?'Use a synthetic mock_ key for the simulator. A real development-labelled Rampex key can still use real money.':'Never put merchant keys in the TV app.'},
       {key:'webhook_secret',label:'Webhook secret',type:'password',max:512}
     ],v=>api('/api/renewals/connection',{...v,tenant_id:tenant}))));
-    if(state.user.role==='owner')box.append(button('Rollout policy',()=>modal('Renewal payment rollout',[{key:'enabled',label:'Payments',value:data.policy.enabled?'yes':'no',options:[['no','Off'],['yes','On']]},{key:'testing_only',label:'Eligible branded apps',value:data.policy.testing_only?'yes':'no',options:[['yes','Testing branded apps only'],['no','Testing and production branded apps']]}],v=>api('/api/renewals/policy',{enabled:v.enabled==='yes',testing_only:v.testing_only==='yes'}))));
+    if(state.user.role==='owner'&&!data.catalogue_only)box.append(button('Rollout policy',()=>modal('Renewal payment rollout',[{key:'enabled',label:'Payments',value:data.policy.enabled?'yes':'no',options:[['no','Off'],['yes','On']]},{key:'testing_only',label:'Eligible branded apps',value:data.policy.testing_only?'yes':'no',options:[['yes','Testing branded apps only'],['no','Testing and production branded apps']]}],v=>api('/api/renewals/policy',{enabled:v.enabled==='yes',testing_only:v.testing_only==='yes'}))));
     const prices=panel('Package pricing',el('p','Packages, terms, connections and credit costs come from your provider’s panel. Set only the money price customers pay. Each customer renews their current package—no package changes.','scope-label'));main.append(prices);
     function priceForm(pkg,old){
       modal(pkg.name+' — customer price',[

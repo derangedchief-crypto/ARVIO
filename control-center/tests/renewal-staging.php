@@ -185,4 +185,41 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         problem(409,fn()=> $builder->claim(['build_id'=>$job['build_id'],'source_sha'=>$sha,'channel'=>'production']));
         $claimed=$builder->claim(['build_id'=>$job['build_id'],'source_sha'=>$sha,'channel'=>'testing']);same($sha,$claimed['source_sha']);same('testing',$claimed['channel']);same($brand['package_name'].'.test',$claimed['expected']['package_name']);
     };
+    $tests['catalogue connection merge preserves unrelated secrets and cannot enable money or simulations']=static function():void{
+        $current=['origin'=>'https://control.fecxbrfzku.net','database'=>['password'=>'SYNTHETIC-KEEP'],'trial_worker'=>['shared_secret'=>str_repeat('b',64)],'brand_builder'=>['channels'=>['production','testing'],'sources'=>['2.0.127'=>str_repeat('c',40)]],'renewal_payments'=>['allow_live_api'=>true,'simulation_enabled'=>true,'keep'=>'original']];
+        $connection=['base_url'=>'https://resellerworker.extremeiptv.net','shared_secret'=>str_repeat('a',64),'mode'=>'catalogue_only'];
+        $after=ControlCenter\RenewalCatalogueConnection::configuration($current,$connection);same($connection,$after['renewal_worker']);same(false,$after['renewal_payments']['allow_live_api']);same(false,$after['renewal_payments']['simulation_enabled']);same('original',$after['renewal_payments']['keep']);
+        $restored=$after;unset($restored['renewal_worker']);$restored['renewal_payments']=$current['renewal_payments'];same($current,$restored);
+        same($after,ControlCenter\RenewalCatalogueConnection::configuration($after,$connection));
+        problem(409,fn()=> ControlCenter\RenewalCatalogueConnection::configuration($after,array_replace($connection,['shared_secret'=>str_repeat('f',64)])));
+        problem(422,fn()=> ControlCenter\RenewalCatalogueConnection::configuration($current,array_replace($connection,['mode'=>'write_enabled'])));
+        problem(422,fn()=> ControlCenter\RenewalCatalogueConnection::configuration($current,array_replace($connection,['base_url'=>'https://untrusted.example.test'])));
+    };
+    $tests['catalogue-only connection proves signed status and owned packages while denying all renewal calls']=function()use($app,$config,$owner):void{
+        $c=new ControlCenter\Config($config->root,array_replace($config->values,['renewal_worker'=>['mode'=>'catalogue_only','shared_secret'=>str_repeat('a',64)],'renewal_payments'=>['allow_live_api'=>false,'simulation_enabled'=>false]]));$actions=[];
+        $transport=static function($action,$raw,$headers)use(&$actions):string{
+            $actions[]=$action;$h=[];foreach($headers as $line){[$k,$v]=explode(': ',$line,2);$h[$k]=$v;}
+            if($action==='status'){same('{}',$raw);$r=['schema_version'=>1,'configured'=>true,'catalogue_only'=>true,'writes_enabled'=>false];}
+            else{$input=json_decode($raw,true);same(['reseller_id'],array_keys($input));$r=['reseller_id'=>$input['reseller_id'],'catalogue_only'=>true,'writes_enabled'=>false,'plans'=>[['id'=>7,'name'=>'Offered package','credits'=>'2','duration'=>1,'period'=>'months','max_connections'=>2,'fingerprint'=>str_repeat('d',64),'funded'=>true]]];}
+            $payload=json_encode($r);return json_encode(['payload'=>$payload,'signature'=>hash_hmac('sha256',"branded-renewal-result-v1\n".$h['X-Renewal-Timestamp']."\n".$h['X-Renewal-Nonce']."\n".$payload,str_repeat('a',64))]);
+        };
+        $worker=new ControlCenter\RenewalWorker($c,$transport);$r=ControlCenter\RenewalCatalogueConnection::probe($app,$c,$worker);same(true,$r['connected']);same(1,$r['package_count']);same(false,$r['writes_enabled']);same(false,$r['payments_enabled']);same(false,$r['live_rampex_api_enabled']);same(['status','catalog'],$actions);
+        $readonlyApp=new ControlCenter\Application($c);$view=$readonlyApp->renewalSettings->status($owner,[]);same(true,$view['catalogue_only']);check(!str_contains(json_encode($view),str_repeat('a',64)));
+        problem(409,fn()=> $readonlyApp->renewalSettings->setPolicy($owner,['enabled'=>true,'testing_only'=>true]));
+        problem(503,fn()=> $worker->eligibility('101','999',str_repeat('a',64)));problem(503,fn()=> $worker->renew([]));same(['status','catalog'],$actions);
+        $app->renewalSettings->setPolicy($owner,['enabled'=>true,'testing_only'=>true]);
+        try{problem(409,fn()=> ControlCenter\RenewalCatalogueConnection::probe($app,$c,$worker));}
+        finally{$app->renewalSettings->setPolicy($owner,['enabled'=>false,'testing_only'=>true]);}
+        same(['status','catalog'],$actions);
+    };
+    $tests['catalogue-only handshake refuses a signed worker with write capability or missing mode proof']=function()use($config):void{
+        $c=new ControlCenter\Config($config->root,array_replace($config->values,['renewal_worker'=>['mode'=>'catalogue_only','shared_secret'=>str_repeat('a',64)]]));
+        foreach([['schema_version'=>1,'configured'=>true,'writes_enabled'=>true,'catalogue_only'=>true],['schema_version'=>1,'configured'=>true,'writes_enabled'=>false]] as $reply){
+            $worker=new ControlCenter\RenewalWorker($c,static function($action,$raw,$headers)use($reply):string{
+                $h=[];foreach($headers as $line){[$k,$v]=explode(': ',$line,2);$h[$k]=$v;}$payload=json_encode($reply);
+                return json_encode(['payload'=>$payload,'signature'=>hash_hmac('sha256',"branded-renewal-result-v1\n".$h['X-Renewal-Timestamp']."\n".$h['X-Renewal-Nonce']."\n".$payload,str_repeat('a',64))]);
+            });
+            problem(503,fn()=> $worker->connectionStatus());
+        }
+    };
 }

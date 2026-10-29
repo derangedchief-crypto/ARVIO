@@ -76,5 +76,12 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     assert.equal(await operator.getByLabel('Rampex API key',{exact:true}).getAttribute('type'),'password');
     assert.equal(await operator.getByLabel('Webhook secret',{exact:true}).getAttribute('type'),'password');
     assert.deepEqual(errors,[]);console.log('PASS actual reseller renewal workspace renders with write-only password fields; no live connection submitted');
+    const readonly=await operator.evaluate(async tenant=>(await(await fetch('/api/renewals/settings?tenant_id='+tenant)).json()),tenant);
+    await operator.route('**/api/renewals/settings?**',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({...readonly,catalogue_only:true})}));
+    await operator.reload();await operator.getByRole('button',{name:'Set price',exact:true}).waitFor();
+    assert.equal(await operator.getByRole('button',{name:'Connect Rampex',exact:true}).count(),0);
+    assert.equal(await operator.getByRole('button',{name:'Rollout policy',exact:true}).count(),0);
+    assert((await operator.locator('#main').innerText()).includes('payments and renewal writes remain OFF'));
+    assert.deepEqual(errors,[]);console.log('PASS catalogue-only settings show explicit OFF state and no payment-enablement controls');
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

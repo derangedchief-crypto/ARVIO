@@ -7,6 +7,19 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.27.3 — catalogue-only worker connection
+
+See `deploy/UPDATE-0.27.3.txt` and the separate auth-worker catalogue bundle.
+The existing worker gains signed offered-package reads under a READ ONLY database
+transaction, without installing any paid-renewal adapter. Its new checkout/renew
+routes are unconditionally denied, not merely hidden by a configurable write flag.
+A new private catalogue key is transferred directly between the two server roots,
+never through chat or public storage. The website verifies signed read-only status
+and its verified owner's real packages before importing the key. Payment rollout,
+live Rampex calls and simulated payments stay off; website catalogue-only mode
+also blocks outbound checkout/renew calls. Original portal/trial configuration,
+credentials, state, builder settings and application keys remain untouched.
+
 ## 0.27.2 — current-package renewal and package pricing
 
 The panel defines offered package names, terms, connections and CREDIT costs.
