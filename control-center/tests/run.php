@@ -162,6 +162,8 @@ require __DIR__.'/primary-access.php';
 primaryAccessCases($tests,$app,$config,$owner);
 require __DIR__.'/device-recovery.php';
 deviceRecoveryCases($tests,$app,$config,$owner,$beta,$fixture);
+require __DIR__.'/rampex-contract.php';
+rampexContractCases($tests);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {
