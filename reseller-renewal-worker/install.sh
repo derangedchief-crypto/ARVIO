@@ -93,7 +93,7 @@ PY
  printf 'ready\n' > "$site/.dependencies-ready"
 fi
 runuser -u iptvrenewal -- test -x "$python"
-files=(main.py adapter.py native_panel.py branded_renewals.py branded_renewals_runtime.py renewal_packages.py configure_proxy.py nginx-location.conf README.md)
+files=(main.py adapter.py native_panel.py branded_renewals.py branded_renewals_runtime.py renewal_packages.py configure_proxy.py nginx-location.conf README.md preflight.py)
 for name in "${files[@]}"; do
  test ! -L "$site/$name" || { echo 'Unsafe managed source path.' >&2; exit 1; }
  if [[ -f "$site/$name" ]]; then cp --preserve=all -- "$site/$name" "$backup/$name";fi
@@ -127,6 +127,27 @@ modified=true
 if [[ "$was_active" == true ]]; then systemctl stop iptv-renewal-worker.service;fi
 for name in "${files[@]}"; do install -m 0644 -o root -g iptvrenewal "$base/$name" "$site/$name";done
 install -m 0644 -o root -g root "$base/iptv-renewal-worker.service" "$unit"
+"$bootstrap" -I -S - "$environment" "$site" "$state" <<'PY'
+import json,os,subprocess,sys
+from pathlib import Path
+env=dict(os.environ)
+env.update(dict(line.split('=',1) for line in Path(sys.argv[1]).read_text().splitlines() if line and not line.startswith('#')))
+site=Path(sys.argv[2]);started=__import__('time').time()
+try:
+ result=subprocess.run(['runuser','-u','iptvrenewal','--',str(site/'venv/bin/python'),str(site/'preflight.py')],cwd=site,env=env,capture_output=True,text=True,timeout=180)
+except subprocess.TimeoutExpired:
+ raise SystemExit('Read-only startup exceeded 180 seconds; check SSH/database reachability. Original state retained.') from None
+try:
+ report=json.loads(result.stdout)
+ print(json.dumps(report,indent=2))
+except Exception:print('Read-only startup could not produce its safe report.')
+if result.returncode:
+ try:
+  evidence=json.loads((Path(sys.argv[3])/'startup-status.json').read_text())
+  if evidence.get('at',0)>=int(started):print(json.dumps(evidence,indent=2))
+ except Exception:pass
+ raise SystemExit('Read-only startup failed BEFORE service launch; evidence above. No renewal was attempted.')
+PY
 systemctl daemon-reload
 systemctl start iptv-renewal-worker.service
 "$bootstrap" -I -S - "$environment" <<'PY'
@@ -136,7 +157,8 @@ key=dict(line.split('=',1) for line in Path(sys.argv[1]).read_text().splitlines(
 class NoRedirect(urllib.request.HTTPRedirectHandler):
  def redirect_request(self,*args,**kwargs):return None
 opener=urllib.request.build_opener(NoRedirect)
-for attempt in range(30):
+deadline=time.monotonic()+180
+while True:
  try:
   stamp=str(int(time.time()));nonce=secrets.token_hex(16);raw=b'{}'
   sig=hmac.new(key.encode(),b'branded-renewal-request-v1\n'+stamp.encode()+b'\n'+nonce.encode()+b'\n'+raw,hashlib.sha256).hexdigest()
@@ -148,7 +170,10 @@ for attempt in range(30):
   if value.get('mode')!='renewals' or value.get('writes_enabled') is not True or value.get('atomic_renewal')!=1 or value.get('current_package_only') is not True:raise RuntimeError()
   break
  except Exception:
-  if attempt==29:raise SystemExit('New renewal service failed readiness; private values omitted') from None
+  if time.monotonic()>=deadline:
+   try:print(Path('/var/lib/iptv-renewal-worker/startup-status.json').read_text())
+   except OSError:pass
+   raise SystemExit('New renewal service failed readiness; private values omitted') from None
   time.sleep(1)
 PY
 [[ "$auth_env_before" == "$(sha256sum "$auth/.env")" && "$auth_config_before" == "$(sha256sum "$auth/config.py")" && "$auth_main_before" == "$(sha256sum "$auth/main.py")" ]] || { echo 'Auth files changed concurrently; investigate before proceeding.' >&2; exit 1; }
@@ -156,7 +181,7 @@ if [[ "$auth_was_active" == true ]]; then systemctl is-active --quiet iptv-auth-
 systemctl enable iptv-renewal-worker.service
 modified=false
 echo 'Separate renewal worker ready on 127.0.0.1:9093; auth worker was NOT modified or restarted.'
-if ! "$bootstrap" -I -S "$base/configure_proxy.py"; then echo 'Local worker is ready; public renewal routing needs the actual proxy config reviewed. Existing auth/trial routing was not replaced.' >&2;fi
+if ! "$bootstrap" -I -S "$base/configure_proxy.py"; then echo 'Local worker is ready; public renewal routing needs the actual proxy config reviewed. Existing auth/trial routing was not replaced. Connection transfer must wait.' >&2;exit 1;fi
 echo "New-worker backup: $backup"
 echo "Private website connection file: $export_file (never paste/upload publicly)"
 echo 'After public routing succeeds, transfer the private connection file to the website and run its full-worker import.'

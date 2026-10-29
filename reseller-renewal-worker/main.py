@@ -15,13 +15,31 @@ from mysql.connector import Error as PanelDatabaseError
 from sshtunnel import BaseSSHTunnelForwarderError
 import native_panel
 from adapter import RenewalAdapter
-from branded_renewals import RenewalOperations,RenewalDeferred,validate
+from branded_renewals import RenewalOperations,RenewalDeferred,RenewalRejected,validate
 
 log=logging.getLogger('iptv-renewal-worker.http')
 adapter=RenewalAdapter(vars(native_panel))
 secret=os.environ.get('RENEWAL_BRIDGE_SECRET','')
 directory=Path(os.environ.get('RENEWAL_STATE_DIR','/var/lib/iptv-renewal-worker'))
 expected_key=os.environ.get('RENEWAL_LEDGER_KEY_SHA256','')
+
+
+def startup_report(stage,error=None):
+    """Private on-host evidence survives installer rollback; never store values."""
+    value={'stage':stage,'at':int(time.time()),'pid':os.getpid()}
+    if error is not None:
+        value['error_type']=type(error).__name__
+        # RenewalRejected is our own fixed-text schema/transaction guard, not
+        # a DB/SSH/validation exception that may contain credentials or input.
+        if isinstance(error,RenewalRejected):value['guard']=str(error)
+        import traceback
+        value['frames']=[{'file':Path(f.filename).name,'line':f.lineno} for f in traceback.extract_tb(error.__traceback__)[-8:]]
+    try:
+        temporary=directory/('startup-'+str(os.getpid())+'.tmp')
+        fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        with os.fdopen(fd,'w') as stream:json.dump(value,stream)
+        os.replace(temporary,directory/'startup-status.json')
+    except OSError:pass
 
 
 def state_ready():
@@ -42,15 +60,21 @@ class AnchoredOperations(RenewalOperations):
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
-    if not re.fullmatch('[a-f0-9]{64}',secret):raise RuntimeError('Separate renewal bridge key is required')
-    state_ready()
+    stage='state-validation'
     try:
+        startup_report(stage)
+        if not re.fullmatch('[a-f0-9]{64}',secret):raise RuntimeError('Separate renewal bridge key is required')
+        state_ready()
+        stage='ssh-tunnel-and-database-pool';startup_report(stage)
         await run_in_threadpool(native_panel._start_tunnel_and_pool)
+        stage='panel-transaction-journal-check';startup_report(stage)
         with native_panel.panel_db_cursor(autocommit=False) as (cur,conn):
             try:adapter.journal_ready(cur)
             finally:conn.rollback()
+        stage='ready';startup_report(stage)
         yield
     except Exception as error:
+        startup_report(stage,error)
         log.error('Renewal service startup/runtime unavailable: error_type=%s',type(error).__name__)
         raise RuntimeError('Renewal panel connection/readiness failed; private values omitted') from None
     finally:await run_in_threadpool(native_panel._stop_tunnel)

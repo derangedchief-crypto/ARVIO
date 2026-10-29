@@ -49,6 +49,20 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual('renewals',value['mode']);self.assertTrue(value['writes_enabled']);self.assertFalse(value['catalogue_only']);self.assertTrue(value['current_package_only']);self.assertEqual(1,value['atomic_renewal'])
         expected=hmac.new(self.secret.encode(),('branded-renewal-result-v1\n'+stamp+'\n'+nonce+'\n'+e['payload']).encode(),hashlib.sha256).hexdigest();self.assertEqual(expected,e['signature'])
         self.assertEqual(200,self.client.get('/health').status_code)
+    def test_startup_failure_evidence_survives_without_private_exception_values(self):
+        import asyncio
+        async def start():
+            async with self.module.lifespan(self.module.app):pass
+        with patch.object(sys.modules['native_panel'],'_start_tunnel_and_pool',side_effect=RuntimeError('SYNTHETIC-PRIVATE-PASSWORD')):
+            with self.assertRaises(RuntimeError):asyncio.run(start())
+        path=self.state/'startup-status.json';report=json.loads(path.read_text())
+        self.assertEqual('ssh-tunnel-and-database-pool',report['stage']);self.assertEqual('RuntimeError',report['error_type'])
+        self.assertNotIn('SYNTHETIC',path.read_text());self.assertEqual(0,path.stat().st_mode&0o077)
+        from branded_renewals import RenewalRejected
+        with patch.object(self.module.adapter,'journal_ready',side_effect=RenewalRejected('Existing credit journal cannot safely hold the full operation receipt')):
+            with self.assertRaises(RuntimeError):asyncio.run(start())
+        report=json.loads(path.read_text());self.assertEqual('panel-transaction-journal-check',report['stage']);self.assertIn('credit journal',report['guard'])
+        self.assertEqual(self.key,(self.state/'renewal.key').read_bytes())
     def test_no_auth_or_legacy_portal_or_trial_routes_are_exposed(self):
         for path in ['/create-line','/renew-line','/change-package','/terminate-line','/verify-login','/branded-trials/provision']:
             self.assertEqual(404,self.client.post(path,json={}).status_code)

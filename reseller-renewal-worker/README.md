@@ -1,5 +1,13 @@
 # Separate IPTV renewal worker
 
+Recovery update: installation now runs a read-only startup preflight as the
+renewal user before launching systemd, and retains credential-free stage/error
+evidence in the original private state directory. It allows up to180 seconds for
+native SSH/pool startup instead of the original short polling window. A failed
+preflight never submits renewals or modifies panel schema; it reports which
+prerequisite failed and retains the existing key/ledger/config. This improves
+diagnosis/recovery; it is not proof that an unknown server failure is resolved.
+
 This is a NEW service, not a patch to `iptv-auth-worker` and not the earlier
 catalogue-only extension. Do not run the old catalogue installer for this setup.
 

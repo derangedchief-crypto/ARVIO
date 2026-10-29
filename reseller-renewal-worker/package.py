@@ -17,7 +17,7 @@ version=(repo/'control-center/VERSION').read_text().strip()
 if not re.fullmatch(r'\d+\.\d+\.\d+',version):raise SystemExit('Invalid delivery version')
 out=Path(args.output) if args.output else repo/'control-center/dist'/('Extreme-Renewal-Worker-'+version+'.zip');out.parent.mkdir(parents=True,exist_ok=True)
 entries={}
-for name in ['main.py','adapter.py','bootstrap_state.py','install.sh','iptv-renewal-worker.service','configure_proxy.py','nginx-location.conf','README.md']:
+for name in ['main.py','adapter.py','bootstrap_state.py','install.sh','iptv-renewal-worker.service','configure_proxy.py','nginx-location.conf','README.md','preflight.py']:
     path=root/name
     if path.is_symlink():raise SystemExit('Refusing source symlink')
     entries[name]=path.read_bytes()
