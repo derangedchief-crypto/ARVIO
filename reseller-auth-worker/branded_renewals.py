@@ -20,10 +20,21 @@ class RenewalRejected(Exception):
     pass
 
 
+class RenewalDeferred(RenewalRejected):
+    """Definite pre-commit/no-write condition; retry the SAME paid operation."""
+    pass
+
+
+class RenewalDefinitive(RenewalRejected):
+    """A confirmed rollback/validation rejection needing operator review."""
+    pass
+
+
 def validate(spec):
-    fields={'operation_id','brand_id','reseller_id','line_id','package_id','plan_fingerprint','merchant_id','payment_link_id','primary_fingerprint','current_package_only'}
+    fields={'operation_id','brand_id','reseller_id','line_id','package_id','plan_fingerprint','merchant_id','payment_link_id','primary_fingerprint','current_package_only','expected_expiry'}
     if not isinstance(spec,dict) or set(spec)!=fields:raise RenewalRejected('Invalid renewal operation fields')
     if spec['current_package_only'] is not True:raise RenewalRejected('Current-package-only renewal contract is required')
+    if type(spec['expected_expiry']) is not int or not 1<=spec['expected_expiry']<=int(time.time()):raise RenewalRejected('The original expired invoice revision is required')
     for field,size in [('operation_id',32),('brand_id',32),('plan_fingerprint',64),('primary_fingerprint',64)]:
         if not isinstance(spec[field],str) or not re.fullmatch('[a-f0-9]{%d}'%size,spec[field]):raise RenewalRejected('Invalid renewal operation identity')
     for field in ['reseller_id','line_id']:
@@ -77,7 +88,7 @@ class RenewalOperations:
             while True:
                 try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);break
                 except BlockingIOError:
-                    if time.monotonic()>=deadline:raise RenewalRejected('Renewal operation busy; retry the SAME order') from None
+                    if time.monotonic()>=deadline:raise RenewalDeferred('Renewal operation busy; retry the SAME order') from None
                     time.sleep(.02)
             db=sqlite3.connect(ledger,timeout=10)
             db.row_factory=sqlite3.Row
@@ -99,7 +110,7 @@ class RenewalOperations:
             raise RenewalRejected('Existing worker needs its atomic renewal/payment guard first')
         with self.storage(spec['operation_id']) as (db,key):
             fingerprint=hmac.new(key,b'renewal-request-v1\n'+canonical(spec),hashlib.sha256).hexdigest()
-            payment_hash=hmac.new(key,b'renewal-payment-v1\n'+canonical({k:spec[k] for k in ['merchant_id','payment_link_id','reseller_id']}),hashlib.sha256).hexdigest()
+            payment_hash=hmac.new(key,b'renewal-payment-v2\n'+canonical({k:spec[k] for k in ['merchant_id','payment_link_id']}),hashlib.sha256).hexdigest()
             row=db.execute('SELECT * FROM operations WHERE operation_id=?',(spec['operation_id'],)).fetchone()
             if row and not hmac.compare_digest(row['fingerprint'],fingerprint):raise RenewalRejected('Order ID already belongs to another renewal')
             if not row:
@@ -128,6 +139,12 @@ class RenewalOperations:
                 self.panel.validate(spec)
                 save('sending')
                 try:receipt=self.receipt(spec,self.panel.renew_once(spec,fingerprint,payment_hash))
+                except RenewalDeferred:
+                    save('reserved')
+                    raise
+                except RenewalDefinitive:
+                    save('needs_review')
+                    raise
                 except Exception:
                     save('needs_review')
                     return {'state':'needs_review','operation_id':spec['operation_id']}

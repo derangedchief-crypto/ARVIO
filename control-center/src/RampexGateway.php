@@ -9,16 +9,24 @@ final class RampexGateway {
     private function request(string $path,string $key,?array $body=null):array {
         if(($this->config->get('renewal_payments',[])['allow_live_api']??false)!==true)throw new Problem(503,'Live Rampex API calls have not been approved.');
         $headers=['X-API-Key: '.$key,'Accept: application/json','Content-Type: application/json'];
-        if($this->transport)$raw=($this->transport)($path,$body,$headers);
+        $status=200;
+        if($this->transport){$reply=($this->transport)($path,$body,$headers);if(is_array($reply)){$status=$reply['status'];$raw=$reply['body'];}else $raw=$reply;}
         else{
             $raw='';$curl=curl_init('https://api.rampex.io/'.$path);
             $opts=[CURLOPT_HTTPHEADER=>$headers,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_CONNECTTIMEOUT=>5,CURLOPT_TIMEOUT=>15,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_WRITEFUNCTION=>static function($h,$chunk)use(&$raw){if(strlen($raw)+strlen($chunk)>131072)return 0;$raw.=$chunk;return strlen($chunk);}];
             if($body!==null){$opts[CURLOPT_POST]=true;$opts[CURLOPT_POSTFIELDS]=json_encode($body,JSON_THROW_ON_ERROR);}
             curl_setopt_array($curl,$opts);$ok=curl_exec($curl);$status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);curl_close($curl);
-            if($ok===false||$status!==200)throw new Problem(503,'Rampex request unavailable; do not create another paid order.');
+            if($ok===false)throw new Problem(503,'Rampex request unavailable; keep the same order and do not pay again.');
         }
         try{$data=json_decode($raw,true,16,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new Problem(503,'Invalid Rampex response.');}
-        if(!is_array($data))throw new Problem(503,'Invalid Rampex response.');return $data;
+        if(!is_array($data))throw new Problem(503,'Invalid Rampex response.');
+        $code=is_array($data['error']??null)?($data['error']['code']??null):null;
+        $definite=in_array($status,[400,401,403],true)||(in_array($status,[200,201],true)&&in_array($code,['NO_WALLET','INVALID_API_KEY','INACTIVE_API_KEY','VALIDATION_ERROR','MISSING_API_KEY','UNAUTHORIZED'],true));
+        if($path==='api-create-payment-link'&&$definite&&($data['success']??null)===false&&empty($data['data']['link_id'])&&empty($data['data']['payment_url']))throw new RampexLinkRejected($code==='NO_WALLET'?'Configure your payout wallet in Rampex Settings. No payment link or charge was created.':'Rampex rejected payment-link creation. Check the merchant settings; no payment link or charge was created.');
+        if(in_array($status,[401,403],true))throw new Problem(422,'Rampex rejected this API key. Check its active status and permissions in your Rampex account.');
+        if($code==='NO_WALLET')throw new Problem(409,'Configure your payout wallet in Rampex Settings before creating a checkout.');
+        if(!in_array($status,[200,201],true)||($data['success']??true)!==true)throw new Problem(503,'Rampex request did not succeed; retain the original order.');
+        return $data;
     }
     public function validate(string $key,string $mode):array {
         if($mode==='mock'){
@@ -29,7 +37,8 @@ final class RampexGateway {
         if($this->mockAllowed())throw new Problem(503,'Live merchants cannot be connected to the isolated renewal simulator.');
         $r=$this->request('api-validate-key',$key,[]);
         if(($r['valid']??false)!==true||!is_string($r['merchant_id']??null)||!preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$r['merchant_id']))throw new Problem(422,'Merchant key could not be verified.');
-        return ['merchant_id'=>$r['merchant_id'],'business_name'=>Input::text($r['business_name']??'Merchant','merchant name',120)];
+        $name=is_string($r['business_name']??null)?trim($r['business_name']):'';
+        return ['merchant_id'=>$r['merchant_id'],'business_name'=>Input::text(mb_substr($name!==''?$name:'Rampex merchant',0,120),'merchant name',120)];
     }
     public function create(array $connection,array $order,string $email):array {
         if($connection['mode']==='mock'){
@@ -38,12 +47,20 @@ final class RampexGateway {
             $this->db->query('INSERT INTO renewal_simulations (link_id,merchant_id,currency,amount_minor) VALUES (?,?,?,?)',[$id,$connection['merchant_id'],$order['currency'],$order['amount_minor']]);
             return ['link_id'=>$id,'url'=>$this->config->origin().'/renew/demo/'.$order['id']];
         }
+        $session=$this->db->one('SELECT token_cipher FROM renewal_sessions WHERE id=?',[$order['session_id']]);
+        if(!$session)throw new Problem(409,'Original checkout session is unavailable.');
+        $return=$this->config->origin().'/renew/'.$this->secrets->decrypt($session['token_cipher']);
         $data=$this->request('api-create-payment-link',$this->secrets->decrypt($connection['api_cipher']),[
-            'amount'=>number_format($order['amount_minor']/100,2,'.',''),'currency'=>$order['currency'],'customer_email'=>$email,
-            'description'=>'Renewal order '.$order['id'],'provider'=>'hosted','woo_order_id'=>$order['id'],'woo_store_url'=>$this->config->origin()]);
-        $r=$data['data']??$data;$id=$r['link_id']??null;$url=$r['payment_url']??$r['redirect_url']??$r['short_url']??null;
-        $u=is_string($url)?parse_url($url):false;
-        if(!is_string($id)||!preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$id)||!$u||($u['scheme']??null)!=='https'||!in_array($u['host']??null,['checkout.rampex.io','rampex.io','pay.rampex.io'],true)||isset($u['user'])||isset($u['pass']))throw new Problem(503,'Payment link response could not be verified; do not retry creation.');
+            'amount'=>$order['amount_minor']/(10**RampexPaymentVerifier::exponent($order['currency'])),'currency'=>$order['currency'],'customer_email'=>$email,
+            'description'=>'Renewal order '.$order['id'],'provider'=>'hosted','woo_order_id'=>$order['id'],'woo_store_url'=>$this->config->origin(),'payment_url'=>$return]);
+        $r=$data['data']??$data;
+        if(!is_array($r))throw new Problem(503,'Invalid payment link response; retain the original order.');
+        $id=$r['link_id']??null;$url=null;
+        foreach([$r['redirect_url']??null,$r['payment_url']??null,$r['short_url']??null] as $candidate){
+            $u=is_string($candidate)?parse_url($candidate):false;
+            if($u&&($u['scheme']??null)==='https'&&in_array($u['host']??null,['checkout.rampex.io','rampex.io','pay.rampex.io'],true)&&(!isset($u['port'])||$u['port']===443)&&!isset($u['user'])&&!isset($u['pass'])){$url=$candidate;break;}
+        }
+        if(!is_string($id)||!preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$id)||$url===null)throw new Problem(503,'Payment link response could not be verified; do not retry creation.');
         return ['link_id'=>$id,'url'=>$url];
     }
     public function status(array $connection,array $order):array {
@@ -53,11 +70,21 @@ final class RampexGateway {
             return ['link_id'=>$r['link_id'],'merchant_id'=>$r['merchant_id'],'status'=>$r['status'],'fully_paid'=>$r['status']==='completed','amount_minor'=>(int)$r['amount_minor'],'currency'=>$r['currency']];
         }
         $data=$this->request('api-get-payment-status?link_id='.rawurlencode($order['provider_link_id']),$this->secrets->decrypt($connection['api_cipher']));$r=$data['data']??$data;
-        $currency=$r['currency']??'';$amount=RampexPaymentVerifier::minor($r['amount']??null,$currency);
-        // Do not guess a crypto->fiat conversion. Until Rampex confirms the
-        // live gross-payment contract, an ambiguous denomination stays pending.
-        $full=($r['fully_paid']??false)===true;
-        if(!$full&&($r['received_currency']??null)===$currency){$full=RampexPaymentVerifier::minor($r['received_amount']??null,$currency)>=$amount;}
+        if(!is_array($r)||array_is_list($r))throw new Problem(503,'Invalid Rampex merchant status response.');
+        $currency=Input::text($r['currency']??null,'Rampex currency',3);$amount=RampexPaymentVerifier::minor($r['amount']??null,$currency);
+        if(isset($r['merchant_id'])&&$r['merchant_id']!==$connection['merchant_id'])throw new Problem(409,'Rampex merchant identity does not match this order.');
+        // Documented merchant API terminal completion, NOT a browser result or
+        // a guessed crypto/net-payout -> fiat conversion. Quote amount/currency
+        // are independently matched by the verifier and signed notification.
+        $full=($r['status']??null)==='completed'&&($r['fully_paid']??true)===true&&($r['partial_payment']??false)!==true;
+        if($full&&($r['received_currency']??null)===$currency&&isset($r['received_amount'])){
+            // Exact comparison against integer minor units. Do not round a
+            // fractional-minor-unit underpayment UP; excess precision/overpayment is
+            // not a second subscription period or a net-payout comparison.
+            $value=$r['received_amount'];$text=is_string($value)||is_int($value)||is_float($value)?(string)$value:'';
+            if(!preg_match('/^(0|[1-9][0-9]{0,11})(?:\.([0-9]{1,12}))?$/D',$text,$m))$full=false;
+            else{$e=RampexPaymentVerifier::exponent($currency);$full=(int)$m[1]*(10**$e)+(int)str_pad(substr($m[2]??'',0,$e),$e,'0')>=$amount;}
+        }
         return ['link_id'=>$r['link_id']??null,'merchant_id'=>$connection['merchant_id'],'status'=>$r['status']??null,'fully_paid'=>$full,'amount_minor'=>$amount,'currency'=>$currency];
     }
 }

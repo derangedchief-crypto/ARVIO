@@ -23,8 +23,9 @@
     else if(info.renewal){
       const p=info.renewal;$('message').textContent='Renew your current package. Review the price before continuing; your package will not change.';$('checkout').hidden=false;
       $('package-name').textContent=p.name;
-      $('details').textContent=p.duration+' '+p.period+' · '+p.max_connections+' connection(s) · '+(p.amount_minor/100).toFixed(2)+' '+p.currency;
-      $('checkout').onsubmit=async e=>{e.preventDefault();$('error').textContent='';$('pay').disabled=true;try{const result=await post('/api/public-renewals/checkout',{session_token:token,price_id:p.id,price_revision:p.revision,email:$('email').value});showOrder(result.order,info.simulated);if(result.order.payment_url)location.assign(paymentUrl(result.order.payment_url));}catch(error){$('error').textContent=error.message;$('pay').disabled=false;}};
+      const exponent=p.currency_exponent??2;
+      $('details').textContent=p.duration+' '+p.period+' · '+p.max_connections+' connection(s) · '+(p.amount_minor/10**exponent).toFixed(exponent)+' '+p.currency;
+      $('checkout').onsubmit=async e=>{e.preventDefault();$('error').textContent='';$('pay').disabled=true;try{const result=await post('/api/public-renewals/checkout',{session_token:token,price_id:p.id,price_revision:p.revision,package_fingerprint:p.package_fingerprint,email:$('email').value});showOrder(result.order,info.simulated);if(result.order.payment_url)location.assign(paymentUrl(result.order.payment_url));}catch(error){$('error').textContent=error.message;$('pay').disabled=false;}};
     }else $('message').textContent='Renewal is unavailable or this quote expired. Please return to your TV or contact your provider.';
     let checks=0;const timer=setInterval(async()=>{if(document.hidden||++checks>180){if(checks>180)clearInterval(timer);return;}try{const r=await post('/api/public-renewals/status',{session_token:token});if(r.order){showOrder(r.order,r.simulated);if(r.order.fulfilment_state==='fulfilled')clearInterval(timer);}}catch(error){clearInterval(timer);$('error').textContent=error.message;}},10000);
   }catch(error){$('message').textContent='Unable to open this renewal.';$('error').textContent=error.message;}

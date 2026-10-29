@@ -19,6 +19,38 @@ for the installed site's exact testing job. 277 expanded service checks pass.
 
 ## Added
 
+The user superseded the shared-worker/catalogue-only approach and supplied the
+auth/trial worker source as reference: a NEW independent renewal worker must reuse
+its private server-local config.py/.env without changing the running auth service.
+`reseller-renewal-worker/` implements that model on9093 with its own systemd unit,
+anchored private ledger and separate cookie jar/tunnel. Only reviewed native
+helpers are frozen into the bundle; the old auth/create/delete/trial app is not
+shipped. Initial installation copies private config values ON HOST only, reads
+working dependency versions as metadata and builds its own isolated Python
+environment/unprivileged account. Auth source/env/config hashes
+are checked unchanged and that service is never stopped/restarted by the installer.
+
+Website0.28.0 imports full capabilities (not a permanent read-only phase), enables
+Rampex account API setup and installs the asynchronous payment/fulfilment timer.
+HTTP201 creation and authenticated Merchant API terminal completion are supported;
+signed setup notifications are acknowledged without granting a period. API and
+webhook verification are distinguished. Missing creation replies can bind only via
+signed order correlation plus merchant-API verification; definite no-link errors
+can retry, uncertain results never blindly create another payable link. Same-
+merchant key/webhook rotation preserves invoice identity/evidence. Customer money
+prices follow offered package IDs; fresh provider definitions/cost are snapshotted
+per invoice instead of invalidating cash pricing as if it were a custom plan.
+
+The native transaction extends the same line, preserves connection overrides and
+credentials/activation/notes/bouquets, debits via the native journal and records its
+marker atomically. The invoice's original expired revision is checked under locks,
+so a manual/other renewal cannot cause a second period/debit. Global merchant/link
+reference fencing spans resellers. Lost replies reconcile automatically; funding
+and connection delays retry the same operation, known rejected/rolled-back states
+are held for review, and refresh repair never repeats financial changes. Root
+installation and live Rampex/Overcast/device acceptance remain user execution;
+no actual customer charge or live line renewal has been performed by this session.
+
 The owner authorized the INITIAL read-only connection to the existing auth worker.
 Website0.27.3 and the catalogue-only worker bundle support that separate phase.
 The additive source hook accepts only the reviewed original worker plus its exact

@@ -12,7 +12,7 @@ from branded_renewals_runtime import NativeRenewalAdapter,_operation,lookup_rece
 
 UPLOAD=Path('/home/studio/Extreme Hub Tivimate Rework/new auth.zip')
 
-def spec():return {'operation_id':'a'*32,'brand_id':'b'*32,'reseller_id':'101','line_id':'999','package_id':7,'plan_fingerprint':'c'*64,'merchant_id':'merchant-A','payment_link_id':'link-A','primary_fingerprint':hashlib.sha256(b'user\npass').hexdigest(),'current_package_only':True}
+def spec():return {'operation_id':'a'*32,'brand_id':'b'*32,'reseller_id':'101','line_id':'999','package_id':7,'plan_fingerprint':'c'*64,'merchant_id':'merchant-A','payment_link_id':'link-A','primary_fingerprint':hashlib.sha256(b'user\npass').hexdigest(),'current_package_only':True,'expected_expiry':1000}
 
 class Cursor:
     def __init__(self):

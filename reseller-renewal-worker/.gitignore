@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+.env.*
+config.py
+native_panel.py
+venv/
+state/
+*.key
+*.sqlite*
+*-connection.json
+*.log

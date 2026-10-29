@@ -59,7 +59,7 @@ class NativeRenewalAdapter:
         if tables!={name:'innodb' for name in ['users','customers','users_credits_log','users_packages']}:raise RenewalRejected('Renewal and credit journal tables must support the same atomic transaction')
         cur.execute("SELECT CHARACTER_MAXIMUM_LENGTH AS note_capacity FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users_credits_log' AND COLUMN_NAME='note'")
         row=cur.fetchone()
-        if not row or int(row.get('note_capacity') or 0)<200:raise RenewalRejected('Existing credit journal cannot safely hold operation receipts')
+        if not row or int(row.get('note_capacity') or 0)<178:raise RenewalRejected('Existing credit journal cannot safely hold the full operation receipt')
     def plans(self,cur,owner):
         group,overrides=self.worker['_reseller_package_scope'](cur,owner['username'])
         cur.execute('SELECT * FROM users_packages WHERE enabled=1 AND activated=1 AND type<>1 ORDER BY id LIMIT 201');rows=cur.fetchall()

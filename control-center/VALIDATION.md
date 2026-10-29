@@ -1,5 +1,39 @@
 # Control Center validation
 
+## 0.28.0 separate full worker and Rampex account setup
+
+Release validation: 287 isolated website/service cases, nine browser cases and
+29 standalone worker cases (including17 real MariaDB transaction cases) pass.
+The existing auth/trial/bridge regression suite also passes all71 checks. PHP/JS,
+shell/embedded-Python syntax and actual delivery ZIP/manifest checks pass.
+
+The new service has its own folder, port, unprivileged user, Python environment
+and anchored state. Dependency version discovery reads the old environment's
+metadata without executing its packages or the private config; old files/services
+are untouched. Bundles omit private config/env and all old portal/trial routes.
+
+Real isolated MariaDB cases execute the supplied native date/locking/credit-journal
+helpers: one extension/debit, current-package and expired-revision fences, credit
+trigger/no-trigger paths, missing-note rollback, duplicate/concurrent/cross-reseller
+reference fencing, lost commit replies, funding deferral, refresh-only repair,
+preserved credentials/notes/bouquets/connection overrides and unlimited catalogue
+entries not blocking renewable products. HTTP checks cover separate service auth,
+capabilities, original state loss and absence of legacy auth/create/delete routes.
+
+Website contract checks cover full-worker imports, normal owner controls, real
+merchant-key validation adapters, HTTP201 creation, exact37-currency minor units,
+gross invoice vs net payout, ignored signed setup notifications, same-merchant key
+rotation evidence, lost creation replies, unpaid expiry/retry, late accepted money
+and manual/other renewal protection. Asynchronous jobs retain the same operation.
+
+These checks are isolated/synthetic: no live Rampex request with an account key,
+card charge, real line renewal or actual Overcast refresh was performed. Root
+installation/proxy reload and the specific owner test-line/provider/device
+acceptance must be confirmed on the servers; no global production-readiness or
+provider/KYC/chargeback/instant-unlock guarantee follows from local tests.
+Logs: /tmp/opencode/renewal-worker-028-release-validation.log and
+/tmp/opencode/rampex-028-release-validation.log.
+
 ## 0.27.3 catalogue-only connection
 
 283 isolated service checks, eight focused browser checks and71 auth-worker

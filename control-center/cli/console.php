@@ -62,7 +62,13 @@ try {
             break;
         case 'renewal-jobs':
             if(count($argv)!==2)throw new RuntimeException('Usage: php cli/console.php renewal-jobs');
-            $app=new Application($config);echo json_encode($app->renewalPayments->processOne(),JSON_THROW_ON_ERROR)."\n";
+            $app=new Application($config);$deadline=microtime(true)+45;$worked=0;
+            do{$result=$app->renewalPayments->processOne();if(!$result['worked'])break;$worked++;}while(microtime(true)<$deadline);
+            echo json_encode(['worked'=>$worked],JSON_THROW_ON_ERROR)."\n";
+            break;
+        case 'renewal-worker-check':
+            if(count($argv)!==2)throw new RuntimeException('Usage: php cli/console.php renewal-worker-check');
+            $app=new Application($config);echo json_encode(ControlCenter\RenewalWorkerConnection::probe($app,$config),JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR)."\n";
             break;
         case 'renewal-catalogue-check':
             if(count($argv)!==2)throw new RuntimeException('Usage: php cli/console.php renewal-catalogue-check');

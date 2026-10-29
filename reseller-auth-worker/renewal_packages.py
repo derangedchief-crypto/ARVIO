@@ -8,7 +8,7 @@ import re
 def package_document(plan):
     try:
         credit=decimal.Decimal(str(plan.get('credits') or '0'));duration=int(plan.get('duration') or 0);connections=int(plan.get('max_connections') or 1)
-        groups=json.loads(plan.get('bouquets') or '[]');name=plan['package_name'];period=str(plan.get('duration_period') or '').lower();legacy=int(plan.get('duration_value') or 0)
+        groups=json.loads(plan.get('bouquets') or '[]');name=plan['package_name'];period=str(plan.get('duration_period') or 'days').lower();legacy=int(plan.get('duration_value') or 0)
         if not credit.is_finite() or credit<0 or credit>1000000000 or credit.normalize().as_tuple().exponent<-8 or not 1<=duration<=1000000 or not 1<=connections<=100 or not 0<=legacy<=1000000:raise ValueError()
         if not isinstance(name,str) or not 1<=len(name)<=80 or any(ord(c)<32 or ord(c)==127 for c in name):raise ValueError()
         if period not in {'hour','hours','day','days','week','weeks','month','months','year','years'} or not isinstance(groups,list) or not groups or len(groups)>10000:raise ValueError()

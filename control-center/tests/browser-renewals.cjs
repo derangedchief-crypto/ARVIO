@@ -8,13 +8,13 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
   assert(base&&['127.0.0.1','localhost'].includes(new URL(base).hostname));
   const browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:360,height:800}});
   const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  const token='a'.repeat(64),id='b'.repeat(32);let current=null,submitted=null;
+  const token='a'.repeat(64),id='b'.repeat(32);let current=null,submitted=null,quoteCurrency='USD';
   const order={id,payment_state:'awaiting',fulfilment_state:'not_paid',currency:'USD',amount_minor:1050,payment_url:null};
   await page.route('**/api/public-renewals/**',async route=>{
     const req=route.request(),path=new URL(req.url()).pathname;
     assert.equal(req.method(),'POST');assert.equal(req.postDataJSON().session_token,token);
     let body;
-    if(path.endsWith('/info'))body={reseller:'TEST <img src=x onerror=alert(1)>',target_label:'Existing account ending 1234',renewal:current?null:{id:'c'.repeat(32),package_id:77,name:'One month',revision:3,currency:'USD',amount_minor:1050,duration:1,period:'months',max_connections:2},order:current,simulated:true};
+    if(path.endsWith('/info'))body={reseller:'TEST <img src=x onerror=alert(1)>',target_label:'Existing account ending 1234',renewal:current?null:{id:'c'.repeat(32),package_id:77,package_fingerprint:'d'.repeat(64),name:'One month',revision:3,currency:quoteCurrency,currency_exponent:quoteCurrency==='JPY'?0:2,amount_minor:quoteCurrency==='JPY'?1500:1050,duration:1,period:'months',max_connections:2},order:current,simulated:true};
     else if(path.endsWith('/checkout')){submitted=req.postDataJSON();current={...order};body={order:current};}
     else body={schema_version:1,order:current,simulated:true};
     await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
@@ -31,9 +31,12 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     console.log('PASS phone checkout is escaped, demo-labelled and fits 360px');
     await page.getByLabel('Receipt email').fill('receipt@example.test');await page.getByRole('button',{name:'Continue to payment',exact:true}).click();
     await page.locator('#order').waitFor({state:'visible'});
-    assert.deepEqual(Object.keys(submitted).sort(),['email','price_id','price_revision','session_token']);assert.equal(submitted.price_revision,3);assert.equal(submitted.email,'receipt@example.test');
+    assert.deepEqual(Object.keys(submitted).sort(),['email','package_fingerprint','price_id','price_revision','session_token']);assert.equal(submitted.price_revision,3);assert.equal(submitted.package_fingerprint,'d'.repeat(64));assert.equal(submitted.email,'receipt@example.test');
     assert.equal(await page.locator('input[type=number],input[name=amount],input[name=card]').count(),0);
     console.log('PASS phone renews the displayed current package without a package picker or editable price');
+    current=null;quoteCurrency='JPY';await page.reload();await page.getByRole('heading',{name:'One month',exact:true}).waitFor();
+    assert((await page.locator('#details').innerText()).includes('1500 JPY'));assert(!(await page.locator('#details').innerText()).includes('15.00'));assert.equal(await page.locator('select').count(),0);
+    console.log('PASS zero-decimal Rampex link currencies use their actual minor units, not a forced cents scale');
     current={...order,payment_state:'paid',fulfilment_state:'refresh_pending'};
     await page.reload();await page.getByRole('heading',{name:'Payment received',exact:true}).waitFor();
     assert((await page.locator('#order-state').innerText()).includes('Do not pay again'));assert(await page.locator('#checkout').isHidden());

@@ -1,0 +1,14 @@
+[Unit]
+Description=Verify renewal payments and fulfil the original orders
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=www
+Group=www
+WorkingDirectory=/www/wwwroot/control.fecxbrfzku.net
+ExecStart=/www/server/php/84/bin/php -d opcache.enable_cli=0 cli/console.php renewal-jobs
+TimeoutStartSec=180
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

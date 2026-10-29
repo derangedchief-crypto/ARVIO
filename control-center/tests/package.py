@@ -51,6 +51,8 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         assert 'database/migrations/027_current_package_pricing.sql' in names
         for name in ['src/RenewalCatalogueConnection.php','cli/connect-renewal-catalogue.php','deploy/connect-renewal-catalogue.sh','deploy/UPDATE-0.27.3.txt']:
             assert name in names, name
+        for name in ['src/RenewalWorkerConnection.php','src/RampexLinkRejected.php','cli/connect-renewal-worker.php','deploy/connect-renewal-worker.sh','deploy/renewal-jobs.service','deploy/renewal-jobs.timer','deploy/UPDATE-0.28.0.txt','database/migrations/028_renewal_webhook_readiness.sql']:
+            assert name in names, name
         assert b'fresh-checkins' in archive.read('cli/console.php')
         assert 'src/AppBrands.php' in names and 'database/migrations/014_reseller_app_brands.sql' in names
         assert 'src/TrialPolicies.php' in names and 'src/TrialContacts.php' in names and 'database/migrations/015_trial_policies_contacts.sql' in names

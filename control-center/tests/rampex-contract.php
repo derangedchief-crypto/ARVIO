@@ -16,8 +16,11 @@ function rampexContractCases(array &$tests):void {
     };
     $tests['Rampex amount comparison uses exact minor units without float rounding']=static function():void{
         same(1050,ControlCenter\RampexPaymentVerifier::minor('10.50','USD'));same(1050,ControlCenter\RampexPaymentVerifier::minor(10.5,'CAD'));
-        foreach(['10.005','1e2','-1','NaN','50000.01','0'] as $amount)problem(422,fn()=>ControlCenter\RampexPaymentVerifier::minor($amount,'USD'));
-        problem(422,fn()=>ControlCenter\RampexPaymentVerifier::minor('10','JPY'));
+        foreach(['10.005','1e2','-1','NaN','42949672.96','0'] as $amount)problem(422,fn()=>ControlCenter\RampexPaymentVerifier::minor($amount,'USD'));
+        same(15000000,ControlCenter\RampexPaymentVerifier::minor('150000','IDR'));same(5000001,ControlCenter\RampexPaymentVerifier::minor('50000.01','USD'));
+        same(1500,ControlCenter\RampexPaymentVerifier::minor('1500','JPY'));same(1500,ControlCenter\RampexPaymentVerifier::minor('1500.00','JPY'));same(1050,ControlCenter\RampexPaymentVerifier::minor('10.50','INR'));
+        same(37,count(ControlCenter\RampexPaymentVerifier::currencyExponents()));problem(422,fn()=>ControlCenter\RampexPaymentVerifier::minor('1500.50','JPY'));
+        problem(422,fn()=>ControlCenter\RampexPaymentVerifier::minor('10','ZZZ'));
     };
     $tests['Rampex valid gross payment is not compared against net payout fees']=static function()use($verify,$event,$status):void{
         same(1050,$verify($event,$status)['amount_minor']);

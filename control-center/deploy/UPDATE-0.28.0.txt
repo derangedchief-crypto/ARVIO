@@ -1,0 +1,89 @@
+CONTROL CENTER 0.28.0 — NEW FULL RENEWAL WORKER + RAMPEX MERCHANT SETUP
+
+This replaces the catalogue-only preview deployment path at the user's request.
+Do NOT run the old catalogue worker installer for this new setup.
+No customer APK publication or main promotion is involved. Testing127 remains valid.
+
+WORKER HOST (existing auth host38.190.133.171):
+1. Install the NEW Extreme-Renewal-Worker-0.28.0.zip in a root-private directory.
+   Run its install.sh. It creates /opt/iptv-renewal-worker, service
+   iptv-renewal-worker.service, port127.0.0.1:9093, and its own durable state/key.
+   It copies existing auth config.py/.env locally with private permissions and
+   reads its installed dependency versions without changing them, builds its OWN
+   Python environment/unprivileged account, and NEVER modifies,
+   stops or restarts iptv-auth-worker or its trial source/config/ledger.
+2. The installer attempts to route ONLY /branded-renewals/ in the existing worker
+   Nginx vhost to9093, preserving other routes and TLS settings. Ambiguous/shared
+   or custom existing routes are retained for review. If needed, use its
+   configure_proxy.py --site with the actual reviewed proxy config path.
+3. Transfer /root/renewal-worker-website-connection.json DIRECTLY to /root/ on the
+   WEBSITE host using trusted SSH/SFTP. This is a NEW financial bridge key, not
+   your original portal/trial key, Rampex key, or old catalogue JSON. Never paste
+   contents into chat or place this file in the website/public directory.
+
+WEBSITE HOST38.190.133.176:
+4. Back up/extract the0.28.0 UPDATE ZIP into /www/wwwroot/control.fecxbrfzku.net.
+   Private config.php/storage are excluded. Run as root:
+
+   chown root:root /root/renewal-worker-website-connection.json
+   chmod 600 /root/renewal-worker-website-connection.json
+   bash /www/wwwroot/control.fecxbrfzku.net/deploy/connect-renewal-worker.sh
+
+   The helper migrates028 (webhook readiness + immutable invoice expiry revision),
+   checks signed full-worker capabilities and your real package scope, imports the
+   connection atomically, enables Rampex API setup, and installs the automatic
+   renewal-jobs.timer. It preserves trial/builder settings, existing keys/history
+   and every unrelated private value. It does not charge or renew any customer.
+   Pausing new checkout later does not abandon already verified paid invoices.
+
+RAMPEX SETUP (each reseller's OWN account, including verified owner workspace):
+5. In Rampex Settings, configure the payout wallet, create an API key and copy
+   your Webhook Secret. In Customer renewals -> Connect Rampex, enter both values.
+   Key validation uses the authenticated Merchant API; account setup itself does
+   not create a payment link or charge anyone. No key or card details enter the APK.
+6. Copy the website's displayed webhook URL into that merchant's Rampex Webhooks
+   settings. Send a test notification if available. Valid signed setup/unrelated
+   notifications are acknowledged/recorded as ignored, NEVER as a paid renewal.
+   The screen distinguishes API-key verification from a verified webhook delivery.
+7. Set MONEY prices for the actual offered panel package rows. No custom package,
+   duration or connection editor. Panel CREDIT cost stays controlled by the panel.
+   The customer phone page displays ONLY the current package/price. Fresh panel
+   terms/cost are snapshotted per invoice; changed quotes must be reconfirmed.
+8. Use the normal owner payment rollout control when ready for the chosen test.
+   A genuinely expired/unrestricted same-owner test line is needed, not an active,
+   unlimited, blocked or unrelated account. The testing app then offers Renew/QR.
+   For a fresh testing-app install, activate/check in that dedicated line while
+   valid first, then explicitly expire that TEST line for acceptance. Checkout uses
+   its existing approved installation key; it is not a public expired-login bypass.
+
+AUTOMATIC PROCESSING:
+- Signed webhook raw bytes are durably recorded promptly; timer verifies merchant
+  API completion, exact immutable amount/currency/reference, then submits ONE
+  original operation. No browser redirect, ping or extra deposit grants access.
+- Late provider-accepted money is not rejected solely by a local QR timeout.
+- The worker checks current package AND original expired line revision under DB
+  locks, records the renewal/credit/payment marker in one transaction and repairs
+  native refresh without another debit. A manual/other renewal meanwhile is held
+  for review instead of adding another period. Missing/corrupt private state is
+  never reset. Temporary funding/lost replies retry the SAME paid operation.
+- Explicit no-link provider rejection can retry after settings are corrected;
+  uncertain creation never blindly creates another payable link. A signed provider
+  order reference can recover a lost creation reply after merchant-API verification.
+- API-key/webhook rotations retain old order evidence and use only the same
+  verified merchant identity. Price/API-key edits cannot remap old payments.
+- The app unlocks only after full renewal + fresh primary validation; local saved
+  credentials, activation code, playlists, settings and favourites are preserved.
+
+CONTROLLED ACCEPTANCE:
+Rampex is production-only, not a fake-money sandbox. The integration has isolated
+real-SQL/HTTP/provider-contract tests, not a completed live transaction. Confirm
+one specifically chosen test line's expiry/current package, choose a small amount
+supported by the hosted provider, and verify exactly one extension/debit, retained
+credentials/data, duplicate-callback safety and actual device unlock before a
+customer rollout. Also verify underpayment is NOT fulfilled; never compare net
+crypto payout fees as if they were the customer's gross invoice amount. Do not
+claim universal no-KYC/chargeback/instant-processing/provider availability.
+
+Safe checks: cli/console.php renewal-worker-check; systemctl status renewal-jobs.timer
+on WEBSITE; journalctl -u iptv-renewal-worker.service on WORKER. Send safe output,
+never config/env/connection files, ledger keys, customer passwords or raw card data.

@@ -33,6 +33,7 @@ final class RenewalSimulation {
             $fp=hash('sha256',json_encode($input,JSON_THROW_ON_ERROR));$old=$this->db->one('SELECT * FROM renewal_simulated_operations WHERE operation_id=?',[$input['operation_id']]);
             if($old){if(!hash_equals($fp,$old['fingerprint']))throw new Problem(409,'Simulation operation mismatch.');return json_decode($old['receipt'],true,16,JSON_THROW_ON_ERROR);}
             if((int)($fresh['package_id']??0)!==$input['package_id'])throw new Problem(409,'Current package changed; simulation will not switch packages.');
+            if((int)$fresh['expires_at']!==($input['expected_expiry']??null))throw new Problem(409,'Line was already renewed or its invoice revision changed.');
             $plans=json_decode($fresh['plans'],true,16,JSON_THROW_ON_ERROR);
             $plan=null;foreach($plans as $p)if($p['id']===$input['package_id']&&hash_equals($p['fingerprint'],$input['plan_fingerprint']))$plan=$p;
             if(!$plan||!$plan['funded']||!hash_equals($fresh['primary_fingerprint'],$input['primary_fingerprint'])||!in_array($fresh['state'],['expired','active'],true))throw new Problem(409,'Simulation plan unavailable.');

@@ -7,7 +7,38 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
-## 0.27.3 — catalogue-only worker connection
+## 0.28.0 — independent full renewal worker and Rampex setup
+
+The owner selected a NEW service, replacing the earlier catalogue-only deployment
+approach. See `deploy/UPDATE-0.28.0.txt` and `reseller-renewal-worker/README.md` in
+the source repository. It runs separately on9093 with its own unit/folder/ledger,
+copies the existing auth config/env privately on-host and never modifies/restarts
+the existing auth/trial worker. Only the renewal URL prefix moves to it.
+
+The full import verifies signed atomic/current-package capabilities and real
+package scope, enables merchant API setup, and installs automatic verified-order
+processing. Resellers connect their own Rampex API key/webhook secret, configure
+the displayed callback URL and set money prices for offered packages. The normal
+owner rollout switch remains available; this is not a catalogue-only write block.
+API validation/setup itself does not charge anyone. A signed webhook ping is not a
+payment; provider completion and immutable amount/currency/reference are checked.
+The documented37 link currencies use their proper minor units (JPY/UGX/VND are
+zero-decimal); no guessed USD/FX amount cap or200-package business cap is imposed.
+Provider rules and technical storage/request boundaries are validated separately.
+
+Invoices snapshot CURRENT panel terms/cost and the expired line revision. A later
+manual/other renewal or package change cannot debit/add another period. Duplicate
+and lost replies reconcile one durable operation; temporary funding/network and
+native refresh retry without another customer charge. A local QR timeout does not
+discard already accepted money. Already paid obligations can complete when new
+checkout is paused, but account/device/tenant restrictions remain mandatory.
+
+Rampex has no documented fake-money sandbox. The supplied native helpers and
+merchant contract have isolated tests; actual panel refresh, real provider payment
+and device unlock still require the owner's controlled acceptance test. No new
+customer APK or main promotion is part of this server-side delivery.
+
+## 0.27.3 — catalogue-only worker connection (historical deployment option)
 
 See `deploy/UPDATE-0.27.3.txt` and the separate auth-worker catalogue bundle.
 The existing worker gains signed offered-package reads under a READ ONLY database

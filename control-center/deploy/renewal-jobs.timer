@@ -1,0 +1,11 @@
+[Unit]
+Description=Process verified renewal orders automatically
+
+[Timer]
+OnBootSec=20
+OnUnitInactiveSec=10
+AccuracySec=1
+Unit=renewal-jobs.service
+
+[Install]
+WantedBy=timers.target
