@@ -1,8 +1,7 @@
-"""Offline renewal-operation foundation. NO route hook, installer or live adapter.
+"""Durable renewal-operation ledger, without import-time routes or IO.
 
-The existing reseller worker's renewal/credit/Overcast path must gain an atomic
-payment marker before it can implement this adapter contract. In particular the
-unmodified /renew-line is NOT safe to use as renew_once(). No import-time IO.
+The separate runtime adapter requires the reviewed atomic transaction patch.
+The unmodified /renew-line is NOT safe to use as renew_once().
 """
 import contextlib
 import fcntl
@@ -22,9 +21,9 @@ class RenewalRejected(Exception):
 
 
 def validate(spec):
-    fields={'operation_id','brand_id','reseller_id','line_id','package_id','plan_fingerprint','merchant_id','payment_link_id'}
+    fields={'operation_id','brand_id','reseller_id','line_id','package_id','plan_fingerprint','merchant_id','payment_link_id','primary_fingerprint'}
     if not isinstance(spec,dict) or set(spec)!=fields:raise RenewalRejected('Invalid renewal operation fields')
-    for field,size in [('operation_id',32),('brand_id',32),('plan_fingerprint',64)]:
+    for field,size in [('operation_id',32),('brand_id',32),('plan_fingerprint',64),('primary_fingerprint',64)]:
         if not isinstance(spec[field],str) or not re.fullmatch('[a-f0-9]{%d}'%size,spec[field]):raise RenewalRejected('Invalid renewal operation identity')
     for field in ['reseller_id','line_id']:
         if not isinstance(spec[field],str) or not re.fullmatch('[1-9][0-9]{0,18}',spec[field]):raise RenewalRejected('Invalid verified panel identity')

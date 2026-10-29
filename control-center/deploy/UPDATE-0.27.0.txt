@@ -1,0 +1,42 @@
+CONTROL CENTER 0.27.0 — RENEWAL SETTINGS PREVIEW + BRANDED TESTING ONLY
+
+Website: /www/wwwroot/control.fecxbrfzku.net (aaPanel WEBSITE server).
+This update does NOT deploy a worker, enable payments, charge or renew a line.
+
+1. Back up the existing website/database. Extract the UPDATE ZIP into the EXISTING
+   website folder above. The archive excludes config.php and storage/ entirely.
+2. From the website's aaPanel terminal run:
+
+   cd /www/wwwroot/control.fecxbrfzku.net
+   /www/server/php/84/bin/php -d opcache.enable_cli=0 cli/console.php migrate
+
+   Expected new migration: 026_renewal_payments.sql. DO NOT run fresh-checkins.
+3. Reload only this site's PHP handler if cached code remains; hard-refresh.
+   Open Subscriptions -> Customer renewals and choose a linked reseller workspace.
+   Payment rollout stays OFF, testing-only. Real merchant connection/API calls are
+   disabled unless separately configured/approved. No live worker update is needed
+   merely to see settings. Existing trials, accounts, notes and licences remain.
+
+EXTREME HUB 1 TESTING APK (production/customer APKs remain unchanged):
+
+4. Run this once, substituting the full immutable staging SHA from the release
+   message. Do not use main's SHA or a moving branch name as the source pin:
+
+   /www/server/php/84/bin/php -d opcache.enable_cli=0 cli/console.php queue-brand-testing 46ae4715dbfe4e57dfc7498cfbd6fbfb EXACT_STAGING_SHA 2.0.127 443
+
+   This preserves the last published TESTING name/artwork/revision/package, queues
+   only that brand/channel and registers a separate immutable TESTING source (not
+   a main source). Existing private config, keys, production defaults, fanout and
+   dispatcher settings remain untouched. It does not publish anything itself.
+   Repeating the
+   exact command returns the same job. Send the build_id output, not private config.
+   The approved central testing workflow then signs/publishes that EXACT job from
+   the SAME immutable staging source. No generic/customer/production APK workflow.
+
+NO-MONEY QR TEST LIMIT:
+The current fake-payment simulator is restricted to an isolated localhost staging
+website. This live-site update shows settings only; it does not make the live site
+a sandbox. A testing APK retains contact-provider fallback while payments are off.
+Full QR acceptance needs a separately isolated test endpoint and eligible expired
+reseller-owned primary. Owner-workspace/non-reseller brands remain ineligible for
+payment checkout. Never enable real Rampex keys just to make the QR appear.

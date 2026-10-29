@@ -2,10 +2,20 @@
 
 PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 `https://control.fecxbrfzku.net`, delivered as an aaPanel Nginx upload/extract ZIP.
-Website changes are tested on `control-center-owner-trials` and synchronized into
-`staging/testing` and `main` without running the customer APK publication workflow.
+Current development and delivery use `staging/testing`; updating `main` requires
+separate explicit owner approval. Website delivery never publishes a customer APK.
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
+
+## 0.27.0 — renewal settings preview and one-brand testing queue
+
+See `deploy/UPDATE-0.27.0.txt`. Migration026 adds renewal settings/orders with payment
+rollout OFF and a separate immutable staging-testing source registry. The owner CLI
+can queue one existing branded TESTING identity from its last published artwork,
+without changing private config or main/production sources. It never publishes by
+itself. Rampex live API calls and worker writes remain disabled; the no-money
+simulator is restricted to an isolated localhost staging website. Installing this
+website update does not enable a live QR pilot or install any worker/APK.
 
 ## Current source update — 0.25.0 primary-line and playback safeguards
 

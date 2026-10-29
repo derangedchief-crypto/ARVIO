@@ -1,0 +1,60 @@
+// Isolated phone UI contract checks. All payment endpoints are synthetic routes;
+// this never creates a provider link, records a payment or changes a panel line.
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-center-browser-tools/node_modules/playwright');
+(async()=>{
+  const base=process.env.CONTROL_PREVIEW_URL;
+  assert(base&&['127.0.0.1','localhost'].includes(new URL(base).hostname));
+  const browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:360,height:800}});
+  const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const token='a'.repeat(64),id='b'.repeat(32);let current=null,submitted=null;
+  const order={id,payment_state:'awaiting',fulfilment_state:'not_paid',currency:'USD',amount_minor:1050,payment_url:null};
+  await page.route('**/api/public-renewals/**',async route=>{
+    const req=route.request(),path=new URL(req.url()).pathname;
+    assert.equal(req.method(),'POST');assert.equal(req.postDataJSON().session_token,token);
+    let body;
+    if(path.endsWith('/info'))body={reseller:'TEST <img src=x onerror=alert(1)>',target_label:'Existing account ending 1234',plans:current?[]:[{id:'c'.repeat(32),name:'One month',revision:3,currency:'USD',amount_minor:1050,duration:1,period:'months',max_connections:2}],order:current,simulated:true};
+    else if(path.endsWith('/checkout')){submitted=req.postDataJSON();current={...order};body={order:current};}
+    else body={schema_version:1,order:current,simulated:true};
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
+  });
+  try{
+    await page.goto(base+'/renew/'+token);
+    await page.getByLabel('Renewal plan').waitFor();
+    assert.equal(await page.locator('#seller img').count(),0);
+    assert((await page.locator('#seller').innerText()).includes('<img'));
+    assert((await page.locator('#demo').innerText()).includes('no money'));
+    assert((await page.locator('#details').innerText()).includes('10.50 USD'));
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    console.log('PASS phone checkout is escaped, demo-labelled and fits 360px');
+    await page.getByLabel('Receipt email').fill('receipt@example.test');await page.getByRole('button',{name:'Continue to payment',exact:true}).click();
+    await page.locator('#order').waitFor({state:'visible'});
+    assert.deepEqual(Object.keys(submitted).sort(),['email','plan_id','plan_revision','session_token']);assert.equal(submitted.plan_revision,3);assert.equal(submitted.email,'receipt@example.test');
+    assert.equal(await page.locator('input[type=number],input[name=amount],input[name=card]').count(),0);
+    console.log('PASS phone submits email and server plan revision, never editable amount or card data');
+    current={...order,payment_state:'paid',fulfilment_state:'refresh_pending'};
+    await page.reload();await page.getByRole('heading',{name:'Payment received',exact:true}).waitFor();
+    assert((await page.locator('#order-state').innerText()).includes('Do not pay again'));assert(await page.locator('#checkout').isHidden());
+    console.log('PASS paid pending renewal cannot open a second checkout');
+    current={...current,fulfilment_state:'fulfilled'};
+    await page.reload();await page.getByRole('heading',{name:'Demo renewal completed',exact:true}).waitFor();
+    assert((await page.locator('#order-state').innerText()).includes('No real line was changed'));
+    await page.setViewportSize({width:1280,height:900});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    assert.deepEqual(errors,[]);console.log('PASS demo completion does not claim real account access; no browser errors');
+    const credentials=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));assert.equal(credentials.email,'owner@preview.test');
+    const operator=await context.newPage();operator.on('pageerror',e=>errors.push(e.message));
+    await operator.goto(base);await operator.getByLabel('Email address').fill(credentials.email);
+    await operator.getByLabel('Password',{exact:true}).fill(credentials.password);await operator.getByRole('button',{name:'Sign in',exact:true}).click();
+    await operator.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
+    const tenant=await operator.evaluate(async()=> (await(await fetch('/api/tenants')).json()).items.find(t=>t.kind==='reseller'&&t.name==='TEST branded reseller').id);
+    await operator.goto(base+'/#renewals');
+    await operator.getByLabel('Payment workspace',{exact:true}).selectOption(tenant);
+    try{await operator.getByRole('button',{name:'Connect Rampex',exact:true}).waitFor({timeout:5000});}
+    catch(error){throw new Error('Renewal settings did not render: '+await operator.locator('#main').innerText());}
+    await operator.getByRole('button',{name:'Connect Rampex',exact:true}).click();
+    assert.equal(await operator.getByLabel('Rampex API key',{exact:true}).getAttribute('type'),'password');
+    assert.equal(await operator.getByLabel('Webhook secret',{exact:true}).getAttribute('type'),'password');
+    assert.deepEqual(errors,[]);console.log('PASS actual reseller renewal workspace renders with write-only password fields; no live connection submitted');
+  }finally{await browser.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -116,7 +116,7 @@ async function enter() {
     ['Saved setups', [['library','Channel layouts','layouts'],['library/settings','Playback settings','presets'],['library/profiles','Device setups','profiles'],['library/defaults','Automatic setup','defaults']]],
     ...(state.user.role==='owner'?[['Administration',[['resellers','Resellers','resellers'],['enrollments','Website settings','enrollments']]]]:[]),
     [state.user.role==='owner'?'Apps':'My app', [['branding','Name & artwork','profiles']]],
-    ['Subscriptions', [['addons','Add-ons','key']]],
+    ['Subscriptions', [['addons','Add-ons','key'],['renewals','Customer renewals','key']]],
     ['Account', [['audit','Activity','audit'],['more','Tools','more']]]
   ];
   groups.forEach(([title,links],index)=>{const group=el('section',null,'nav-group');const label=el('div',title,'nav-group-title');label.id='nav-group-'+index;group.setAttribute('aria-labelledby',label.id);group.append(label);links.forEach(([key,text,glyph])=>{const link=el('a');link.append(icon(glyph),el('span',text));link.href='#'+key;link.dataset.page=key;group.append(link);});nav.append(group);});setNavOpen(false,false);
@@ -846,6 +846,7 @@ async function route() {
     else if (hash === 'presets'||hash.startsWith('library')) {if(window.WorkspaceLibrary)await WorkspaceLibrary.render(hash,epoch);else await presetsPage(epoch);}
     else if(hash==='more')await morePage(epoch);
     else if(hash==='branding'||/^branding\/[a-f0-9]{32}$/.test(hash)){document.title='My app brand · Extreme Control';await AppBranding.render(epoch,hash.split('/')[1]);}
+    else if(hash==='renewals'){document.title='Customer renewals · Extreme Control';await Renewals.render(epoch);}
     else if(/^trials(?:\/[a-f0-9]{32})?(?:\/contacts)?$/.test(hash)){document.title='Trials & contacts · Extreme Control';const part=hash.split('/')[1];await TrialWorkspace.render(epoch,part==='contacts'?undefined:part);}
     else if(/^devices\/customer\/[a-f0-9]{32}$/.test(hash))await records('devices',epoch,hash.split('/')[2]);
     else if (hash === 'enrollments' && state.user.role === 'owner') await enrollments(epoch);

@@ -43,6 +43,8 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         assert 'src/DeviceProfiles.php' in names
         assert 'src/DeviceRecovery.php' in names and 'src/DeviceListWindow.php' in names
         assert 'database/migrations/025_device_recovery.sql' in names
+        for name in ['src/BrandTestingUpdates.php','src/RenewalPayments.php','src/RenewalSettings.php','public/renew.html','public/assets/renewals-settings.js','public/assets/renewal-checkout.js','database/migrations/026_renewal_payments.sql','deploy/UPDATE-0.27.0.txt']:
+            assert name in names, name
         assert 'deploy/DEVICE-RECOVERY-AAPANEL.txt' in names
         assert b'fresh-checkins' in archive.read('cli/console.php')
         assert 'src/AppBrands.php' in names and 'database/migrations/014_reseller_app_brands.sql' in names

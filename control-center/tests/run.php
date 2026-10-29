@@ -164,6 +164,8 @@ require __DIR__.'/device-recovery.php';
 deviceRecoveryCases($tests,$app,$config,$owner,$beta,$fixture);
 require __DIR__.'/rampex-contract.php';
 rampexContractCases($tests);
+require __DIR__.'/renewal-staging.php';
+renewalStagingCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA,$tenantB);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

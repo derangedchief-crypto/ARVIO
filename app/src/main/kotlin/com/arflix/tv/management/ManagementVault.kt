@@ -67,6 +67,10 @@ internal class ManagementVault(context: Context) {
                 .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1")).setDigests(KeyProperties.DIGEST_SHA256).build())
         }.generateKeyPair().public.encoded
     }
+    fun existingPublicKey(scope:String):ByteArray? {
+        require(scope.matches(Regex("[a-f0-9]{64}")))
+        return store.getCertificate("control-management-signing-$scope")?.publicKey?.encoded
+    }
     fun sign(scope: String, text: String): String {
         val key = store.getKey("control-management-signing-$scope", null) as PrivateKey
         val signature = Signature.getInstance("SHA256withECDSA").apply { initSign(key); update(text.toByteArray(Charsets.UTF_8)) }.sign()

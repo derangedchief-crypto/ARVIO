@@ -1,5 +1,8 @@
 # Rampex renewal — first staging foundation
 
+Historical first increment at `6cfb727`. For subsequent staging integration and
+its still-open acceptance gates, see `rampex-staging-integration.md`.
+
 ## Confirmed decisions
 
 - Each reseller connects its OWN merchant account; no master/sub-merchant or

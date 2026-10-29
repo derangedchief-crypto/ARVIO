@@ -48,6 +48,12 @@ class PrimaryAccessRepository @Inject constructor(@ApplicationContext context:Co
     private val primaryUrls=java.util.concurrent.ConcurrentHashMap<String,String>()
     private val _state=MutableStateFlow(PrimaryAccessState())
     val state=_state.asStateFlow()
+    val renewalCheckout by lazy { com.arflix.tv.management.RenewalCheckoutRepository(context,this) }
+    internal fun renewalIdentity():Triple<String,String,Long>? {
+        val a=anchor?:return null
+        if(!accountInactive||recoveryRequired||primaryAllowed())return null
+        return Triple(com.arflix.tv.management.ManagementAccount(a.username,a.password).scope,a.identity,bindingRevision)
+    }
     fun start()=synchronized(this){
         if(started)return@synchronized
         started=true

@@ -1,4 +1,20 @@
-# Device management 0.26.0 recovery and fresh check-ins — validation
+# Control Center validation
+
+## 0.27.0 renewal settings preview
+
+Prior staging integration passed 276 isolated service checks, 59 worker tests,
+68 baseline and five focused browser checks, 1,018 native tests (one skip) and
+33 final targeted access/checkout tests plus both Kotlin variants. Payment cases
+use synthetic merchant data and demo targets, never real charges/panel writes.
+Delivery packaging preserves private config/storage and verifies every manifest.
+The additional one-brand staging queue passes the expanded 277-case isolated
+service suite: immutable staging source registration, same-job retries, preserved
+testing artwork/package/revision and refusal to claim that source for production.
+See `deploy/UPDATE-0.27.0.txt` for the
+required migration and explicit testing-only queue command. No live payment or
+production publication is part of this preview.
+
+## Device management 0.26.0 recovery and fresh check-ins
 
 Final local checks: 1,016 Android tests (zero failures/errors, one existing skip),
 both testing/customer Kotlin variants compiled; 261 isolated MariaDB/service checks,
