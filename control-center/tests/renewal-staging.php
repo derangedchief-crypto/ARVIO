@@ -64,7 +64,7 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         });
         problem(503,fn()=> $worker->eligibility('101','999',str_repeat('a',64)));
     };
-    $tests['renewal signed checkout verifies payment then fulfils same demo line once']=function()use($app,$simulationConfig,$owner,$alpha,$tenantA,$settings,$gateway,$worker,$secrets):void{
+    $checkoutFlow=function(array $alpha,array $tenantA,string $lineId)use($app,$simulationConfig,$owner,$settings,$gateway,$worker,$secrets):void{
         $artifacts=new ControlCenter\BrandArtifacts($app->db,$secrets,$simulationConfig);
         $brand=$app->db->one('SELECT * FROM app_brands WHERE tenant_id=?',[$tenantA['id']]);check($brand!==null);
         $app->db->query('UPDATE app_brands SET enabled=1 WHERE id=?',[$brand['id']]);
@@ -82,10 +82,12 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         $install=ControlCenter\Database::id();$account=bin2hex(random_bytes(32));$primary=hash('sha256',"demo-user\ndemo-pass");$package=$artifact['package_name'];
         $reseller=$app->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$tenantA['id']])['panel_id'];
         $app->db->query('UPDATE devices SET installation_id=?,key_fingerprint=?,app_package=? WHERE id=?',[$install,$key,$package,$device['id']]);
-        $app->db->query('INSERT INTO panel_customers (panel_id,account_ref,customer_id,tenant_id,reseller_id) VALUES (?,?,?,?,?)',['987655',$account,$customer['id'],$tenantA['id'],$reseller]);
-        $app->db->query("INSERT INTO enrollment_requests (id,installation_id,key_fingerprint,public_key,account_ref,account_hint,app_package,label,model,os_version,app_version,status,poll_hash,poll_expires_at,device_id,panel_customer_id,panel_reseller_id) VALUES (?,?,?,?,?,?,?,'TV','Demo','Test','test','approved',?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),?,?,?)",[ControlCenter\Database::id(),$install,$key,$public,$account,'demo',$package,str_repeat('a',64),$device['id'],'987655',$reseller]);
-        $plan=$worker->catalog($reseller)[0];
-        $app->db->query('INSERT INTO renewal_simulated_targets (reseller_id,line_id,primary_fingerprint,expires_at,plans) VALUES (?,?,?,?,?)',[$reseller,'987655',$primary,time()-60,json_encode([$plan])]);
+        $app->db->query('INSERT INTO panel_customers (panel_id,account_ref,customer_id,tenant_id,reseller_id) VALUES (?,?,?,?,?)',[$lineId,$account,$customer['id'],$tenantA['id'],$reseller]);
+        $app->db->query("INSERT INTO enrollment_requests (id,installation_id,key_fingerprint,public_key,account_ref,account_hint,app_package,label,model,os_version,app_version,status,poll_hash,poll_expires_at,device_id,panel_customer_id,panel_reseller_id) VALUES (?,?,?,?,?,?,?,'TV','Demo','Test','test','approved',?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),?,?,?)",[ControlCenter\Database::id(),$install,$key,$public,$account,'demo',$package,str_repeat('a',64),$device['id'],$lineId,$reseller]);
+        $plan=$worker->catalog($reseller)[0]??['id'=>777,'name'=>'Demo monthly','duration'=>1,'period'=>'months','max_connections'=>1,'fingerprint'=>str_repeat('d',64),'funded'=>true];
+        $app->db->query('INSERT INTO renewal_simulated_targets (reseller_id,line_id,primary_fingerprint,expires_at,plans) VALUES (?,?,?,?,?)',[$reseller,$lineId,$primary,time()-60,json_encode([$plan])]);
+        if(!$settings->connection($tenantA['id']))$settings->saveConnection($alpha,['api_key'=>'mock_'.$tenantA['id'],'webhook_secret'=>'Synthetic-Owner-Renewal-Secret','mode'=>'mock']);
+        if(!$settings->status($alpha,[])['plans'])$settings->savePlan($alpha,['name'=>'One month','package_id'=>777,'currency'=>'USD','amount'=>'10.50','enabled'=>true]);
         $payments=new ControlCenter\RenewalPayments($app->db,$simulationConfig,$app->auth,$app->management,$secrets,$artifacts,$settings,$gateway,$worker);
         $settings->setPolicy($owner,['enabled'=>true,'testing_only'=>true]);
         try{
@@ -106,7 +108,7 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             same(1,(int)$app->db->query('SELECT COUNT(*) FROM renewal_orders WHERE session_id=(SELECT id FROM renewal_sessions WHERE token_hash=?)',[$secrets->mac("renewal-checkout-token-v1\n$token")])->fetchColumn());
             $app->db->query('UPDATE renewal_orders SET expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE) WHERE id=?',[$order['id']]);
             $connection=$settings->connection($tenantA['id']);problem(401,fn()=> $payments->webhook($connection['id'],'{}',str_repeat('0',64)));
-            $settings->saveConnection($alpha,['api_key'=>'mock_newmerchantabcdefghijklmnop','webhook_secret'=>'Synthetic-New-Merchant-Secret','mode'=>'mock']);
+            $settings->saveConnection($alpha,['api_key'=>'mock_newmerchant'.$tenantA['id'],'webhook_secret'=>'Synthetic-New-Merchant-Secret','mode'=>'mock']);
             same($connection['id'],$app->db->one('SELECT connection_id FROM renewal_orders WHERE id=?',[$order['id']])['connection_id']);
             $payments->simulate($alpha,$order['id']);same('awaiting',$payments->status($token)['order']['payment_state']);
             same(true,$payments->processOne()['worked']);$done=$payments->status($token)['order'];same('paid',$done['payment_state']);same('fulfilled',$done['fulfilment_state']);
@@ -114,6 +116,22 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             same(1,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$order['id']])->fetchColumn());
             same('Keep these notes',$app->db->one('SELECT notes FROM customers WHERE id=?',[$customer['id']])['notes']);
         }finally{$settings->setPolicy($owner,['enabled'=>false,'testing_only'=>true]);}
+    };
+    $tests['renewal signed checkout verifies payment then fulfils same demo line once']=fn()=> $checkoutFlow($alpha,$tenantA,'987655');
+    $tests['verified owner reseller uses the same signed checkout and same-line fulfilment safeguards']=function()use($app,$owner,$checkoutFlow):void{
+        $tenant=$app->management->workspace($owner);
+        $checkoutFlow($owner,$tenant,'987656');
+    };
+    $tests['owner renewal settings require its verified link and stay hidden from other resellers']=function()use($app,$owner,$beta,$settings):void{
+        $tenant=$app->management->workspace($owner);same(null,$owner['tenant_id']);
+        same($tenant['id'],$settings->status($owner,[])['tenant_id']);
+        problem(404,fn()=> $settings->status($beta,['tenant_id'=>$tenant['id']]));
+        $link=$app->db->one('SELECT * FROM panel_resellers WHERE tenant_id=?',[$tenant['id']]);check($link!==null);
+        $unlinked=$app->management->createReseller($owner,['company'=>'TEST renewal unlinked','name'=>'Unlinked','email'=>'renewal-unlinked@example.test','password'=>'Synthetic-Test-Password-Only-123!']);
+        problem(409,fn()=> $settings->status($owner,['tenant_id'=>$unlinked['id']]));
+        $app->db->query('UPDATE panel_resellers SET tenant_id=? WHERE panel_id=?',[$unlinked['id'],$link['panel_id']]);
+        try{problem(409,fn()=> $settings->status($owner,[]));}
+        finally{$app->db->query('UPDATE panel_resellers SET tenant_id=? WHERE panel_id=?',[$tenant['id'],$link['panel_id']]);}
     };
     $tests['renewal simulator clamps calendar month end without touching real lines']=static function():void{
         $base=strtotime('2026-01-31 12:34:56 UTC');$p=['period'=>'months','duration'=>1];

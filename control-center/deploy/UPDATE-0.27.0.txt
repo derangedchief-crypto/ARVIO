@@ -38,5 +38,6 @@ The current fake-payment simulator is restricted to an isolated localhost stagin
 website. This live-site update shows settings only; it does not make the live site
 a sandbox. A testing APK retains contact-provider fallback while payments are off.
 Full QR acceptance needs a separately isolated test endpoint and eligible expired
-reseller-owned primary. Owner-workspace/non-reseller brands remain ineligible for
-payment checkout. Never enable real Rampex keys just to make the QR appear.
+reseller-owned primary. From0.27.1 a verified owner workspace is also supported;
+an admin role alone never substitutes for the verified panel reseller link.
+Never enable real Rampex keys just to make the QR appear.

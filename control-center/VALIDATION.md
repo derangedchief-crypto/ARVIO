@@ -1,5 +1,14 @@
 # Control Center validation
 
+## 0.27.1 verified owner reseller correction
+
+279 isolated service checks and six focused browser checks pass. These include
+the real null-tenant owner login resolving its existing verified workspace,
+owner signed checkout/payment/demo same-line fulfilment, missing-link rejection,
+cross-reseller denial and the owner settings screen rendering with payments OFF.
+No native change, new migration, real payment or panel write is part of this fix.
+Delivery ZIP checks preserve config/storage/keys and validate archive manifests.
+
 ## 0.27.0 renewal settings preview
 
 Prior staging integration passed 276 isolated service checks, 59 worker tests,

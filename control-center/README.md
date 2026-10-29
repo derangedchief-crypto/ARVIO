@@ -9,6 +9,11 @@ separate centrally signed app release; shared build/source pins are not moved he
 
 ## 0.27.0 — renewal settings preview and one-brand testing queue
 
+0.27.1 corrects verified owner/admin reseller workspaces being rejected merely
+because their workspace kind is `owner` and their login's tenant_id is null.
+The existing panel-reseller link and all tenant/primary/payment guards still
+apply; an admin login alone does not qualify. No new migration or APK is needed.
+
 See `deploy/UPDATE-0.27.0.txt`. Migration026 adds renewal settings/orders with payment
 rollout OFF and a separate immutable staging-testing source registry. The owner CLI
 can queue one existing branded TESTING identity from its last published artwork,

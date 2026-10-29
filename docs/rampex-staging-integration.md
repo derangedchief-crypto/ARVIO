@@ -19,6 +19,14 @@ for the installed site's exact testing job. 277 expanded service checks pass.
 
 ## Added
 
+Website0.27.1 corrects the owner-workspace exclusion: a verified owner/admin panel
+reseller uses the existing owner workspace even though the login tenant_id is
+null. Settings and checkout both still require the real reseller link, matching
+brand/line/device ownership and all original restriction/payment checks. 279
+service and six focused browser checks pass, including owner same-line demo
+fulfilment and missing-link/cross-tenant denial. This website-only correction does
+not move the pinned testing APK source or enable payments.
+
 - Migration `026_renewal_payments.sql`: off-by-default owner rollout policy,
   tenant-scoped encrypted merchant connections, revisioned package/price plans,
   checkout-only challenges/sessions, immutable order snapshots, encrypted raw

@@ -49,6 +49,10 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     await operator.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
     const tenant=await operator.evaluate(async()=> (await(await fetch('/api/tenants')).json()).items.find(t=>t.kind==='reseller'&&t.name==='TEST branded reseller').id);
     await operator.goto(base+'/#renewals');
+    await operator.getByRole('button',{name:'Connect Rampex',exact:true}).waitFor();
+    const ownerSettings=await operator.evaluate(async()=>{const r=await fetch('/api/renewals/settings');return {status:r.status,data:await r.json()};});
+    assert.equal(ownerSettings.status,200);assert.equal(ownerSettings.data.policy.enabled,false);
+    console.log('PASS verified owner workspace can open renewal settings without enabling payments');
     await operator.getByLabel('Payment workspace',{exact:true}).selectOption(tenant);
     try{await operator.getByRole('button',{name:'Connect Rampex',exact:true}).waitFor({timeout:5000});}
     catch(error){throw new Error('Renewal settings did not render: '+await operator.locator('#main').innerText());}

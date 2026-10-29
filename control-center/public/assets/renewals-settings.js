@@ -34,5 +34,5 @@ window.Renewals={async render(epoch){
       if(o.payment_state==='paid'&&o.fulfilment_state!=='fulfilled')actions.append(button('Retry same renewal',async()=>{await api('/api/renewals/orders/'+o.id+'/retry',{});toast('Same order queued. No new charge.');route();}));
       return [cellName(o.id,(o.amount_minor/100).toFixed(2)+' '+o.currency),o.payment_state,o.fulfilment_state,actions];
     }))));
-  }catch(error){if(epoch===state.epoch)box.replaceChildren(el('p',error.message,'error'),el('p','Select an active linked reseller workspace. No payment or account change has been requested.','scope-label'));}
+  }catch(error){if(epoch===state.epoch)box.replaceChildren(el('p',error.message,'error'),el('p','Select an active workspace with a verified panel reseller link. Your owner workspace is supported when linked. No payment or account change has been requested.','scope-label'));}
 }};

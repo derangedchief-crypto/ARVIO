@@ -18,7 +18,10 @@ final class RenewalSettings {
     }
     public function workspace(array $actor,mixed $id=null):array {
         $this->ready();$t=$this->management->workspace($actor,$id);
-        if($t['kind']!=='reseller'||$t['status']!=='active'||!$this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$t['id']]))throw new Problem(409,'Renewals require an active verified reseller workspace.');return $t;
+        // Owner logins deliberately have tenant_id=NULL; Management resolves the
+        // existing owner workspace and enforces role/tenant access separately.
+        $ownerWorkspace=$t['kind']==='owner'&&$actor['role']==='owner';
+        if(($t['kind']!=='reseller'&&!$ownerWorkspace)||$t['status']!=='active'||!$this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$t['id']]))throw new Problem(409,'Renewals require an active workspace with a verified panel reseller link.');return $t;
     }
     public function connection(string $tenant):?array {return $this->db->one('SELECT * FROM renewal_connections WHERE tenant_id=? AND enabled=1 ORDER BY created_at DESC,id DESC LIMIT 1',[$tenant]);}
     public function status(array $actor,array $input):array {
