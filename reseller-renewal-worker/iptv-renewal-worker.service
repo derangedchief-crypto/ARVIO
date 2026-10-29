@@ -10,7 +10,7 @@ Group=iptvrenewal
 WorkingDirectory=/opt/iptv-renewal-worker
 EnvironmentFile=/etc/iptv-renewal-worker.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/iptv-renewal-worker/venv/bin/python -m uvicorn main:app --app-dir /opt/iptv-renewal-worker --host 127.0.0.1 --port 9093 --workers 1
+ExecStart=/opt/iptv-renewal-worker/venv/bin/python -m uvicorn main:app --app-dir /opt/iptv-renewal-worker --host 127.0.0.1 --port 19093 --workers 1
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60

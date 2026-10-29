@@ -13,7 +13,7 @@ catalogue-only extension. Do not run the old catalogue installer for this setup.
 
 ## Reuse without altering the auth worker
 
-- Own folder `/opt/iptv-renewal-worker`, port `127.0.0.1:9093`, systemd unit
+- Own folder `/opt/iptv-renewal-worker`, port `127.0.0.1:19093`, systemd unit
   `iptv-renewal-worker.service`, and state `/var/lib/iptv-renewal-worker`.
 - Own unprivileged `iptvrenewal` account and own Python environment. Initial
   dependencies are constrained to the working auth environment's versions, read
@@ -81,11 +81,18 @@ are retained for review. For an explicit site path, run as root:
 
 Alternatively use `nginx-location.conf` INSIDE that existing service-bearing server,
 on the machine that actually proxies `resellerworker.extremeiptv.net`.
-It routes ONLY `/branded-renewals/` to the new loopback port9093. Existing auth,
+It routes ONLY `/branded-renewals/` to the new loopback port19093. Existing auth,
 portal and trial paths remain on their current upstream. Back up the relevant
 Nginx file, validate with `nginx -t`, then reload Nginx (not any other worker).
 Do not assume loopback refers to the worker if the proxy is on another host;
-use your established private upstream in that case, never expose port9093 publicly.
+use your established private upstream in that case, never expose port19093 publicly.
+
+Recovery checks that port19093 is free before starting this service. It never
+stops the unrelated listener on9093. Signed readiness must identify the actual
+systemd MainPID, not a previous preflight process or another HTTP server. The
+exact previous managed Nginx route is migrated from9093 to19093; customized
+routes are preserved for review. The existing ledger, keys and private copies
+of configuration are retained.
 
 The full signed `/status`, `/catalog`, `/eligibility` and `/renew` routes are
 available under that prefix. There is no catalogue-only flag blocking the service.

@@ -75,8 +75,12 @@ def plan(text,snippet):
     if BEGIN in block or END in block:
         if block.count(BEGIN)!=1 or block.count(END)!=1:raise ValueError('Managed proxy markers differ; original retained')
         a=block.index(BEGIN);b=block.index(END)+len(END)
-        if block[a:b]!=managed:raise ValueError('Existing managed proxy differs; review before replacing it')
-        return text
+        if block[a:b]==managed:return text
+        # Recovery moves ONLY our exact previous managed loopback upstream.
+        # Never overwrite a customized route or any auth/trial location.
+        previous=managed.replace('http://127.0.0.1:19093;', 'http://127.0.0.1:9093;')
+        if previous==managed or block[a:b]!=previous:raise ValueError('Existing managed proxy differs; review before replacing it')
+        return text[:begin+a]+managed+text[begin+b:]
     if has_location:raise ValueError('Existing renewal location is not managed; original retained')
     return text[:end]+'\n'+managed+text[end:]
 

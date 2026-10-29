@@ -149,11 +149,18 @@ if result.returncode:
  raise SystemExit('Read-only startup failed BEFORE service launch; evidence above. No renewal was attempted.')
 PY
 systemctl daemon-reload
+"$bootstrap" -I -S - <<'PY'
+import socket
+with socket.socket() as probe:
+ try:probe.bind(('127.0.0.1',19093))
+ except OSError:raise SystemExit('Port 19093 is already occupied. No other listener was stopped; choose a reviewed unused port.') from None
+PY
 systemctl start iptv-renewal-worker.service
-"$bootstrap" -I -S - "$environment" <<'PY'
+"$bootstrap" -I -S - "$environment" "$(systemctl show iptv-renewal-worker.service -p MainPID --value)" <<'PY'
 import hashlib,hmac,http.client,json,secrets,sys,time
 from pathlib import Path
 key=dict(line.split('=',1) for line in Path(sys.argv[1]).read_text().splitlines() if line and not line.startswith('#'))['RENEWAL_BRIDGE_SECRET']
+expected_pid=int(sys.argv[2])
 deadline=time.monotonic()+180
 last={}
 while True:
@@ -162,7 +169,7 @@ while True:
   stamp=str(int(time.time()));nonce=secrets.token_hex(16);raw=b'{}'
   sig=hmac.new(key.encode(),b'branded-renewal-request-v1\n'+stamp.encode()+b'\n'+nonce.encode()+b'\n'+raw,hashlib.sha256).hexdigest()
   # A loopback health check must NEVER inherit HTTP_PROXY/ALL_PROXY settings.
-  connection=http.client.HTTPConnection('127.0.0.1',9093,timeout=3)
+  connection=http.client.HTTPConnection('127.0.0.1',19093,timeout=3)
   connection.request('POST','/branded-renewals/status',body=raw,headers={'Content-Type':'application/json','X-Renewal-Timestamp':stamp,'X-Renewal-Nonce':nonce,'X-Renewal-Signature':sig})
   response=connection.getresponse();last={'http_status':response.status}
   if response.status!=200:raise RuntimeError('http-status')
@@ -171,6 +178,10 @@ while True:
   expected=hmac.new(key.encode(),('branded-renewal-result-v1\n'+stamp+'\n'+nonce+'\n'+e['payload']).encode(),hashlib.sha256).hexdigest()
   if not hmac.compare_digest(expected,e['signature']):raise RuntimeError()
   value=json.loads(e['payload'])
+  last['phase']='service-process-identity'
+  last['expected_pid']=expected_pid
+  last['reported_pid']=value.get('service_pid') if isinstance(value.get('service_pid'),int) else None
+  if expected_pid<1 or value.get('service')!='iptv-renewal-worker' or value.get('service_pid')!=expected_pid:raise RuntimeError('wrong-listener-process')
   last['phase']='response-capabilities'
   if value.get('mode')!='renewals' or value.get('writes_enabled') is not True or value.get('atomic_renewal')!=1 or value.get('current_package_only') is not True:raise RuntimeError()
   break
@@ -195,7 +206,7 @@ PY
 if [[ "$auth_was_active" == true ]]; then systemctl is-active --quiet iptv-auth-worker.service;fi
 systemctl enable iptv-renewal-worker.service
 modified=false
-echo 'Separate renewal worker ready on 127.0.0.1:9093; auth worker was NOT modified or restarted.'
+echo 'Separate renewal worker ready on 127.0.0.1:19093 with signed process identity; auth worker was NOT modified or restarted.'
 if ! "$bootstrap" -I -S "$base/configure_proxy.py"; then echo 'Local worker is ready; public renewal routing needs the actual proxy config reviewed. Existing auth/trial routing was not replaced. Connection transfer must wait.' >&2;exit 1;fi
 echo "New-worker backup: $backup"
 echo "Private website connection file: $export_file (never paste/upload publicly)"
