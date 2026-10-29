@@ -11,6 +11,11 @@ diagnosis/recovery; it is not proof that an unknown server failure is resolved.
 This is a NEW service, not a patch to `iptv-auth-worker` and not the earlier
 catalogue-only extension. Do not run the old catalogue installer for this setup.
 
+Empty package bouquet lists are supported for paid renewal: the customer's
+existing bouquets are preserved, never cleared or replaced by the package list.
+Malformed bouquet data is still rejected, and package fingerprints still prevent
+renewal against a changed package definition.
+
 ## Reuse without altering the auth worker
 
 - Own folder `/opt/iptv-renewal-worker`, port `127.0.0.1:19093`, systemd unit

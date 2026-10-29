@@ -98,6 +98,35 @@ class NativeMysqlTests(unittest.TestCase):
         first=self.run_operation();self.assertEqual('fulfilled',first['state']);self.assertEqual(first,self.run_operation())
         row=self.preserved();self.assertEqual(first['expires_at'],row['exp_date']);self.assertGreater(row['exp_date'],time.time());self.assertEqual(8,self.one('SELECT credits FROM users WHERE id=101')['credits'])
         logs=self.sql('SELECT * FROM users_credits_log');self.assertEqual(1,len(logs));self.assertTrue(logs[0]['note'].startswith('BRN1|'));self.assertEqual(-2,logs[0]['amount']);self.assertEqual(1,self.refreshes)
+    def test_reported_empty_bouquet_offers_do_not_block_catalogue(self):
+        for ident,duration,credits,connections in [(15,1,1,2),(16,1,3,4),(80,12,44,8)]:
+            self.sql("INSERT INTO users_packages VALUES (%s,'Existing package',%s,%s,'months',%s,'[]',%s,'[2]',0,1,1)",(ident,credits,duration,duration,connections))
+        plans=self.adapter.catalog('101')['plans']
+        self.assertEqual([7,8,15,16,80],[p['id'] for p in plans])
+        self.assertEqual([[],[],[]],[p['bouquets'] for p in plans if p['id'] in [15,16,80]])
+        self.untouched()
+    def test_empty_package_bouquets_renew_once_without_clearing_customer_access(self):
+        self.sql("UPDATE users_packages SET bouquets='[]' WHERE id=7")
+        offers=self.adapter.catalog('101')['plans']
+        self.assertEqual([],offers[0]['bouquets'])
+        eligible=self.adapter.eligibility('101','999',hashlib.sha256(b'user\npass').hexdigest())
+        self.assertEqual([7],[p['id'] for p in eligible['plans']])
+        first=self.run_operation();self.assertEqual('fulfilled',first['state'])
+        self.assertEqual(first,self.run_operation())
+        self.assertEqual('[10]',self.preserved()['bouquet'])
+        self.assertEqual('[]',self.one('SELECT bouquets FROM users_packages WHERE id=7')['bouquets'])
+        self.assertEqual(8,self.one('SELECT credits FROM users WHERE id=101')['credits'])
+        self.assertEqual(1,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n'])
+    def test_empty_bouquet_support_does_not_accept_malformed_bouquets_or_package_changes(self):
+        for raw in ['null','{}','[0]','[-1]','["x"]','[true]','[2147483648]','not-json']:
+            self.sql('UPDATE users_packages SET bouquets=%s WHERE id=7',(raw,))
+            with self.assertRaises(RenewalRejected):self.adapter.catalog('101')
+            self.untouched()
+        self.sql("UPDATE users_packages SET bouquets='[]' WHERE id=7")
+        spec=self.spec()
+        self.sql("UPDATE users_packages SET bouquets='[12]' WHERE id=7")
+        with self.assertRaises(RenewalRejected):self.run_operation(spec)
+        self.untouched()
     def test_real_panel_trigger_records_one_atomic_marker_not_a_second_adjustment(self):
         self.trigger();self.assertEqual('fulfilled',self.run_operation()['state']);self.assertEqual(1,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n']);self.assertEqual('line_renew',self.one('SELECT reason FROM users_credits_log')['reason']);self.preserved()
     def test_missing_marker_in_existing_credit_trigger_rolls_back_every_change(self):
