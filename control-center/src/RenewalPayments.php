@@ -49,8 +49,8 @@ final class RenewalPayments {
             $this->db->query('UPDATE renewal_challenges SET used_at=UTC_TIMESTAMP() WHERE nonce_hash=?',[$c['nonce_hash']]);
         });
         $scope=$d+['primary_fingerprint'=>$primary];$eligibility=$this->eligibility($scope);
-        $plans=$this->eligiblePlans($scope,$eligibility);$connection=$this->settings->connection($d['tenant_id']);
-        if(!$connection||!$plans)return ['schema_version'=>1,'available'=>false];
+        $price=$this->eligiblePrice($scope,$eligibility);$connection=$this->settings->connection($d['tenant_id']);
+        if(!$connection||!$price)return ['schema_version'=>1,'available'=>false];
         return $this->db->transaction(function()use($d,$package,$key,$primary):array{
             $this->db->one('SELECT id FROM devices WHERE id=? FOR UPDATE',[$d['id']]);$this->binding($d['id'],$package,$key);
             $row=$this->db->one('SELECT * FROM renewal_sessions WHERE device_id=? AND brand_id=? AND primary_fingerprint=? AND key_fingerprint=? AND account_ref=? AND reseller_id=? AND line_id=? AND expires_at>UTC_TIMESTAMP() ORDER BY created_at DESC LIMIT 1',[$d['id'],$d['brand_id'],$primary,$key,$d['account_ref'],$d['reseller_id'],$d['line_id']]);
@@ -75,12 +75,12 @@ final class RenewalPayments {
         }
         return $s;
     }
-    private function eligiblePlans(array $s,array $eligibility):array {
-        $rows=$this->db->all('SELECT * FROM renewal_plans WHERE tenant_id=? AND enabled=1 ORDER BY amount_minor,id',[$s['tenant_id']]);$allowed=[];
-        foreach($rows as $p)foreach($eligibility['plans'] as $current)if($current['id']===(int)$p['package_id']&&hash_equals($current['fingerprint'],$p['plan_fingerprint'])&&$current['funded']){
-            $allowed[]=['id'=>$p['id'],'name'=>$p['name'],'revision'=>(int)$p['revision'],'currency'=>$p['currency'],'amount_minor'=>(int)$p['amount_minor'],'duration'=>$current['duration'],'period'=>$current['period'],'max_connections'=>$current['max_connections']];break;
-        }
-        return $allowed;
+    private function eligiblePrice(array $s,array $eligibility):?array {
+        $rows=$this->db->all('SELECT * FROM renewal_plans WHERE tenant_id=? AND package_id=? AND enabled=1',[$s['tenant_id'],$eligibility['current_package_id']??0]);
+        if(count($rows)!==1)return null; // Never choose the cheapest duplicate.
+        $p=$rows[0];$current=$eligibility['plans'][0]??null;
+        if(!$current||$current['id']!==(int)$p['package_id']||!hash_equals($current['fingerprint'],$p['plan_fingerprint'])||!$current['funded'])return null;
+        return ['id'=>$p['id'],'package_id'=>$current['id'],'name'=>$current['name'],'revision'=>(int)$p['revision'],'currency'=>$p['currency'],'amount_minor'=>(int)$p['amount_minor'],'duration'=>$current['duration'],'period'=>$current['period'],'max_connections'=>$current['max_connections']];
     }
     private function currentOrder(array $s):?array {
         // A local quote timeout does not cancel a provider payment link. Keep
@@ -92,22 +92,21 @@ final class RenewalPayments {
         $s=$this->session($token);$o=$s['order_id']?$this->db->one('SELECT * FROM renewal_orders WHERE id=?',[$s['order_id']]):$this->currentOrder($s);$seller=$this->db->one('SELECT name FROM tenants WHERE id=?',[$s['tenant_id']]);$c=$this->settings->connection($s['tenant_id']);
         $this->auth->limit('renewal-capability',$s['id'],60,60);
         if($o){$this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$o['id'],$s['id']]);$c=$this->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);}
-        $plans=[];if(!$o&&$s['open']){try{$this->session($token,true);$plans=$this->eligiblePlans($s,$this->eligibility($s));}catch(Problem){}}
-        return ['reseller'=>$seller['name']??'Your provider','target_label'=>'Existing account ending '.substr($s['line_id'],-4),'plans'=>$plans,'order'=>$this->publicOrder($o),'expires_at'=>$s['expires_at'],'simulated'=>$c&&$c['mode']==='mock'];
+        $renewal=null;if(!$o&&$s['open']){try{$this->session($token,true);$renewal=$this->eligiblePrice($s,$this->eligibility($s));}catch(Problem){}}
+        return ['reseller'=>$seller['name']??'Your provider','target_label'=>'Existing account ending '.substr($s['line_id'],-4),'renewal'=>$renewal,'order'=>$this->publicOrder($o),'expires_at'=>$s['expires_at'],'simulated'=>$c&&$c['mode']==='mock'];
     }
     public function checkout(array $input,string $ip):array {
-        Input::keys($input,['session_token','plan_id','plan_revision','email']);$s=$this->session(Input::text($input['session_token']??null,'checkout token',64),true);
+        Input::keys($input,['session_token','price_id','price_revision','email']);$s=$this->session(Input::text($input['session_token']??null,'checkout token',64),true);
         $this->auth->limit('renewal-checkout',$s['id'],10,3600);$email=Input::email($input['email']??null);
-        $eligibility=$this->eligibility($s);$plan=null;
-        foreach($this->eligiblePlans($s,$eligibility) as $p)if($p['id']===($input['plan_id']??null)&&$p['revision']===($input['plan_revision']??null))$plan=$p;
-        if(!$plan)throw new Problem(409,'Plan changed or is unavailable. Refresh before paying.');
+        $eligibility=$this->eligibility($s);$plan=$this->eligiblePrice($s,$eligibility);
+        if(!$plan||$plan['id']!==($input['price_id']??null)||$plan['revision']!==($input['price_revision']??null))throw new Problem(409,'Current package price changed or is unavailable. Refresh before paying.');
         $connection=$this->settings->connection($s['tenant_id']);if(!$connection)throw new Problem(409,'Provider payments are unavailable.');
         $created=$this->db->transaction(function()use($s,$plan,$email,$connection):array{
             $this->db->one('SELECT panel_id FROM panel_customers WHERE panel_id=? FOR UPDATE',[$s['line_id']]);
             if($old=$this->currentOrder($s)){$this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$old['id'],$s['id']]);return ['created'=>false,'order'=>$old];}
             if(!$this->db->one('SELECT id FROM renewal_connections WHERE id=? AND tenant_id=? AND enabled=1 FOR UPDATE',[$connection['id'],$s['tenant_id']]))throw new Problem(409,'Merchant connection changed. Refresh before paying.');
             $snapshot=$this->db->one('SELECT * FROM renewal_plans WHERE id=? AND tenant_id=? FOR UPDATE',[$plan['id'],$s['tenant_id']]);
-            if(!$snapshot||!(bool)$snapshot['enabled']||(int)$snapshot['revision']!==$plan['revision'])throw new Problem(409,'Plan changed before checkout.');
+            if(!$snapshot||!(bool)$snapshot['enabled']||(int)$snapshot['revision']!==$plan['revision']||(int)$snapshot['package_id']!==$plan['package_id'])throw new Problem(409,'Current package price changed before checkout.');
             $id=Database::id();
             $this->db->query('INSERT INTO renewal_orders (id,session_id,tenant_id,brand_id,reseller_id,line_id,primary_fingerprint,connection_id,merchant_id,plan_id,plan_snapshot,currency,amount_minor,email_cipher,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE))',[$id,$s['id'],$s['tenant_id'],$s['brand_id'],$s['reseller_id'],$s['line_id'],$s['primary_fingerprint'],$connection['id'],$connection['merchant_id'],$plan['id'],json_encode($snapshot,JSON_THROW_ON_ERROR),$plan['currency'],$plan['amount_minor'],$this->secrets->encrypt($email)]);
             $this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$id,$s['id']]);

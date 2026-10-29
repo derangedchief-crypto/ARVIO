@@ -7,6 +7,21 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.27.2 — current-package renewal and package pricing
+
+The panel defines offered package names, terms, connections and CREDIT costs.
+Resellers set only the customer MONEY price/currency and availability for those
+fixed packages. The customer phone page displays the current package only, with
+no package selector or upgrade/downgrade flow. Assignment is checked again under
+the existing worker's native locks before a paid renewal; a changed package holds
+the paid order for review, not another charge. The paid contract explicitly
+requires current-package-only support, so old workers fail closed.
+
+Legacy price/order storage is retained. Migration027 adds an explicit package
+assignment to isolated demo targets only; it never changes real panel data.
+See `deploy/UPDATE-0.27.2.txt`. Payment rollout remains OFF and real worker/payment
+acceptance is still separate. No new APK is required for this website-side UI.
+
 ## 0.27.0 — renewal settings preview and one-brand testing queue
 
 0.27.1 corrects verified owner/admin reseller workspaces being rejected merely

@@ -38,7 +38,7 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
     $tests['renewal simulated worker verifies original fingerprint and immutable package']=function()use($app,$worker,$tenantA):void{
         $r=$app->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$tenantA['id']]);$id=$r['panel_id'];
         $p=['id'=>777,'name'=>'Demo monthly','duration'=>1,'period'=>'months','max_connections'=>1,'fingerprint'=>str_repeat('d',64),'funded'=>true];
-        $app->db->query('INSERT INTO renewal_simulated_targets (reseller_id,line_id,primary_fingerprint,expires_at,plans) VALUES (?,?,?,?,?)',[$id,'987654',str_repeat('e',64),time()-60,json_encode([$p])]);
+        $app->db->query('INSERT INTO renewal_simulated_targets (reseller_id,line_id,primary_fingerprint,expires_at,plans,package_id) VALUES (?,?,?,?,?,?)',[$id,'987654',str_repeat('e',64),time()-60,json_encode([$p]),777]);
         same([$p],$worker->catalog($id));same('expired',$worker->eligibility($id,'987654',str_repeat('e',64))['state']);
         same('unavailable',$worker->eligibility($id,'987654',str_repeat('f',64))['state']);
         $spec=['operation_id'=>str_repeat('a',32),'brand_id'=>str_repeat('b',32),'reseller_id'=>$id,'line_id'=>'987654','package_id'=>777,'plan_fingerprint'=>str_repeat('d',64),'merchant_id'=>'demo','payment_link_id'=>'demo-link','primary_fingerprint'=>str_repeat('e',64)];
@@ -46,13 +46,15 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         same(1,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$spec['operation_id']])->fetchColumn());
         problem(409,fn()=> $worker->renew(array_replace($spec,['payment_link_id'=>'different'])));
     };
-    $tests['renewal plan editing is tenant scoped and revision checked']=function()use($settings,$alpha,$beta,$tenantA):void{
-        $input=['name'=>'One month','package_id'=>777,'currency'=>'USD','amount'=>'10.50','enabled'=>true];
-        $result=$settings->savePlan($alpha,$input);$p=$result['plans'][0];same(1050,$p['amount_minor']);same(1,$p['revision']);
-        $edit=$input+['id'=>$p['id'],'expected_revision'=>1];$result=$settings->savePlan($alpha,$edit);same(2,$result['plans'][0]['revision']);
-        problem(409,fn()=> $settings->savePlan($alpha,$edit));
+    $tests['only money pricing for offered packages is editable and revision scoped']=function()use($settings,$alpha,$beta,$tenantA):void{
+        $input=['package_id'=>777,'currency'=>'USD','amount'=>'10.50','enabled'=>true];
+        foreach(['name'=>'Custom plan','duration'=>99,'max_connections'=>99,'credits'=>0] as $key=>$value)problem(422,fn()=> $settings->savePrice($alpha,$input+[$key=>$value]));
+        $result=$settings->savePrice($alpha,$input);$p=$result['prices'][0];same(1050,$p['amount_minor']);same(1,$p['revision']);same('Demo monthly',$p['name']);
+        $edit=$input+['id'=>$p['id'],'expected_revision'=>1];$result=$settings->savePrice($alpha,$edit);same(2,$result['prices'][0]['revision']);
+        problem(409,fn()=> $settings->savePrice($alpha,$edit));
+        problem(409,fn()=> $settings->savePrice($alpha,$input)); // No duplicate price per package.
         problem(404,fn()=> $settings->status($beta,['tenant_id'=>$tenantA['id']]));
-        problem(409,fn()=> $settings->savePlan($alpha,array_replace($input,['package_id'=>999])));
+        problem(409,fn()=> $settings->savePrice($alpha,array_replace($input,['package_id'=>999])));
     };
     $tests['renewal worker rejects unsigned or stale status replies']=function()use($simulationConfig):void{
         $worker=new ControlCenter\RenewalWorker($simulationConfig,static fn()=>json_encode(['payload'=>'{}','signature'=>str_repeat('0',64)]));
@@ -63,6 +65,18 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             return json_encode(['payload'=>$payload,'signature'=>hash_hmac('sha256',"branded-renewal-result-v1\n".$h['X-Renewal-Timestamp']."\n".$h['X-Renewal-Nonce']."\n".$payload,str_repeat('a',64))]);
         });
         problem(503,fn()=> $worker->eligibility('101','999',str_repeat('a',64)));
+    };
+    $tests['signed eligibility cannot omit the current package or offer an alternate package']=function()use($simulationConfig):void{
+        $base=['reseller_id'=>'101','line_id'=>'999','primary_match'=>true,'state'=>'expired','checked_at'=>time(),'expires_at'=>time()-60,'plans'=>[]];
+        $p=['id'=>8,'name'=>'Other offered package','duration'=>1,'period'=>'months','max_connections'=>1,'fingerprint'=>str_repeat('d',64),'funded'=>true];
+        foreach([$base,array_replace($base,['current_package_id'=>7,'plans'=>[$p]])] as $reply){
+            $transport=static function($action,$raw,$headers)use($reply):string{
+                $h=[];foreach($headers as $line){[$k,$v]=explode(': ',$line,2);$h[$k]=$v;}$payload=json_encode($reply);
+                return json_encode(['payload'=>$payload,'signature'=>hash_hmac('sha256',"branded-renewal-result-v1\n".$h['X-Renewal-Timestamp']."\n".$h['X-Renewal-Nonce']."\n".$payload,str_repeat('a',64))]);
+            };
+            $reader=new ControlCenter\RenewalWorker($simulationConfig,$transport);
+            problem(503,fn()=> $reader->eligibility('101','999',str_repeat('a',64)));
+        }
     };
     $checkoutFlow=function(array $alpha,array $tenantA,string $lineId)use($app,$simulationConfig,$owner,$settings,$gateway,$worker,$secrets):void{
         $artifacts=new ControlCenter\BrandArtifacts($app->db,$secrets,$simulationConfig);
@@ -85,9 +99,12 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         $app->db->query('INSERT INTO panel_customers (panel_id,account_ref,customer_id,tenant_id,reseller_id) VALUES (?,?,?,?,?)',[$lineId,$account,$customer['id'],$tenantA['id'],$reseller]);
         $app->db->query("INSERT INTO enrollment_requests (id,installation_id,key_fingerprint,public_key,account_ref,account_hint,app_package,label,model,os_version,app_version,status,poll_hash,poll_expires_at,device_id,panel_customer_id,panel_reseller_id) VALUES (?,?,?,?,?,?,?,'TV','Demo','Test','test','approved',?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),?,?,?)",[ControlCenter\Database::id(),$install,$key,$public,$account,'demo',$package,str_repeat('a',64),$device['id'],$lineId,$reseller]);
         $plan=$worker->catalog($reseller)[0]??['id'=>777,'name'=>'Demo monthly','duration'=>1,'period'=>'months','max_connections'=>1,'fingerprint'=>str_repeat('d',64),'funded'=>true];
-        $app->db->query('INSERT INTO renewal_simulated_targets (reseller_id,line_id,primary_fingerprint,expires_at,plans) VALUES (?,?,?,?,?)',[$reseller,$lineId,$primary,time()-60,json_encode([$plan])]);
+        $other=['id'=>778,'name'=>'Demo yearly','duration'=>12,'period'=>'months','max_connections'=>3,'fingerprint'=>str_repeat('8',64),'funded'=>true];
+        $app->db->query('INSERT INTO renewal_simulated_targets (reseller_id,line_id,primary_fingerprint,expires_at,plans,package_id) VALUES (?,?,?,?,?,?)',[$reseller,$lineId,$primary,time()-60,json_encode([$plan,$other]),$plan['id']]);
         if(!$settings->connection($tenantA['id']))$settings->saveConnection($alpha,['api_key'=>'mock_'.$tenantA['id'],'webhook_secret'=>'Synthetic-Owner-Renewal-Secret','mode'=>'mock']);
-        if(!$settings->status($alpha,[])['plans'])$settings->savePlan($alpha,['name'=>'One month','package_id'=>777,'currency'=>'USD','amount'=>'10.50','enabled'=>true]);
+        if(!$settings->status($alpha,[])['prices'])$settings->savePrice($alpha,['package_id'=>777,'currency'=>'USD','amount'=>'10.50','enabled'=>true]);
+        $settings->savePrice($alpha,['package_id'=>778,'currency'=>'USD','amount'=>'99.00','enabled'=>true]);
+        $otherPrice=array_values(array_filter($settings->status($alpha,[])['prices'],static fn($p)=>$p['package_id']===778))[0];
         $payments=new ControlCenter\RenewalPayments($app->db,$simulationConfig,$app->auth,$app->management,$secrets,$artifacts,$settings,$gateway,$worker);
         $settings->setPolicy($owner,['enabled'=>true,'testing_only'=>true]);
         try{
@@ -97,8 +114,14 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             $open=$body+['challenge'=>$challenge['challenge'],'signature'=>base64_encode($signature)];
             $session=$payments->open($open,'127.0.0.98');same(true,$session['available']);same(true,$session['simulated']);
             problem(403,fn()=> $payments->open($open,'127.0.0.98'));
-            $token=$session['session_token'];$info=$payments->info($token);same(1,count($info['plans']));$p=$info['plans'][0];
-            $checkout=['session_token'=>$token,'plan_id'=>$p['id'],'plan_revision'=>$p['revision'],'email'=>'receipt@example.test'];
+            $token=$session['session_token'];$info=$payments->info($token);check(!array_key_exists('plans',$info));$p=$info['renewal'];same(777,$p['package_id']);
+            problem(422,fn()=> $settings->savePrice($alpha,['id'=>$p['id'],'expected_revision'=>$p['revision'],'package_id'=>778,'currency'=>'USD','amount'=>'12.50','enabled'=>true]));
+            $checkout=['session_token'=>$token,'price_id'=>$p['id'],'price_revision'=>$p['revision'],'email'=>'receipt@example.test'];
+            problem(422,fn()=> $payments->checkout($checkout+['package_id'=>778],'127.0.0.98'));
+            problem(409,fn()=> $payments->checkout(array_replace($checkout,['price_id'=>$otherPrice['id'],'price_revision'=>$otherPrice['revision']]),'127.0.0.98'));
+            $app->db->query('UPDATE renewal_simulated_targets SET package_id=778 WHERE reseller_id=? AND line_id=?',[$reseller,$lineId]);
+            try{problem(409,fn()=> $payments->checkout($checkout,'127.0.0.98'));}
+            finally{$app->db->query('UPDATE renewal_simulated_targets SET package_id=777 WHERE reseller_id=? AND line_id=?',[$reseller,$lineId]);}
             $app->db->query("UPDATE devices SET policy='blocked' WHERE id=?",[$device['id']]);
             try{problem(403,fn()=> $payments->checkout($checkout,'127.0.0.98'));}
             finally{$app->db->query("UPDATE devices SET policy='active' WHERE id=?",[$device['id']]);}
@@ -111,7 +134,12 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             $settings->saveConnection($alpha,['api_key'=>'mock_newmerchant'.$tenantA['id'],'webhook_secret'=>'Synthetic-New-Merchant-Secret','mode'=>'mock']);
             same($connection['id'],$app->db->one('SELECT connection_id FROM renewal_orders WHERE id=?',[$order['id']])['connection_id']);
             $payments->simulate($alpha,$order['id']);same('awaiting',$payments->status($token)['order']['payment_state']);
-            same(true,$payments->processOne()['worked']);$done=$payments->status($token)['order'];same('paid',$done['payment_state']);same('fulfilled',$done['fulfilment_state']);
+            $app->db->query('UPDATE renewal_simulated_targets SET package_id=778 WHERE reseller_id=? AND line_id=?',[$reseller,$lineId]);
+            same(true,$payments->processOne()['worked']);$held=$payments->status($token)['order'];same('paid',$held['payment_state']);same('needs_review',$held['fulfilment_state']);
+            same(0,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$order['id']])->fetchColumn());
+            same(778,(int)$app->db->one('SELECT package_id FROM renewal_simulated_targets WHERE reseller_id=? AND line_id=?',[$reseller,$lineId])['package_id']);
+            $app->db->query('UPDATE renewal_simulated_targets SET package_id=777 WHERE reseller_id=? AND line_id=?',[$reseller,$lineId]);
+            $payments->retry($alpha,$order['id']);same(true,$payments->processOne()['worked']);$done=$payments->status($token)['order'];same('paid',$done['payment_state']);same('fulfilled',$done['fulfilment_state']);
             $payments->simulate($alpha,$order['id']);$payments->processOne();
             same(1,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$order['id']])->fetchColumn());
             same('Keep these notes',$app->db->one('SELECT notes FROM customers WHERE id=?',[$customer['id']])['notes']);

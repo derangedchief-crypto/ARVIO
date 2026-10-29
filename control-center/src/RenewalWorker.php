@@ -42,9 +42,13 @@ final class RenewalWorker {
         $r=$this->request('eligibility',['reseller_id'=>$reseller,'line_id'=>$line,'primary_fingerprint'=>$fingerprint]);
         if(($r['reseller_id']??null)!==$reseller||($r['line_id']??null)!==$line||!is_bool($r['primary_match']??null)||!in_array($r['state']??null,['expired','active','restricted','unlimited','unavailable'],true)||!is_int($r['checked_at']??null)||abs(time()-$r['checked_at'])>60||!is_array($r['plans']??null)||!array_is_list($r['plans']))throw new Problem(503,'Renewal identity/expiry verification failed.');
         if($r['state']==='expired'&&(($r['primary_match']??false)!==true||!is_int($r['expires_at']??null)||$r['expires_at']<1||$r['expires_at']>time()))throw new Problem(503,'Expiry has not been confirmed by server time.');
-        foreach($r['plans'] as $p)self::plan($p);return $r;
+        if($r['state']==='expired'&&(!is_int($r['current_package_id']??null)||$r['current_package_id']<1||count($r['plans'])>1))throw new Problem(503,'Current package has not been confirmed.');
+        foreach($r['plans'] as $p){self::plan($p);if($p['id']!==($r['current_package_id']??null))throw new Problem(503,'Renewal may only use the current package.');}return $r;
     }
     public function renew(array $spec):array {
+        // Legacy workers reject this extra mandatory field before any write;
+        // never silently use the older package-switch-capable paid contract.
+        $spec['current_package_only']=true;
         $r=$this->request('renew',$spec);
         if(($r['operation_id']??null)!==$spec['operation_id']||!in_array($r['state']??null,['fulfilled','refresh_pending','needs_review'],true))throw new Problem(503,'Renewal operation response mismatch.');
         if($r['state']==='fulfilled'&&(($r['reseller_id']??null)!==$spec['reseller_id']||($r['line_id']??null)!==$spec['line_id']||($r['package_id']??null)!==$spec['package_id']||!is_int($r['expires_at']??null)||$r['expires_at']<=time()||$r['expires_at']>4102444800))throw new Problem(503,'Renewal has not confirmed the original line.');

@@ -23,11 +23,16 @@ final class RenewalSimulation {
         $target=$this->db->one('SELECT * FROM renewal_simulated_targets WHERE reseller_id=? AND line_id=?',[$input['reseller_id'],$input['line_id']]);
         if(!$target||!hash_equals($target['primary_fingerprint'],$input['primary_fingerprint']))return ['reseller_id'=>$input['reseller_id'],'line_id'=>$input['line_id'],'state'=>'unavailable','primary_match'=>false,'checked_at'=>time(),'plans'=>[]];
         $plans=json_decode($target['plans'],true,16,JSON_THROW_ON_ERROR);
-        if($action==='eligibility')return ['reseller_id'=>$input['reseller_id'],'line_id'=>$input['line_id'],'state'=>$target['state'],'primary_match'=>true,'checked_at'=>time(),'expires_at'=>(int)$target['expires_at'],'plans'=>$plans];
+        if($action==='eligibility'){
+            $current=(int)($target['package_id']??0);
+            return ['reseller_id'=>$input['reseller_id'],'line_id'=>$input['line_id'],'state'=>$current>0?$target['state']:'unavailable','primary_match'=>true,'checked_at'=>time(),'expires_at'=>(int)$target['expires_at'],'current_package_id'=>$current?:null,'plans'=>$target['state']==='expired'?array_values(array_filter($plans,static fn($p)=>$p['id']===$current)):[]];
+        }
+        if(($input['current_package_only']??null)!==true)throw new Problem(422,'Current-package renewal contract is required.');
         return $this->db->transaction(function()use($input,$target,$plans):array{
             $fresh=$this->db->one('SELECT * FROM renewal_simulated_targets WHERE reseller_id=? AND line_id=? FOR UPDATE',[$input['reseller_id'],$input['line_id']]);
             $fp=hash('sha256',json_encode($input,JSON_THROW_ON_ERROR));$old=$this->db->one('SELECT * FROM renewal_simulated_operations WHERE operation_id=?',[$input['operation_id']]);
             if($old){if(!hash_equals($fp,$old['fingerprint']))throw new Problem(409,'Simulation operation mismatch.');return json_decode($old['receipt'],true,16,JSON_THROW_ON_ERROR);}
+            if((int)($fresh['package_id']??0)!==$input['package_id'])throw new Problem(409,'Current package changed; simulation will not switch packages.');
             $plans=json_decode($fresh['plans'],true,16,JSON_THROW_ON_ERROR);
             $plan=null;foreach($plans as $p)if($p['id']===$input['package_id']&&hash_equals($p['fingerprint'],$input['plan_fingerprint']))$plan=$p;
             if(!$plan||!$plan['funded']||!hash_equals($fresh['primary_fingerprint'],$input['primary_fingerprint'])||!in_array($fresh['state'],['expired','active'],true))throw new Problem(409,'Simulation plan unavailable.');

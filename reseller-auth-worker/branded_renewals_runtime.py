@@ -96,13 +96,17 @@ class NativeRenewalAdapter:
                     if str(row.get('enabled'))!='1' or str(row.get('activated'))!='1':state='restricted'
                     elif not expiry:state='unlimited'
                     else:state='expired' if expiry<=time.time() else 'active'
-                return {'reseller_id':reseller,'line_id':line,'primary_match':matched,'state':state,'expires_at':expiry or None,'checked_at':int(time.time()),'plans':self.plans(cur,owner) if state=='expired' else []}
+                current=int(row.get('package_id') or 0) if matched else 0
+                if current<1:state='unavailable'
+                plans=[p for p in self.plans(cur,owner) if p['id']==current] if state=='expired' else []
+                return {'reseller_id':reseller,'line_id':line,'primary_match':matched,'state':state,'expires_at':expiry or None,'checked_at':int(time.time()),'current_package_id':current or None,'plans':plans}
             finally:conn.rollback()
     def validate(self,spec):
         with self.worker['panel_db_cursor'](autocommit=False) as (cur,conn):
             try:
                 owner=self.owner(cur,spec['reseller_id']);self.journal_ready(cur);row=self.worker['_lock_line_row'](cur,spec['line_id'],owner['id'])
                 if not row or not primary_matches(row,spec['primary_fingerprint']) or str(row.get('enabled'))!='1' or str(row.get('activated'))!='1' or not row.get('exp_date'):raise RenewalRejected('Original primary is unavailable/restricted')
+                if str(row.get('package_id'))!=str(spec['package_id']):raise RenewalRejected('Current package changed; never switch packages during a paid renewal')
                 if not any(p['id']==spec['package_id'] and p['fingerprint']==spec['plan_fingerprint'] and p['funded'] for p in self.plans(cur,owner)):raise RenewalRejected('Paid plan changed or reseller funding unavailable')
             finally:conn.rollback()
     def prepare(self,cur,reseller,body):
@@ -114,6 +118,7 @@ class NativeRenewalAdapter:
         if not row or not primary_matches(row,spec['primary_fingerprint']):raise RenewalRejected('Primary identity changed')
         self.journal_ready(cur);receipt=lookup_receipt(cur,spec,meta['fingerprint'],meta['payment_hash'])
         if receipt:return {'receipt':receipt}
+        if str(row.get('package_id'))!=str(spec['package_id']):raise RenewalRejected('Current package changed; keep this paid order for review')
         if str(row.get('enabled'))!='1' or str(row.get('activated'))!='1' or not row.get('exp_date'):raise RenewalRejected('Restricted/unlimited primary cannot be auto-renewed')
         cur.execute('SELECT * FROM users_packages WHERE id=%s AND enabled=1 AND activated=1 FOR UPDATE',(spec['package_id'],));package=cur.fetchone()
         if not package or str(package.get('type'))=='1':raise RenewalRejected('Select a currently enabled paid package')
@@ -160,7 +165,7 @@ class NativeRenewalAdapter:
         with self.worker['panel_db_cursor'](autocommit=False) as (cur,conn):
             try:
                 owner=self.owner(cur,spec['reseller_id']);row=self.worker['_lock_line_row'](cur,spec['line_id'],owner['id'])
-                return bool(row and primary_matches(row,spec['primary_fingerprint']) and str(row.get('enabled'))=='1' and str(row.get('activated'))=='1' and int(row.get('exp_date') or 0)>=receipt['expires_at'] and int(row.get('exp_date') or 0)>time.time())
+                return bool(row and primary_matches(row,spec['primary_fingerprint']) and str(row.get('package_id'))==str(spec['package_id']) and str(row.get('enabled'))=='1' and str(row.get('activated'))=='1' and int(row.get('exp_date') or 0)>=receipt['expires_at'] and int(row.get('exp_date') or 0)>time.time())
             finally:conn.rollback()
     def refresh_and_verify(self,spec,receipt):
         if not self.current(spec,receipt):return False

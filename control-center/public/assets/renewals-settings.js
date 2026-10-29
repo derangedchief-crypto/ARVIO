@@ -14,19 +14,23 @@ window.Renewals={async render(epoch){
       {key:'webhook_secret',label:'Webhook secret',type:'password',max:512}
     ],v=>api('/api/renewals/connection',{...v,tenant_id:tenant}))));
     if(state.user.role==='owner')box.append(button('Rollout policy',()=>modal('Renewal payment rollout',[{key:'enabled',label:'Payments',value:data.policy.enabled?'yes':'no',options:[['no','Off'],['yes','On']]},{key:'testing_only',label:'Eligible branded apps',value:data.policy.testing_only?'yes':'no',options:[['yes','Testing branded apps only'],['no','Testing and production branded apps']]}],v=>api('/api/renewals/policy',{enabled:v.enabled==='yes',testing_only:v.testing_only==='yes'}))));
-    const plans=panel('Renewal plans');main.append(plans);
-    async function planForm(old){
-      const catalog=await api('/api/renewals/catalog?tenant_id='+encodeURIComponent(tenant));if(epoch!==state.epoch)return;
-      if(!catalog.plans.length){toast('No currently allowed paid packages. Configure the existing panel worker first.');return;}
-      modal(old?'Edit renewal plan':'Add renewal plan',[
-        {key:'name',label:'Customer-facing plan name',value:old?.name,max:80},
-        {key:'package_id',label:'Panel renewal package',type:'number',value:old?.package_id||catalog.plans[0].id,options:catalog.plans.map(p=>[p.id,`${p.name} · ${p.duration} ${p.period} · ${p.max_connections} connection(s)`])},
+    const prices=panel('Package pricing',el('p','Packages, terms, connections and credit costs come from your provider’s panel. Set only the money price customers pay. Each customer renews their current package—no package changes.','scope-label'));main.append(prices);
+    function priceForm(pkg,old){
+      modal(pkg.name+' — customer price',[
         {key:'amount',label:'Customer renewal price',value:old?(old.amount_minor/100).toFixed(2):'',hint:'This is the customer price, not the reseller panel-credit cost.'},
         {key:'currency',label:'Currency',value:old?.currency||'USD',options:['USD','CAD','EUR','GBP','AUD'].map(c=>[c,c])},
         {key:'enabled',label:'Available for checkout',value:old?.enabled===false?'no':'yes',options:[['yes','Yes'],['no','No']]}
-      ],v=>api('/api/renewals/plans',{...v,tenant_id:tenant,id:old?.id||'',expected_revision:old?.revision||0,package_id:Number(v.package_id),enabled:v.enabled==='yes'}));
+      ],v=>api('/api/renewals/prices',{...v,tenant_id:tenant,id:old?.id||'',expected_revision:old?.revision||0,package_id:pkg.id,enabled:v.enabled==='yes'}));
     }
-    plans.append(button('Add renewal plan',()=>planForm(null)),table(['Plan','Price','Available','Actions'],data.plans.map(p=>[p.name,(p.amount_minor/100).toFixed(2)+' '+p.currency,p.enabled?'Yes':'No',button('Edit',()=>planForm(p))])));
+    try{
+      const catalog=await api('/api/renewals/catalog?tenant_id='+encodeURIComponent(tenant));if(epoch!==state.epoch)return;
+      prices.append(table(['Offered package','Panel credits','Customer price','Actions'],catalog.packages.map(pkg=>{
+        const saved=data.prices.filter(p=>p.package_id===pkg.id),old=saved[0];
+        const action=saved.length>1?el('span','Duplicate prices need owner review'):button(old?'Edit price':'Set price',()=>priceForm(pkg,old));
+        return [cellName(pkg.name,`${pkg.duration} ${pkg.period} · ${pkg.max_connections} connection(s)`),pkg.credits??'—',old?(old.amount_minor/100).toFixed(2)+' '+old.currency+(old.enabled?'':' · off'):'Not set',action];
+      })));
+      if(!catalog.packages.length)prices.append(el('p','No offered paid packages are available. Contact your provider.'));
+    }catch(error){prices.append(el('p','Offered packages unavailable: '+error.message,'error'));}
     const orders=await api('/api/renewals/orders?tenant_id='+encodeURIComponent(tenant));if(epoch!==state.epoch)return;
     main.append(panel('Recent renewal orders',el('p','Up to 50 recent orders. A paid order is never charged again when fulfilment needs repair.','scope-label'),table(['Order','Payment','Renewal','Actions'],orders.items.map(o=>{
       const actions=el('div',null,'actions');

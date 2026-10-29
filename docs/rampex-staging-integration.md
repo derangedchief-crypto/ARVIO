@@ -19,6 +19,26 @@ for the installed site's exact testing job. 277 expanded service checks pass.
 
 ## Added
 
+Website0.27.2 implements the user's corrected pricing model: the panel alone
+defines offered packages and credit costs; resellers set money prices only.
+Customers renew their CURRENT assigned package, not a reseller-created plan or a
+customer-selected alternative. Checkout returns one immutable quote and no package
+picker. Native worker validation and its locked transaction guard both compare
+the line's current package_id to that quote before writing/debiting. Assignment
+changes after payment hold the same paid order for review. A mandatory
+current_package_only=true field makes older paid-worker contracts reject the
+request before side effects; old ledger fingerprints are never reset to bypass
+review. Migration027 affects only demo assignments. The legacy renewal_plans table
+is retained as price storage and old order evidence, not a package creator.
+
+280 service/seven browser and61 worker checks pass for this model. The separate
+central testing APK2.0.127.10-test is published/website-mirrored: retained CI APK,
+release and website bytes match, testing package/signer/name match115.10-test,
+code increases43100010->44300010 and all1,114 raster resources are unchanged.
+Report: `/tmp/opencode/rampex-127-testing-verified/verification.json`. No customer
+APK or production brand was published. Device acceptance and live payments remain
+unverified/disabled respectively.
+
 Website0.27.1 corrects the owner-workspace exclusion: a verified owner/admin panel
 reseller uses the existing owner workspace even though the login tenant_id is
 null. Settings and checkout both still require the real reseller link, matching

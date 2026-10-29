@@ -20,11 +20,11 @@
     const info=await post('/api/public-renewals/info',{session_token:token});$('seller').textContent=info.reseller;$('demo').hidden=!info.simulated;
     const target=document.createElement('p');target.textContent=info.target_label;target.className='quiet';$('seller').after(target);
     if(info.order)showOrder(info.order,info.simulated);
-    else if(info.plans.length){
-      $('message').textContent='Choose your provider’s renewal plan and confirm the price before continuing.';$('checkout').hidden=false;
-      for(const plan of info.plans){const o=document.createElement('option');o.value=plan.id;o.textContent=plan.name+' — '+(plan.amount_minor/100).toFixed(2)+' '+plan.currency;$('plan').append(o);}
-      function selected(){return info.plans.find(p=>p.id===$('plan').value);}function details(){const p=selected();$('details').textContent=p.duration+' '+p.period+' · '+p.max_connections+' connection(s) · '+(p.amount_minor/100).toFixed(2)+' '+p.currency;}details();$('plan').onchange=details;
-      $('checkout').onsubmit=async e=>{e.preventDefault();$('error').textContent='';$('pay').disabled=true;try{const p=selected();const result=await post('/api/public-renewals/checkout',{session_token:token,plan_id:p.id,plan_revision:p.revision,email:$('email').value});showOrder(result.order,info.simulated);if(result.order.payment_url)location.assign(paymentUrl(result.order.payment_url));}catch(error){$('error').textContent=error.message;$('pay').disabled=false;}};
+    else if(info.renewal){
+      const p=info.renewal;$('message').textContent='Renew your current package. Review the price before continuing; your package will not change.';$('checkout').hidden=false;
+      $('package-name').textContent=p.name;
+      $('details').textContent=p.duration+' '+p.period+' · '+p.max_connections+' connection(s) · '+(p.amount_minor/100).toFixed(2)+' '+p.currency;
+      $('checkout').onsubmit=async e=>{e.preventDefault();$('error').textContent='';$('pay').disabled=true;try{const result=await post('/api/public-renewals/checkout',{session_token:token,price_id:p.id,price_revision:p.revision,email:$('email').value});showOrder(result.order,info.simulated);if(result.order.payment_url)location.assign(paymentUrl(result.order.payment_url));}catch(error){$('error').textContent=error.message;$('pay').disabled=false;}};
     }else $('message').textContent='Renewal is unavailable or this quote expired. Please return to your TV or contact your provider.';
     let checks=0;const timer=setInterval(async()=>{if(document.hidden||++checks>180){if(checks>180)clearInterval(timer);return;}try{const r=await post('/api/public-renewals/status',{session_token:token});if(r.order){showOrder(r.order,r.simulated);if(r.order.fulfilment_state==='fulfilled')clearInterval(timer);}}catch(error){clearInterval(timer);$('error').textContent=error.message;}},10000);
   }catch(error){$('message').textContent='Unable to open this renewal.';$('error').textContent=error.message;}

@@ -1,5 +1,20 @@
 # Control Center validation
 
+## 0.27.2 current-package-only pricing
+
+280 isolated service checks and seven focused browser checks pass. Reseller
+money prices are accepted only for currently offered panel packages; custom names,
+terms, connections, credit overrides, duplicate prices and retargeting are denied.
+Both verified owner and reseller checkout flows show only the current package,
+reject another offered/priced package, hold package changes after payment without
+renewing, and repair the original paid order after review without another charge.
+The phone has no package picker. The operator edits money price/currency only.
+All 61 existing/new reseller-worker offline/HTTP checks pass, including native
+current-package locking and refusal of old/non-current-package-only contracts.
+ZIP/manifest checks preserve private config/storage and existing order history.
+These tests use synthetic provider/panel data; real-panel transaction acceptance
+and live Rampex contract verification remain open.
+
 ## 0.27.1 verified owner reseller correction
 
 279 isolated service checks and six focused browser checks pass. These include

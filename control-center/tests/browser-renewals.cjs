@@ -14,14 +14,15 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     const req=route.request(),path=new URL(req.url()).pathname;
     assert.equal(req.method(),'POST');assert.equal(req.postDataJSON().session_token,token);
     let body;
-    if(path.endsWith('/info'))body={reseller:'TEST <img src=x onerror=alert(1)>',target_label:'Existing account ending 1234',plans:current?[]:[{id:'c'.repeat(32),name:'One month',revision:3,currency:'USD',amount_minor:1050,duration:1,period:'months',max_connections:2}],order:current,simulated:true};
+    if(path.endsWith('/info'))body={reseller:'TEST <img src=x onerror=alert(1)>',target_label:'Existing account ending 1234',renewal:current?null:{id:'c'.repeat(32),package_id:77,name:'One month',revision:3,currency:'USD',amount_minor:1050,duration:1,period:'months',max_connections:2},order:current,simulated:true};
     else if(path.endsWith('/checkout')){submitted=req.postDataJSON();current={...order};body={order:current};}
     else body={schema_version:1,order:current,simulated:true};
     await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
   });
   try{
     await page.goto(base+'/renew/'+token);
-    await page.getByLabel('Renewal plan').waitFor();
+    await page.getByRole('heading',{name:'One month',exact:true}).waitFor();
+    assert.equal(await page.locator('select').count(),0);
     assert.equal(await page.locator('#seller img').count(),0);
     assert((await page.locator('#seller').innerText()).includes('<img'));
     assert((await page.locator('#demo').innerText()).includes('no money'));
@@ -30,9 +31,9 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     console.log('PASS phone checkout is escaped, demo-labelled and fits 360px');
     await page.getByLabel('Receipt email').fill('receipt@example.test');await page.getByRole('button',{name:'Continue to payment',exact:true}).click();
     await page.locator('#order').waitFor({state:'visible'});
-    assert.deepEqual(Object.keys(submitted).sort(),['email','plan_id','plan_revision','session_token']);assert.equal(submitted.plan_revision,3);assert.equal(submitted.email,'receipt@example.test');
+    assert.deepEqual(Object.keys(submitted).sort(),['email','price_id','price_revision','session_token']);assert.equal(submitted.price_revision,3);assert.equal(submitted.email,'receipt@example.test');
     assert.equal(await page.locator('input[type=number],input[name=amount],input[name=card]').count(),0);
-    console.log('PASS phone submits email and server plan revision, never editable amount or card data');
+    console.log('PASS phone renews the displayed current package without a package picker or editable price');
     current={...order,payment_state:'paid',fulfilment_state:'refresh_pending'};
     await page.reload();await page.getByRole('heading',{name:'Payment received',exact:true}).waitFor();
     assert((await page.locator('#order-state').innerText()).includes('Do not pay again'));assert(await page.locator('#checkout').isHidden());
@@ -44,6 +45,9 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     assert.deepEqual(errors,[]);console.log('PASS demo completion does not claim real account access; no browser errors');
     const credentials=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));assert.equal(credentials.email,'owner@preview.test');
     const operator=await context.newPage();operator.on('pageerror',e=>errors.push(e.message));
+    let priceSubmission=null;
+    await operator.route('**/api/renewals/catalog?**',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({packages:[{id:77,name:'Provider monthly',duration:1,period:'months',max_connections:2,credits:'2',fingerprint:'d'.repeat(64),funded:true}]})}));
+    await operator.route('**/api/renewals/prices',r=>{priceSubmission=r.request().postDataJSON();return r.fulfill({status:200,contentType:'application/json',body:'{"saved":true}'});});
     await operator.goto(base);await operator.getByLabel('Email address').fill(credentials.email);
     await operator.getByLabel('Password',{exact:true}).fill(credentials.password);await operator.getByRole('button',{name:'Sign in',exact:true}).click();
     await operator.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
@@ -56,6 +60,18 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     await operator.getByLabel('Payment workspace',{exact:true}).selectOption(tenant);
     try{await operator.getByRole('button',{name:'Connect Rampex',exact:true}).waitFor({timeout:5000});}
     catch(error){throw new Error('Renewal settings did not render: '+await operator.locator('#main').innerText());}
+    await operator.getByRole('button',{name:'Set price',exact:true}).waitFor();
+    assert(await operator.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    assert.equal(await operator.getByRole('button',{name:'Add renewal plan',exact:true}).count(),0);
+    await operator.getByRole('button',{name:'Set price',exact:true}).click();
+    assert.equal(await operator.getByLabel('Customer-facing plan name',{exact:true}).count(),0);
+    assert.equal(await operator.getByLabel('Panel renewal package',{exact:true}).count(),0);
+    await operator.getByLabel('Customer renewal price',{exact:true}).fill('12.50');
+    await operator.locator('#modal-form').getByRole('button',{name:'Save',exact:true}).click();
+    await operator.locator('#modal').waitFor({state:'hidden'});
+    assert.equal(priceSubmission.package_id,77);assert.equal(priceSubmission.amount,'12.50');
+    assert.deepEqual(Object.keys(priceSubmission).sort(),['amount','currency','enabled','expected_revision','id','package_id','tenant_id']);
+    console.log('PASS reseller prices a fixed offered package; no custom plan name, term, connection or package editor');
     await operator.getByRole('button',{name:'Connect Rampex',exact:true}).click();
     assert.equal(await operator.getByLabel('Rampex API key',{exact:true}).getAttribute('type'),'password');
     assert.equal(await operator.getByLabel('Webhook secret',{exact:true}).getAttribute('type'),'password');

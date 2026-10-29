@@ -168,7 +168,8 @@ final class Application
         if($method==='GET'&&$path==='/api/renewals/catalog')Http::json($this->renewalSettings->catalog($actor,$_GET));
         if($method==='POST'&&$path==='/api/renewals/policy')Http::json($this->renewalSettings->setPolicy($actor,Http::body()));
         if($method==='POST'&&$path==='/api/renewals/connection')Http::json($this->renewalSettings->saveConnection($actor,Http::body()));
-        if($method==='POST'&&$path==='/api/renewals/plans')Http::json($this->renewalSettings->savePlan($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/prices')Http::json($this->renewalSettings->savePrice($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/plans')throw new Problem(422,'Custom renewal plans are not supported. Set money pricing for an offered panel package.');
         if($method==='GET'&&$path==='/api/renewals/orders')Http::json($this->renewalPayments->orders($actor,$_GET));
         if($method==='POST'&&preg_match('~^/api/renewals/orders/([a-f0-9]{32})/simulate$~D',$path,$m)){Input::keys(Http::body(),[]);Http::json($this->renewalPayments->simulate($actor,$m[1]));}
         if($method==='POST'&&preg_match('~^/api/renewals/orders/([a-f0-9]{32})/retry$~D',$path,$m)){Input::keys(Http::body(),[]);Http::json($this->renewalPayments->retry($actor,$m[1]));}

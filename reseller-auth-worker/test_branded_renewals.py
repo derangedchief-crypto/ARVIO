@@ -11,7 +11,7 @@ from branded_renewals import RenewalOperations,RenewalRejected
 
 def spec(**changes):
     return dict({'operation_id':'a'*32,'brand_id':'b'*32,'reseller_id':'101','line_id':'999','package_id':7,
-        'plan_fingerprint':'c'*64,'merchant_id':'merchant-A','payment_link_id':'fixture-link','primary_fingerprint':'d'*64},**changes)
+        'plan_fingerprint':'c'*64,'merchant_id':'merchant-A','payment_link_id':'fixture-link','primary_fingerprint':'d'*64,'current_package_only':True},**changes)
 
 
 class FakePanel:
