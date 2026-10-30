@@ -1,5 +1,14 @@
 # Separate IPTV renewal worker
 
+Expired-line fix1 (0.29.0): enabled lines with a finite expiry in the past may
+have activated=0 in Overcast. They are now eligible for checkout, without changing
+the panel row. Only the verified paid renewal transaction restores activated=1,
+atomically with the expiry extension and credit receipt. enabled=0, unsupported
+activation flags, never-started and future-dated inactive lines remain denied.
+Replay/refresh never performs another activation, debit or extension. Existing
+credentials, package, bouquets, notes and connection overrides are preserved.
+This standalone-worker update needs no website migration or APK rebuild.
+
 Recovery update: installation now runs a read-only startup preflight as the
 renewal user before launching systemd, and retains credential-free stage/error
 evidence in the original private state directory. It allows up to180 seconds for

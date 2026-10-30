@@ -73,6 +73,9 @@ class NativeRenewalAdapter:
         with self.worker['panel_db_cursor'](autocommit=False) as (cur,conn):
             try:owner=self.owner(cur,reseller);self.journal_ready(cur);return {'reseller_id':reseller,'plans':self.plans(cur,owner)}
             finally:conn.rollback()
+    def line_permitted(self,row):
+        # The legacy adapter retains its existing strict activation policy.
+        return bool(row and str(row.get('enabled'))=='1' and str(row.get('activated'))=='1')
     def eligibility(self,reseller,line,fingerprint):
         with self.worker['panel_db_cursor'](autocommit=False) as (cur,conn):
             try:
@@ -80,7 +83,7 @@ class NativeRenewalAdapter:
                 matched=bool(row and primary_matches(row,fingerprint));expiry=int(row.get('exp_date') or 0) if row else 0
                 state='unavailable'
                 if matched:
-                    if str(row.get('enabled'))!='1' or str(row.get('activated'))!='1':state='restricted'
+                    if not self.line_permitted(row):state='restricted'
                     elif not expiry:state='unlimited'
                     else:state='expired' if expiry<=time.time() else 'active'
                 current=int(row.get('package_id') or 0) if matched else 0
@@ -106,7 +109,7 @@ class NativeRenewalAdapter:
         self.journal_ready(cur);receipt=lookup_receipt(cur,spec,meta['fingerprint'],meta['payment_hash'])
         if receipt:return {'receipt':receipt}
         if str(row.get('package_id'))!=str(spec['package_id']):raise RenewalRejected('Current package changed; keep this paid order for review')
-        if str(row.get('enabled'))!='1' or str(row.get('activated'))!='1' or not row.get('exp_date'):raise RenewalRejected('Restricted/unlimited primary cannot be auto-renewed')
+        if not self.line_permitted(row) or not row.get('exp_date'):raise RenewalRejected('Restricted/unlimited primary cannot be auto-renewed')
         cur.execute('SELECT * FROM users_packages WHERE id=%s AND enabled=1 AND activated=1 FOR UPDATE',(spec['package_id'],));package=cur.fetchone()
         if not package or str(package.get('type'))=='1':raise RenewalRejected('Select a currently enabled paid package')
         group,overrides=self.worker['_reseller_package_scope'](cur,body.username)

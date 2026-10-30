@@ -84,10 +84,10 @@ class NativeMysqlTests(unittest.TestCase):
         p=package_document(self.one('SELECT * FROM users_packages WHERE id=7'))
         return dict({'operation_id':'a'*32,'brand_id':'b'*32,'reseller_id':'101','line_id':'999','package_id':7,'plan_fingerprint':p['fingerprint'],'merchant_id':'merchant','payment_link_id':'link','primary_fingerprint':hashlib.sha256(b'user\npass').hexdigest(),'current_package_only':True,'expected_expiry':self.before['exp_date']},**extra)
     def run_operation(self,spec=None,adapter=None):return RenewalOperations(self.state,adapter or self.adapter).request(spec or self.spec())
-    def preserved(self):
+    def preserved(self,activated=None):
         row=self.one('SELECT * FROM customers WHERE id=999')
         for field in ['username','password','activation_code','reseller_notes','admin_notes','bouquet','allowed_outputs','max_connections','parent_pin','package_id','enabled','activated']:
-            self.assertEqual(self.before[field],row[field],field)
+            self.assertEqual(activated if field=='activated' and activated is not None else self.before[field],row[field],field)
         return row
     def untouched(self):
         self.assertEqual(self.before['exp_date'],self.preserved()['exp_date']);self.assertEqual(10,self.one('SELECT credits FROM users WHERE id=101')['credits']);self.assertEqual(0,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n'])
@@ -122,7 +122,7 @@ class NativeMysqlTests(unittest.TestCase):
         ]:
             with self.assertRaises(RenewalRejected):self.adapter.identify(identity)
             self.untouched()
-        for field,value in [('exp_date',int(time.time())+3600),('exp_date',0),('enabled',0),('activated',0)]:
+        for field,value in [('exp_date',int(time.time())+3600),('exp_date',0),('enabled',0),('activated',2)]:
             self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(value,))
             with self.assertRaises(RenewalRejected):self.adapter.identify({'reseller_id':'101','activation_code':'123456'})
             self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(self.before[field],))
@@ -158,11 +158,66 @@ class NativeMysqlTests(unittest.TestCase):
         with self.assertRaises(RenewalRejected):self.run_operation()
         self.untouched();self.assertEqual(0,self.refreshes)
     def test_restricted_and_unlimited_lines_never_renew(self):
-        for field,value in [('enabled',0),('activated',0),('exp_date',0)]:
+        for field,value in [('enabled',0),('activated',2),('exp_date',0)]:
             self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(value,))
             with self.assertRaises(RenewalRejected):self.run_operation()
             self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(self.before[field],))
             self.untouched()
+    def expired_inactive(self):
+        self.sql('UPDATE customers SET activated=0 WHERE id=999')
+        self.before=self.one('SELECT * FROM customers WHERE id=999')
+    def test_enabled_expired_inactive_line_can_quote_without_writes_then_reactivates_once_on_payment(self):
+        self.expired_inactive()
+        for identity in [{'activation_code':'123456'},{'username':'user','password':'pass'}]:
+            result=self.adapter.identify({'reseller_id':'101',**identity})
+            self.assertEqual('999',result['line_id'])
+        result=self.adapter.eligibility('101','999',hashlib.sha256(b'user\npass').hexdigest())
+        self.assertEqual('expired',result['state']);self.assertEqual([7],[p['id'] for p in result['plans']])
+        self.untouched();self.assertEqual(0,self.refreshes)
+        first=self.run_operation();self.assertEqual('fulfilled',first['state'])
+        self.assertEqual(first,self.run_operation())
+        self.assertEqual(first['expires_at'],self.preserved(activated=1)['exp_date'])
+        self.assertEqual(8,self.one('SELECT credits FROM users WHERE id=101')['credits'])
+        self.assertEqual(1,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n'])
+    def test_disabled_never_started_future_and_unknown_activation_states_still_cannot_reactivate(self):
+        self.expired_inactive()
+        for field,value in [('enabled',0),('exp_date',None),('exp_date',0),('exp_date',int(time.time())+3600),('activated',2)]:
+            self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(value,))
+            with self.assertRaises(RenewalRejected):self.adapter.identify({'reseller_id':'101','activation_code':'123456'})
+            with self.assertRaises(RenewalRejected):self.run_operation()
+            self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(self.before[field],))
+            self.untouched()
+        self.assertEqual(0,self.refreshes)
+    def test_reactivation_rolls_back_with_a_failed_credit_journal_and_retry_uses_same_order(self):
+        self.expired_inactive();self.trigger(drop_note=True)
+        with self.assertRaises(RenewalRejected):self.run_operation()
+        self.untouched();self.assertEqual(0,self.refreshes)
+        self.sql('DROP TRIGGER credit_audit');self.trigger()
+        self.assertEqual('fulfilled',self.run_operation()['state'])
+        self.preserved(activated=1)
+        self.assertEqual(1,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n'])
+    def test_committed_reactivation_lost_reply_and_refresh_repair_never_debit_or_extend_twice(self):
+        self.expired_inactive()
+        class LostReply(RenewalAdapter):
+            def renew_once(self,*args):super().renew_once(*args);raise ConnectionError('Synthetic lost reply')
+        self.ready=False
+        self.assertEqual('needs_review',self.run_operation(adapter=LostReply(self.native))['state'])
+        expiry=self.preserved(activated=1)['exp_date']
+        self.assertEqual('refresh_pending',self.run_operation(adapter=RenewalAdapter(self.native))['state'])
+        self.ready=True
+        self.assertEqual('fulfilled',self.run_operation(adapter=RenewalAdapter(self.native))['state'])
+        self.assertEqual(expiry,self.preserved(activated=1)['exp_date'])
+        self.assertEqual(8,self.one('SELECT credits FROM users WHERE id=101')['credits'])
+        self.assertEqual(1,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n'])
+    def test_concurrent_payment_retries_reactivate_expired_inactive_line_once(self):
+        self.expired_inactive();self.trigger()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            results=list(pool.map(lambda _:self.run_operation(adapter=RenewalAdapter(self.native)),range(8)))
+        self.assertEqual({'fulfilled'},{r['state'] for r in results})
+        self.assertEqual(1,len({r['expires_at'] for r in results}))
+        self.preserved(activated=1)
+        self.assertEqual(8,self.one('SELECT credits FROM users WHERE id=101')['credits'])
+        self.assertEqual(1,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n'])
     def test_current_package_and_funding_and_package_scope_are_authoritative(self):
         for statement,restore in [
             ('UPDATE customers SET package_id=8 WHERE id=999','UPDATE customers SET package_id=7 WHERE id=999'),

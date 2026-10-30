@@ -85,7 +85,7 @@ app=FastAPI(title='IPTV Renewal Worker',lifespan=lifespan)
 
 def status():
     state_ready()
-    return {'schema_version':1,'service':'iptv-renewal-worker','service_pid':os.getpid(),'configured':True,'mode':'renewals','catalogue_only':False,'writes_enabled':True,'atomic_renewal':1,'unique_payment_reference':1,'current_package_only':True,'renewal_login':1}
+    return {'schema_version':1,'service':'iptv-renewal-worker','service_pid':os.getpid(),'configured':True,'mode':'renewals','catalogue_only':False,'writes_enabled':True,'atomic_renewal':1,'unique_payment_reference':1,'current_package_only':True,'renewal_login':1,'expired_line_reactivation':1}
 
 
 @app.get('/health')

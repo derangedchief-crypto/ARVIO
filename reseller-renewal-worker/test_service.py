@@ -48,7 +48,8 @@ class ServiceTests(unittest.TestCase):
         r,stamp,nonce=self.send('status');self.assertEqual(200,r.status_code);e=r.json();value=json.loads(e['payload'])
         self.assertEqual('renewals',value['mode']);self.assertTrue(value['writes_enabled']);self.assertFalse(value['catalogue_only']);self.assertTrue(value['current_package_only']);self.assertEqual(1,value['atomic_renewal'])
         expected=hmac.new(self.secret.encode(),('branded-renewal-result-v1\n'+stamp+'\n'+nonce+'\n'+e['payload']).encode(),hashlib.sha256).hexdigest();self.assertEqual(expected,e['signature'])
-        self.assertEqual(200,self.client.get('/health').status_code)
+        health=self.client.get('/health');self.assertEqual(200,health.status_code)
+        self.assertEqual(1,health.json()['expired_line_reactivation'])
     def test_startup_failure_evidence_survives_without_private_exception_values(self):
         import asyncio
         async def start():
