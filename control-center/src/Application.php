@@ -91,13 +91,14 @@ final class Application
         if($method==='POST'&&preg_match('~^/api/renewals/webhooks/([a-f0-9]{32})$~D',$path,$match)){
             if(!$this->renewalSettings->installed())throw new Problem(404,'Payment notification unavailable.');
             $raw=file_get_contents('php://input',false,null,0,65537);if(strlen($raw)>65536)throw new Problem(413,'Notification too large.');
-            Http::json($this->renewalPayments->webhook($match[1],$raw,$_SERVER['HTTP_X_RAMPEX_SIGNATURE']??$_SERVER['HTTP_X_WEBHOOK_SIGNATURE']??''));
+            Http::json($this->renewalPayments->webhook($match[1],$raw,$_SERVER['HTTP_STRIPE_SIGNATURE']??$_SERVER['HTTP_X_SQUARE_HMACSHA256_SIGNATURE']??$_SERVER['HTTP_X_RAMPEX_SIGNATURE']??$_SERVER['HTTP_X_WEBHOOK_SIGNATURE']??''));
         }
         if($method==='POST'&&str_starts_with($path,'/api/public-renewals/')){
             Http::sameOrigin($this->config);$input=Http::body(8192);
             if($path==='/api/public-renewals/info'){Input::keys($input,['session_token']);Http::json($this->renewalPayments->info(Input::text($input['session_token']??null,'checkout token',64)));}
             if($path==='/api/public-renewals/status'){Input::keys($input,['session_token']);Http::json($this->renewalPayments->status(Input::text($input['session_token']??null,'checkout token',64)));}
             if($path==='/api/public-renewals/checkout')Http::json($this->renewalPayments->checkout($input,$_SERVER['REMOTE_ADDR']??''));
+            if($path==='/api/public-renewals/route')Http::json($this->renewalPayments->selectRoute($input));
             throw new Problem(404,'Renewal route not found.');
         }
         if($method==='POST'&&$path==='/api/device/renewals/login/challenge')Http::json($this->renewalPayments->loginChallenge(Http::body(8192),$_SERVER['REMOTE_ADDR']??''));
@@ -170,6 +171,8 @@ final class Application
         if($method==='GET'&&$path==='/api/renewals/catalog')Http::json($this->renewalSettings->catalog($actor,$_GET));
         if($method==='POST'&&$path==='/api/renewals/policy')Http::json($this->renewalSettings->setPolicy($actor,Http::body()));
         if($method==='POST'&&$path==='/api/renewals/connection')Http::json($this->renewalSettings->saveConnection($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/connection-setup')Http::json($this->renewalSettings->prepareConnection($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/routing')Http::json($this->renewalSettings->saveRoutes($actor,Http::body()));
         if($method==='POST'&&$path==='/api/renewals/prices')Http::json($this->renewalSettings->savePrice($actor,Http::body()));
         if($method==='POST'&&$path==='/api/renewals/plans')throw new Problem(422,'Custom renewal plans are not supported. Set money pricing for an offered panel package.');
         if($method==='GET'&&$path==='/api/renewals/orders')Http::json($this->renewalPayments->orders($actor,$_GET));

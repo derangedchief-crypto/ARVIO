@@ -62,7 +62,7 @@ class XtreamGateViewModel @Inject constructor(
         if(com.arflix.tv.branding.AppBrand.id.isNotBlank()){
             _uiState.value=_uiState.value.copy(progressText="Checking renewal options…")
             renewalCheckout.loadCode(code)
-            if(renewalCheckout.state.value.url!=null){
+            if(renewalCheckout.state.value.url!=null||renewalCheckout.state.value.needsCountry){
                 _uiState.value=_uiState.value.copy(isSubmitting=false,progressText=null,errorMessage=null,renewalRequested=true)
                 return
             }

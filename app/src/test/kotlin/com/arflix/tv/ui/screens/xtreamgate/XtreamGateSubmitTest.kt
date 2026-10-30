@@ -144,4 +144,19 @@ class XtreamGateSubmitTest {
             coVerify(exactly=1){iptv.saveVerifiedActivation(any(),any())}
         } finally {vm.viewModelScope.cancel();runCurrent();unmockkObject(AppBrand);Dispatchers.resetMain()}
     }
+    @Test fun expiredLoginCanOpenCountryConfirmationWithoutIssuingQrOrGrantingAccess()=runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler));mockkObject(AppBrand)
+        every{AppBrand.id}returns "b".repeat(32)
+        val activation=mockk<IptvActivationRepository>();val iptv=mockk<IptvRepository>(relaxed=true)
+        val primary=mockk<PrimaryAccessRepository>();val checkout=mockk<RenewalCheckoutRepository>(relaxed=true)
+        every{primary.renewalCheckout}returns checkout
+        every{checkout.state}returns MutableStateFlow(RenewalCheckoutState(needsCountry=true))
+        coEvery{activation.resolve("123456")}returns Result.failure(IllegalStateException("Inactive"))
+        val vm=XtreamGateViewModel(iptv,activation,mockk(relaxed=true),mockk(relaxed=true),mockk(relaxed=true),mockk(relaxed=true),primary)
+        try {
+            var navigated=0;vm.onActivationCodeChange("123456");vm.submit{navigated++};runCurrent()
+            assertTrue(vm.uiState.value.renewalRequested);assertNull(checkout.state.value.url);assertEquals(0,navigated)
+            coVerify(exactly=0){iptv.saveVerifiedActivation(any(),any())}
+        }finally{vm.viewModelScope.cancel();runCurrent();unmockkObject(AppBrand);Dispatchers.resetMain()}
+    }
 }

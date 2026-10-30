@@ -6,7 +6,12 @@ namespace ControlCenter;
  * is server-owned; webhook acknowledgement and fulfilment are separate jobs. */
 final class RenewalPayments {
     public function __construct(private readonly Database $db,private readonly Config $config,private readonly Auth $auth,private readonly Management $management,private readonly Secrets $secrets,private readonly BrandArtifacts $artifacts,private readonly RenewalSettings $settings,private readonly RampexGateway $gateway,private readonly RenewalWorker $worker) {}
-    public static function signingText(string $nonce,string $device,string $package,string $key,string $primary):string {return "ECRENEWCHECKOUT1\n$nonce\n$device\n$package\n$key\n$primary";}
+    public static function signingText(string $nonce,string $device,string $package,string $key,string $primary,?string $country=null):string {return $country===null?"ECRENEWCHECKOUT1\n$nonce\n$device\n$package\n$key\n$primary":"ECRENEWCHECKOUT2\n$nonce\n$device\n$package\n$key\n$primary\n$country";}
+    private function country(mixed $value):string {if(!in_array($value,['US','CA'],true))throw new Problem(422,'Confirm USA or Canada before continuing.');return $value;}
+    private function routes(array $s,array $price):array {return $this->settings->candidates($s['tenant_id'],$s['country'],$price['currency'],str_ends_with($s['app_package'],'.test'));}
+    private function selectedConnection(array $s,array $price):?array {
+        foreach($this->routes($s,$price) as $c)if(($s['gateway']??null)===null||$c['gateway']===$s['gateway'])return $c;return null;
+    }
     private function enabled(string $package):bool {
         $p=$this->settings->policy();return $p['enabled']&&(!$p['testing_only']||str_ends_with($package,'.test'));
     }
@@ -18,9 +23,9 @@ final class RenewalPayments {
         if(!$brand)throw new Problem(403,'Renewal checkout is unavailable.');
         return $brand;
     }
-    public static function loginSigningText(string $nonce,string $install,string $package,string $key,array $identity):string {
+    public static function loginSigningText(string $nonce,string $install,string $package,string $key,array $identity,?string $country=null):string {
         $text=isset($identity['activation_code'])?"code\n".$identity['activation_code']:"account\n".hash('sha256',$identity['username'])."\n".hash('sha256',$identity['password']);
-        return "ECRENEWLOGIN1\n$nonce\n$install\n$package\n$key\n".hash('sha256',$text);
+        return $country===null?"ECRENEWLOGIN1\n$nonce\n$install\n$package\n$key\n".hash('sha256',$text):"ECRENEWLOGIN2\n$nonce\n$install\n$package\n$key\n".hash('sha256',$text)."\n$country";
     }
     public function loginChallenge(array $input,string $ip):array {
         Input::keys($input,['installation_id','app_package','key_fingerprint']);
@@ -33,9 +38,11 @@ final class RenewalPayments {
         return ['schema_version'=>1,'available'=>true,'challenge'=>$nonce,'expires_in'=>120];
     }
     public function loginOpen(array $input,string $ip):array {
-        Input::keys($input,['challenge','installation_id','app_package','public_key','identity','signature']);
+        Input::keys($input,['challenge','installation_id','app_package','public_key','identity','signature','country']);
         $nonce=EnrollmentProof::hex($input['challenge']??null,64);$install=EnrollmentProof::hex($input['installation_id']??null,32);$package=Input::text($input['app_package']??null,'package',80);
         $brand=$this->loginBrand($package);$encoded=Input::text($input['public_key']??null,'public key',256);$public=EnrollmentProof::publicKey($encoded);$key=$public['fingerprint'];
+        if(!isset($input['country']))return ['schema_version'=>1,'available'=>false,'reason'=>'country_required'];
+        $country=$this->country($input['country']);
         $identity=$input['identity']??null;
         if(!is_array($identity))throw new Problem(422,'Invalid renewal login.');
         if(isset($identity['activation_code'])){
@@ -43,7 +50,7 @@ final class RenewalPayments {
         }else{
             Input::keys($identity,['username','password']);foreach(['username'=>256,'password'=>512] as $field=>$max)if(!is_string($identity[$field]??null)||strlen($identity[$field])<1||strlen($identity[$field])>$max)throw new Problem(422,'Invalid renewal login.');
         }
-        EnrollmentProof::verifyDeviceSignature($public,Input::text($input['signature']??null,'signature',128),self::loginSigningText($nonce,$install,$package,$key,$identity));
+        EnrollmentProof::verifyDeviceSignature($public,Input::text($input['signature']??null,'signature',128),self::loginSigningText($nonce,$install,$package,$key,$identity,$country));
         $this->auth->limit('renewal-login-ip',$this->secrets->mac($ip),6,600);
         $this->auth->limit('renewal-login-key',$key,6,600);
         $this->db->transaction(function()use($nonce,$install,$package,$key):void{
@@ -52,16 +59,16 @@ final class RenewalPayments {
             $this->db->query('UPDATE renewal_login_challenges SET used_at=UTC_TIMESTAMP() WHERE nonce_hash=?',[$row['nonce_hash']]);
         });
         $target=$this->worker->identify($brand['reseller_id'],$identity);
-        $scope=$brand+$target+['app_package'=>$package,'key_fingerprint'=>$key,'login_installation_id'=>$install,'login_public_key'=>$encoded];
+        $scope=$brand+$target+['app_package'=>$package,'key_fingerprint'=>$key,'login_installation_id'=>$install,'login_public_key'=>$encoded,'country'=>$country,'gateway'=>null];
         $this->loginBinding($scope);
-        $eligible=$this->eligibility($scope);$connection=$this->settings->connection($brand['tenant_id']);$price=$this->eligiblePrice($scope,$eligible);
-        if(!$connection||!$price)return ['schema_version'=>1,'available'=>false,'reason'=>!$connection?'provider_setup_required':'package_price_unavailable'];
+        $eligible=$this->eligibility($scope);$price=$this->eligiblePrice($scope,$eligible);$connection=$price?$this->selectedConnection($scope,$price):null;
+        if(!$price||!$connection)return ['schema_version'=>1,'available'=>false,'reason'=>!$price?'package_price_unavailable':'no_gateway_for_country'];
         $token=bin2hex(random_bytes(32));$id=Database::id();
         // No managed device, enrollment credential, playback lease or account
         // credentials are created/stored by expired-code checkout.
         $account=$this->secrets->mac("renewal-login-account-v1\n".$target['line_id']."\n".$target['primary_fingerprint']);
-        $this->db->query('INSERT INTO renewal_sessions (id,token_hash,token_cipher,device_id,tenant_id,brand_id,app_package,key_fingerprint,account_ref,reseller_id,line_id,primary_fingerprint,expires_at,login_installation_id,login_public_key) VALUES (?,?,?,NULL,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE),?,?)',[$id,$this->tokenHash($token),$this->secrets->encrypt($token),$brand['tenant_id'],$brand['brand_id'],$package,$key,$account,$target['reseller_id'],$target['line_id'],$target['primary_fingerprint'],$install,$encoded]);
-        return ['schema_version'=>1,'available'=>true,'checkout_url'=>$this->config->origin().'/renew/'.$token,'session_token'=>$token,'expires_in'=>900,'simulated'=>$connection['mode']==='mock'];
+        $this->db->query('INSERT INTO renewal_sessions (id,token_hash,token_cipher,device_id,tenant_id,brand_id,app_package,key_fingerprint,account_ref,reseller_id,line_id,primary_fingerprint,expires_at,login_installation_id,login_public_key,country,gateway) VALUES (?,?,?,NULL,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE),?,?,?,?)',[$id,$this->tokenHash($token),$this->secrets->encrypt($token),$brand['tenant_id'],$brand['brand_id'],$package,$key,$account,$target['reseller_id'],$target['line_id'],$target['primary_fingerprint'],$install,$encoded,$country,$connection['gateway']]);
+        return ['schema_version'=>1,'available'=>true,'checkout_url'=>$this->config->origin().'/renew/'.$token,'session_token'=>$token,'expires_in'=>900,'simulated'=>$connection['mode']!=='live','country'=>$country,'gateway'=>$connection['gateway']];
     }
     private function loginBinding(array $s,bool $requireRollout=true):array {
         $brand=$this->loginBrand($s['app_package'],$requireRollout);
@@ -99,31 +106,31 @@ final class RenewalPayments {
         return ['schema_version'=>1,'available'=>true,'challenge'=>$nonce,'expires_in'=>120];
     }
     public function open(array $input,string $ip):array {
-        Input::keys($input,['challenge','device_id','app_package','key_fingerprint','primary_fingerprint','signature']);
+        Input::keys($input,['challenge','device_id','app_package','key_fingerprint','primary_fingerprint','signature','country']);
         $nonce=EnrollmentProof::hex($input['challenge']??null,64);$device=Input::id($input['device_id']??null);$package=Input::text($input['app_package']??null,'package',80);
         $key=EnrollmentProof::hex($input['key_fingerprint']??null,64);$primary=EnrollmentProof::hex($input['primary_fingerprint']??null,64);
+        if(!isset($input['country']))return ['schema_version'=>1,'available'=>false,'reason'=>'country_required'];$country=$this->country($input['country']);
         $d=$this->binding($device,$package,$key);$public=EnrollmentProof::publicKey($d['public_key']);
         if(!hash_equals($public['fingerprint'],$key))throw new Problem(403,'Checkout signing identity mismatch.');
-        EnrollmentProof::verifyDeviceSignature($public,Input::text($input['signature']??null,'signature',128),self::signingText($nonce,$device,$package,$key,$primary));
+        EnrollmentProof::verifyDeviceSignature($public,Input::text($input['signature']??null,'signature',128),self::signingText($nonce,$device,$package,$key,$primary,$country));
         $this->auth->limit('renewal-open',$device,30,3600);
         $this->db->transaction(function()use($nonce,$device,$package,$key,$primary):void{
             $c=$this->db->one('SELECT * FROM renewal_challenges WHERE nonce_hash=? AND expires_at>UTC_TIMESTAMP() FOR UPDATE',[hash('sha256',$nonce)]);
             if(!$c||$c['used_at']!==null||$c['device_id']!==$device||$c['app_package']!==$package||$c['key_fingerprint']!==$key||$c['primary_fingerprint']!==$primary)throw new Problem(403,'Checkout challenge expired or already used.');
             $this->db->query('UPDATE renewal_challenges SET used_at=UTC_TIMESTAMP() WHERE nonce_hash=?',[$c['nonce_hash']]);
         });
-        $scope=$d+['primary_fingerprint'=>$primary];$eligibility=$this->eligibility($scope);
-        $price=$this->eligiblePrice($scope,$eligibility);$connection=$this->settings->connection($d['tenant_id']);
+        $scope=$d+['primary_fingerprint'=>$primary,'country'=>$country,'gateway'=>null];$eligibility=$this->eligibility($scope);
+        $price=$this->eligiblePrice($scope,$eligibility);$connection=$price?$this->selectedConnection($scope,$price):null;
         if(!$connection||!$price)return ['schema_version'=>1,'available'=>false];
-        return $this->db->transaction(function()use($d,$package,$key,$primary):array{
+        return $this->db->transaction(function()use($d,$package,$key,$primary,$country,$connection):array{
             $this->db->one('SELECT id FROM devices WHERE id=? FOR UPDATE',[$d['id']]);$this->binding($d['id'],$package,$key);
-            $row=$this->db->one('SELECT * FROM renewal_sessions WHERE device_id=? AND brand_id=? AND primary_fingerprint=? AND key_fingerprint=? AND account_ref=? AND reseller_id=? AND line_id=? AND expires_at>UTC_TIMESTAMP() ORDER BY created_at DESC LIMIT 1',[$d['id'],$d['brand_id'],$primary,$key,$d['account_ref'],$d['reseller_id'],$d['line_id']]);
+            $row=$this->db->one('SELECT * FROM renewal_sessions WHERE device_id=? AND brand_id=? AND primary_fingerprint=? AND key_fingerprint=? AND account_ref=? AND reseller_id=? AND line_id=? AND country=? AND gateway=? AND expires_at>UTC_TIMESTAMP() ORDER BY created_at DESC LIMIT 1',[$d['id'],$d['brand_id'],$primary,$key,$d['account_ref'],$d['reseller_id'],$d['line_id'],$country,$connection['gateway']]);
             if(!$row){
                 $token=bin2hex(random_bytes(32));$id=Database::id();
-                $this->db->query('INSERT INTO renewal_sessions (id,token_hash,token_cipher,device_id,tenant_id,brand_id,app_package,key_fingerprint,account_ref,reseller_id,line_id,primary_fingerprint,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE))',[$id,$this->tokenHash($token),$this->secrets->encrypt($token),$d['id'],$d['tenant_id'],$d['brand_id'],$package,$key,$d['account_ref'],$d['reseller_id'],$d['line_id'],$primary]);
+                $this->db->query('INSERT INTO renewal_sessions (id,token_hash,token_cipher,device_id,tenant_id,brand_id,app_package,key_fingerprint,account_ref,reseller_id,line_id,primary_fingerprint,expires_at,country,gateway) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE),?,?)',[$id,$this->tokenHash($token),$this->secrets->encrypt($token),$d['id'],$d['tenant_id'],$d['brand_id'],$package,$key,$d['account_ref'],$d['reseller_id'],$d['line_id'],$primary,$country,$connection['gateway']]);
                 $row=$this->db->one('SELECT * FROM renewal_sessions WHERE id=?',[$id]);
             }else $token=$this->secrets->decrypt($row['token_cipher']);
-            $connection=$this->settings->connection($d['tenant_id']);
-            return ['schema_version'=>1,'available'=>true,'checkout_url'=>$this->config->origin().'/renew/'.$token,'session_token'=>$token,'expires_in'=>max(1,min(900,strtotime($row['expires_at'].' UTC')-time())),'simulated'=>$connection['mode']==='mock'];
+            return ['schema_version'=>1,'available'=>true,'checkout_url'=>$this->config->origin().'/renew/'.$token,'session_token'=>$token,'expires_in'=>max(1,min(900,strtotime($row['expires_at'].' UTC')-time())),'simulated'=>$connection['mode']!=='live','country'=>$country,'gateway'=>$connection['gateway']];
         });
     }
     private function tokenHash(string $token):string {EnrollmentProof::hex($token,64);return $this->secrets->mac("renewal-checkout-token-v1\n$token");}
@@ -139,7 +146,12 @@ final class RenewalPayments {
         return $s;
     }
     private function eligiblePrice(array $s,array $eligibility):?array {
-        $rows=$this->db->all('SELECT * FROM renewal_plans WHERE tenant_id=? AND package_id=? AND enabled=1',[$s['tenant_id'],$eligibility['current_package_id']??0]);
+        $country=$s['country']??'';
+        $rows=$this->db->all('SELECT * FROM renewal_plans WHERE tenant_id=? AND package_id=? AND country=?',[$s['tenant_id'],$eligibility['current_package_id']??0,$country]);
+        if(!$rows&&$country!=='')$rows=$this->db->all("SELECT * FROM renewal_plans WHERE tenant_id=? AND package_id=? AND country=''",[$s['tenant_id'],$eligibility['current_package_id']??0]);
+        // An explicitly disabled country price must not fall through to a
+        // default currency/price that the reseller did not enable there.
+        $rows=array_values(array_filter($rows,static fn($r)=>(bool)$r['enabled']));
         if(count($rows)!==1)return null; // Never choose the cheapest duplicate.
         $p=$rows[0];$current=$eligibility['plans'][0]??null;
         if(!$current||$current['id']!==(int)$p['package_id']||!$current['funded'])return null;
@@ -152,26 +164,57 @@ final class RenewalPayments {
         // unresolved orders blocking across brands/devices until reconciled.
         return $this->db->one("SELECT * FROM renewal_orders WHERE tenant_id=? AND line_id=? AND primary_fingerprint=? AND fulfilment_state!='fulfilled' AND payment_state IN ('creating','awaiting','link_uncertain','verification_pending','paid','review') ORDER BY created_at DESC,id DESC LIMIT 1",[$s['tenant_id'],$s['line_id'],$s['primary_fingerprint']]);
     }
-    private function publicOrder(?array $o):?array {return $o?['id'=>$o['id'],'payment_state'=>$o['payment_state'],'fulfilment_state'=>$o['fulfilment_state'],'currency'=>$o['currency'],'amount_minor'=>(int)$o['amount_minor'],'payment_url'=>$o['payment_state']==='awaiting'?$o['provider_url']:null]:null;}
+    private function publicOrder(?array $o):?array {
+        if(!$o)return null;$c=$this->db->one('SELECT gateway FROM renewal_connections WHERE id=?',[$o['connection_id']]);
+        return ['id'=>$o['id'],'payment_state'=>$o['payment_state'],'fulfilment_state'=>$o['fulfilment_state'],'currency'=>$o['currency'],'amount_minor'=>(int)$o['amount_minor'],'payment_url'=>$o['payment_state']==='awaiting'?$o['provider_url']:null,'gateway'=>$c['gateway']??null,'country'=>$o['country']??null];
+    }
     public function info(string $token):array {
-        $s=$this->session($token);$o=$s['order_id']?$this->db->one('SELECT * FROM renewal_orders WHERE id=?',[$s['order_id']]):$this->currentOrder($s);$seller=$this->db->one('SELECT name FROM tenants WHERE id=?',[$s['tenant_id']]);$c=$this->settings->connection($s['tenant_id']);
+        $s=$this->session($token);$o=$s['order_id']?$this->db->one('SELECT * FROM renewal_orders WHERE id=?',[$s['order_id']]):$this->currentOrder($s);$seller=$this->db->one('SELECT name FROM tenants WHERE id=?',[$s['tenant_id']]);$c=$this->settings->connection($s['tenant_id'],$s['gateway']??'rampex');
         if($o&&in_array($o['payment_state'],['not_created','expired'],true))$o=null;
         $this->auth->limit('renewal-capability',$s['id'],60,60);
         if($o){$this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$o['id'],$s['id']]);$c=$this->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);}
-        $renewal=null;if(!$o&&$s['open']){try{$this->session($token,true);$renewal=$this->eligiblePrice($s,$this->eligibility($s));}catch(Problem){}}
+        $renewal=null;if((!$o||$o['payment_state']==='awaiting')&&$s['open']){try{$this->session($token,true);$renewal=$this->eligiblePrice($s,$this->eligibility($s));}catch(Problem){}}
         if($renewal!==null)unset($renewal['package_snapshot']); // Wholesale credits/bouquets stay server-side.
-        return ['reseller'=>$seller['name']??'Your provider','target_label'=>'Existing account ending '.substr($s['line_id'],-4),'renewal'=>$renewal,'order'=>$this->publicOrder($o),'expires_at'=>$s['expires_at'],'simulated'=>$c&&$c['mode']==='mock'];
+        $gateways=$renewal&&in_array($s['country'],['US','CA'],true)?array_map(static fn($v)=>['gateway'=>$v['gateway'],'sandbox'=>$v['mode']!=='live'],$this->routes($s,$renewal)):[];
+        return ['reseller'=>$seller['name']??'Your provider','target_label'=>'Existing account ending '.substr($s['line_id'],-4),'renewal'=>$renewal,'order'=>$this->publicOrder($o),'expires_at'=>$s['expires_at'],'simulated'=>$c&&$c['mode']!=='live','country'=>$s['country'],'gateway'=>$s['gateway'],'gateways'=>$gateways];
+    }
+    public function selectRoute(array $input):array {
+        Input::keys($input,['session_token','country','gateway']);$token=Input::text($input['session_token']??null,'checkout token',64);$s=$this->session($token,true);$country=$this->country($input['country']??null);$gateway=$input['gateway']??null;
+        if($gateway!==null&&!in_array($gateway,['stripe','square','rampex'],true))throw new Problem(422,'Choose an available payment gateway.');
+        $this->auth->limit('renewal-route',$s['id'],10,600);
+        $original=$this->currentOrder($s);$expired=null;
+        if($original){
+            if($original['payment_state']!=='awaiting'||!$original['provider_link_id'])throw new Problem(409,'An unresolved payment already exists. Retain that invoice; do not pay again.');
+            $c=$this->db->one('SELECT * FROM renewal_connections WHERE id=?',[$original['connection_id']]);$status=$this->gateway->status($c,$original);
+            if(($status['status']??null)!=='expired'||($status['fully_paid']??null)!==false||($status['merchant_id']??null)!==$original['merchant_id']||($status['link_id']??null)!==$original['provider_link_id']||($status['amount_minor']??null)!==(int)$original['amount_minor']||($status['currency']??null)!==$original['currency'])throw new Problem(409,'The provider has not confirmed that the old invoice expired unpaid. Do not create another payment.');
+            $expired=$original['id'];
+        }
+        $this->db->transaction(function()use($s,$country,$gateway,$expired):void{
+            $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$s['tenant_id']]);
+            $current=$this->currentOrder($s);
+            if($current){
+                if($expired!==$current['id']||$current['payment_state']!=='awaiting')throw new Problem(409,'An unresolved payment already exists. Continue that invoice; do not pay again through another gateway.');
+                $changed=$this->db->query("UPDATE renewal_orders SET payment_state='expired',fulfilment_state='not_paid' WHERE id=? AND payment_state='awaiting' AND fulfilment_state!='fulfilled'",[$current['id']]);
+                if($changed->rowCount()!==1)throw new Problem(409,'The original invoice changed during verification; retain it and refresh.');
+            }
+            $candidate=array_replace($s,['country'=>$country,'gateway'=>$gateway]);$p=$this->eligiblePrice($candidate,$this->eligibility($candidate));
+            $connection=$p?$this->selectedConnection($candidate,$p):null;
+            if(!$p||!$connection)throw new Problem(409,'This gateway is not available for your provider, country and package currency.');
+            $this->db->query('UPDATE renewal_sessions SET country=?,gateway=?,order_id=NULL WHERE id=?',[$country,$connection['gateway'],$s['id']]);
+        });return $this->info($token);
     }
     public function checkout(array $input,string $ip):array {
         Input::keys($input,['session_token','price_id','price_revision','package_fingerprint','email']);$s=$this->session(Input::text($input['session_token']??null,'checkout token',64),true);
         $this->auth->limit('renewal-checkout',$s['id'],10,3600);$email=Input::email($input['email']??null);
         $eligibility=$this->eligibility($s);$plan=$this->eligiblePrice($s,$eligibility);
         if(!$plan||$plan['id']!==($input['price_id']??null)||$plan['revision']!==($input['price_revision']??null)||$plan['package_fingerprint']!==($input['package_fingerprint']??null))throw new Problem(409,'Current package or price changed or is unavailable. Refresh before paying.');
-        $connection=$this->settings->connection($s['tenant_id']);if(!$connection)throw new Problem(409,'Provider payments are unavailable.');
+        $this->country($s['country']);$connection=$this->selectedConnection($s,$plan);if(!$connection)throw new Problem(409,'Provider payments are unavailable for this country and currency.');
         $created=$this->db->transaction(function()use($s,$plan,$email,$connection,$eligibility):array{
             // Login checkout may precede management enrollment/panel sync, so a
             // panel_customers row is not a reliable shared invoice lock.
             $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$s['tenant_id']]);
+            $freshRoute=$this->db->one('SELECT country,gateway FROM renewal_sessions WHERE id=? FOR UPDATE',[$s['id']]);
+            if(!$freshRoute||$freshRoute['country']!==$s['country']||$freshRoute['gateway']!==$s['gateway'])throw new Problem(409,'Payment route changed. Refresh before creating a checkout.');
             $this->db->one('SELECT panel_id FROM panel_customers WHERE panel_id=? FOR UPDATE',[$s['line_id']]);
             if($old=$this->currentOrder($s)){$this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$old['id'],$s['id']]);return ['created'=>false,'order'=>$old];}
             if(!$this->db->one('SELECT id FROM renewal_connections WHERE id=? AND tenant_id=? AND enabled=1 FOR UPDATE',[$connection['id'],$s['tenant_id']]))throw new Problem(409,'Merchant connection changed. Refresh before paying.');
@@ -179,7 +222,7 @@ final class RenewalPayments {
             if(!$snapshot||!(bool)$snapshot['enabled']||(int)$snapshot['revision']!==$plan['revision']||(int)$snapshot['package_id']!==$plan['package_id'])throw new Problem(409,'Current package price changed before checkout.');
             $snapshot['name']=$plan['name'];$snapshot['plan_fingerprint']=$plan['package_fingerprint'];$snapshot['package_snapshot']=json_encode($plan['package_snapshot'],JSON_THROW_ON_ERROR);
             $id=Database::id();
-            $this->db->query('INSERT INTO renewal_orders (id,session_id,tenant_id,brand_id,reseller_id,line_id,primary_fingerprint,connection_id,merchant_id,plan_id,plan_snapshot,currency,amount_minor,email_cipher,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE))',[$id,$s['id'],$s['tenant_id'],$s['brand_id'],$s['reseller_id'],$s['line_id'],$s['primary_fingerprint'],$connection['id'],$connection['merchant_id'],$plan['id'],json_encode($snapshot,JSON_THROW_ON_ERROR),$plan['currency'],$plan['amount_minor'],$this->secrets->encrypt($email)]);
+            $this->db->query('INSERT INTO renewal_orders (id,session_id,tenant_id,brand_id,reseller_id,line_id,primary_fingerprint,connection_id,merchant_id,plan_id,plan_snapshot,currency,amount_minor,email_cipher,expires_at,country) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE),?)',[$id,$s['id'],$s['tenant_id'],$s['brand_id'],$s['reseller_id'],$s['line_id'],$s['primary_fingerprint'],$connection['id'],$connection['merchant_id'],$plan['id'],json_encode($snapshot,JSON_THROW_ON_ERROR),$plan['currency'],$plan['amount_minor'],$this->secrets->encrypt($email),$s['country']]);
             $this->db->query('UPDATE renewal_orders SET quoted_expiry=? WHERE id=?',[$eligibility['expires_at'],$id]);
             $this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$id,$s['id']]);
             return ['created'=>true,'order'=>$this->db->one('SELECT * FROM renewal_orders WHERE id=?',[$id])];
@@ -197,24 +240,24 @@ final class RenewalPayments {
         if($o&&in_array($o['payment_state'],['not_created','expired'],true))$o=null;
         $this->auth->limit('renewal-capability',$s['id'],60,60);
         $c=$o?$this->db->one('SELECT mode FROM renewal_connections WHERE id=?',[$o['connection_id']]):null;
-        return ['schema_version'=>1,'order'=>$this->publicOrder($o),'simulated'=>$c&&$c['mode']==='mock'];
+        return ['schema_version'=>1,'order'=>$this->publicOrder($o),'simulated'=>$c&&$c['mode']!=='live'];
     }
     public function webhook(string $connectionId,string $raw,string $signature):array {
         $c=$this->db->one('SELECT * FROM renewal_connections WHERE id=?',[Input::id($connectionId)])??throw new Problem(401,'Invalid payment notification.');
-        if(!RampexPaymentVerifier::signatureValid($raw,$signature,$this->secrets->decrypt($c['webhook_cipher'])))throw new Problem(401,'Invalid payment notification.');
-        try{$e=json_decode($raw,true,16,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new Problem(422,'Invalid payment notification.');}
-        if(!is_array($e)||!str_starts_with(ltrim($raw),'{'))throw new Problem(422,'Invalid payment notification.');
+        $e=$this->gateway->event($c,$raw,$signature);
         $this->db->query('UPDATE renewal_connections SET webhook_verified_at=UTC_TIMESTAMP() WHERE id=?',[$c['id']]);
         $link=$e['link_id']??null;$o=null;
-        if(is_string($link)&&preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$link))$o=$this->db->one('SELECT id FROM renewal_orders WHERE tenant_id=? AND merchant_id=? AND provider_link_id=?',[$c['tenant_id'],$c['merchant_id'],$link]);
+        if(is_string($link)&&preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$link))$o=$this->db->one('SELECT id,connection_id FROM renewal_orders WHERE tenant_id=? AND merchant_id=? AND provider_link_id=?',[$c['tenant_id'],$c['merchant_id'],$link]);
         if(!$o&&is_string($link)&&preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$link)){
             // Recover a lost link-creation reply only through a signed provider
             // order reference; the job still verifies the link via merchant API.
             $ref=self::providerOrderRef($e);
-            if(is_string($ref)&&preg_match('/^[a-f0-9]{32}$/D',$ref))$o=$this->db->one("SELECT id FROM renewal_orders WHERE id=? AND tenant_id=? AND merchant_id=? AND provider_link_id IS NULL AND payment_state IN ('creating','link_uncertain','review')",[$ref,$c['tenant_id'],$c['merchant_id']]);
+            if(is_string($ref)&&preg_match('/^[a-f0-9]{32}$/D',$ref))$o=$this->db->one("SELECT id,connection_id FROM renewal_orders WHERE id=? AND tenant_id=? AND merchant_id=? AND provider_link_id IS NULL AND payment_state IN ('creating','link_uncertain','review')",[$ref,$c['tenant_id'],$c['merchant_id']]);
         }
         if(!$o){$this->auth->audit(null,'renewals.webhook_ignored',$c['id'],$c['tenant_id'],['body_sha256'=>hash('sha256',$raw)]);return ['accepted'=>true,'ignored'=>true];}
-        $this->db->query('INSERT INTO renewal_events (id,connection_id,order_id,body_sha256,body_cipher,signature) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id',[Database::id(),$c['id'],$o['id'],hash('sha256',$raw),$this->secrets->encrypt($raw),strtolower(trim($signature))]);
+        $originalConnection=$this->db->one('SELECT gateway,mode FROM renewal_connections WHERE id=?',[$o['connection_id']]);
+        if(!$originalConnection||$originalConnection['gateway']!==$c['gateway']||$originalConnection['mode']!==$c['mode'])throw new Problem(403,'Notification gateway or environment differs from the original invoice.');
+        $this->db->query('INSERT INTO renewal_events (id,connection_id,order_id,body_sha256,body_cipher,signature) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id',[Database::id(),$c['id'],$o['id'],hash('sha256',$raw),$this->secrets->encrypt($raw),$signature]);
         return ['accepted'=>true]; // No provider/worker network calls in webhook request.
     }
     private static function providerOrderRef(array $event):?string {
@@ -240,7 +283,17 @@ final class RenewalPayments {
     }
     public function retry(array $actor,string $id):array {
         $o=$this->ownedOrder($actor,$id);
-        if($o['payment_state']!=='paid'||$o['fulfilment_state']==='fulfilled')throw new Problem(409,'Only an unfulfilled paid order may be retried.');
+        if($o['fulfilment_state']==='fulfilled')throw new Problem(409,'A fulfilled invoice cannot be renewed again.');
+        if($o['payment_state']!=='paid'){
+            if(!in_array($o['payment_state'],['review','verification_pending'],true)||!$this->db->one("SELECT id FROM renewal_events WHERE order_id=? AND state IN ('review','pending','processing') LIMIT 1",[$id]))throw new Problem(409,'Only the original received payment evidence may be rechecked.');
+            $this->db->transaction(function()use($id):void{
+                $row=$this->db->one('SELECT id,lease_until>UTC_TIMESTAMP() AS busy FROM renewal_orders WHERE id=? FOR UPDATE',[$id]);
+                if(!$row||$row['busy'])throw new Problem(409,'This invoice is already being verified; retry later.');
+                $this->db->query("UPDATE renewal_events SET state='pending' WHERE order_id=? AND state='review'",[$id]);
+                $this->db->query('UPDATE renewal_orders SET next_attempt_at=UTC_TIMESTAMP() WHERE id=?',[$id]);
+            });
+            $this->auth->audit($actor,'renewals.same_payment_recheck',$id,$o['tenant_id']);return ['queued'=>true,'new_charge'=>false];
+        }
         $this->db->query("UPDATE renewal_orders SET fulfilment_state='pending',next_attempt_at=UTC_TIMESTAMP() WHERE id=? AND (lease_until IS NULL OR lease_until<UTC_TIMESTAMP())",[$id]);
         $this->auth->audit($actor,'renewals.same_order_retry',$id,$o['tenant_id']);return ['queued'=>true,'new_charge'=>false];
     }
@@ -256,18 +309,16 @@ final class RenewalPayments {
             $event=$this->db->one("SELECT * FROM renewal_events WHERE order_id=? AND state IN ('pending','processing') ORDER BY created_at,id LIMIT 1",[$o['id']]);
             if($event){
                 $sender=$this->db->one('SELECT * FROM renewal_connections WHERE id=?',[$event['connection_id']]);
-                if(!$sender||$sender['tenant_id']!==$o['tenant_id']||$sender['merchant_id']!==$o['merchant_id'])throw new Problem(409,'Payment notification belongs to a different merchant.');
-                $raw=$this->secrets->decrypt($event['body_cipher']);$payload=json_decode($raw,true,16,JSON_THROW_ON_ERROR);
-                if(!RampexPaymentVerifier::signatureValid($raw,$event['signature'],$this->secrets->decrypt($sender['webhook_cipher'])))throw new Problem(401,'Invalid stored payment notification.');
+                if(!$sender||$sender['tenant_id']!==$o['tenant_id']||$sender['merchant_id']!==$o['merchant_id']||$sender['gateway']!==$c['gateway']||$sender['mode']!==$c['mode'])throw new Problem(409,'Payment notification belongs to a different merchant, gateway or environment.');
+                $raw=$this->secrets->decrypt($event['body_cipher']);$payload=$this->gateway->event($sender,$raw,$event['signature'],false);
                 if(($payload['event']??null)==='payment.expired'){
-                    if(!RampexPaymentVerifier::signatureValid($raw,$event['signature'],$this->secrets->decrypt($sender['webhook_cipher'])))throw new Problem(401,'Invalid stored notification.');
                     if($o['payment_state']!=='paid'){
                         if($o['provider_link_id']===null){
                             $candidate=$payload['link_id']??null;
                             if(!is_string($candidate)||!preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$candidate)||self::providerOrderRef($payload)!==$o['id'])throw new Problem(409,'Original expired link is unresolved.');
                             $o['provider_link_id']=$candidate;
                         }
-                        $active=$this->settings->connection($o['tenant_id']);$reader=$active&&$active['merchant_id']===$o['merchant_id']?$active:$c;
+                        $active=$this->settings->connection($o['tenant_id'],$c['gateway']);$reader=$active&&$active['merchant_id']===$o['merchant_id']&&$active['mode']===$c['mode']?$active:$c;
                         $status=$this->gateway->status($reader,$o);
                         if(($status['link_id']??null)!==$o['provider_link_id']||($status['merchant_id']??null)!==$o['merchant_id']||($status['status']??null)!=='expired')throw new Problem(503,'Provider has not confirmed unpaid link expiry; retain the original order.');
                         $this->db->query("UPDATE renewal_orders SET provider_link_id=COALESCE(provider_link_id,?),payment_state='expired',fulfilment_state='not_paid' WHERE id=? AND lease_token=? AND payment_state!='paid' AND fulfilment_state!='fulfilled'",[$o['provider_link_id'],$o['id'],$lease]);
@@ -281,8 +332,8 @@ final class RenewalPayments {
                         if(!is_string($candidate)||!preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$candidate)||self::providerOrderRef($payload)!==$o['id'])throw new Problem(409,'Original payment-link identity is unresolved.');
                         $o['provider_link_id']=$candidate;
                     }
-                    $active=$this->settings->connection($o['tenant_id']);$reader=$active&&$active['merchant_id']===$o['merchant_id']?$active:$c;
-                    $receipt=RampexPaymentVerifier::completed($raw,$event['signature'],$this->secrets->decrypt($sender['webhook_cipher']),['link_id'=>$o['provider_link_id'],'merchant_id'=>$o['merchant_id'],'currency'=>$o['currency'],'amount_minor'=>(int)$o['amount_minor']],$this->gateway->status($reader,$o));
+                    $active=$this->settings->connection($o['tenant_id'],$c['gateway']);$reader=$active&&$active['merchant_id']===$o['merchant_id']&&$active['mode']===$c['mode']?$active:$c;
+                    $receipt=$this->gateway->completed($sender,$raw,$event['signature'],$o,$this->gateway->status($reader,$o));
                     $this->db->transaction(function()use($o,$lease,$receipt,$event,$payload):void{
                         $current=$this->db->one('SELECT * FROM renewal_orders WHERE id=? AND lease_token=? FOR UPDATE',[$o['id'],$lease]);if(!$current)throw new Problem(409,'Order lease changed.');
                         if($current['provider_link_id']!==null&&$current['provider_link_id']!==$o['provider_link_id'])throw new Problem(409,'Order already has another payment link.');
@@ -306,6 +357,10 @@ final class RenewalPayments {
                 // invoice. All account/device/tenant/primary restrictions remain.
                 $s=$this->db->one('SELECT * FROM renewal_sessions WHERE id=?',[$o['session_id']]);$d=$this->sessionBinding($s,false);
                 if($d['account_ref']!==$s['account_ref']||$d['line_id']!==$o['line_id']||$d['reseller_id']!==$o['reseller_id'])throw new Problem(409,'Paid order ownership changed.');
+                if($c['mode']==='sandbox'){
+                    $this->db->query("UPDATE renewal_orders SET fulfilment_state='fulfilled',receipt=? WHERE id=? AND lease_token=?",[json_encode(['simulated'=>true,'no_line_change'=>true]),$o['id'],$lease]);
+                    return ['worked'=>true,'sandbox'=>true];
+                }
                 $p=json_decode($o['plan_snapshot'],true,16,JSON_THROW_ON_ERROR);
                 if(!is_numeric($o['quoted_expiry']??null)||(int)$o['quoted_expiry']<1)throw new Problem(409,'Original invoice expiry revision is unavailable; retain this paid order for review.');
                 $r=$this->worker->renew(['operation_id'=>$o['id'],'brand_id'=>$o['brand_id'],'reseller_id'=>$o['reseller_id'],'line_id'=>$o['line_id'],'package_id'=>(int)$p['package_id'],'plan_fingerprint'=>$p['plan_fingerprint'],'merchant_id'=>$o['merchant_id'],'payment_link_id'=>$o['provider_link_id'],'primary_fingerprint'=>$o['primary_fingerprint'],'expected_expiry'=>(int)$o['quoted_expiry']]);
@@ -317,6 +372,7 @@ final class RenewalPayments {
                 $this->db->query("UPDATE renewal_orders SET fulfilment_state=IF(fulfilment_state='fulfilled','fulfilled','needs_review'),payment_state=IF(payment_state='paid','paid','review') WHERE id=? AND lease_token=?",[$o['id'],$lease]);
                 if(isset($event['id']))$this->db->query("UPDATE renewal_events e JOIN renewal_orders o ON o.id=e.order_id SET e.state='review' WHERE e.id=? AND o.lease_token=?",[$event['id'],$lease]);
             }
+            if($error->status===503&&isset($event['id'])&&($payload['event']??null)==='payment.completed')$this->db->query("UPDATE renewal_orders SET payment_state='verification_pending' WHERE id=? AND lease_token=? AND payment_state='awaiting'",[$o['id'],$lease]);
             $this->db->query('UPDATE renewal_orders SET next_attempt_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE) WHERE id=? AND lease_token=?',[$o['id'],$lease]);
         }catch(\Throwable){
             // Corrupt/local evidence must not block every later customer's job

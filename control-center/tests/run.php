@@ -166,6 +166,8 @@ require __DIR__.'/rampex-contract.php';
 rampexContractCases($tests);
 require __DIR__.'/renewal-staging.php';
 renewalStagingCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA,$tenantB);
+require __DIR__.'/card-gateways.php';
+cardGatewayCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

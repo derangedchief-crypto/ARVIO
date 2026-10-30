@@ -75,7 +75,8 @@ function fields(form, schema) {
     else if (input.tagName !== 'SELECT') input.maxLength = field.max || (field.type === 'textarea' ? 2000 : 120);
     if (field.type === 'number') { input.min = 1; input.max = 100000; input.step = 1; }
     if (field.options) for (const [value, name] of field.options) { const option = el('option', name); option.value = value; input.append(option); }
-    input.required = field.required !== false; if (field.value !== undefined && field.value !== null) input.value = field.value;
+     input.required = field.required !== false; if (field.value !== undefined && field.value !== null) input.value = field.value;
+     if (field.readOnly) input.readOnly = true;
     form.append(label, input); if (field.hint) {input.title=field.hint;input.setAttribute('aria-description',field.hint);if(field.type==='password'&&['password','new_password'].includes(field.key)&&(field.min??14)>0)input.placeholder='14+ characters';}
   }
 }

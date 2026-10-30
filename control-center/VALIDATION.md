@@ -1,5 +1,40 @@
 # Control Center validation
 
+## 0.30.0 country-aware direct Stripe and Square
+
+Release checks pass:304 isolated service cases,12 browser cases,1,031 Android
+tests (zero failures/errors, one skipped), both Android variants compiled,
+45 standalone renewal-worker cases and71 existing auth/trial regression cases.
+Deterministic delivery/archive checks preserve the original config/storage/keys.
+
+New coverage exercises the real country-signed expired-login endpoint, selecting
+the reseller's preferred Canadian Square route before issuing a checkout token;
+direct Stripe is an approved alternative. Missing/altered country cannot mint a
+QR, and client/server both prohibit Canadian Rampex fallback. Merchant identity,
+gateway, environment, location/currency, gross amount and reference mismatches,
+refunds, manual CASH/EXTERNAL Square records and uncaptured payments are rejected.
+An OPEN Square digital order with a captured card payment is correctly accepted.
+
+Synthetic direct-card callbacks plus separate API reads verify the original
+invoice before one same-line renewal. Duplicate/late notifications, capture lag,
+credential-recheck, original-provider expiry before switching gateways and late
+money on an expired invoice retain the original financial evidence. Sandbox
+completions perform ZERO renewal-worker operations. Country-specific disabled
+prices cannot fall through to an unintended default price. Merchant setup reserves
+the final webhook URL before endpoint secrets exist and is scoped/idempotent.
+
+Browser checks cover 360px checkout, country/provider selection, no package or
+amount editing, escaped labels, separate encrypted/write-only merchant forms,
+pre-secret read-only callback URLs and saved Square/Stripe country preferences.
+Native checks cover country confirmation before any checkout request/QR, signed
+country binding, unchanged account verification and rejecting Canadian crypto
+fallback even if a server returned an invalid route.
+
+Provider APIs in these tests are controlled fake transports. No real API key,
+charge, Square/Stripe hosted-payment acceptance, or real panel renewal was used.
+Actual provider sandbox acceptance and a separately approved live test remain the
+owner's controlled checks after the matching website/testing APK are installed.
+
 ## 0.29.0 checkout-only expired login
 
 290 isolated service cases, nine browser cases and40 standalone-worker cases

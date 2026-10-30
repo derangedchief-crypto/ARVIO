@@ -55,6 +55,9 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
             assert name in names, name
         assert 'database/migrations/029_renewal_login.sql' in names
         assert 'deploy/UPDATE-0.29.0.txt' in names
+        assert 'database/migrations/030_country_payment_gateways.sql' in names
+        assert 'src/CardGateway.php' in names
+        assert 'deploy/UPDATE-0.30.0.txt' in names
         assert b'fresh-checkins' in archive.read('cli/console.php')
         assert 'src/AppBrands.php' in names and 'database/migrations/014_reseller_app_brands.sql' in names
         assert 'src/TrialPolicies.php' in names and 'src/TrialContacts.php' in names and 'database/migrations/015_trial_policies_contacts.sql' in names

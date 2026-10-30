@@ -7,6 +7,55 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.30.0 — country-aware direct Stripe and Square checkout
+
+Branded testing app2.0.129 confirms USA or Canada BEFORE requesting a QR. This is
+customer confirmation, not a claim that an IP address or a TV proves physical
+location. The payment provider independently verifies payment eligibility. Country
+is bound into the device signature; missing/unsupported country never defaults to
+the USA. Canadian routing excludes Rampex's crypto/card route on both client and
+server. Direct Stripe Checkout is ordinary fiat card checkout, not a crypto onramp.
+
+Each verified reseller/owner workspace connects its OWN Stripe, Square and/or
+Rampex merchant. Connections coexist; rotation preserves old invoice credentials
+and callbacks. Keys remain encrypted/write-only on the website, never in APKs or
+QRs. Click Connect to reserve the FINAL callback URL BEFORE creating a Stripe or
+Square webhook and copying its endpoint signing secret. Complete provider setup
+in the matching sandbox/live environment, save, then send a provider test event.
+Square additionally verifies its selected location belongs to the merchant and
+has card processing enabled. Account approval and business eligibility remain the
+provider's responsibility; code never overrides provider restrictions.
+
+Resellers choose ordered preferred/alternative gateways separately for US/Canada.
+Only configured routes matching the invoice currency are offered. Stripe card
+presentment initially supports USD/CAD; Square uses the actual location currency.
+Country-specific package money prices override the default price; an explicit
+disabled country price does not fall back. Package terms and wholesale credit cost
+still come from the panel, and only the customer's CURRENT package is renewable.
+
+The phone can select another approved gateway BEFORE a payment link exists. An
+unresolved invoice cannot be abandoned or duplicated: changing an existing route
+requires a merchant-API-confirmed unpaid expiry, preserving old financial history.
+Late money on an expired invoice is retained for review, never a second extension.
+
+Stripe uses timestamped raw-body webhook signatures plus fresh merchant-scoped
+Checkout/PaymentIntent/captured-charge verification. Square verifies raw-body plus
+EXACT callback URL HMAC, original order/reference/location and completed Payment.
+An OPEN Square digital order may already be paid; captured payment is authoritative.
+Wrong merchant, environment, amount, currency, references and refunds fail closed.
+Capture/API lag retries original evidence without another charge. Credential repair
+can recheck the same invoice; no operator action can simply declare money paid.
+
+Stripe/Square sandbox completions NEVER call the real renewal worker or unlock
+real accounts. Live completions retain the existing one-operation paid transaction,
+expiry revision guard, credit journal, current-package protection and active-account
+reverification. No real merchant keys, charges or panel writes are used by tests.
+
+Migration030 adds provider/country/setup metadata while retaining existing Rampex
+connections, prices and orders. No new renewal worker, port, credentials transfer,
+or ledger reset is needed. See `deploy/UPDATE-0.30.0.txt`. Deliver only the selected
+centrally signed branded TESTING APK; no customer/production APK or main promotion.
+
 ## 0.29.0 — renewal at expired-code login and without management enrollment
 
 The branded testing app can offer checkout when a previously activated account

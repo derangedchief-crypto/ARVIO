@@ -36,4 +36,14 @@ class RenewalCheckoutTest {
         assertTrue(renewalFailureMessage(403).contains("not eligible"))
         assertTrue(renewalFailureMessage(null).contains("retry"))
     }
+    @Test fun countryIsBoundIntoCheckoutSignatureAndNeverDefaultsToUnitedStates() {
+        val digest=renewalCodeDigest("123456")
+        val us=renewalLoginSigningText("nonce","install","brand","key",digest,"US")
+        val ca=renewalLoginSigningText("nonce","install","brand","key",digest,"CA")
+        assertEquals("ECRENEWLOGIN2\nnonce\ninstall\nbrand\nkey\n$digest\nUS",us)
+        assertNotEquals(us,ca)
+        assertNotEquals(us,renewalLoginSigningText("nonce","install","brand","key",digest))
+        assertNull(RenewalCheckoutState(needsCountry=true).url)
+        assertNull(RenewalCheckoutState(needsCountry=true).country)
+    }
 }

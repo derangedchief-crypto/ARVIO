@@ -148,9 +148,11 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
                 problem(403,fn()=> $payments->loginChallenge(['installation_id'=>$install,'app_package'=>'com.arvio.tv.test','key_fingerprint'=>$key],'127.0.0.91'));
                 $body=['installation_id'=>$install,'app_package'=>$package,'key_fingerprint'=>$key];
                 $challenge=$payments->loginChallenge($body,'127.0.0.91');$identity=['activation_code'=>'123456'];
-                openssl_sign(ControlCenter\RenewalPayments::loginSigningText($challenge['challenge'],$install,$package,$key,$identity),$signature,$private,OPENSSL_ALGO_SHA256);
-                $open=['installation_id'=>$install,'app_package'=>$package,'challenge'=>$challenge['challenge'],'public_key'=>$public,'identity'=>$identity,'signature'=>base64_encode($signature)];
+                openssl_sign(ControlCenter\RenewalPayments::loginSigningText($challenge['challenge'],$install,$package,$key,$identity,'US'),$signature,$private,OPENSSL_ALGO_SHA256);
+                $open=['installation_id'=>$install,'app_package'=>$package,'challenge'=>$challenge['challenge'],'public_key'=>$public,'identity'=>$identity,'signature'=>base64_encode($signature),'country'=>'US'];
                 problem(403,fn()=> $payments->loginOpen(array_replace($open,['identity'=>['activation_code'=>'654321']]),'127.0.0.91'));
+                problem(403,fn()=> $payments->loginOpen(array_replace($open,['country'=>'CA']),'127.0.0.91'));
+                $withoutCountry=$open;unset($withoutCountry['country']);same('country_required',$payments->loginOpen($withoutCountry,'127.0.0.91')['reason']);
                 $session=$payments->loginOpen($open,'127.0.0.91');
                 problem(403,fn()=> $payments->loginOpen($open,'127.0.0.91'));
                 same(true,$session['available']);same(true,$session['simulated']);
@@ -161,8 +163,9 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             }else{
             $body=['device_id'=>$device['id'],'app_package'=>$package,'key_fingerprint'=>$key,'primary_fingerprint'=>$primary];
             $challenge=$payments->challenge($body,'127.0.0.98');same(true,$challenge['available']);
-            openssl_sign(ControlCenter\RenewalPayments::signingText($challenge['challenge'],$device['id'],$package,$key,$primary),$signature,$private,OPENSSL_ALGO_SHA256);
-            $open=$body+['challenge'=>$challenge['challenge'],'signature'=>base64_encode($signature)];
+            openssl_sign(ControlCenter\RenewalPayments::signingText($challenge['challenge'],$device['id'],$package,$key,$primary,'US'),$signature,$private,OPENSSL_ALGO_SHA256);
+            $open=$body+['challenge'=>$challenge['challenge'],'signature'=>base64_encode($signature),'country'=>'US'];
+            problem(403,fn()=> $payments->open(array_replace($open,['country'=>'CA']),'127.0.0.98'));
             $session=$payments->open($open,'127.0.0.98');same(true,$session['available']);same(true,$session['simulated']);
             problem(403,fn()=> $payments->open($open,'127.0.0.98'));
             }

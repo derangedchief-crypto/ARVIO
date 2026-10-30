@@ -8,13 +8,15 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
   assert(base&&['127.0.0.1','localhost'].includes(new URL(base).hostname));
   const browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:360,height:800}});
   const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  const token='a'.repeat(64),id='b'.repeat(32);let current=null,submitted=null,quoteCurrency='USD';
-  const order={id,payment_state:'awaiting',fulfilment_state:'not_paid',currency:'USD',amount_minor:1050,payment_url:null};
+   const token='a'.repeat(64),id='b'.repeat(32);let current=null,submitted=null,quoteCurrency='USD',country='US',gateway='rampex',routeSubmission=null;
+   const order={id,payment_state:'awaiting',fulfilment_state:'not_paid',currency:'USD',amount_minor:1050,payment_url:null};
+   const info=()=>({reseller:'TEST <img src=x onerror=alert(1)>',target_label:'Existing account ending 1234',country,gateway,gateways:country==='CA'?[{gateway:'square',sandbox:true},{gateway:'stripe',sandbox:true}]:[{gateway:'rampex',sandbox:true}],renewal:current?null:{id:'c'.repeat(32),package_id:77,package_fingerprint:'d'.repeat(64),name:'One month',revision:3,currency:quoteCurrency,currency_exponent:quoteCurrency==='JPY'?0:2,amount_minor:quoteCurrency==='JPY'?1500:1050,duration:1,period:'months',max_connections:2},order:current,simulated:true});
   await page.route('**/api/public-renewals/**',async route=>{
     const req=route.request(),path=new URL(req.url()).pathname;
     assert.equal(req.method(),'POST');assert.equal(req.postDataJSON().session_token,token);
     let body;
-    if(path.endsWith('/info'))body={reseller:'TEST <img src=x onerror=alert(1)>',target_label:'Existing account ending 1234',renewal:current?null:{id:'c'.repeat(32),package_id:77,package_fingerprint:'d'.repeat(64),name:'One month',revision:3,currency:quoteCurrency,currency_exponent:quoteCurrency==='JPY'?0:2,amount_minor:quoteCurrency==='JPY'?1500:1050,duration:1,period:'months',max_connections:2},order:current,simulated:true};
+     if(path.endsWith('/info'))body=info();
+     else if(path.endsWith('/route')){routeSubmission=req.postDataJSON();assert(!current);country=routeSubmission.country;gateway=routeSubmission.gateway||(country==='CA'?'square':'rampex');body=info();}
     else if(path.endsWith('/checkout')){submitted=req.postDataJSON();current={...order};body={order:current};}
     else body={schema_version:1,order:current,simulated:true};
     await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
@@ -22,7 +24,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
   try{
     await page.goto(base+'/renew/'+token);
     await page.getByRole('heading',{name:'One month',exact:true}).waitFor();
-    assert.equal(await page.locator('select').count(),0);
+     assert.equal(await page.locator('select#country,select#gateway').count(),2);
     assert.equal(await page.locator('#seller img').count(),0);
     assert((await page.locator('#seller').innerText()).includes('<img'));
     assert((await page.locator('#demo').innerText()).includes('no money'));
@@ -35,7 +37,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     assert.equal(await page.locator('input[type=number],input[name=amount],input[name=card]').count(),0);
     console.log('PASS phone renews the displayed current package without a package picker or editable price');
     current=null;quoteCurrency='JPY';await page.reload();await page.getByRole('heading',{name:'One month',exact:true}).waitFor();
-    assert((await page.locator('#details').innerText()).includes('1500 JPY'));assert(!(await page.locator('#details').innerText()).includes('15.00'));assert.equal(await page.locator('select').count(),0);
+     assert((await page.locator('#details').innerText()).includes('1500 JPY'));assert(!(await page.locator('#details').innerText()).includes('15.00'));assert.equal(await page.locator('select#country,select#gateway').count(),2);
     console.log('PASS zero-decimal Rampex link currencies use their actual minor units, not a forced cents scale');
     current={...order,payment_state:'paid',fulfilment_state:'refresh_pending'};
     await page.reload();await page.getByRole('heading',{name:'Payment received',exact:true}).waitFor();
@@ -45,12 +47,19 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     await page.reload();await page.getByRole('heading',{name:'Demo renewal completed',exact:true}).waitFor();
     assert((await page.locator('#order-state').innerText()).includes('No real line was changed'));
     await page.setViewportSize({width:1280,height:900});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-    assert.deepEqual(errors,[]);console.log('PASS demo completion does not claim real account access; no browser errors');
+     assert.deepEqual(errors,[]);console.log('PASS demo completion does not claim real account access; no browser errors');
+     current=null;country=null;gateway=null;quoteCurrency='CAD';await page.reload();await page.getByLabel('Payment country',{exact:true}).waitFor();assert(await page.locator('#checkout').isHidden());
+     await page.getByLabel('Payment country',{exact:true}).selectOption('CA');await page.locator('#gateway').waitFor({state:'visible'});
+     assert.equal(await page.locator('#gateway option[value=rampex]').count(),0);assert.equal(await page.locator('#gateway option').count(),2);assert.equal(await page.locator('#gateway').inputValue(),'square');
+     await page.getByLabel('Payment gateway',{exact:true}).selectOption('stripe');await page.waitForFunction(()=>document.getElementById('gateway').value==='stripe'&&!document.getElementById('pay').disabled);
+     assert.equal(routeSubmission.country,'CA');assert.equal(routeSubmission.gateway,'stripe');assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+     console.log('PASS Canadian country confirmation offers direct Square and Stripe, never Rampex, before payment');
     const credentials=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));assert.equal(credentials.email,'owner@preview.test');
     const operator=await context.newPage();operator.on('pageerror',e=>errors.push(e.message));
-    let priceSubmission=null;
+     let priceSubmission=null,routingSubmission=null;
     await operator.route('**/api/renewals/catalog?**',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({packages:[{id:77,name:'Provider monthly',duration:1,period:'months',max_connections:2,credits:'2',fingerprint:'d'.repeat(64),funded:true}]})}));
-    await operator.route('**/api/renewals/prices',r=>{priceSubmission=r.request().postDataJSON();return r.fulfill({status:200,contentType:'application/json',body:'{"saved":true}'});});
+     await operator.route('**/api/renewals/prices',r=>{priceSubmission=r.request().postDataJSON();return r.fulfill({status:200,contentType:'application/json',body:'{"saved":true}'});});
+     await operator.route('**/api/renewals/routing',r=>{routingSubmission=r.request().postDataJSON();return r.fulfill({status:200,contentType:'application/json',body:'{"saved":true}'});});
     await operator.goto(base);await operator.getByLabel('Email address').fill(credentials.email);
     await operator.getByLabel('Password',{exact:true}).fill(credentials.password);await operator.getByRole('button',{name:'Sign in',exact:true}).click();
     await operator.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
@@ -73,11 +82,28 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     await operator.locator('#modal-form').getByRole('button',{name:'Save',exact:true}).click();
     await operator.locator('#modal').waitFor({state:'hidden'});
     assert.equal(priceSubmission.package_id,77);assert.equal(priceSubmission.amount,'12.50');
-    assert.deepEqual(Object.keys(priceSubmission).sort(),['amount','currency','enabled','expected_revision','id','package_id','tenant_id']);
+     assert.deepEqual(Object.keys(priceSubmission).sort(),['amount','country','currency','enabled','expected_revision','id','package_id','tenant_id']);
     console.log('PASS reseller prices a fixed offered package; no custom plan name, term, connection or package editor');
     await operator.getByRole('button',{name:'Connect Rampex',exact:true}).click();
     assert.equal(await operator.getByLabel('Rampex API key',{exact:true}).getAttribute('type'),'password');
-    assert.equal(await operator.getByLabel('Webhook secret',{exact:true}).getAttribute('type'),'password');
+     assert.equal(await operator.getByLabel('Webhook secret',{exact:true}).getAttribute('type'),'password');
+     await operator.getByRole('button',{name:'Cancel',exact:true}).click();
+     await operator.getByRole('button',{name:'Connect Square',exact:true}).click();
+     const webhook=operator.getByLabel('Provider webhook URL — configure this first',{exact:true});
+     await webhook.waitFor();assert.equal(await webhook.getAttribute('readonly'),'');assert((await webhook.inputValue()).includes('/api/renewals/webhooks/'));
+     assert.equal(await operator.getByLabel('Square access token',{exact:true}).getAttribute('type'),'password');
+     assert.equal(await operator.getByLabel('Webhook signature key',{exact:true}).getAttribute('type'),'password');
+     assert.equal(await operator.getByLabel('Mode',{exact:true}).inputValue(),'sandbox');assert.equal(await operator.getByLabel('Square Location ID',{exact:true}).count(),1);
+     await operator.getByRole('button',{name:'Cancel',exact:true}).click();
+     await operator.getByRole('button',{name:'Connect Stripe',exact:true}).click();assert.equal(await operator.getByLabel('Stripe API key',{exact:true}).getAttribute('type'),'password');
+     await operator.getByRole('button',{name:'Cancel',exact:true}).click();
+     console.log('PASS Stripe and Square use separate write-only connection forms; sandbox is explicit');
+     await operator.getByRole('button',{name:'Edit Canada gateways',exact:true}).click();
+     assert.equal(await operator.getByLabel('Preferred gateway',{exact:true}).locator('option[value=rampex]').count(),0);
+     await operator.getByLabel('Preferred gateway',{exact:true}).selectOption('square');await operator.getByLabel('First alternative',{exact:true}).selectOption('stripe');
+     await operator.locator('#modal-form').getByRole('button',{name:'Save',exact:true}).click();await operator.locator('#modal').waitFor({state:'hidden'});
+     assert.equal(routingSubmission.country,'CA');assert.deepEqual(routingSubmission.gateways,['square','stripe']);
+     console.log('PASS reseller can save Square preference and Stripe alternative for Canada without an empty-option validation trap');
     assert.deepEqual(errors,[]);console.log('PASS actual reseller renewal workspace renders with write-only password fields; no live connection submitted');
     const readonly=await operator.evaluate(async tenant=>(await(await fetch('/api/renewals/settings?tenant_id='+tenant)).json()),tenant);
     await operator.route('**/api/renewals/settings?**',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({...readonly,catalogue_only:true})}));
