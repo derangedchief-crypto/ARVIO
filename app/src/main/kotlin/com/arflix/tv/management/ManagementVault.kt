@@ -18,8 +18,12 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Management secrets never fall back to plaintext or share profile/cache stores. */
-internal class ManagementVault(context: Context) {
-    private val directory = File(context.noBackupFilesDir, "device-management-v1").apply { check(isDirectory || mkdirs()) }
+internal class ManagementVault(context: Context, directoryName: String = "device-management-v1") {
+    private val directory = File(context.noBackupFilesDir, directoryName.also {
+        require(it in setOf("device-management-v1", "renewal-checkout-v1"))
+    }).apply { check(isDirectory || mkdirs()) }
+    internal val encryptionAlias = if (directoryName == "device-management-v1")
+        "control-management-encryption-v1" else "control-renewal-checkout-encryption-v1"
     private val gson = Gson()
     private val store: KeyStore get() = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private fun file(scope: String): AtomicFile {
@@ -27,10 +31,10 @@ internal class ManagementVault(context: Context) {
         return AtomicFile(File(directory, "$scope.enc"))
     }
     private fun encryptionKey(create: Boolean): SecretKey {
-        (store.getKey("control-management-encryption-v1", null) as? SecretKey)?.let { return it }
+        (store.getKey(encryptionAlias, null) as? SecretKey)?.let { return it }
         check(create) { "Management encryption key unavailable" }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
-            init(KeyGenParameterSpec.Builder("control-management-encryption-v1", KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            init(KeyGenParameterSpec.Builder(encryptionAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setKeySize(256).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
