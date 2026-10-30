@@ -21,6 +21,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import com.arflix.tv.BuildConfig
 import com.arflix.tv.management.RenewalCheckoutState
+import com.arflix.tv.management.RenewalCheckoutRepository
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -54,26 +55,33 @@ fun PrimaryActivationGate(controller:PrimaryAccessRepository,content: @Composabl
 @Composable
 private fun BrandedExpiredAccount(controller:PrimaryAccessRepository){
     val repository=remember(controller){controller.renewalCheckout}
+    LaunchedEffect(repository){repository.load()}
+    RenewalCheckoutScreen(repository)
+}
+
+@Composable
+internal fun RenewalCheckoutScreen(repository:RenewalCheckoutRepository,onRenewed:(()->Unit)?=null,onCancel:(()->Unit)?=null){
     val checkout by repository.state.collectAsState()
     var showQr by remember { mutableStateOf(false) }
     val lifecycle=LocalLifecycleOwner.current.lifecycle
     val scope=rememberCoroutineScope()
-    LaunchedEffect(repository){repository.load()}
     DisposableEffect(repository){onDispose{repository.clear()}}
+    LaunchedEffect(checkout.fulfilled){if(checkout.fulfilled)onRenewed?.invoke()}
     LaunchedEffect(repository,showQr,checkout.url){
         var checks=0
         if(showQr&&checkout.url!=null)lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED){while(isActive&&checks++<180){repository.poll();delay(10_000)}}
     }
-    RenewalAccountNotice(checkout,showQr,{showQr=true},{scope.launch{repository.load()}})
+    RenewalAccountNotice(checkout,showQr,{showQr=true},{scope.launch{repository.refresh()}},onCancel)
 }
 
 @Composable
-internal fun RenewalAccountNotice(checkout:RenewalCheckoutState,showQr:Boolean,onShowQr:()->Unit,onRefresh:()->Unit){
+internal fun RenewalAccountNotice(checkout:RenewalCheckoutState,showQr:Boolean,onShowQr:()->Unit,onRefresh:()->Unit,onCancel:(()->Unit)?=null){
     BackHandler{}
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),contentAlignment=Alignment.Center){
         Column(Modifier.widthIn(max=700.dp).verticalScroll(rememberScrollState()).padding(32.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(16.dp)){
             Text(if(checkout.url!=null)"Your subscription has expired" else "Your account is expired or inactive",style=MaterialTheme.typography.headlineMedium,textAlign=TextAlign.Center)
-            Text("Please contact your provider to renew or reactivate your account.",textAlign=TextAlign.Center)
+            Text(if(checkout.url!=null)"Renew your current package securely using your phone." else "Please contact your provider to renew or reactivate your account.",textAlign=TextAlign.Center)
+            if(checkout.loading)CircularProgressIndicator()
             if(checkout.url!=null){
                 if(checkout.simulated)Text("DEMO ONLY — no money or real renewal",color=MaterialTheme.colorScheme.error,textAlign=TextAlign.Center)
                 if(showQr&&checkout.qrExpired){Text("This QR has expired. Refresh the link to continue the same renewal.",textAlign=TextAlign.Center);Button(onClick=onRefresh){Text("Refresh QR")}}
@@ -81,6 +89,8 @@ internal fun RenewalAccountNotice(checkout:RenewalCheckoutState,showQr:Boolean,o
                 else Button(onClick=onShowQr){Text("Renew subscription")}
             }
             checkout.message?.let{Text(it,textAlign=TextAlign.Center)}
+            if(!checkout.loading&&checkout.url==null)Button(onClick=onRefresh){Text("Retry renewal")}
+            if(onCancel!=null)TextButton(onClick=onCancel){Text("Use a different activation code")}
             Text("Access returns only after your account is verified active. Do not uninstall or clear app data.",style=MaterialTheme.typography.bodySmall,textAlign=TextAlign.Center)
         }
     }

@@ -105,6 +105,30 @@ class NativeMysqlTests(unittest.TestCase):
         self.assertEqual([7,8,15,16,80],[p['id'] for p in plans])
         self.assertEqual([[],[],[]],[p['bouquets'] for p in plans if p['id'] in [15,16,80]])
         self.untouched()
+    def test_expired_code_and_saved_credentials_identify_only_checkout_target(self):
+        expected={'reseller_id':'101','line_id':'999','primary_fingerprint':hashlib.sha256(b'user\npass').hexdigest()}
+        self.assertEqual(expected,self.adapter.identify({'reseller_id':'101','activation_code':'123456'}))
+        self.assertEqual(expected,self.adapter.identify({'reseller_id':'101','username':'user','password':'pass'}))
+        self.assertNotIn('username',expected);self.assertNotIn('password',expected)
+        self.untouched();self.assertEqual(0,self.refreshes)
+    def test_renewal_login_rejects_unknown_wrong_owner_password_duplicate_and_restricted_lines(self):
+        for identity in [
+            {'reseller_id':'101','activation_code':'654321'},
+            {'reseller_id':'102','activation_code':'123456'},
+            {'reseller_id':'101','activation_code':'000000'},
+            {'reseller_id':'101','activation_code':123456},
+            {'reseller_id':'101','activation_code':'123456','line_id':'1000'},
+            {'reseller_id':'101','username':'user','password':'wrong'},
+        ]:
+            with self.assertRaises(RenewalRejected):self.adapter.identify(identity)
+            self.untouched()
+        for field,value in [('exp_date',int(time.time())+3600),('exp_date',0),('enabled',0),('activated',0)]:
+            self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(value,))
+            with self.assertRaises(RenewalRejected):self.adapter.identify({'reseller_id':'101','activation_code':'123456'})
+            self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(self.before[field],))
+        self.sql("UPDATE customers SET activation_code='123456' WHERE id=1000")
+        with self.assertRaises(RenewalRejected):self.adapter.identify({'reseller_id':'101','activation_code':'123456'})
+        self.untouched()
     def test_empty_package_bouquets_renew_once_without_clearing_customer_access(self):
         self.sql("UPDATE users_packages SET bouquets='[]' WHERE id=7")
         offers=self.adapter.catalog('101')['plans']

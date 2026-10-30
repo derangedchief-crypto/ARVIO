@@ -1,0 +1,27 @@
+0.29.0 — expired login checkout
+
+1. WORKER: install the verified Extreme-Renewal-Worker-0.29.0.zip.
+   Existing config/env, ledger, keys and auth/trial service are retained. Only the
+   independent renewal service restarts. The existing19093 proxy route remains.
+
+2. WEBSITE: back up website code and the original private database/application key.
+   Verify the Extreme-Control-Center-0.29.0-Update.zip checksum, then extract over
+   the existing website. The update omits config.php, storage and private keys.
+   Run bash deploy/connect-renewal-worker.sh to migrate and verify capabilities.
+   No connection-file retransfer or secret rotation is needed for an existing
+   0.28.0 connection. Existing payment policy, reseller merchant settings, prices
+   and paid-order history are preserved. Migration029 adds checkout-only session
+   metadata and allows a nullable managed-device reference; no grants are minted.
+
+3. APP: use a new centrally signed branded TESTING APK from the exact approved
+   2.0.128 /444 staging source. Queue only the intended testing brand with the
+   owner CLI, preserving its published package, signer, revision and artwork.
+   Do not dispatch a blank queue pickup or publish any customer/production APK.
+
+The new APK can request renewal using a bound expired account or an expired
+activation code on the login screen. An approved management enrollment is not
+required. QR checkout is still reseller-scoped and renews only the current package.
+Rampex setup, current-package pricing and owner rollout must be available.
+After payment, normal account activation is reverified before app access returns.
+Do not uninstall, clear app data, reset the ledger, recreate keys or alter panel
+packages to work around a checkout error. No real payment is made by installation.

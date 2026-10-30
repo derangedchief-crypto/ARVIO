@@ -78,6 +78,15 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(422,self.send('catalog',{'reseller_id':'101','username':'forged'})[0].status_code)
         with patch.object(self.module.adapter,'eligibility',return_value={'state':'expired'}) as eligibility:
             self.assertEqual(200,self.send('eligibility',{'reseller_id':'101','line_id':'999','primary_fingerprint':'d'*64})[0].status_code);eligibility.assert_called_once_with('101','999','d'*64)
+    def test_renewal_login_is_authenticated_and_does_not_expose_credentials_or_renew(self):
+        target={'reseller_id':'101','line_id':'999','primary_fingerprint':'d'*64}
+        with patch.object(self.module.adapter,'identify',return_value=target) as identify,patch.object(self.module,'AnchoredOperations') as ledger:
+            self.assertEqual(403,self.send('identify',{'activation_code':'123456','reseller_id':'101'},key='f'*64)[0].status_code)
+            identify.assert_not_called()
+            response=self.send('identify',{'activation_code':'123456','reseller_id':'101'})[0]
+            self.assertEqual(200,response.status_code)
+            self.assertEqual(target,json.loads(response.json()['payload']))
+            self.assertNotIn('123456',response.text);ledger.assert_not_called()
     def test_missing_or_changed_original_state_is_held_without_automatic_recreation(self):
         key=self.state/'renewal.key';key.unlink()
         self.assertEqual(422,self.send('status')[0].status_code);self.assertFalse(key.exists())

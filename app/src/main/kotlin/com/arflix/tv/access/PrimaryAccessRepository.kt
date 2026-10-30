@@ -54,6 +54,11 @@ class PrimaryAccessRepository @Inject constructor(@ApplicationContext context:Co
         if(!accountInactive||recoveryRequired||primaryAllowed())return null
         return Triple(com.arflix.tv.management.ManagementAccount(a.username,a.password).scope,a.identity,bindingRevision)
     }
+    internal fun renewalAccount():com.arflix.tv.management.ManagementAccount? {
+        if(renewalIdentity()==null)return null
+        val a=anchor?:return null
+        return com.arflix.tv.management.ManagementAccount(a.username,a.password)
+    }
     fun start()=synchronized(this){
         if(started)return@synchronized
         started=true

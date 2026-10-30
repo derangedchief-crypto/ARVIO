@@ -7,11 +7,33 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.29.0 — renewal at expired-code login and without management enrollment
+
+The branded testing app can offer checkout when a previously activated account
+expires, or when an expired activation code is entered on the login screen.
+Checkout no longer depends on an approved management enrollment. The separate
+renewal worker verifies the real line, expiry, reseller and current package; code
+and password lookups return only a checkout target, never account credentials.
+Unknown, ambiguous, disabled, active, unlimited and wrong-reseller lines are denied.
+
+Login challenges are short-lived, one-use, key-signed and bound to the submitted
+identity, installation and branded package. Generic apps are excluded. Known
+device restrictions and the normal reseller/brand/payment policy remain enforced.
+Migration029 adds checkout-only identity metadata and permits sessions without a
+managed device; it does not create enrollment credentials or grant app access.
+Payment still renews the same line once. The app must verify normal active-account
+access afterward; fresh login repeats the original activation flow after payment.
+
+Install the new renewal worker before the website update, then migrate the website.
+Private worker settings, keys, ledger and existing device data are retained. A new
+centrally signed branded TESTING APK is required for the native login/UI changes.
+No customer/production APK or main promotion is part of this delivery.
+
 ## 0.28.0 — independent full renewal worker and Rampex setup
 
 The owner selected a NEW service, replacing the earlier catalogue-only deployment
 approach. See `deploy/UPDATE-0.28.0.txt` and `reseller-renewal-worker/README.md` in
-the source repository. It runs separately on9093 with its own unit/folder/ledger,
+the source repository. Recovery updates use19093 with its own unit/folder/ledger,
 copies the existing auth config/env privately on-host and never modifies/restarts
 the existing auth/trial worker. Only the renewal URL prefix moves to it.
 

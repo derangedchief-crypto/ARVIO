@@ -2,6 +2,9 @@
 Uses its reviewed calendar, locking, credit journal and native refresh helpers.
 """
 from decimal import Decimal
+import hashlib
+import hmac
+import re
 from types import SimpleNamespace
 import threading
 from branded_renewals import RenewalOperations,RenewalRejected,RenewalDeferred,RenewalDefinitive
@@ -9,6 +12,28 @@ from branded_renewals_runtime import NativeRenewalAdapter,_operation,primary_mat
 
 
 class RenewalAdapter(NativeRenewalAdapter):
+    def identify(self,value):
+        """Checkout-only identity; never returns credentials or grants app access."""
+        if not isinstance(value,dict) or not isinstance(value.get('reseller_id'),str) or not re.fullmatch('[1-9][0-9]{0,18}',value['reseller_id']):raise RenewalRejected('Invalid renewal login')
+        code=set(value)=={'reseller_id','activation_code'}
+        if code:
+            if not isinstance(value['activation_code'],str) or not re.fullmatch('[0-9]{6}',value['activation_code']):raise RenewalRejected('Invalid renewal login')
+            column='activation_code';argument=value['activation_code']
+        else:
+            if set(value)!={'reseller_id','username','password'} or any(not isinstance(value.get(k),str) or not 1<=len(value[k])<=limit for k,limit in [('username',256),('password',512)]):raise RenewalRejected('Invalid renewal login')
+            column='username';argument=value['username']
+        with self.worker['panel_db_cursor'](autocommit=False) as (cur,conn):
+            try:
+                cur.execute('SELECT id,member_id,username,password,enabled,activated FROM customers WHERE '+column+'=%s LIMIT 2',(argument,));rows=cur.fetchall()
+                row=rows[0] if len(rows)==1 else None
+                password=str(row.get('password') or '') if row else 'unavailable-account-placeholder'
+                matched=code or hmac.compare_digest(password.encode(),value['password'].encode())
+                if not row or not matched or not row.get('username') or not row.get('password') or str(row['member_id'])!=value['reseller_id'] or str(row['enabled'])!='1' or str(row['activated'])!='1':raise RenewalRejected('Renewal login is unavailable')
+                primary=hashlib.sha256((str(row['username'])+'\n'+str(row['password'])).encode()).hexdigest();line=str(row['id'])
+            finally:conn.rollback()
+        result=self.eligibility(value['reseller_id'],line,primary)
+        if result['state']!='expired' or result['primary_match'] is not True:raise RenewalRejected('Renewal login is unavailable')
+        return {'reseller_id':value['reseller_id'],'line_id':line,'primary_fingerprint':primary}
     def __init__(self,native):
         self.worker=native;self.refreshed={};self.refresh_lock=threading.RLock()
         # Unlike the old public /renew-line route, this owned implementation has

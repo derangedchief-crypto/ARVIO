@@ -11,6 +11,13 @@ diagnosis/recovery; it is not proof that an unknown server failure is resolved.
 This is a NEW service, not a patch to `iptv-auth-worker` and not the earlier
 catalogue-only extension. Do not run the old catalogue installer for this setup.
 
+0.29.0 adds signed, read-only `identify` requests for expired activation codes or
+the already-bound account credentials. Only the website's separate worker key can
+call this route. It verifies unique identity, enabled/activated state, expiry and
+reseller ownership, returning only line/reseller IDs and a primary fingerprint.
+It never returns passwords, provisions a device or grants playback. The normal
+paid-operation transaction and original line data are unchanged.
+
 Empty package bouquet lists are supported for paid renewal: the customer's
 existing bouquets are preserved, never cleared or replaced by the package list.
 Malformed bouquet data is still rejected, and package fingerprints still prevent

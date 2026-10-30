@@ -1,5 +1,24 @@
 # Control Center validation
 
+## 0.29.0 checkout-only expired login
+
+290 isolated service cases, nine browser cases and40 standalone-worker cases
+(including22 real isolated MariaDB cases) pass. Delivery archive tests confirm
+advancing timestamps, deterministic manifests and preservation of config/storage.
+
+The new full simulated flow starts from an expired code with no approved enrollment
+or registered installation/panel-customer binding. It creates only a checkout
+session: device/enrollment/credential counts do not change. Tampered signatures,
+nonce replay, generic apps and known blocked installations are denied. Payment
+still uses the current package and one durable operation, including held-package
+repair, duplicate notifications, expired quotes and paid fulfilment after pause.
+Native SQL tests deny wrong owners/passwords/codes, duplicate codes, active,
+unlimited, disabled and unactivated lines without a panel write or refresh.
+
+Android compile/login-test validation is tracked separately for the rebuilt
+branded testing APK. No new APK is implied by installing the website or worker.
+No real payment or real-line renewal was performed during this development.
+
 ## 0.28.0 separate full worker and Rampex account setup
 
 Release validation: 287 isolated website/service cases, nine browser cases and

@@ -100,6 +100,8 @@ final class Application
             if($path==='/api/public-renewals/checkout')Http::json($this->renewalPayments->checkout($input,$_SERVER['REMOTE_ADDR']??''));
             throw new Problem(404,'Renewal route not found.');
         }
+        if($method==='POST'&&$path==='/api/device/renewals/login/challenge')Http::json($this->renewalPayments->loginChallenge(Http::body(8192),$_SERVER['REMOTE_ADDR']??''));
+        if($method==='POST'&&$path==='/api/device/renewals/login/open')Http::json($this->renewalPayments->loginOpen(Http::body(8192),$_SERVER['REMOTE_ADDR']??''));
         if($method==='POST'&&$path==='/api/device/renewals/challenge')Http::json($this->renewalPayments->challenge(Http::body(8192),$_SERVER['REMOTE_ADDR']??''));
         if($method==='POST'&&$path==='/api/device/renewals/open')Http::json($this->renewalPayments->open(Http::body(8192),$_SERVER['REMOTE_ADDR']??''));
         if($method==='POST'&&$path==='/api/device/renewals/status'){ $input=Http::body(8192);Input::keys($input,['session_token']);Http::json($this->renewalPayments->status(Input::text($input['session_token']??null,'checkout token',64))); }

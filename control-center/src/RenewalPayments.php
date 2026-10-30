@@ -10,6 +10,69 @@ final class RenewalPayments {
     private function enabled(string $package):bool {
         $p=$this->settings->policy();return $p['enabled']&&(!$p['testing_only']||str_ends_with($package,'.test'));
     }
+    private function loginBrand(string $package,bool $requireRollout=true):array {
+        if(!preg_match('/^com\.extreme\.brand\.b([a-f0-9]{32})(\.test)?$/D',$package,$m)||($requireRollout&&!$this->enabled($package)))throw new Problem(403,'Renewal checkout is unavailable.');
+        $artifact=$this->artifacts->approved($m[1],isset($m[2])?'testing':'production');
+        if(!$artifact||$artifact['package_name']!==$package)throw new Problem(403,'Renewal checkout is unavailable.');
+        $brand=$this->db->one("SELECT b.id AS brand_id,b.tenant_id,pr.panel_id AS reseller_id FROM app_brands b JOIN tenants t ON t.id=b.tenant_id JOIN panel_resellers pr ON pr.tenant_id=b.tenant_id WHERE b.id=? AND b.enabled=1 AND t.status='active' AND t.kind IN ('reseller','owner') AND (t.kind!='owner' OR EXISTS(SELECT 1 FROM users u WHERE u.role='owner' AND u.active=1))",[$m[1]]);
+        if(!$brand)throw new Problem(403,'Renewal checkout is unavailable.');
+        return $brand;
+    }
+    public static function loginSigningText(string $nonce,string $install,string $package,string $key,array $identity):string {
+        $text=isset($identity['activation_code'])?"code\n".$identity['activation_code']:"account\n".hash('sha256',$identity['username'])."\n".hash('sha256',$identity['password']);
+        return "ECRENEWLOGIN1\n$nonce\n$install\n$package\n$key\n".hash('sha256',$text);
+    }
+    public function loginChallenge(array $input,string $ip):array {
+        Input::keys($input,['installation_id','app_package','key_fingerprint']);
+        $package=Input::text($input['app_package']??null,'package',80);
+        $this->loginBrand($package);
+        $install=EnrollmentProof::hex($input['installation_id']??null,32);$key=EnrollmentProof::hex($input['key_fingerprint']??null,64);
+        $this->auth->limit('renewal-login-challenge',$this->secrets->mac($ip),30,600);
+        $nonce=bin2hex(random_bytes(32));
+        $this->db->query('INSERT INTO renewal_login_challenges (nonce_hash,installation_id,key_fingerprint,app_package,expires_at) VALUES (?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 2 MINUTE))',[hash('sha256',$nonce),$install,$key,$package]);
+        return ['schema_version'=>1,'available'=>true,'challenge'=>$nonce,'expires_in'=>120];
+    }
+    public function loginOpen(array $input,string $ip):array {
+        Input::keys($input,['challenge','installation_id','app_package','public_key','identity','signature']);
+        $nonce=EnrollmentProof::hex($input['challenge']??null,64);$install=EnrollmentProof::hex($input['installation_id']??null,32);$package=Input::text($input['app_package']??null,'package',80);
+        $brand=$this->loginBrand($package);$encoded=Input::text($input['public_key']??null,'public key',256);$public=EnrollmentProof::publicKey($encoded);$key=$public['fingerprint'];
+        $identity=$input['identity']??null;
+        if(!is_array($identity))throw new Problem(422,'Invalid renewal login.');
+        if(isset($identity['activation_code'])){
+            Input::keys($identity,['activation_code']);if(!is_string($identity['activation_code'])||!preg_match('/^[0-9]{6}$/D',$identity['activation_code']))throw new Problem(422,'Invalid renewal login.');
+        }else{
+            Input::keys($identity,['username','password']);foreach(['username'=>256,'password'=>512] as $field=>$max)if(!is_string($identity[$field]??null)||strlen($identity[$field])<1||strlen($identity[$field])>$max)throw new Problem(422,'Invalid renewal login.');
+        }
+        EnrollmentProof::verifyDeviceSignature($public,Input::text($input['signature']??null,'signature',128),self::loginSigningText($nonce,$install,$package,$key,$identity));
+        $this->auth->limit('renewal-login-ip',$this->secrets->mac($ip),6,600);
+        $this->auth->limit('renewal-login-key',$key,6,600);
+        $this->db->transaction(function()use($nonce,$install,$package,$key):void{
+            $row=$this->db->one('SELECT * FROM renewal_login_challenges WHERE nonce_hash=? AND expires_at>UTC_TIMESTAMP() FOR UPDATE',[hash('sha256',$nonce)]);
+            if(!$row||$row['used_at']!==null||$row['installation_id']!==$install||$row['app_package']!==$package||$row['key_fingerprint']!==$key)throw new Problem(403,'Renewal login challenge expired or already used.');
+            $this->db->query('UPDATE renewal_login_challenges SET used_at=UTC_TIMESTAMP() WHERE nonce_hash=?',[$row['nonce_hash']]);
+        });
+        $target=$this->worker->identify($brand['reseller_id'],$identity);
+        $scope=$brand+$target+['app_package'=>$package,'key_fingerprint'=>$key,'login_installation_id'=>$install,'login_public_key'=>$encoded];
+        $this->loginBinding($scope);
+        $eligible=$this->eligibility($scope);$connection=$this->settings->connection($brand['tenant_id']);$price=$this->eligiblePrice($scope,$eligible);
+        if(!$connection||!$price)return ['schema_version'=>1,'available'=>false,'reason'=>!$connection?'provider_setup_required':'package_price_unavailable'];
+        $token=bin2hex(random_bytes(32));$id=Database::id();
+        // No managed device, enrollment credential, playback lease or account
+        // credentials are created/stored by expired-code checkout.
+        $account=$this->secrets->mac("renewal-login-account-v1\n".$target['line_id']."\n".$target['primary_fingerprint']);
+        $this->db->query('INSERT INTO renewal_sessions (id,token_hash,token_cipher,device_id,tenant_id,brand_id,app_package,key_fingerprint,account_ref,reseller_id,line_id,primary_fingerprint,expires_at,login_installation_id,login_public_key) VALUES (?,?,?,NULL,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE),?,?)',[$id,$this->tokenHash($token),$this->secrets->encrypt($token),$brand['tenant_id'],$brand['brand_id'],$package,$key,$account,$target['reseller_id'],$target['line_id'],$target['primary_fingerprint'],$install,$encoded]);
+        return ['schema_version'=>1,'available'=>true,'checkout_url'=>$this->config->origin().'/renew/'.$token,'session_token'=>$token,'expires_in'=>900,'simulated'=>$connection['mode']==='mock'];
+    }
+    private function loginBinding(array $s,bool $requireRollout=true):array {
+        $brand=$this->loginBrand($s['app_package'],$requireRollout);
+        if($brand['tenant_id']!==$s['tenant_id']||$brand['brand_id']!==$s['brand_id']||$brand['reseller_id']!==$s['reseller_id']||!is_string($s['login_installation_id']??null)||!preg_match('/^[a-f0-9]{32}$/D',$s['login_installation_id'])||!is_string($s['login_public_key']??null)||!hash_equals(EnrollmentProof::publicKey($s['login_public_key'])['fingerprint'],$s['key_fingerprint']))throw new Problem(403,'Renewal checkout ownership changed.');
+        $restricted=$this->db->one("SELECT d.id FROM devices d JOIN tenants t ON t.id=d.tenant_id WHERE d.app_package=? AND (d.installation_id=? OR d.key_fingerprint=?) AND (d.policy!='active' OR t.status!='active') LIMIT 1",[$s['app_package'],$s['login_installation_id'],$s['key_fingerprint']]);
+        if($restricted)throw new Problem(403,'Renewal checkout is unavailable for this device.');
+        return $s;
+    }
+    private function sessionBinding(array $s,bool $requireRollout=true):array {
+        return $s['device_id']===null?$this->loginBinding($s,$requireRollout):$this->binding($s['device_id'],$s['app_package'],$s['key_fingerprint'],$requireRollout);
+    }
     private function binding(string $device,string $package,?string $key=null,bool $requireRollout=true):array {
         if(!preg_match('/^com\.extreme\.brand\.b([a-f0-9]{32})(\.test)?$/D',$package,$m)||($requireRollout&&!$this->enabled($package)))throw new Problem(403,'Renewal checkout is unavailable.');
         $artifact=$this->artifacts->approved($m[1],isset($m[2])?'testing':'production');
@@ -70,7 +133,7 @@ final class RenewalPayments {
         if(!$s)throw new Problem(404,'Checkout unavailable or expired.');
         if($checkout){
             if(!$s['open'])throw new Problem(409,'This checkout expired; return to the TV for a new QR.');
-            $d=$this->binding($s['device_id'],$s['app_package'],$s['key_fingerprint']);
+            $d=$this->sessionBinding($s);
             if($d['account_ref']!==$s['account_ref']||$d['reseller_id']!==$s['reseller_id']||$d['line_id']!==$s['line_id'])throw new Problem(409,'Account ownership changed; contact your provider.');
         }
         return $s;
@@ -106,6 +169,9 @@ final class RenewalPayments {
         if(!$plan||$plan['id']!==($input['price_id']??null)||$plan['revision']!==($input['price_revision']??null)||$plan['package_fingerprint']!==($input['package_fingerprint']??null))throw new Problem(409,'Current package or price changed or is unavailable. Refresh before paying.');
         $connection=$this->settings->connection($s['tenant_id']);if(!$connection)throw new Problem(409,'Provider payments are unavailable.');
         $created=$this->db->transaction(function()use($s,$plan,$email,$connection,$eligibility):array{
+            // Login checkout may precede management enrollment/panel sync, so a
+            // panel_customers row is not a reliable shared invoice lock.
+            $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$s['tenant_id']]);
             $this->db->one('SELECT panel_id FROM panel_customers WHERE panel_id=? FOR UPDATE',[$s['line_id']]);
             if($old=$this->currentOrder($s)){$this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$old['id'],$s['id']]);return ['created'=>false,'order'=>$old];}
             if(!$this->db->one('SELECT id FROM renewal_connections WHERE id=? AND tenant_id=? AND enabled=1 FOR UPDATE',[$connection['id'],$s['tenant_id']]))throw new Problem(409,'Merchant connection changed. Refresh before paying.');
@@ -238,7 +304,7 @@ final class RenewalPayments {
             if($o['payment_state']==='paid'&&in_array($o['fulfilment_state'],['pending','refresh_pending','reconcile_pending'],true)){
                 // Pausing NEW checkout does not abandon an already verified paid
                 // invoice. All account/device/tenant/primary restrictions remain.
-                $s=$this->db->one('SELECT * FROM renewal_sessions WHERE id=?',[$o['session_id']]);$d=$this->binding($s['device_id'],$s['app_package'],$s['key_fingerprint'],false);
+                $s=$this->db->one('SELECT * FROM renewal_sessions WHERE id=?',[$o['session_id']]);$d=$this->sessionBinding($s,false);
                 if($d['account_ref']!==$s['account_ref']||$d['line_id']!==$o['line_id']||$d['reseller_id']!==$o['reseller_id'])throw new Problem(409,'Paid order ownership changed.');
                 $p=json_decode($o['plan_snapshot'],true,16,JSON_THROW_ON_ERROR);
                 if(!is_numeric($o['quoted_expiry']??null)||(int)$o['quoted_expiry']<1)throw new Problem(409,'Original invoice expiry revision is unavailable; retain this paid order for review.');

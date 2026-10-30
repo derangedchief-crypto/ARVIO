@@ -66,6 +66,23 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         });
         problem(503,fn()=> $worker->eligibility('101','999',str_repeat('a',64)));
     };
+    $tests['renewal login signature has a native-compatible domain and binds identity without raw secrets']=static function():void{
+        $text=ControlCenter\RenewalPayments::loginSigningText('nonce','install','brand','key',['activation_code'=>'123456']);
+        same("ECRENEWLOGIN1\nnonce\ninstall\nbrand\nkey\nc9621e3692279fb32c54f841fa993e72d62c601bfd4e702c825b8d2e7f46ac8c",$text);
+        check(!str_contains($text,'123456'));
+        check($text!==ControlCenter\RenewalPayments::loginSigningText('nonce','other','brand','key',['activation_code'=>'123456']));
+        check(ControlCenter\RenewalPayments::loginSigningText('n','i','b','k',['username'=>"a\nb",'password'=>'c'])!==ControlCenter\RenewalPayments::loginSigningText('n','i','b','k',['username'=>'a','password'=>"b\nc"]));
+    };
+    $tests['signed renewal login cannot select another reseller target or smuggle account credentials']=function()use($simulationConfig):void{
+        $valid=['reseller_id'=>'101','line_id'=>'999','primary_fingerprint'=>str_repeat('a',64)];
+        foreach([array_replace($valid,['reseller_id'=>'102']),array_replace($valid,['line_id'=>999]),$valid+['password'=>'MUST-NOT-PASS']] as $reply){
+            $reader=new ControlCenter\RenewalWorker($simulationConfig,static function($action,$raw,$headers)use($reply):string{
+                $h=[];foreach($headers as $line){[$k,$v]=explode(': ',$line,2);$h[$k]=$v;}$payload=json_encode($reply);
+                return json_encode(['payload'=>$payload,'signature'=>hash_hmac('sha256',"branded-renewal-result-v1\n".$h['X-Renewal-Timestamp']."\n".$h['X-Renewal-Nonce']."\n".$payload,str_repeat('a',64))]);
+            });
+            problem(503,fn()=> $reader->identify('101',['activation_code'=>'123456']));
+        }
+    };
     $tests['signed eligibility cannot omit the current package or offer an alternate package']=function()use($simulationConfig):void{
         $base=['reseller_id'=>'101','line_id'=>'999','primary_match'=>true,'state'=>'expired','checked_at'=>time(),'expires_at'=>time()-60,'plans'=>[]];
         $p=['id'=>8,'name'=>'Other offered package','duration'=>1,'period'=>'months','max_connections'=>1,'fingerprint'=>str_repeat('d',64),'funded'=>true];
@@ -78,7 +95,7 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             problem(503,fn()=> $reader->eligibility('101','999',str_repeat('a',64)));
         }
     };
-    $checkoutFlow=function(array $alpha,array $tenantA,string $lineId,bool $lostReply=false)use($app,$simulationConfig,$owner,$settings,$gateway,$worker,$secrets):void{
+    $checkoutFlow=function(array $alpha,array $tenantA,string $lineId,bool $lostReply=false,bool $login=false)use($app,$simulationConfig,$owner,$settings,$gateway,$worker,$secrets):void{
         $artifacts=new ControlCenter\BrandArtifacts($app->db,$secrets,$simulationConfig);
         $brand=$app->db->one('SELECT * FROM app_brands WHERE tenant_id=?',[$tenantA['id']]);check($brand!==null);
         $app->db->query('UPDATE app_brands SET enabled=1 WHERE id=?',[$brand['id']]);
@@ -86,8 +103,10 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         $manifest=null;foreach($app->db->all('SELECT manifest FROM app_brand_builds WHERE brand_id=? ORDER BY created_at,id',[$brand['id']]) as $old){$candidate=json_decode($old['manifest'],true);if(isset($candidate['brand_id'],$candidate['assets'],$candidate['package_name'])){$manifest=$candidate;break;}}
         check($manifest!==null,'Published test fixture needs a complete cosmetic snapshot');
         $manifest=array_replace($manifest,['app_version'=>'2.0.126','app_version_code'=>442,'brand_version'=>$revision]);
+        if(!$login){
         $app->db->query('INSERT INTO app_brand_builds (id,brand_id,brand_version,app_version,manifest,requested_by,build_channel) VALUES (?,?,?,?,?,?,?)',[$build,$brand['id'],$revision,'2.0.126',json_encode($manifest),$owner['id'],'testing']);
         $artifacts->recordVerified($build,['channel'=>'testing','package_name'=>$brand['package_name'].'.test','version_name'=>'2.0.126.'.$revision.'-test','version_code'=>44200000+$revision,'trial_protocol'=>1,'signer_sha256'=>'3273d0b0294a689565ab4b0c8ef7e1887e2ca680240718f5521628b5c46328b7','apk_sha256'=>str_repeat('a',64),'artifact_url'=>'https://github.com/derangedchief-crypto/ARVIO/releases/download/brand-'.$brand['id'].'-testing/Brand-synthetic.apk']);
+        }
         $artifact=$artifacts->approved($brand['id'],'testing');check($artifact!==null);
         $customer=$app->management->createCustomer($alpha,['name'=>'TEST renewal customer','notes'=>'Keep these notes']);
         $device=$app->management->createDevice($alpha,['customer_id'=>$customer['id'],'label'=>'TEST renewal TV']);
@@ -103,19 +122,50 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         $app->db->query('INSERT INTO renewal_simulated_targets (reseller_id,line_id,primary_fingerprint,expires_at,plans,package_id) VALUES (?,?,?,?,?,?)',[$reseller,$lineId,$primary,time()-60,json_encode([$plan,$other]),$plan['id']]);
         if(!$settings->connection($tenantA['id']))$settings->saveConnection($alpha,['api_key'=>'mock_'.$tenantA['id'],'webhook_secret'=>'Synthetic-Owner-Renewal-Secret','mode'=>'mock']);
         if(!$settings->status($alpha,[])['prices'])$settings->savePrice($alpha,['package_id'=>777,'currency'=>'USD','amount'=>'10.50','enabled'=>true]);
-        $settings->savePrice($alpha,['package_id'=>778,'currency'=>'USD','amount'=>'99.00','enabled'=>true]);
+        if(!$app->db->one('SELECT id FROM renewal_plans WHERE tenant_id=? AND package_id=778',[$tenantA['id']]))$settings->savePrice($alpha,['package_id'=>778,'currency'=>'USD','amount'=>'99.00','enabled'=>true]);
         $otherPrice=array_values(array_filter($settings->status($alpha,[])['prices'],static fn($p)=>$p['package_id']===778))[0];
-        $payments=new ControlCenter\RenewalPayments($app->db,$simulationConfig,$app->auth,$app->management,$secrets,$artifacts,$settings,$gateway,$worker);
+        $checkoutWorker=$worker;
+        if($login){
+            $base=(new ControlCenter\RenewalSimulation($app->db,$simulationConfig))->transport();
+            $checkoutWorker=new ControlCenter\RenewalWorker($simulationConfig,static function($action,$raw,$headers)use($base,$reseller,$lineId,$primary):string{
+                if($action!=='identify')return $base($action,$raw,$headers);
+                $v=json_decode($raw,true);same($reseller,$v['reseller_id']);same('123456',$v['activation_code']);
+                $h=[];foreach($headers as $line){[$k,$value]=explode(': ',$line,2);$h[$k]=$value;}
+                $payload=json_encode(['reseller_id'=>$reseller,'line_id'=>$lineId,'primary_fingerprint'=>$primary]);
+                return json_encode(['payload'=>$payload,'signature'=>hash_hmac('sha256',"branded-renewal-result-v1\n".$h['X-Renewal-Timestamp']."\n".$h['X-Renewal-Nonce']."\n".$payload,str_repeat('a',64))]);
+            });
+            $app->db->query('DELETE FROM enrollment_requests WHERE device_id=?',[$device['id']]);
+            $app->db->query('UPDATE devices SET installation_id=?,key_fingerprint=?,app_package=? WHERE id=?',[ControlCenter\Database::id(),bin2hex(random_bytes(32)),$package,$device['id']]);
+            $app->db->query('DELETE FROM panel_customers WHERE panel_id=?',[$lineId]);
+        }
+        $payments=new ControlCenter\RenewalPayments($app->db,$simulationConfig,$app->auth,$app->management,$secrets,$artifacts,$settings,$gateway,$checkoutWorker);
         $refreshed=$plan;$refreshed['credits']='3';$refreshed['fingerprint']=str_repeat('e',64);
         $app->db->query('UPDATE renewal_simulated_targets SET plans=? WHERE reseller_id=? AND line_id=?',[json_encode([$refreshed,$other]),$reseller,$lineId]);
         $settings->setPolicy($owner,['enabled'=>true,'testing_only'=>true]);
         try{
+            if($login){
+                $counts=$app->db->one('SELECT (SELECT COUNT(*) FROM devices) AS devices,(SELECT COUNT(*) FROM enrollment_requests) AS requests,(SELECT COUNT(*) FROM device_credentials) AS credentials');
+                problem(403,fn()=> $payments->loginChallenge(['installation_id'=>$install,'app_package'=>'com.arvio.tv.test','key_fingerprint'=>$key],'127.0.0.91'));
+                $body=['installation_id'=>$install,'app_package'=>$package,'key_fingerprint'=>$key];
+                $challenge=$payments->loginChallenge($body,'127.0.0.91');$identity=['activation_code'=>'123456'];
+                openssl_sign(ControlCenter\RenewalPayments::loginSigningText($challenge['challenge'],$install,$package,$key,$identity),$signature,$private,OPENSSL_ALGO_SHA256);
+                $open=['installation_id'=>$install,'app_package'=>$package,'challenge'=>$challenge['challenge'],'public_key'=>$public,'identity'=>$identity,'signature'=>base64_encode($signature)];
+                problem(403,fn()=> $payments->loginOpen(array_replace($open,['identity'=>['activation_code'=>'654321']]),'127.0.0.91'));
+                $session=$payments->loginOpen($open,'127.0.0.91');
+                problem(403,fn()=> $payments->loginOpen($open,'127.0.0.91'));
+                same(true,$session['available']);same(true,$session['simulated']);
+                $row=$app->db->one('SELECT * FROM renewal_sessions WHERE token_hash=?',[$secrets->mac("renewal-checkout-token-v1\n".$session['session_token'])]);
+                same(null,$row['device_id']);same($install,$row['login_installation_id']);same($public,$row['login_public_key']);
+                same($counts,$app->db->one('SELECT (SELECT COUNT(*) FROM devices) AS devices,(SELECT COUNT(*) FROM enrollment_requests) AS requests,(SELECT COUNT(*) FROM device_credentials) AS credentials'));
+                check(!str_contains(json_encode($session),'123456'));check(!isset($session['credential'],$session['username'],$session['password']));
+            }else{
             $body=['device_id'=>$device['id'],'app_package'=>$package,'key_fingerprint'=>$key,'primary_fingerprint'=>$primary];
             $challenge=$payments->challenge($body,'127.0.0.98');same(true,$challenge['available']);
             openssl_sign(ControlCenter\RenewalPayments::signingText($challenge['challenge'],$device['id'],$package,$key,$primary),$signature,$private,OPENSSL_ALGO_SHA256);
             $open=$body+['challenge'=>$challenge['challenge'],'signature'=>base64_encode($signature)];
             $session=$payments->open($open,'127.0.0.98');same(true,$session['available']);same(true,$session['simulated']);
             problem(403,fn()=> $payments->open($open,'127.0.0.98'));
+            }
             $token=$session['session_token'];$info=$payments->info($token);check(!array_key_exists('plans',$info));$p=$info['renewal'];same(777,$p['package_id']);
             same(1050,$p['amount_minor']);same(str_repeat('e',64),$p['package_fingerprint']);check(!isset($p['package_snapshot'])); // Current panel cost can change without inventing/re-saving a reseller plan.
             problem(422,fn()=> $settings->savePrice($alpha,['id'=>$p['id'],'expected_revision'=>$p['revision'],'package_id'=>778,'currency'=>'USD','amount'=>'12.50','enabled'=>true]));
@@ -126,6 +176,7 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             $app->db->query('UPDATE renewal_simulated_targets SET package_id=778 WHERE reseller_id=? AND line_id=?',[$reseller,$lineId]);
             try{problem(409,fn()=> $payments->checkout($checkout,'127.0.0.98'));}
             finally{$app->db->query('UPDATE renewal_simulated_targets SET package_id=777 WHERE reseller_id=? AND line_id=?',[$reseller,$lineId]);}
+            if($login)$app->db->query('UPDATE devices SET installation_id=?,key_fingerprint=?,app_package=? WHERE id=?',[$install,$key,$package,$device['id']]);
             $app->db->query("UPDATE devices SET policy='blocked' WHERE id=?",[$device['id']]);
             try{problem(403,fn()=> $payments->checkout($checkout,'127.0.0.98'));}
             finally{$app->db->query("UPDATE devices SET policy='active' WHERE id=?",[$device['id']]);}
@@ -159,7 +210,7 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             same(0,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$order['id']])->fetchColumn());
             same(778,(int)$app->db->one('SELECT package_id FROM renewal_simulated_targets WHERE reseller_id=? AND line_id=?',[$reseller,$lineId])['package_id']);
             $app->db->query('UPDATE renewal_simulated_targets SET package_id=777 WHERE reseller_id=? AND line_id=?',[$reseller,$lineId]);
-            if($lostReply)$settings->setPolicy($owner,['enabled'=>false,'testing_only'=>true]); // Paid invoices still fulfil after new checkout is paused.
+            if($lostReply||$login)$settings->setPolicy($owner,['enabled'=>false,'testing_only'=>true]); // Paid invoices still fulfil after new checkout is paused.
             $payments->retry($alpha,$order['id']);same(true,$payments->processOne()['worked']);$done=$payments->status($token)['order'];same('paid',$done['payment_state']);same('fulfilled',$done['fulfilment_state']);
             $payments->simulate($alpha,$order['id']);$payments->processOne();
             same(1,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$order['id']])->fetchColumn());
@@ -173,6 +224,7 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         }finally{$settings->setPolicy($owner,['enabled'=>false,'testing_only'=>true]);}
     };
     $tests['renewal signed checkout verifies payment then fulfils same demo line once']=fn()=> $checkoutFlow($alpha,$tenantA,'987655');
+    $tests['expired activation code creates checkout without enrollment or app grants and fulfils once']=fn()=> $checkoutFlow($alpha,$tenantA,'987657',false,true);
     $tests['verified owner reseller uses the same signed checkout and same-line fulfilment safeguards']=function()use($app,$owner,$checkoutFlow):void{
         $tenant=$app->management->workspace($owner);
         $checkoutFlow($owner,$tenant,'987656',true);
@@ -260,7 +312,7 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
         $c=new ControlCenter\Config($config->root,array_replace($config->values,['renewal_worker'=>['mode'=>'renewals','shared_secret'=>str_repeat('a',64)],'renewal_payments'=>['allow_live_api'=>true,'simulation_enabled'=>false]]));$actions=[];
         $reader=new ControlCenter\RenewalWorker($c,static function($action,$raw,$headers)use(&$actions):string{
             $actions[]=$action;$h=[];foreach($headers as $line){[$k,$v]=explode(': ',$line,2);$h[$k]=$v;}
-            if($action==='status')$r=['schema_version'=>1,'service'=>'iptv-renewal-worker','mode'=>'renewals','configured'=>true,'catalogue_only'=>false,'writes_enabled'=>true,'atomic_renewal'=>1,'unique_payment_reference'=>1,'current_package_only'=>true];
+            if($action==='status')$r=['schema_version'=>1,'service'=>'iptv-renewal-worker','mode'=>'renewals','configured'=>true,'catalogue_only'=>false,'writes_enabled'=>true,'atomic_renewal'=>1,'unique_payment_reference'=>1,'current_package_only'=>true,'renewal_login'=>1];
             else{$v=json_decode($raw,true);$r=['reseller_id'=>$v['reseller_id'],'plans'=>[['id'=>7,'name'=>'Current offered package','credits'=>'2','duration'=>1,'period'=>'months','max_connections'=>1,'fingerprint'=>str_repeat('d',64),'funded'=>true]]];}
             $payload=json_encode($r);return json_encode(['payload'=>$payload,'signature'=>hash_hmac('sha256',"branded-renewal-result-v1\n".$h['X-Renewal-Timestamp']."\n".$h['X-Renewal-Nonce']."\n".$payload,str_repeat('a',64))]);
         });

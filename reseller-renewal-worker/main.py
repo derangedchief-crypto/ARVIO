@@ -85,7 +85,7 @@ app=FastAPI(title='IPTV Renewal Worker',lifespan=lifespan)
 
 def status():
     state_ready()
-    return {'schema_version':1,'service':'iptv-renewal-worker','service_pid':os.getpid(),'configured':True,'mode':'renewals','catalogue_only':False,'writes_enabled':True,'atomic_renewal':1,'unique_payment_reference':1,'current_package_only':True}
+    return {'schema_version':1,'service':'iptv-renewal-worker','service_pid':os.getpid(),'configured':True,'mode':'renewals','catalogue_only':False,'writes_enabled':True,'atomic_renewal':1,'unique_payment_reference':1,'current_package_only':True,'renewal_login':1}
 
 
 @app.get('/health')
@@ -98,7 +98,7 @@ def bridge_health():return status()
 
 @app.post('/branded-renewals/{action}')
 async def request(action:str,request:Request):
-    if action not in ['status','catalog','eligibility','renew']:raise HTTPException(404,'Unknown renewal action')
+    if action not in ['status','catalog','eligibility','renew','identify']:raise HTTPException(404,'Unknown renewal action')
     raw=bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)
@@ -110,6 +110,8 @@ async def request(action:str,request:Request):
         if action=='status':
             if value!={}:raise ValueError()
             result=status()
+        elif action=='identify':
+            result=await run_in_threadpool(adapter.identify,value)
         elif action=='catalog':
             if not isinstance(value,dict) or set(value)!={'reseller_id'} or not isinstance(value['reseller_id'],str) or not re.fullmatch('[1-9][0-9]{0,18}',value['reseller_id']):raise ValueError()
             result=await run_in_threadpool(adapter.catalog,value['reseller_id'])

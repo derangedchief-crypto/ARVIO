@@ -9,7 +9,7 @@ final class RenewalWorker {
         $c=$this->config->get('renewal_worker',[]);$key=$c['shared_secret']??'';
         if(($c['mode']??null)==='catalogue_only'&&!in_array($action,['catalog','status'],true))throw new Problem(503,'Catalogue-only connection: checkout and renewal writes remain disabled.');
         if(!is_string($key)||!preg_match('/^[a-f0-9]{64}$/D',$key))throw new Problem(503,'Configure the separate renewal worker connection.');
-        if(!in_array($action,['catalog','eligibility','renew','status'],true))throw new \LogicException('Invalid internal renewal action');
+        if(!in_array($action,['catalog','eligibility','renew','status','identify'],true))throw new \LogicException('Invalid internal renewal action');
         $raw=json_encode($action==='status'?(object)$input:$input,JSON_THROW_ON_ERROR);$stamp=(string)time();$nonce=bin2hex(random_bytes(16));
         $signature=hash_hmac('sha256',"branded-renewal-request-v1\n$stamp\n$nonce\n$raw",$key);
         $headers=['Content-Type: application/json','X-Renewal-Timestamp: '.$stamp,'X-Renewal-Nonce: '.$nonce,'X-Renewal-Signature: '.$signature];
@@ -20,6 +20,7 @@ final class RenewalWorker {
             $response='';$curl=curl_init(rtrim($url,'/').'/branded-renewals/'.$action);
             curl_setopt_array($curl,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>$raw,CURLOPT_HTTPHEADER=>$headers,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_CONNECTTIMEOUT=>5,CURLOPT_TIMEOUT=>25,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_WRITEFUNCTION=>static function($h,$chunk)use(&$response){if(strlen($response)+strlen($chunk)>2000000)return 0;$response.=$chunk;return strlen($chunk);}]);
             $ok=curl_exec($curl);$status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);curl_close($curl);
+            if($ok!==false&&$action==='identify'&&$status===422)throw new Problem(422,'This account is not eligible for renewal in this app.');
             if($ok!==false&&$action==='renew'&&in_array($status,[409,422],true))throw new Problem(409,'The worker requires review of the original paid invoice or current account/package state. No new customer charge was requested.');
             if($ok===false||$status!==200)throw new Problem(503,($c['mode']??null)==='catalogue_only'?'Catalogue-only worker unavailable (HTTP '.$status.'). Check the auth-host connection and /branded-renewals/ proxy; no panel changes requested.':'Renewal worker unavailable; retain the original order.');
         }
@@ -36,6 +37,11 @@ final class RenewalWorker {
         if(($r['reseller_id']??null)!==$reseller||!is_array($r['plans']??null)||!array_is_list($r['plans']))throw new Problem(503,'Renewal catalog scope mismatch.');
         foreach($r['plans'] as $p)self::plan($p);return $r['plans'];
     }
+    public function identify(string $reseller,array $identity):array {
+        $r=$this->request('identify',['reseller_id'=>$reseller]+$identity);
+        if(count($r)!==3||array_diff(array_keys($r),['reseller_id','line_id','primary_fingerprint'])||($r['reseller_id']??null)!==$reseller||!is_string($r['line_id']??null)||!preg_match('/^[1-9][0-9]{0,18}$/D',$r['line_id'])||!is_string($r['primary_fingerprint']??null)||!preg_match('/^[a-f0-9]{64}$/D',$r['primary_fingerprint']))throw new Problem(503,'Renewal login verification failed.');
+        return $r;
+    }
     public function connectionStatus():array {
         $r=$this->request('status',[]);
         if(($r['schema_version']??null)!==1||($r['configured']??null)!==true||($r['catalogue_only']??null)!==true||($r['writes_enabled']??null)!==false)throw new Problem(503,'Worker has not confirmed that renewal writes are disabled.');
@@ -44,7 +50,8 @@ final class RenewalWorker {
     public function productionStatus():array {
         $r=$this->request('status',[]);
         if(($r['schema_version']??null)!==1||($r['service']??null)!=='iptv-renewal-worker'||($r['mode']??null)!=='renewals'||($r['catalogue_only']??null)!==false||($r['configured']??null)!==true||($r['writes_enabled']??null)!==true||($r['atomic_renewal']??null)!==1||($r['unique_payment_reference']??null)!==1||($r['current_package_only']??null)!==true)throw new Problem(503,'The separate renewal worker has not confirmed its payment/renewal safeguards.');
-        return ['connected'=>true,'mode'=>'renewals','writes_enabled'=>true,'atomic_renewal'=>true,'current_package_only'=>true];
+        if(($r['renewal_login']??null)!==1)throw new Problem(503,'Update the separate renewal worker for expired-code checkout before connecting this website version.');
+        return ['connected'=>true,'mode'=>'renewals','writes_enabled'=>true,'atomic_renewal'=>true,'current_package_only'=>true,'renewal_login'=>true];
     }
     public static function plan(array $p):void {
         foreach(['id','duration','max_connections'] as $k)if(!is_int($p[$k]??null)||$p[$k]<1)throw new Problem(503,'Invalid renewal package limits.');
