@@ -14,7 +14,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     let body,status=200;
     if(path.endsWith('/info'))body=info();
     else if(path.endsWith('/route')){
-      routeRequests++;assert.equal(request.postDataJSON().cancel_previous,!!current);
+      routeRequests++;assert.equal(request.postDataJSON().cancel_previous,false);
       if(current&&!canExpire){status=409;body={error:'The provider has not confirmed that the old invoice expired unpaid. Do not create another payment.'};}
       else{current=null;body=info();}
     }else if(path.endsWith('/checkout')){creates++;throw new Error('No checkout should be created by these UI checks.');}
@@ -36,10 +36,10 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     console.log('PASS declining cancellation confirmation sends no route or payment request');
     await page.locator('#apply-route').click();await page.waitForFunction(()=>document.getElementById('error').textContent.includes('not confirmed'));
     assert.equal(creates,0);assert(await page.locator('#route').isVisible());assert(await page.locator('#continue').isHidden());
-    console.log('PASS unresolved provider invoice cannot be replaced by the browser or create a second charge');
+    console.log('PASS a failed switch keeps the existing order and does not silently create a charge');
     canExpire=true;await page.locator('#apply-route').click();await page.locator('#checkout').waitFor({state:'visible'});
     assert.equal(await page.locator('#gateway').inputValue(),'square');assert.equal(creates,0);
-    console.log('PASS provider-confirmed expiry response opens the selected new gateway quote without making a payment');
+    console.log('PASS successful immediate switch opens the selected quote without submitting a payment');
 
     current={...order};canExpire=false;await page.reload();await page.locator('#route').waitFor({state:'visible'});
     current=null;await nextPoll();await page.locator('#checkout').waitFor({state:'visible'});

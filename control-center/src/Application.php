@@ -172,6 +172,7 @@ final class Application
         if($method==='POST'&&$path==='/api/renewals/policy')Http::json($this->renewalSettings->setPolicy($actor,Http::body()));
         if($method==='POST'&&$path==='/api/renewals/connection')Http::json($this->renewalSettings->saveConnection($actor,Http::body()));
         if($method==='POST'&&$path==='/api/renewals/connection-setup')Http::json($this->renewalSettings->prepareConnection($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/gateway-availability')Http::json($this->renewalSettings->setAvailability($actor,Http::body()));
         if($method==='POST'&&$path==='/api/renewals/routing')Http::json($this->renewalSettings->saveRoutes($actor,Http::body()));
         if($method==='POST'&&$path==='/api/renewals/prices')Http::json($this->renewalSettings->savePrice($actor,Http::body()));
         if($method==='POST'&&$path==='/api/renewals/plans')throw new Problem(422,'Custom renewal plans are not supported. Set money pricing for an offered panel package.');

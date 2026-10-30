@@ -26,13 +26,41 @@ final class RenewalSettings {
     }
     public function connection(string $tenant,string $gateway='rampex'):?array {return $this->db->one('SELECT * FROM renewal_connections WHERE tenant_id=? AND gateway=? AND enabled=1 ORDER BY created_at DESC,id DESC LIMIT 1',[$tenant,$gateway]);}
     public function connections(string $tenant):array {return $this->db->all('SELECT * FROM renewal_connections WHERE tenant_id=? AND enabled=1 ORDER BY created_at DESC,id DESC',[$tenant]);}
+    public function availability(string $tenant):array {
+        $out=array_fill_keys(['stripe','square','rampex'],['enabled'=>true,'revision'=>0]);
+        foreach($this->db->all('SELECT gateway,enabled,revision FROM renewal_gateway_availability WHERE tenant_id=?',[$tenant]) as $r)$out[$r['gateway']]=['enabled'=>(bool)$r['enabled'],'revision'=>(int)$r['revision']];
+        return $out;
+    }
+    public function checkoutEnabled(string $tenant,string $gateway):bool {return $this->availability($tenant)[$gateway]['enabled']??false;}
+    public function setAvailability(array $actor,array $input):array {
+        Input::keys($input,['tenant_id','gateway','connection_id','enabled','expected_revision']);$t=$this->workspace($actor,$input['tenant_id']??null);$gateway=$input['gateway']??null;
+        if(!in_array($gateway,['stripe','square','rampex'],true)||!is_bool($input['enabled']??null))throw new Problem(422,'Choose a supported gateway and checkout availability.');
+        $id=Input::id($input['connection_id']??null);$expected=Input::integer($input['expected_revision']??null,0,2147483647);$enabled=$input['enabled'];
+        $this->db->transaction(function()use($actor,$t,$gateway,$id,$expected,$enabled):void{
+            $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$t['id']]);
+            $c=$this->connection($t['id'],$gateway);
+            if(!$c||$c['id']!==$id)throw new Problem(409,'Merchant connection changed; refresh before changing checkout availability.');
+            $old=$this->availability($t['id'])[$gateway];
+            if($old['revision']!==$expected)throw new Problem(409,'Gateway availability changed; refresh before saving.');
+            $this->db->query('INSERT INTO renewal_gateway_availability (tenant_id,gateway,enabled,revision) VALUES (?,?,?,1) ON DUPLICATE KEY UPDATE enabled=VALUES(enabled),revision=revision+1',[$t['id'],$gateway,(int)$enabled]);
+            if(!$enabled){
+                // Disabling is an explicit local handover, NOT a claim that the
+                // external payment link was cancelled. Keep every old record.
+                $this->db->query("UPDATE renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id SET o.checkout_superseded=1 WHERE o.tenant_id=? AND c.gateway=? AND o.payment_state IN ('creating','awaiting','link_uncertain','verification_pending','review') AND o.fulfilment_state!='fulfilled'",[$t['id'],$gateway]);
+                $this->db->query('UPDATE renewal_sessions s JOIN renewal_orders o ON o.id=s.order_id SET s.order_id=NULL WHERE s.tenant_id=? AND o.checkout_superseded=1',[$t['id']]);
+                $this->db->query("UPDATE renewal_route_switches r SET r.state='completed',r.token=REPLACE(UUID(),'-',''),r.updated_at=UTC_TIMESTAMP() WHERE r.tenant_id=? AND r.state IN ('ready','switching','blocked') AND EXISTS (SELECT 1 FROM renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id WHERE o.tenant_id=r.tenant_id AND o.line_id=r.line_id AND o.primary_fingerprint=r.primary_fingerprint AND o.checkout_superseded=1 AND c.gateway=?) AND NOT EXISTS (SELECT 1 FROM renewal_orders p WHERE p.tenant_id=r.tenant_id AND p.line_id=r.line_id AND p.primary_fingerprint=r.primary_fingerprint AND p.checkout_superseded=0 AND p.fulfilment_state!='fulfilled' AND p.payment_state IN ('creating','awaiting','link_uncertain','verification_pending','paid','review'))",[$t['id'],$gateway]);
+            }
+            $this->auth->audit($actor,'renewals.gateway_availability_changed',$id,$t['id'],['gateway'=>$gateway,'enabled'=>$enabled]);
+        });return $this->status($actor,['tenant_id'=>$t['id']]);
+    }
     public function routing(string $tenant):array {
         $out=[];foreach(['US','CA'] as $country){$r=$this->db->one('SELECT gateways,revision FROM renewal_gateway_routes WHERE tenant_id=? AND country=?',[$tenant,$country]);$out[$country]=['gateways'=>$r?json_decode($r['gateways'],true,8,JSON_THROW_ON_ERROR):($country==='CA'?['stripe','square']:['stripe','square','rampex']),'revision'=>(int)($r['revision']??0)];}return $out;
     }
     public function candidates(string $tenant,string $country,string $currency,bool $testing):array {
         if(!in_array($country,['US','CA'],true))throw new Problem(422,'Confirm USA or Canada before requesting renewal checkout.');
-        $connections=$this->connections($tenant);$result=[];
+        $connections=$this->connections($tenant);$availability=$this->availability($tenant);$result=[];
         foreach($this->routing($tenant)[$country]['gateways'] as $gateway)foreach($connections as $c){
+            if(!$availability[$gateway]['enabled'])continue;
             if($c['gateway']!==$gateway||(!$testing&&$c['mode']!=='live')||!$this->gateway->supports($c,$country,$currency))continue;
             $result[]=$c;break;
         }return $result;
@@ -53,7 +81,8 @@ final class RenewalSettings {
         Input::keys($input,['tenant_id']);$t=$this->workspace($actor,$input['tenant_id']??null);$c=$this->connection($t['id']);
         $plans=$this->db->all('SELECT id,name,country,currency,amount_minor,package_id,package_snapshot,plan_fingerprint,revision,enabled FROM renewal_plans WHERE tenant_id=? ORDER BY created_at,id',[$t['id']]);
         foreach($plans as &$p){$p['amount_minor']=(int)$p['amount_minor'];$p['currency_exponent']=RampexPaymentVerifier::exponent($p['currency']);$p['package_id']=(int)$p['package_id'];$p['revision']=(int)$p['revision'];$p['enabled']=(bool)$p['enabled'];$p['package']=json_decode($p['package_snapshot'],true,16,JSON_THROW_ON_ERROR);unset($p['package_snapshot']);}unset($p);
-        $public=fn($v)=>['id'=>$v['id'],'gateway'=>$v['gateway'],'merchant_id'=>$v['merchant_id'],'business_name'=>$v['business_name'],'mode'=>$v['mode'],'api_key_saved'=>true,'webhook_secret_saved'=>true,'webhook_verified_at'=>$v['webhook_verified_at']??null,'webhook_url'=>$this->config->origin().'/api/renewals/webhooks/'.$v['id']];
+        $availability=$this->availability($t['id']);
+        $public=fn($v)=>['id'=>$v['id'],'gateway'=>$v['gateway'],'merchant_id'=>$v['merchant_id'],'business_name'=>$v['business_name'],'mode'=>$v['mode'],'checkout_enabled'=>$availability[$v['gateway']]['enabled'],'availability_revision'=>$availability[$v['gateway']]['revision'],'api_key_saved'=>true,'webhook_secret_saved'=>true,'webhook_verified_at'=>$v['webhook_verified_at']??null,'webhook_url'=>$this->config->origin().'/api/renewals/webhooks/'.$v['id']];
         return ['tenant_id'=>$t['id'],'policy'=>$this->policy(),'currency_exponents'=>RampexPaymentVerifier::currencyExponents(),'catalogue_only'=>($this->config->get('renewal_worker',[])['mode']??null)==='catalogue_only','connection'=>$c?$public($c):null,'connections'=>array_map($public,$this->connections($t['id'])),'routing'=>$this->routing($t['id']),'prices'=>$plans,'simulation_allowed'=>$this->gateway->mockAllowed()];
     }
     public function saveConnection(array $actor,array $input):array {

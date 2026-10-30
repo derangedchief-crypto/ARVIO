@@ -11,7 +11,11 @@ final class RenewalPayments {
     private function country(mixed $value):string {if(!in_array($value,['US','CA'],true))throw new Problem(422,'Confirm USA or Canada before continuing.');return $value;}
     private function routes(array $s,array $price):array {return $this->settings->candidates($s['tenant_id'],$s['country'],$price['currency'],str_ends_with($s['app_package'],'.test'));}
     private function selectedConnection(array $s,array $price):?array {
-        foreach($this->routes($s,$price) as $c)if(($s['gateway']??null)===null||$c['gateway']===$s['gateway'])return $c;return null;
+        $routes=$this->routes($s,$price);
+        foreach($routes as $c)if(($s['gateway']??null)===null||$c['gateway']===$s['gateway'])return $c;
+        // A paused selection automatically returns to the reseller's ordered
+        // country default, never an arbitrary gateway or a different currency.
+        return isset($s['gateway'])&&!$this->settings->checkoutEnabled($s['tenant_id'],$s['gateway'])?($routes[0]??null):null;
     }
     private function enabled(string $package):bool {
         $p=$this->settings->policy();return $p['enabled']&&(!$p['testing_only']||str_ends_with($package,'.test'));
@@ -161,23 +165,26 @@ final class RenewalPayments {
         return ['id'=>$p['id'],'package_id'=>$current['id'],'name'=>$current['name'],'revision'=>(int)$p['revision'],'package_fingerprint'=>$current['fingerprint'],'package_snapshot'=>$current,'currency'=>$p['currency'],'currency_exponent'=>RampexPaymentVerifier::exponent($p['currency']),'amount_minor'=>(int)$p['amount_minor'],'duration'=>$current['duration'],'period'=>$current['period'],'max_connections'=>$current['max_connections']];
     }
     private function currentOrder(array $s):?array {
-        // A local quote timeout does not cancel a provider payment link. Keep
-        // unresolved orders blocking across brands/devices until reconciled.
-        return $this->db->one("SELECT * FROM renewal_orders WHERE tenant_id=? AND line_id=? AND primary_fingerprint=? AND fulfilment_state!='fulfilled' AND payment_state IN ('creating','awaiting','link_uncertain','verification_pending','paid','review') ORDER BY created_at DESC,id DESC LIMIT 1",[$s['tenant_id'],$s['line_id'],$s['primary_fingerprint']]);
+        // Timeouts alone do not retire links. Explicit provider handover or
+        // disabling a gateway supersedes old attempts without deleting evidence.
+        return $this->db->one("SELECT * FROM renewal_orders WHERE tenant_id=? AND line_id=? AND primary_fingerprint=? AND checkout_superseded=0 AND fulfilment_state!='fulfilled' AND payment_state IN ('creating','awaiting','link_uncertain','verification_pending','paid','review') ORDER BY created_at DESC,id DESC LIMIT 1",[$s['tenant_id'],$s['line_id'],$s['primary_fingerprint']]);
     }
     private function publicOrder(?array $o):?array {
         if(!$o)return null;$c=$this->db->one('SELECT gateway FROM renewal_connections WHERE id=?',[$o['connection_id']]);
-        return ['id'=>$o['id'],'payment_state'=>$o['payment_state'],'fulfilment_state'=>$o['fulfilment_state'],'currency'=>$o['currency'],'amount_minor'=>(int)$o['amount_minor'],'payment_url'=>$o['payment_state']==='awaiting'&&$o['void_state']===null?$o['provider_url']:null,'gateway'=>$c['gateway']??null,'country'=>$o['country']??null,'void_state'=>$o['void_state']];
+        $disabled=$c&&!$this->settings->checkoutEnabled($o['tenant_id'],$c['gateway']);
+        return ['id'=>$o['id'],'payment_state'=>$o['payment_state'],'fulfilment_state'=>$o['fulfilment_state'],'currency'=>$o['currency'],'amount_minor'=>(int)$o['amount_minor'],'payment_url'=>$o['payment_state']==='awaiting'&&$o['void_state']===null&&!$disabled&&!$o['checkout_superseded']?$o['provider_url']:null,'gateway'=>$c['gateway']??null,'gateway_disabled'=>$disabled,'country'=>$o['country']??null,'void_state'=>$o['void_state']];
     }
     public function info(string $token):array {
         $s=$this->session($token);$o=$s['order_id']?$this->db->one('SELECT * FROM renewal_orders WHERE id=?',[$s['order_id']]):$this->currentOrder($s);$seller=$this->db->one('SELECT name FROM tenants WHERE id=?',[$s['tenant_id']]);$c=$this->settings->connection($s['tenant_id'],$s['gateway']??'rampex');
+        if($o&&$o['checkout_superseded'])$o=$this->currentOrder($s);
         if($o&&in_array($o['payment_state'],['not_created','expired'],true))$o=null;
         $this->auth->limit('renewal-capability',$s['id'],60,60);
         if($o){$this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$o['id'],$s['id']]);$c=$this->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);}
         $renewal=null;if((!$o||$o['payment_state']==='awaiting')&&$s['open']){try{$this->session($token,true);$renewal=$this->eligiblePrice($s,$this->eligibility($s));}catch(Problem){}}
         if($renewal!==null)unset($renewal['package_snapshot']); // Wholesale credits/bouquets stay server-side.
         $gateways=$renewal&&in_array($s['country'],['US','CA'],true)?array_map(static fn($v)=>['gateway'=>$v['gateway'],'sandbox'=>$v['mode']!=='live'],$this->routes($s,$renewal)):[];
-        return ['reseller'=>$seller['name']??'Your provider','target_label'=>'Existing account ending '.substr($s['line_id'],-4),'renewal'=>$renewal,'order'=>$this->publicOrder($o),'expires_at'=>$s['expires_at'],'simulated'=>$c&&$c['mode']!=='live','country'=>$s['country'],'gateway'=>$s['gateway'],'gateways'=>$gateways];
+        $selected=$renewal?$this->selectedConnection($s,$renewal):null;if(!$o&&$selected)$c=$selected;
+        return ['reseller'=>$seller['name']??'Your provider','target_label'=>'Existing account ending '.substr($s['line_id'],-4),'renewal'=>$renewal,'order'=>$this->publicOrder($o),'expires_at'=>$s['expires_at'],'simulated'=>$c&&$c['mode']!=='live','country'=>$s['country'],'gateway'=>$selected['gateway']??$s['gateway'],'gateways'=>$gateways];
     }
     public function selectRoute(array $input):array {
         Input::keys($input,['session_token','country','gateway','cancel_previous']);$token=Input::text($input['session_token']??null,'checkout token',64);$s=$this->session($token,true);$country=$this->country($input['country']??null);$gateway=$input['gateway']??null;
@@ -186,7 +193,10 @@ final class RenewalPayments {
         if(isset($input['cancel_previous'])&&!is_bool($input['cancel_previous']))throw new Problem(422,'Invalid checkout cancellation consent.');
         $candidate=array_replace($s,['country'=>$country,'gateway'=>$gateway]);$eligible=$this->eligibility($candidate);$price=$this->eligiblePrice($candidate,$eligible);$connection=$price?$this->selectedConnection($candidate,$price):null;
         if(!$price||!$connection)throw new Problem(409,'The replacement gateway is not available for this country and currency.');
-        $this->voids()->switch($s,$country,$connection['gateway'],(int)$eligible['expires_at'],($input['cancel_previous']??false)===true);return $this->info($token);
+        // Even cached older clients sending cancel_previous must not get stuck
+        // waiting on an external cancellation. Keep the field for compatibility.
+        $this->voids()->handover($s,$country,$connection['gateway'],(int)$eligible['expires_at']);
+        return $this->info($token);
     }
     public function checkout(array $input,string $ip):array {
         Input::keys($input,['session_token','price_id','price_revision','package_fingerprint','email']);$s=$this->session(Input::text($input['session_token']??null,'checkout token',64),true);
@@ -194,13 +204,19 @@ final class RenewalPayments {
         $eligibility=$this->eligibility($s);$plan=$this->eligiblePrice($s,$eligibility);
         if(!$plan||$plan['id']!==($input['price_id']??null)||$plan['revision']!==($input['price_revision']??null)||$plan['package_fingerprint']!==($input['package_fingerprint']??null))throw new Problem(409,'Current package or price changed or is unavailable. Refresh before paying.');
         $this->country($s['country']);$connection=$this->selectedConnection($s,$plan);if(!$connection)throw new Problem(409,'Provider payments are unavailable for this country and currency.');
-        $created=$this->db->transaction(function()use($s,$plan,$email,$connection,$eligibility):array{
+        $created=$this->db->transaction(function()use($s,$plan,$email,&$connection,$eligibility):array{
             // Login checkout may precede management enrollment/panel sync, so a
             // panel_customers row is not a reliable shared invoice lock.
             $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$s['tenant_id']]);
             $freshRoute=$this->db->one('SELECT country,gateway FROM renewal_sessions WHERE id=? FOR UPDATE',[$s['id']]);
-            $this->voids()->assertCheckout($s,(int)$eligibility['expires_at']);
             if(!$freshRoute||$freshRoute['country']!==$s['country']||$freshRoute['gateway']!==$s['gateway'])throw new Problem(409,'Payment route changed. Refresh before creating a checkout.');
+            $connection=$this->selectedConnection($s,$plan);
+            if(!$connection)throw new Problem(409,'No enabled payment gateway is available for this country and currency.');
+            if($connection['gateway']!==$s['gateway']&&!$this->currentOrder($s)){
+                $this->db->query("UPDATE renewal_route_switches SET gateway=?,updated_at=UTC_TIMESTAMP() WHERE tenant_id=? AND line_id=? AND primary_fingerprint=? AND state='ready' AND gateway=?",[$connection['gateway'],$s['tenant_id'],$s['line_id'],$s['primary_fingerprint'],$s['gateway']]);
+                $this->db->query('UPDATE renewal_sessions SET gateway=? WHERE id=?',[$connection['gateway'],$s['id']]);$s['gateway']=$connection['gateway'];
+            }
+            $this->voids()->assertCheckout($s,(int)$eligibility['expires_at']);
             $this->db->one('SELECT panel_id FROM panel_customers WHERE panel_id=? FOR UPDATE',[$s['line_id']]);
             if($old=$this->currentOrder($s)){$this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$old['id'],$s['id']]);return ['created'=>false,'order'=>$old];}
             if(!$this->db->one('SELECT id FROM renewal_connections WHERE id=? AND tenant_id=? AND enabled=1 FOR UPDATE',[$connection['id'],$s['tenant_id']]))throw new Problem(409,'Merchant connection changed. Refresh before paying.');
@@ -220,14 +236,18 @@ final class RenewalPayments {
             catch(RampexLinkRejected $error){$this->db->query("UPDATE renewal_orders SET payment_state='not_created' WHERE id=?",[$o['id']]);throw new Problem(422,$error->getMessage());}
             catch(\Throwable){$this->db->query("UPDATE renewal_orders SET payment_state='link_uncertain' WHERE id=?",[$o['id']]);throw new Problem(503,'Payment link preparation is uncertain. Keep this order and contact your provider; do not pay again.');}
         }
-        return ['order'=>$this->publicOrder($this->db->one('SELECT * FROM renewal_orders WHERE id=?',[$o['id']]))];
+        $fresh=$this->db->one('SELECT * FROM renewal_orders WHERE id=?',[$o['id']]);
+        if($fresh['checkout_superseded'])return $this->checkout($input,$ip);
+        return ['order'=>$this->publicOrder($fresh)];
     }
     public function status(string $token):array {
         $s=$this->session($token);$o=$s['order_id']?$this->db->one('SELECT * FROM renewal_orders WHERE id=?',[$s['order_id']]):$this->currentOrder($s);
+        if($o&&$o['checkout_superseded'])$o=$this->currentOrder($s);
         if($o&&in_array($o['payment_state'],['not_created','expired'],true))$o=null;
         $this->auth->limit('renewal-capability',$s['id'],60,60);
         $c=$o?$this->db->one('SELECT mode FROM renewal_connections WHERE id=?',[$o['connection_id']]):null;
-        return ['schema_version'=>1,'order'=>$this->publicOrder($o),'simulated'=>$c&&$c['mode']!=='live'];
+        $disabled=array_keys(array_filter($this->settings->availability($s['tenant_id']),static fn($v)=>!$v['enabled']));
+        return ['schema_version'=>1,'order'=>$this->publicOrder($o),'simulated'=>$c&&$c['mode']!=='live','disabled_gateways'=>$disabled];
     }
     public function webhook(string $connectionId,string $raw,string $signature):array {
         $c=$this->db->one('SELECT * FROM renewal_connections WHERE id=?',[Input::id($connectionId)])??throw new Problem(401,'Invalid payment notification.');
@@ -266,10 +286,11 @@ final class RenewalPayments {
     }
     public function orders(array $actor,array $input):array {
         Input::keys($input,['tenant_id']);$t=$this->settings->workspace($actor,$input['tenant_id']??null);
-        return ['items'=>$this->db->all('SELECT o.id,o.payment_state,o.fulfilment_state,o.currency,o.amount_minor,o.created_at,o.paid_at,c.mode FROM renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id WHERE o.tenant_id=? ORDER BY o.created_at DESC,o.id LIMIT 50',[$t['id']]),'simulation_allowed'=>$this->gateway->mockAllowed()];
+        return ['items'=>$this->db->all('SELECT o.id,o.payment_state,o.fulfilment_state,o.checkout_superseded,o.currency,o.amount_minor,o.created_at,o.paid_at,c.mode FROM renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id WHERE o.tenant_id=? ORDER BY o.created_at DESC,o.id LIMIT 50',[$t['id']]),'simulation_allowed'=>$this->gateway->mockAllowed()];
     }
     public function retry(array $actor,string $id):array {
         $o=$this->ownedOrder($actor,$id);
+        if($o['checkout_superseded'])throw new Problem(409,'This invoice was superseded when its gateway was disabled. Reconcile any received funds manually; do not renew it again.');
         if($o['fulfilment_state']==='fulfilled')throw new Problem(409,'A fulfilled invoice cannot be renewed again.');
         if($o['payment_state']!=='paid'){
             if(!in_array($o['payment_state'],['review','verification_pending'],true)||!$this->db->one("SELECT id FROM renewal_events WHERE order_id=? AND state IN ('review','pending','processing') LIMIT 1",[$id]))throw new Problem(409,'Only the original received payment evidence may be rechecked.');
@@ -333,7 +354,8 @@ final class RenewalPayments {
                         // Local QR/quote expiry cannot cancel money the provider
                         // accepted. Honour this verified immutable quote once;
                         // current ownership/package checks still gate fulfilment.
-                        if($current['payment_state']!=='paid')$this->db->query("UPDATE renewal_orders SET payment_state='paid',paid_at=UTC_TIMESTAMP(),fulfilment_state='pending' WHERE id=?",[$o['id']]);
+                        if($current['checkout_superseded'])$this->db->query("UPDATE renewal_orders SET payment_state='paid',paid_at=COALESCE(paid_at,UTC_TIMESTAMP()),fulfilment_state='needs_review' WHERE id=?",[$o['id']]);
+                        elseif($current['payment_state']!=='paid')$this->db->query("UPDATE renewal_orders SET payment_state='paid',paid_at=UTC_TIMESTAMP(),fulfilment_state='pending' WHERE id=?",[$o['id']]);
                         $this->db->query("UPDATE renewal_events SET state='verified' WHERE id=?",[$event['id']]);
                     });
                 }

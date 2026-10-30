@@ -17,6 +17,13 @@ window.Renewals={async render(epoch){
       card.append(el('p',c?`${c.business_name} · ${c.merchant_id} · ${c.mode==='live'?'Live merchant':'TEST ONLY — no real renewal'}`:'Not connected.'));
       card.append(el('p',gateway==='square'?'Use your Square developer access token, an active card-enabled Location ID, and webhook signature key. Token permissions must allow merchant/location reads, order read/write and payment read/write. Subscribe to payment.created and payment.updated.':gateway==='stripe'?'Use your Stripe secret/restricted API key and this endpoint’s whsec_ webhook signing secret. Restricted keys need account read, Checkout Sessions read/write, and PaymentIntents/Charges read. Subscribe to checkout.session.completed, checkout.session.async_payment_succeeded and checkout.session.expired.':'In Rampex Settings, configure your payout wallet, create an API key and copy your Webhook Secret. Rampex routing is US-only; it is not offered for Canada.','scope-label'));
       if(c)card.append(el('p','Configure this exact webhook URL in '+names[gateway]+':'),el('code',c.webhook_url,'brand-download'),el('p',c.webhook_verified_at?'Webhook signature verified: '+c.webhook_verified_at+' UTC':'Webhook not yet seen. Finish provider webhook setup before testing payments.','scope-label'));
+      if(c){
+        const enabled=c.checkout_enabled!==false;
+        card.append(el('p',enabled?'New checkouts: ENABLED':'New checkouts: DISABLED — connection values saved','scope-label'));
+        if(!data.catalogue_only)card.append(button((enabled?'Disable ':'Enable ')+names[gateway]+' checkouts',()=>modal(names[gateway]+' checkout availability',[
+          {key:'enabled',label:'New customer checkouts',value:enabled?'off':'on',options:[['off','Disabled — keep saved connection'],['on','Enabled']],hint:'Customers automatically move to the enabled country default without waiting for old invoice expiry. Saved keys, webhook URL and preferences remain. Old unpaid attempts are superseded locally, NOT cancelled externally: old links may still accept funds. Late money is held for manual reconciliation, never a second renewal. Replacing the connection does not re-enable it.'}
+        ],v=>api('/api/renewals/gateway-availability',{tenant_id:tenant,gateway,connection_id:c.id,expected_revision:c.availability_revision??0,enabled:v.enabled==='on'}))));
+      }
       if(!data.catalogue_only)card.append(button(c?'Replace '+names[gateway]+' connection':'Connect '+names[gateway],async()=>{try{
         const setup=await api('/api/renewals/connection-setup',{tenant_id:tenant,gateway});if(epoch!==state.epoch)return;
         modal(names[gateway]+' merchant connection',[
@@ -62,9 +69,9 @@ window.Renewals={async render(epoch){
     main.append(panel('Recent renewal orders',el('p','Up to 50 recent orders. A paid order is never charged again when fulfilment needs repair.','scope-label'),table(['Order','Payment','Renewal','Actions'],orders.items.map(o=>{
       const actions=el('div',null,'actions');
       if(o.mode==='mock'&&orders.simulation_allowed)actions.append(button('Simulate payment',async()=>{await api('/api/renewals/orders/'+o.id+'/simulate',{});if(state.user.role==='owner')await api('/api/renewals/process-demo',{});route();}));
-       if(o.payment_state==='paid'&&o.fulfilment_state!=='fulfilled')actions.append(button('Retry same renewal',async()=>{await api('/api/renewals/orders/'+o.id+'/retry',{});toast('Same order queued. No new charge.');route();}));
-       if(['review','verification_pending'].includes(o.payment_state)&&o.fulfilment_state!=='fulfilled')actions.append(button('Recheck same payment',async()=>{await api('/api/renewals/orders/'+o.id+'/retry',{});toast('Original payment evidence queued for verification. No new charge.');route();}));
-      return [cellName(o.id,money(o)),o.payment_state,o.fulfilment_state,actions];
+        if(o.payment_state==='paid'&&o.fulfilment_state!=='fulfilled'&&!Number(o.checkout_superseded))actions.append(button('Retry same renewal',async()=>{await api('/api/renewals/orders/'+o.id+'/retry',{});toast('Same order queued. No new charge.');route();}));
+        if(['review','verification_pending'].includes(o.payment_state)&&o.fulfilment_state!=='fulfilled'&&!Number(o.checkout_superseded))actions.append(button('Recheck same payment',async()=>{await api('/api/renewals/orders/'+o.id+'/retry',{});toast('Original payment evidence queued for verification. No new charge.');route();}));
+       return [cellName(o.id,money(o)+(Number(o.checkout_superseded)?' · Superseded — old gateway disabled; reconcile late funds':'')),o.payment_state,o.fulfilment_state,actions];
     }))));
   }catch(error){if(epoch===state.epoch)box.replaceChildren(el('p',error.message,'error'),el('p','Select an active workspace with a verified panel reseller link. Your owner workspace is supported when linked. No payment or account change has been requested.','scope-label'));}
 }};

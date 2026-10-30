@@ -2,14 +2,14 @@
 declare(strict_types=1);
 namespace ControlCenter;
 
-/** Cancel provider checkouts, never delete local invoices or refund payments.
- * A durable account-scoped fence blocks checkout creation through every QR
- * while external cancellation is in flight or its outcome is unknown. */
+/** Account-scoped checkout handover with preserved financial evidence.
+ * Customer switching is immediate and local; legacy provider cancellation
+ * helpers remain separate. Neither mode deletes invoices or refunds funds. */
 final class RenewalCheckoutVoids {
     public function __construct(private readonly Database $db,private readonly RenewalSettings $settings,private readonly RampexGateway $gateway,private readonly Auth $auth) {}
     private function scope(array $s):array {return [$s['tenant_id'],$s['line_id'],$s['primary_fingerprint']];}
     private function pending(array $s,bool $lock=false):array {
-        return $this->db->all("SELECT * FROM renewal_orders WHERE tenant_id=? AND line_id=? AND primary_fingerprint=? AND fulfilment_state!='fulfilled' AND payment_state IN ('creating','awaiting','link_uncertain','verification_pending','paid','review') ORDER BY created_at,id".($lock?' FOR UPDATE':''),$this->scope($s));
+        return $this->db->all("SELECT * FROM renewal_orders WHERE tenant_id=? AND line_id=? AND primary_fingerprint=? AND checkout_superseded=0 AND fulfilment_state!='fulfilled' AND payment_state IN ('creating','awaiting','link_uncertain','verification_pending','paid','review') ORDER BY created_at,id".($lock?' FOR UPDATE':''),$this->scope($s));
     }
     public function assertCheckout(array $s,int $expiry):void {
         $r=$this->db->one('SELECT * FROM renewal_route_switches WHERE tenant_id=? AND line_id=? AND primary_fingerprint=? FOR UPDATE',$this->scope($s));
@@ -19,6 +19,19 @@ final class RenewalCheckoutVoids {
     }
     public function checkoutCreated(array $s):void {
         $this->db->query("UPDATE renewal_route_switches SET state='completed',updated_at=UTC_TIMESTAMP() WHERE tenant_id=? AND line_id=? AND primary_fingerprint=? AND state='ready'",$this->scope($s));
+    }
+    public function handover(array $s,string $country,string $gateway,int $expiry):void {
+        $this->db->transaction(function()use($s,$country,$gateway,$expiry):void{
+            $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$s['tenant_id']]);$scope=$this->scope($s);
+            $orders=$this->pending($s,true);
+            foreach($orders as $o)if($o['payment_state']==='paid')throw new Problem(409,'Payment has already been received. Your existing renewal must be reconciled rather than charged again.');
+            foreach($orders as $o){
+                $this->db->query('UPDATE renewal_orders SET checkout_superseded=1 WHERE id=?',[$o['id']]);
+                $this->auth->audit(null,'renewals.checkout_superseded',$o['id'],$s['tenant_id'],['replacement_gateway'=>$gateway,'provider_cancelled'=>false]);
+            }
+            $this->db->query('UPDATE renewal_sessions SET country=?,gateway=?,order_id=NULL WHERE tenant_id=? AND line_id=? AND primary_fingerprint=? AND expires_at>UTC_TIMESTAMP()',[$country,$gateway,...$scope]);
+            $this->db->query("INSERT INTO renewal_route_switches (tenant_id,line_id,primary_fingerprint,token,state,country,gateway,quoted_expiry,lease_until) VALUES (?,?,?,?,'ready',?,?,?,UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE token=VALUES(token),state='ready',country=VALUES(country),gateway=VALUES(gateway),quoted_expiry=VALUES(quoted_expiry),lease_until=VALUES(lease_until),updated_at=UTC_TIMESTAMP()",[...$scope,Database::id(),$country,$gateway,$expiry]);
+        });
     }
     public function switch(array $s,string $country,string $gateway,int $expiry,bool $cancel=true):void {
         $token=Database::id();$scope=$this->scope($s);

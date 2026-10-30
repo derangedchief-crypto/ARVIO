@@ -7,6 +7,37 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.32.0 — saved gateway switches and immediate provider handover
+
+Each connected gateway has an Enable/Disable new-checkouts control. Its encrypted
+API key, webhook secret, account/location details, webhook URL and country routing
+are retained. Re-enable without entering credentials again. Replacement merchant
+connections inherit the gateway's off/on policy; saving new keys cannot turn a
+disabled gateway back on. Changes are workspace scoped and revision checked.
+
+Disabling a gateway immediately supersedes its old unpaid attempts locally and
+automatically uses the first enabled eligible gateway in the reseller's country
+preference order. Existing QRs and stale checkout submissions use this same
+fallback. No enabled eligible provider means checkout unavailable, not fallback
+to a disabled gateway or an unsupported country/currency.
+
+Customer provider switches also immediately supersede older unpaid attempts. They
+do NOT wait for Rampex (or another provider) to expire/cancel an invoice. Superseded
+records, merchant keys and webhook handling remain intact. Late verified funds
+on a superseded invoice are recorded as paid/needs_review with settlement evidence,
+never sent to the renewal worker or replayed by the retry action. A payment already
+known locally to be paid continues its existing renewal instead of a new charge.
+
+IMPORTANT: this is local handover, NOT external payment cancellation. An old
+provider link can still accept money, including a duplicate payment. The reseller
+must reconcile/refund those funds manually. This deliberately prioritizes customer
+freedom to switch over waiting for provider-side cancellation. The customer page
+warns not to pay the old link. Normal renewal writes still require captured funds
+and exact merchant, amount, currency, account and package verification.
+
+Migration 032 is additive; the rollout remains testing-only by default. No APK,
+renewal/auth/trial worker or production publication changes. See UPDATE-0.32.0.txt.
+
 ## 0.31.0 — provider-confirmed unpaid checkout cancellation
 
 The customer confirms cancellation when switching gateways. Stripe expires the

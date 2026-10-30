@@ -1,5 +1,23 @@
 # Control Center validation
 
+## 0.32.0 immediate gateway handover and saved availability
+
+321 service tests and 22 browser checks pass (14 workspace/checkout checks plus
+eight polling/race checks). PHP/JavaScript syntax and reproducible delivery ZIP
+checks pass. Frozen logs: gateway-freedom-frozen-release-validation.log and
+gateway-freedom-frozen-polling-validation.log in /tmp/opencode/.
+
+Coverage includes disabled Rampex with an existing unpaid invoice, immediate
+switching away from still-enabled Rampex, switching between direct card providers
+while the old invoice remains open, default-route fallback in new TV login QRs,
+late old-payment reconciliation without another renewal, tenant isolation,
+availability revisions, preserved encrypted credentials and routing, and merchant
+replacement not re-enabling a disabled provider. UI coverage includes disabling
+and re-enabling without credential fields. All provider traffic is synthetic.
+This version explicitly permits externally payable older links: no claim of
+preventing duplicate payments is made. Superseded captured funds are held for
+manual review, with no automatic second renewal or refund.
+
 ## 0.31.0 provider-confirmed checkout cancellation
 
 314 service tests and 20 browser checks pass (12 existing plus eight timed

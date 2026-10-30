@@ -11,7 +11,7 @@ final class RenewalInvoiceStatus {
         if(!$c)throw new Problem(409,'Original merchant connection is unavailable.');
         $active=$app->db->one('SELECT * FROM renewal_connections WHERE tenant_id=? AND gateway=? AND merchant_id=? AND mode=? AND enabled=1 ORDER BY created_at DESC,id DESC LIMIT 1',[$o['tenant_id'],$c['gateway'],$o['merchant_id'],$c['mode']]);
         $reader=$active??$c;
-        $out=['order_reference'=>$o['id'],'local_payment_state'=>$o['payment_state'],'local_renewal_state'=>$o['fulfilment_state'],'gateway'=>$c['gateway'],'provider_reference'=>$o['provider_link_id'],'provider_confirmed_expired_unpaid'=>false,'records_changed'=>false,'payment_requested'=>false,'renewal_requested'=>false];
+        $out=['order_reference'=>$o['id'],'local_payment_state'=>$o['payment_state'],'local_renewal_state'=>$o['fulfilment_state'],'checkout_superseded'=>(bool)$o['checkout_superseded'],'gateway'=>$c['gateway'],'provider_reference'=>$o['provider_link_id'],'provider_confirmed_expired_unpaid'=>false,'records_changed'=>false,'payment_requested'=>false,'renewal_requested'=>false];
         $snapshot=json_decode($o['plan_snapshot'],true,16,JSON_THROW_ON_ERROR);$package=(int)($snapshot['package_id']??0);
         $prices=$app->db->all("SELECT currency,enabled FROM renewal_plans WHERE tenant_id=? AND package_id=? AND country='CA'",[$o['tenant_id'],$package]);
         if(!$prices)$prices=$app->db->all("SELECT currency,enabled FROM renewal_plans WHERE tenant_id=? AND package_id=? AND country=''",[$o['tenant_id'],$package]);

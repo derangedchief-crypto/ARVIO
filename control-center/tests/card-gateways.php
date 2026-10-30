@@ -100,14 +100,38 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             $install=ControlCenter\Database::id();$ip='127.0.1.'.((int)$line%250+1);$package=$artifact['package_name'];
             $challenge=$payments->loginChallenge(['installation_id'=>$install,'key_fingerprint'=>$fingerprint,'app_package'=>$package],$ip);$identity=['activation_code'=>'123456'];
             openssl_sign(ControlCenter\RenewalPayments::loginSigningText($challenge['challenge'],$install,$package,$fingerprint,$identity,'CA'),$signature,$private,OPENSSL_ALGO_SHA256);
+            if($behavior==='disabled_default'){$sq=$settings->connection($tenantA['id'],'square');$settings->setAvailability($alpha,['gateway'=>'square','connection_id'=>$sq['id'],'enabled'=>false,'expected_revision'=>$settings->availability($tenantA['id'])['square']['revision']]);}
             $opened=$payments->loginOpen(['installation_id'=>$install,'app_package'=>$package,'public_key'=>$public,'challenge'=>$challenge['challenge'],'identity'=>$identity,'signature'=>base64_encode($signature),'country'=>'CA'],$ip);
-            same(true,$opened['available']);same('CA',$opened['country']);same('square',$opened['gateway']);
+            same(true,$opened['available']);same('CA',$opened['country']);same($behavior==='disabled_default'?'stripe':'square',$opened['gateway']);
             $token=$opened['session_token'];if($opened['gateway']!==$provider)$payments->selectRoute(['session_token'=>$token,'country'=>'CA','gateway'=>$provider]);
             $info=$payments->info($token);$price=$info['renewal'];same('CAD',$price['currency']);same(1000,$price['amount_minor']);same($provider,$info['gateway']);
             $order=$payments->checkout(['session_token'=>$token,'price_id'=>$price['id'],'price_revision'=>$price['revision'],'package_fingerprint'=>$price['package_fingerprint'],'email'=>'receipt@example.test'],'127.0.0.67')['order'];
             $o=$app->db->one('SELECT * FROM renewal_orders WHERE id=?',[$order['id']]);$connection=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);
             $stripeStatus=static fn($o,$mode,$state='succeeded',$refund=0)=>['id'=>'cs_'.$o['id'],'client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id']],'amount_total'=>(int)$o['amount_minor'],'currency'=>strtolower($o['currency']),'livemode'=>$mode==='live','status'=>'complete','payment_status'=>'paid','payment_intent'=>['id'=>'pi_'.$o['id'],'status'=>$state,'amount_received'=>(int)$o['amount_minor'],'currency'=>strtolower($o['currency']),'metadata'=>['order_id'=>$o['id']],'livemode'=>$mode==='live','latest_charge'=>['paid'=>true,'captured'=>true,'amount_refunded'=>$refund,'payment_method_details'=>['type'=>'card']]]];
             $expiredOrder=null;
+            if(in_array($behavior,['handover','rampex_handover','free_switch','rampex_switch'],true)){
+                $disabledGateway=str_starts_with($behavior,'rampex_')?'rampex':'stripe';
+                if($disabledGateway==='rampex'){
+                    $connection=$settings->connection($tenantA['id'],'rampex');
+                    $app->db->query('UPDATE renewal_orders SET connection_id=?,merchant_id=?,provider_link_id=? WHERE id=?',[$connection['id'],$connection['merchant_id'],'legacy-rampex-link-'.$o['id'],$o['id']]);
+                    $app->db->query("UPDATE renewal_sessions SET gateway='rampex' WHERE id=?",[$o['session_id']]);
+                    if($behavior==='rampex_handover')$app->db->query("INSERT INTO renewal_route_switches (tenant_id,line_id,primary_fingerprint,token,state,country,gateway,quoted_expiry,lease_until) VALUES (?,?,?,?,'blocked','CA','square',?,UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state='blocked'",[$o['tenant_id'],$o['line_id'],$o['primary_fingerprint'],ControlCenter\Database::id(),$o['quoted_expiry']]);
+                }else $expiredOrder=$o;
+                $sourceOrder=$o;$records[$o['id']]['state']='open';
+                $settings->saveConnection($alpha,['gateway'=>'square','mode'=>'live','api_key'=>'SYNTHETIC_SQUARE_TOKEN_ONLY','webhook_secret'=>'SYNTHETIC_live_WEBHOOK_SECRET','location_id'=>'LOC_CA']);
+                $before=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$connection['id']]);
+                if(in_array($behavior,['free_switch','rampex_switch'],true))$payments->selectRoute(['session_token'=>$token,'country'=>'CA','gateway'=>'square','cancel_previous'=>$behavior==='rampex_switch']);
+                else $settings->setAvailability($alpha,['gateway'=>$disabledGateway,'connection_id'=>$connection['id'],'enabled'=>false,'expected_revision'=>$settings->availability($tenantA['id'])[$disabledGateway]['revision']]);
+                same($before,$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$connection['id']]));
+                same(1,(int)$app->db->one('SELECT checkout_superseded FROM renewal_orders WHERE id=?',[$o['id']])['checkout_superseded']);
+                $changed=$payments->info($token);same('square',$changed['gateway']);same(null,$changed['order']);same(null,$payments->status($token)['order']);
+                $provider='square';$price=$changed['renewal'];
+                $order=$payments->checkout(['session_token'=>$token,'price_id'=>$price['id'],'price_revision'=>$price['revision'],'package_fingerprint'=>$price['package_fingerprint'],'email'=>'receipt@example.test'],'127.0.0.67')['order'];
+                same('square',$order['gateway']);same('open',$records[$sourceOrder['id']]['state']);
+                $o=$app->db->one('SELECT * FROM renewal_orders WHERE id=?',[$order['id']]);$connection=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);
+                problem(409,fn()=> $payments->retry($alpha,$sourceOrder['id']));
+                unset($records[$sourceOrder['id']]['state']); // Synthetic late captured money, not a cancellation.
+            }
             if(in_array($behavior,['void','void_many','void_legacy'],true)){
                 if($behavior==='void_legacy')$app->db->query('UPDATE renewal_orders SET provider_checkout_id=NULL WHERE id=?',[$o['id']]);
                 $records[$o['id']]['state']='open';$prior=[$o];
@@ -118,7 +142,8 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
                 }
                 $next=$provider==='stripe'?'square':'stripe';
                 $settings->saveConnection($alpha,['gateway'=>$next,'mode'=>$mode,'api_key'=>$next==='stripe'?($mode==='live'?'sk_live_SYNTHETIC_KEY_ONLY':'sk_test_SYNTHETIC_KEY_ONLY'):'SYNTHETIC_SQUARE_TOKEN_ONLY','webhook_secret'=>'SYNTHETIC_'.$mode.'_WEBHOOK_SECRET','location_id'=>'LOC_CA']);
-                $changed=$payments->selectRoute(['session_token'=>$token,'country'=>'CA','gateway'=>$next,'cancel_previous'=>true]);
+                $session=$app->db->one('SELECT * FROM renewal_sessions WHERE id=?',[$o['session_id']]);
+                (new ControlCenter\RenewalCheckoutVoids($app->db,$settings,$gateway,$app->auth))->switch($session,'CA',$next,(int)$o['quoted_expiry']);$changed=$payments->info($token);
                 same($next,$changed['gateway']);same(null,$changed['order']);
                 foreach($prior as $old){$held=$app->db->one('SELECT * FROM renewal_orders WHERE id=?',[$old['id']]);same('expired',$held['payment_state']);same('confirmed',$held['void_state']);same('expired',$records[$old['id']]['state']);}
                 same(0,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$o['id']])->fetchColumn());
@@ -128,14 +153,16 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             if($behavior==='switch'){
                 $expiredOrder=$o;$statusPath='stripe/v1/checkout/sessions/cs_'.$o['id'].'?expand%5B%5D=payment_intent.latest_charge';
                 $overrides[$statusPath]=array_replace($stripeStatus($o,$mode),['status'=>'expired','payment_status'=>'unpaid','payment_intent'=>null]);
-                $changed=$payments->selectRoute(['session_token'=>$token,'country'=>'CA','gateway'=>'square']);
+                $session=$app->db->one('SELECT * FROM renewal_sessions WHERE id=?',[$o['session_id']]);
+                (new ControlCenter\RenewalCheckoutVoids($app->db,$settings,$gateway,$app->auth))->switch($session,'CA','square',(int)$o['quoted_expiry']);$changed=$payments->info($token);
                 same('square',$changed['gateway']);same('expired',$app->db->one('SELECT payment_state FROM renewal_orders WHERE id=?',[$o['id']])['payment_state']);
                 unset($overrides[$statusPath]);$provider='square';$price=$changed['renewal'];
                 $order=$payments->checkout(['session_token'=>$token,'price_id'=>$price['id'],'price_revision'=>$price['revision'],'package_fingerprint'=>$price['package_fingerprint'],'email'=>'receipt@example.test'],'127.0.0.67')['order'];
                 $o=$app->db->one('SELECT * FROM renewal_orders WHERE id=?',[$order['id']]);$connection=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);
             }
             $secret=$secrets->decrypt($connection['webhook_cipher']);$url=$c->origin().'/api/renewals/webhooks/'.$connection['id'];$id=$o['id'];
-            problem(409,fn()=> $payments->selectRoute(['session_token'=>$token,'country'=>'CA','gateway'=>$provider==='square'?'stripe':'square']));
+            $session=$app->db->one('SELECT * FROM renewal_sessions WHERE id=?',[$o['session_id']]);
+            problem(409,fn()=> (new ControlCenter\RenewalCheckoutVoids($app->db,$settings,$gateway,$app->auth))->switch($session,'CA',$provider==='square'?'stripe':'square',(int)$o['quoted_expiry']));
             if($provider==='stripe'){
                 $event=['type'=>'checkout.session.completed','livemode'=>$mode==='live','data'=>['object'=>['id'=>'cs_'.$id,'payment_status'=>'paid','client_reference_id'=>$id,'metadata'=>['order_id'=>$id],'amount_total'=>1000,'currency'=>'cad','payment_intent'=>'pi_'.$id]]];
                 $raw=json_encode($event);$stamp=(string)time();$signature='t='.$stamp.',v1='.hash_hmac('sha256',$stamp.'.'.$raw,$secret);
@@ -175,7 +202,11 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
                 same($expiry,(int)$app->db->one('SELECT expires_at FROM renewal_simulated_targets WHERE reseller_id=? AND line_id=?',[$reseller,$line])['expires_at']);
                 same(0,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$old['id']])->fetchColumn());
             }
-        } finally {$settings->setPolicy($owner,['enabled'=>false,'testing_only'=>true]);}
+        } finally {
+            if($behavior==='disabled_default'){$sq=$settings->connection($tenantA['id'],'square');$settings->setAvailability($alpha,['gateway'=>'square','connection_id'=>$sq['id'],'enabled'=>true,'expected_revision'=>$settings->availability($tenantA['id'])['square']['revision']]);}
+            if(in_array($behavior,['handover','rampex_handover'],true)){$g=$behavior==='rampex_handover'?'rampex':'stripe';$active=$settings->connection($tenantA['id'],$g);$settings->setAvailability($alpha,['gateway'=>$g,'connection_id'=>$active['id'],'enabled'=>true,'expected_revision'=>$settings->availability($tenantA['id'])[$g]['revision']]);}
+            $settings->setPolicy($owner,['enabled'=>false,'testing_only'=>true]);
+        }
     };
     $tests['Canadian Square hosted card payment verifies an OPEN paid order and renews the same line once']=fn()=> $flow('square','live','998801');
     $tests['Canadian direct Stripe card payment verifies captured gross fiat amount and renews once']=fn()=> $flow('stripe','live','998802');
@@ -215,6 +246,11 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
     $tests['Square unpaid link is deleted and its cancelled order verified before switching to Stripe']=fn()=> $flow('square','live','998812','void');
     $tests['switch cancels all older unpaid account checkouts and preserves every invoice record']=fn()=> $flow('stripe','live','998813','void_many');
     $tests['pre-update Square invoice finds the original payment-link ID before cancelling']=fn()=> $flow('square','live','998814','void_legacy');
+    $tests['disabled gateway immediately hands the old QR to the default without waiting for expiry and late money cannot renew twice']=fn()=> $flow('stripe','live','998815','handover');
+    $tests['an old Rampex invoice immediately yields to the configured default when Rampex is disabled without any Rampex API call']=fn()=> $flow('stripe','live','998816','rampex_handover');
+    $tests['customer can switch between enabled providers immediately while the older link remains open for reconciliation']=fn()=> $flow('stripe','live','998817','free_switch');
+    $tests['customer can leave an active Rampex invoice immediately without disabling Rampex or waiting for provider expiry']=fn()=> $flow('stripe','live','998818','rampex_switch');
+    $tests['the app login QR automatically uses the next enabled default when the preferred provider is disabled']=fn()=> $flow('stripe','live','998819','disabled_default');
     $tests['provider setup reserves its final webhook URL before credentials and retries cannot replace a completed setup']=function()use($app,$c,$alpha,$beta,$tenantA,$settings):void{
         $draft=$settings->prepareConnection($alpha,['gateway'=>'square']);
         same($draft,$settings->prepareConnection($alpha,['gateway'=>'square']));
@@ -289,7 +325,7 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
     };
     $tests['unknown cancellation blocks every checkout until a verified retry completes']=function()use($app,$settings,$tenantA,$gateway,&$overrides,&$records):void{
         $source=$app->db->one("SELECT o.* FROM renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id WHERE o.tenant_id=? AND c.gateway='stripe' AND o.payment_state='paid' ORDER BY o.created_at DESC,o.id DESC LIMIT 1",[$tenantA['id']]);
-        $o=$source;$o['id']=ControlCenter\Database::id();$o['line_id']='998820';$o['payment_state']='awaiting';$o['fulfilment_state']='not_paid';$o['provider_link_id']='cs_'.$o['id'];$o['provider_checkout_id']=$o['provider_link_id'];$o['void_state']=null;$o['void_token']=null;
+        $o=$source;$o['id']=ControlCenter\Database::id();$o['line_id']='998820';$o['payment_state']='awaiting';$o['fulfilment_state']='not_paid';$o['provider_link_id']='cs_'.$o['id'];$o['provider_checkout_id']=$o['provider_link_id'];$o['void_state']=null;$o['void_token']=null;$o['checkout_superseded']=0;
         $columns=array_keys($o);$app->db->query('INSERT INTO renewal_orders ('.implode(',',$columns).') VALUES ('.implode(',',array_fill(0,count($columns),'?')).')',array_values($o));
         $records[$o['id']]=['id'=>$o['id'],'gateway'=>'stripe','live'=>true,'amount'=>(int)$o['amount_minor'],'currency'=>$o['currency'],'state'=>'open'];
         $s=['tenant_id'=>$o['tenant_id'],'line_id'=>$o['line_id'],'primary_fingerprint'=>$o['primary_fingerprint'],'country'=>'CA','gateway'=>'stripe'];
@@ -304,6 +340,31 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
         same('expired',$app->db->one('SELECT payment_state FROM renewal_orders WHERE id=?',[$o['id']])['payment_state']);
         $app->db->query("UPDATE renewal_route_switches SET state='switching',lease_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 3 MINUTE) WHERE tenant_id=? AND line_id=? AND primary_fingerprint=?",[$s['tenant_id'],$s['line_id'],$s['primary_fingerprint']]);
         problem(409,fn()=> $voids->switch($s,'CA','stripe',123));
+    };
+    $tests['gateway off on preserves encrypted connection values and routing while enforcing tenant scope and revisions']=function()use($app,$settings,$alpha,$beta,$tenantA,$secrets,&$calls):void{
+        $routes=$settings->routing($tenantA['id']);$policy=$settings->policy();
+        foreach(['rampex','stripe','square'] as $g){
+            $connection=$settings->connection($tenantA['id'],$g);$rev=$settings->availability($tenantA['id'])[$g]['revision'];$beforeCalls=count($calls);
+            $input=['gateway'=>$g,'connection_id'=>$connection['id'],'enabled'=>false,'expected_revision'=>$rev];
+            problem(404,fn()=> $settings->setAvailability($beta,$input+['tenant_id'=>$tenantA['id']]));
+            $public=$settings->setAvailability($alpha,$input);same($beforeCalls,count($calls));
+            same($connection,$settings->connection($tenantA['id'],$g));same(false,$settings->checkoutEnabled($tenantA['id'],$g));
+            $visible=array_values(array_filter($public['connections'],static fn($v)=>$v['gateway']===$g))[0];same(false,$visible['checkout_enabled']);same(true,$visible['api_key_saved']);same(true,$visible['webhook_secret_saved']);
+            check(!in_array($g,array_column($settings->candidates($tenantA['id'],'US','USD',true),'gateway'),true));
+            check(!str_contains(json_encode($public),$secrets->decrypt($connection['api_cipher'])));
+            problem(409,fn()=> $settings->setAvailability($alpha,$input));
+            $settings->setAvailability($alpha,array_replace($input,['enabled'=>true,'expected_revision'=>$rev+1]));same(true,$settings->checkoutEnabled($tenantA['id'],$g));same($connection,$settings->connection($tenantA['id'],$g));
+        }
+        same($routes,$settings->routing($tenantA['id']));same($policy,$settings->policy());
+        problem(422,fn()=> $settings->setAvailability($alpha,['gateway'=>'bad','connection_id'=>str_repeat('a',32),'enabled'=>false,'expected_revision'=>0]));
+    };
+    $tests['replacing a disabled merchant connection cannot silently turn its checkout back on']=function()use($settings,$alpha,$tenantA,$secrets):void{
+        $g='square';$c=$settings->connection($tenantA['id'],$g);$rev=$settings->availability($tenantA['id'])[$g]['revision'];
+        $settings->setAvailability($alpha,['gateway'=>$g,'connection_id'=>$c['id'],'enabled'=>false,'expected_revision'=>$rev]);
+        $settings->saveConnection($alpha,['gateway'=>$g,'mode'=>$c['mode'],'api_key'=>$secrets->decrypt($c['api_cipher']),'webhook_secret'=>$secrets->decrypt($c['webhook_cipher']),'location_id'=>'LOC_CA']);
+        $next=$settings->connection($tenantA['id'],$g);check($next['id']!==$c['id']);same(false,$settings->checkoutEnabled($tenantA['id'],$g));
+        problem(409,fn()=> $settings->setAvailability($alpha,['gateway'=>$g,'connection_id'=>$c['id'],'enabled'=>true,'expected_revision'=>$rev+1]));
+        $settings->setAvailability($alpha,['gateway'=>$g,'connection_id'=>$next['id'],'enabled'=>true,'expected_revision'=>$rev+1]);
     };
     $tests['only exact merchant-scoped unpaid provider expiry may release an awaiting invoice']=static function():void{
         $o=['payment_state'=>'awaiting','fulfilment_state'=>'not_paid','merchant_id'=>'merchant','provider_link_id'=>'link','currency'=>'CAD','amount_minor'=>'1000','expires_at'=>'2020-01-01 00:00:00'];

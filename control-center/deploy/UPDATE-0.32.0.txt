@@ -1,0 +1,45 @@
+0.32.0 — disable saved gateways and immediately switch payment providers
+
+TESTING/STAGING ONLY. Website update; no APK rebuild or worker restart.
+Back up website code and database, extract over 0.30.0/0.30.1/0.31.0, then run:
+php -d opcache.enable_cli=0 cli/console.php migrate
+php -d opcache.enable_cli=0 cli/console.php preflight
+Migration 032 adds gateway availability policy and a superseded-attempt flag.
+Migration 031 is also included for sites upgrading directly from 0.30.x.
+Config, storage, keys, device identity and financial history remain untouched.
+
+Customer renewals -> Payment gateways -> Disable Rampex checkouts (or Stripe or
+Square). Connection values and webhook URL remain saved. Re-enable without keys.
+Country routing sets the preferred/default provider and ordered alternatives.
+Customers and old QRs automatically fall back to the first enabled provider that
+matches their country, currency and live/testing eligibility.
+
+SWITCHING IS IMMEDIATE. Old unpaid attempts are superseded locally, not waited on.
+Rampex expiry or cancellation is NOT a requirement for switching. Customers can
+also switch between enabled providers immediately. Old checkout references and
+signed webhook verification remain intact. Failed previous cancellation fences
+are cleared by a new handover without creating an external cancellation request.
+
+FINANCIAL TRADEOFF: old external links may still accept money. This update cannot
+guarantee absence of duplicate payments. The reseller explicitly chose immediate
+switching and manual later reconciliation. Late captured funds are retained as
+paid/needs_review with settlement evidence, never another automatic renewal.
+Old superseded invoices cannot be replayed with the renewal retry button. Resolve
+refunds or other accounting manually; no automatic refund is issued.
+
+Acceptance with merchant SANDBOX accounts:
+1. Start a Rampex attempt (or use an existing unpaid one), disable Rampex, reopen
+   the same QR: the configured enabled default must be ready without waiting.
+2. Re-enable Rampex without entering keys. Old superseded attempts stay retired.
+3. Switch between enabled providers while an old invoice is still open: the new
+   provider quote must appear immediately, without cancellation/expiry requests.
+4. Complete the replacement and send a synthetic late old payment: record/review
+   old funds but never extend service or debit credits twice.
+5. Disable the preferred gateway: new TV QR chooses the next enabled eligible one.
+6. Disable all eligible providers: no checkout; never use a disabled provider or
+   offer Rampex in Canada. Restore only the intended providers afterward.
+7. Replace a disabled gateway's keys: it must remain disabled until enabled.
+
+Automated provider tests use synthetic transports only. No real provider link,
+charge, refund or cancellation was performed. Live acceptance requires separate
+deliberate authorization.
