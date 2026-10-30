@@ -8,9 +8,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.ConscryptMode
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk=[28],manifest=Config.NONE)
+@ConscryptMode(ConscryptMode.Mode.OFF)
+@Config(sdk=[28],manifest=Config.NONE,application=android.app.Application::class)
 class RenewalLoginClientTest {
     @Test fun savedExpiredAccountWithoutManagementEnrollmentCanRequestCheckoutOnly()=runTest {
         val vault=mockk<ManagementVault>(relaxed=true);val api=mockk<ManagementApi>()
