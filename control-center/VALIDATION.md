@@ -1,5 +1,20 @@
 # Control Center validation
 
+## 0.32.1 minimal provider-facing payment details
+
+323 service tests and 14 workspace/checkout browser checks pass. PHP syntax and
+reproducible delivery ZIP checks pass. Frozen run:
+/tmp/opencode/minimal-payment-details-frozen-validation.log.
+
+Synthetic provider contracts assert the required Stripe/Square label is Payment,
+Square payment_note and Rampex description are absent, and Stripe metadata holds
+only an opaque order reference. All normal Square completion tests omit notes.
+Recovery coverage simulates a lost Square creation reply, then verifies one
+settlement/renewal using its authenticated opaque order reference. Identity,
+location, amount and currency mismatches cannot authorize recovery; unrelated
+orders without an application reference are ignored. Old signed-note compatibility
+is retained. No provider transaction history or merchant descriptor is modified.
+
 ## 0.32.0 immediate gateway handover and saved availability
 
 321 service tests and 22 browser checks pass (14 workspace/checkout checks plus

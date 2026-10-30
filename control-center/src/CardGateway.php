@@ -66,11 +66,11 @@ final class CardGateway {
         $g=$c['gateway'];$key=$this->secrets->decrypt($c['api_cipher']);$options=$this->options($c);$amount=(int)$o['amount_minor'];
         if(!$this->supports($c,$o['country'],$o['currency']))throw new RampexLinkRejected('This gateway cannot process the selected country and invoice currency.');
         if($g==='stripe'){
-            $r=$this->request($g,$c['mode'],'/v1/checkout/sessions',$key,['mode'=>'payment','allowed_payment_method_types'=>['card'],'billing_address_collection'=>'required','customer_email'=>$email,'client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id'],'country'=>$o['country']],'payment_intent_data'=>['metadata'=>['order_id'=>$o['id']]],'line_items'=>[['quantity'=>1,'price_data'=>['currency'=>strtolower($o['currency']),'unit_amount'=>$amount,'product_data'=>['name'=>'Current subscription renewal']]]],'success_url'=>$return,'cancel_url'=>$return],$o['id']);
+            $r=$this->request($g,$c['mode'],'/v1/checkout/sessions',$key,['mode'=>'payment','allowed_payment_method_types'=>['card'],'billing_address_collection'=>'required','customer_email'=>$email,'client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id']],'payment_intent_data'=>['metadata'=>['order_id'=>$o['id']]],'line_items'=>[['quantity'=>1,'price_data'=>['currency'=>strtolower($o['currency']),'unit_amount'=>$amount,'product_data'=>['name'=>'Payment']]]],'success_url'=>$return,'cancel_url'=>$return],$o['id']);
             if(($r['client_reference_id']??null)!==$o['id']||($r['amount_total']??null)!==$amount||strtoupper($r['currency']??'')!==$o['currency']||($r['livemode']??null)!==($c['mode']==='live'))throw new Problem(503,'Stripe quote verification failed; retain the original invoice.');
             return ['link_id'=>self::id($r['id']??null),'checkout_id'=>self::id($r['id']??null),'url'=>self::url($r['url']??null,$g,$c['mode'])];
         }
-        $r=$this->request($g,$c['mode'],'/v2/online-checkout/payment-links',$key,['idempotency_key'=>$o['id'],'order'=>['location_id'=>$options['location_id'],'reference_id'=>$o['id'],'line_items'=>[['name'=>'Current subscription renewal','quantity'=>'1','base_price_money'=>['amount'=>$amount,'currency'=>$o['currency']]]]],'checkout_options'=>['allow_tipping'=>false,'ask_for_shipping_address'=>false,'redirect_url'=>$return,'accepted_payment_methods'=>['apple_pay'=>true,'google_pay'=>true,'cash_app_pay'=>false,'afterpay_clearpay'=>false]],'pre_populated_data'=>['buyer_email'=>$email],'payment_note'=>'Renewal order '.$o['id']],$o['id']);
+        $r=$this->request($g,$c['mode'],'/v2/online-checkout/payment-links',$key,['idempotency_key'=>$o['id'],'order'=>['location_id'=>$options['location_id'],'reference_id'=>$o['id'],'line_items'=>[['name'=>'Payment','quantity'=>'1','base_price_money'=>['amount'=>$amount,'currency'=>$o['currency']]]]],'checkout_options'=>['allow_tipping'=>false,'ask_for_shipping_address'=>false,'redirect_url'=>$return,'accepted_payment_methods'=>['apple_pay'=>true,'google_pay'=>true,'cash_app_pay'=>false,'afterpay_clearpay'=>false]],'pre_populated_data'=>['buyer_email'=>$email]],$o['id']);
         $p=$r['payment_link']??[];$id=self::id($p['order_id']??null);
         $order=$this->request($g,$c['mode'],'/v2/orders/'.rawurlencode($id),$key)['order']??[];
         $this->squareOrder($order,$o,$options);
@@ -144,6 +144,17 @@ final class CardGateway {
         $status=$this->status($c,$o);
         if(!RampexGateway::unpaidExpiryConfirmed($o,$status))throw new Problem(503,'Provider has not confirmed cancellation without payment. No replacement checkout was opened.');
         return $status;
+    }
+    public function orderReference(array $c,array $event):?string {
+        if($c['gateway']!=='square'||($event['event']??null)!=='payment.completed')return null;
+        $id=self::id($event['link_id']??null);$options=$this->options($c);
+        $r=$this->request('square',$c['mode'],'/v2/orders/'.rawurlencode($id),$this->secrets->decrypt($c['api_cipher']))['order']??[];
+        if(($r['id']??null)!==$id)throw new Problem(409,'Square reference recovery returned another order.');
+        if(($r['location_id']??null)!==$options['location_id'])return null;
+        $ref=$r['reference_id']??null;
+        if(!is_string($ref)||!preg_match('/^[a-f0-9]{32}$/D',$ref))return null;
+        if(($r['total_money']['amount']??null)!==($event['amount_minor']??null)||($r['total_money']['currency']??null)!==($event['currency']??null))throw new Problem(409,'Square reference recovery does not match the signed payment.');
+        return $ref;
     }
     public function event(array $c,string $raw,string $signature,string $url,bool $fresh=true):array {
         $g=$c['gateway'];$secret=$this->secrets->decrypt($c['webhook_cipher']);$valid=false;

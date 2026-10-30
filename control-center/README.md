@@ -7,6 +7,29 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.32.1 — minimal provider-facing payment details
+
+New Stripe and Square checkouts use the required generic item name `Payment`.
+Square's optional payment note and Rampex's optional description are omitted.
+Stripe metadata retains only the opaque order ID, not country or purchase details.
+Opaque client/order references still bind transactions to private website records.
+No package name, channel list, panel login, activation code, renewal term or
+subscription description is supplied in these provider-facing item/note fields.
+
+Square receipts no longer need a human-readable payment note for verification.
+Known links still queue without a provider call. If a Square link-creation reply
+was lost, a signed webhook can recover the opaque reference through the reseller's
+authenticated order API, checking order ID, location, total and currency. The job
+repeats the binding and verifies captured payment before any renewal. Unrelated
+Square orders without an application reference are ignored. Older note-bearing
+webhooks remain supported.
+
+This is data minimization, not anonymity: the provider still receives the amount,
+currency, required customer/billing information, merchant identity and return URL,
+and retains normal transaction records. Provider/merchant business names and
+statement descriptors are unchanged. Existing checkout records are not rewritten.
+Website-only patch; no new migration, APK or worker update after 0.32.0.
+
 ## 0.32.0 — saved gateway switches and immediate provider handover
 
 Each connected gateway has an Enable/Disable new-checkouts control. Its encrypted

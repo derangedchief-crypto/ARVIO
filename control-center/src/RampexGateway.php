@@ -60,7 +60,7 @@ final class RampexGateway {
         $return=$this->config->origin().'/renew/'.$this->secrets->decrypt($session['token_cipher']);
         $data=$this->request('api-create-payment-link',$this->secrets->decrypt($connection['api_cipher']),[
             'amount'=>$order['amount_minor']/(10**RampexPaymentVerifier::exponent($order['currency'])),'currency'=>$order['currency'],'customer_email'=>$email,
-            'description'=>'Renewal order '.$order['id'],'provider'=>'hosted','woo_order_id'=>$order['id'],'woo_store_url'=>$this->config->origin(),'payment_url'=>$return]);
+            'provider'=>'hosted','woo_order_id'=>$order['id'],'woo_store_url'=>$this->config->origin(),'payment_url'=>$return]);
         $r=$data['data']??$data;
         if(!is_array($r))throw new Problem(503,'Invalid payment link response; retain the original order.');
         $id=$r['link_id']??null;$url=null;
@@ -120,6 +120,7 @@ final class RampexGateway {
         try{$r=json_decode($raw,true,16,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new Problem(422,'Invalid payment notification.');}
         if(!is_array($r)||!str_starts_with(ltrim($raw),'{'))throw new Problem(422,'Invalid payment notification.');return $r;
     }
+    public function orderReference(array $c,array $event):?string {return $this->cards()->orderReference($c,$event);}
     public function completed(array $c,string $raw,string $signature,array $order,array $status):array {
         if(($c['gateway']??'rampex')!=='rampex')return $this->cards()->completed($c,$this->event($c,$raw,$signature,false),$order,$status);
         return RampexPaymentVerifier::completed($raw,$signature,$this->secrets->decrypt($c['webhook_cipher']),['link_id'=>$order['provider_link_id'],'merchant_id'=>$order['merchant_id'],'currency'=>$order['currency'],'amount_minor'=>(int)$order['amount_minor']],$status);

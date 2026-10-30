@@ -330,7 +330,7 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             $calls[]=$path;
             if($path==='api-validate-key')return ['status'=>200,'body'=>json_encode(['valid'=>true,'merchant_id'=>$connection['merchant_id'],'business_name'=>'Synthetic merchant'])];
             if($path==='api-create-payment-link'){
-                same($o['id'],$body['woo_order_id']);same(10.5,$body['amount']);same('USD',$body['currency']);check(str_contains($body['payment_url'],'/renew/'));check(!isset($body['wallet']));
+                same($o['id'],$body['woo_order_id']);same(10.5,$body['amount']);same('USD',$body['currency']);check(str_contains($body['payment_url'],'/renew/'));check(!isset($body['wallet']));check(!isset($body['description']));
                 return ['status'=>201,'body'=>json_encode(['success'=>true,'data'=>['link_id'=>'contract-link','payment_url'=>'https://checkout.rampex.io/pay.php?invoice=contract-link']])];
             }
             return ['status'=>200,'body'=>json_encode(['success'=>true,'data'=>['link_id'=>$o['provider_link_id'],'status'=>'completed','amount'=>'10.500000','currency'=>'USD','received_amount'=>10.50,'received_currency'=>'polygon_usdc','payout_amount'=>'9.95']])];

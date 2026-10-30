@@ -12,6 +12,7 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
         elseif($path==='square/v2/locations/LOC_CA')$r=['location'=>['id'=>'LOC_CA','merchant_id'=>'M_CA','country'=>'CA','currency'=>'CAD','status'=>'ACTIVE','capabilities'=>['CREDIT_CARD_PROCESSING']]];
         elseif($path==='stripe/v1/checkout/sessions'){
             $id=$body['client_reference_id'];same('payment',$body['mode']);same(['card'],$body['allowed_payment_method_types']);same($id,$body['metadata']['order_id']);same($id,$body['payment_intent_data']['metadata']['order_id']);
+            same('Payment',$body['line_items'][0]['price_data']['product_data']['name']);same(['order_id'=>$id],$body['metadata']);check(!isset($body['description'],$body['payment_intent_data']['description']));
             check(!isset($body['wallet_addresses'],$body['destination_currency']));check(in_array('Idempotency-Key: '.$id,$headers,true));
             $live=str_contains(implode('\n',$headers),'_live_');$records[$id]=['id'=>$id,'gateway'=>'stripe','live'=>$live,'amount'=>$body['line_items'][0]['price_data']['unit_amount'],'currency'=>strtoupper($body['line_items'][0]['price_data']['currency'])];
             $r=['id'=>'cs_'.$id,'url'=>'https://checkout.stripe.com/c/pay/cs_'.$id,'client_reference_id'=>$id,'amount_total'=>$records[$id]['amount'],'currency'=>strtolower($records[$id]['currency']),'livemode'=>$live];
@@ -23,7 +24,7 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             $r=['id'=>'cs_'.$id,'client_reference_id'=>$id,'metadata'=>['order_id'=>$id],'amount_total'=>$v['amount'],'currency'=>strtolower($v['currency']),'livemode'=>$v['live'],'status'=>'complete','payment_status'=>'paid','payment_intent'=>['id'=>'pi_'.$id,'status'=>'succeeded','amount_received'=>$v['amount'],'currency'=>strtolower($v['currency']),'metadata'=>['order_id'=>$id],'livemode'=>$v['live'],'latest_charge'=>['paid'=>true,'captured'=>true,'amount_refunded'=>0,'payment_method_details'=>['type'=>'card']]]];
             if(isset($v['state']))$r=array_replace($r,['status'=>$v['state'],'payment_status'=>'unpaid','payment_intent'=>null]);
         }elseif($path==='square/v2/online-checkout/payment-links'){
-            $id=$body['order']['reference_id'];same($id,$body['idempotency_key']);same('LOC_CA',$body['order']['location_id']);same(false,$body['checkout_options']['allow_tipping']);same('Renewal order '.$id,$body['payment_note']);
+            $id=$body['order']['reference_id'];same($id,$body['idempotency_key']);same('LOC_CA',$body['order']['location_id']);same(false,$body['checkout_options']['allow_tipping']);check(!isset($body['payment_note']));same('Payment',$body['order']['line_items'][0]['name']);
             same(false,$body['checkout_options']['accepted_payment_methods']['cash_app_pay']);same(false,$body['checkout_options']['accepted_payment_methods']['afterpay_clearpay']);
             $records[$id]=['id'=>$id,'gateway'=>'square','amount'=>$body['order']['line_items'][0]['base_price_money']['amount'],'currency'=>$body['order']['line_items'][0]['base_price_money']['currency']];
             $r=['payment_link'=>['id'=>'link_'.$id,'order_id'=>'sq_'.$id,'url'=>'https://square.link/u/'.$id]];
@@ -168,14 +169,15 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
                 $raw=json_encode($event);$stamp=(string)time();$signature='t='.$stamp.',v1='.hash_hmac('sha256',$stamp.'.'.$raw,$secret);
                 problem(401,fn()=> $payments->webhook($connection['id'],$raw,'t='.(time()-600).',v1='.hash_hmac('sha256',(time()-600).'.'.$raw,$secret)));
             }else{
-                $event=['type'=>'payment.updated','merchant_id'=>'M_CA','data'=>['object'=>['payment'=>['id'=>'pay_'.$id,'order_id'=>'sq_'.$id,'status'=>'COMPLETED','amount_money'=>['amount'=>1000,'currency'=>'CAD'],'note'=>'Renewal order '.$id]]]];
+                $event=['type'=>'payment.updated','merchant_id'=>'M_CA','data'=>['object'=>['payment'=>['id'=>'pay_'.$id,'order_id'=>'sq_'.$id,'status'=>'COMPLETED','amount_money'=>['amount'=>1000,'currency'=>'CAD']]]]];
                 $raw=json_encode($event);$signature=base64_encode(hash_hmac('sha256',$url.$raw,$secret,true));
                 problem(401,fn()=> $payments->webhook($connection['id'],$raw,base64_encode(hash_hmac('sha256','https://wrong.example'.$raw,$secret,true))));
             }
             problem(401,fn()=> $payments->webhook($connection['id'],$raw.' ',$signature));
-            same('awaiting',$payments->status($token)['order']['payment_state']);
+            if($behavior==='lost_reply')$app->db->query("UPDATE renewal_orders SET provider_link_id=NULL,provider_checkout_id=NULL,provider_url=NULL,payment_state='link_uncertain' WHERE id=?",[$id]);
+            same($behavior==='lost_reply'?'link_uncertain':'awaiting',$payments->status($token)['order']['payment_state']);
             $payments->webhook($connection['id'],$raw,$signature);$payments->webhook($connection['id'],$raw,$signature);
-            same('awaiting',$payments->status($token)['order']['payment_state']);
+            same($behavior==='lost_reply'?'link_uncertain':'awaiting',$payments->status($token)['order']['payment_state']);
             if(in_array($behavior,['delay','refund'],true)){
                 $statusPath='stripe/v1/checkout/sessions/cs_'.$o['id'].'?expand%5B%5D=payment_intent.latest_charge';
                 $overrides[$statusPath]=$stripeStatus($o,$mode,$behavior==='delay'?'processing':'succeeded',$behavior==='refund'?1:0);
@@ -251,6 +253,7 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
     $tests['customer can switch between enabled providers immediately while the older link remains open for reconciliation']=fn()=> $flow('stripe','live','998817','free_switch');
     $tests['customer can leave an active Rampex invoice immediately without disabling Rampex or waiting for provider expiry']=fn()=> $flow('stripe','live','998818','rampex_switch');
     $tests['the app login QR automatically uses the next enabled default when the preferred provider is disabled']=fn()=> $flow('stripe','live','998819','disabled_default');
+    $tests['Square with no payment note recovers a lost creation reply using its verified opaque order reference']=fn()=> $flow('square','live','998821','lost_reply');
     $tests['provider setup reserves its final webhook URL before credentials and retries cannot replace a completed setup']=function()use($app,$c,$alpha,$beta,$tenantA,$settings):void{
         $draft=$settings->prepareConnection($alpha,['gateway'=>'square']);
         same($draft,$settings->prepareConnection($alpha,['gateway'=>'square']));
@@ -365,6 +368,16 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
         $next=$settings->connection($tenantA['id'],$g);check($next['id']!==$c['id']);same(false,$settings->checkoutEnabled($tenantA['id'],$g));
         problem(409,fn()=> $settings->setAvailability($alpha,['gateway'=>$g,'connection_id'=>$c['id'],'enabled'=>true,'expected_revision'=>$rev+1]));
         $settings->setAvailability($alpha,['gateway'=>$g,'connection_id'=>$next['id'],'enabled'=>true,'expected_revision'=>$rev+1]);
+    };
+    $tests['note-free Square recovery binds order identity location amount currency and opaque reference']=function()use($app,$tenantA,$gateway,&$overrides):void{
+        $o=$app->db->one("SELECT o.* FROM renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id WHERE o.tenant_id=? AND c.gateway='square' AND o.checkout_superseded=0 AND o.payment_state='paid' ORDER BY o.created_at DESC,o.id DESC LIMIT 1",[$tenantA['id']]);$c=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);
+        $event=['event'=>'payment.completed','link_id'=>$o['provider_link_id'],'amount_minor'=>(int)$o['amount_minor'],'currency'=>$o['currency']];
+        same($o['id'],$gateway->orderReference($c,$event));$path='square/v2/orders/'.$o['provider_link_id'];
+        $base=['id'=>$o['provider_link_id'],'reference_id'=>$o['id'],'location_id'=>'LOC_CA','total_money'=>['amount'=>(int)$o['amount_minor'],'currency'=>$o['currency']]];
+        try{
+            foreach([['id'=>'other_order'],['total_money'=>['amount'=>999,'currency'=>$o['currency']]],['total_money'=>['amount'=>(int)$o['amount_minor'],'currency'=>'USD']]] as $bad){$overrides[$path]=['order'=>array_replace($base,$bad)];problem(409,fn()=> $gateway->orderReference($c,$event));}
+            foreach([['location_id'=>'OTHER_LOCATION'],['reference_id'=>'unrelated-shop-order']] as $unrelated){$overrides[$path]=['order'=>array_replace($base,$unrelated)];same(null,$gateway->orderReference($c,$event));}
+        }finally{unset($overrides[$path]);}
     };
     $tests['only exact merchant-scoped unpaid provider expiry may release an awaiting invoice']=static function():void{
         $o=['payment_state'=>'awaiting','fulfilment_state'=>'not_paid','merchant_id'=>'merchant','provider_link_id'=>'link','currency'=>'CAD','amount_minor'=>'1000','expires_at'=>'2020-01-01 00:00:00'];

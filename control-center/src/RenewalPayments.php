@@ -259,13 +259,17 @@ final class RenewalPayments {
             // Recover a lost link-creation reply only through a signed provider
             // order reference; the job still verifies the link via merchant API.
             $ref=self::providerOrderRef($e);
+            if($ref===null&&$c['gateway']==='square'){
+                $active=$this->settings->connection($c['tenant_id'],'square');$reader=$active&&$active['merchant_id']===$c['merchant_id']&&$active['mode']===$c['mode']?array_replace($c,['api_cipher'=>$active['api_cipher']]):$c;
+                $ref=$this->gateway->orderReference($reader,$e);
+            }
             if(is_string($ref)&&preg_match('/^[a-f0-9]{32}$/D',$ref))$o=$this->db->one("SELECT id,connection_id FROM renewal_orders WHERE id=? AND tenant_id=? AND merchant_id=? AND provider_link_id IS NULL AND payment_state IN ('creating','link_uncertain','review')",[$ref,$c['tenant_id'],$c['merchant_id']]);
         }
         if(!$o){$this->auth->audit(null,'renewals.webhook_ignored',$c['id'],$c['tenant_id'],['body_sha256'=>hash('sha256',$raw)]);return ['accepted'=>true,'ignored'=>true];}
         $originalConnection=$this->db->one('SELECT gateway,mode FROM renewal_connections WHERE id=?',[$o['connection_id']]);
         if(!$originalConnection||$originalConnection['gateway']!==$c['gateway']||$originalConnection['mode']!==$c['mode'])throw new Problem(403,'Notification gateway or environment differs from the original invoice.');
         $this->db->query('INSERT INTO renewal_events (id,connection_id,order_id,body_sha256,body_cipher,signature) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id',[Database::id(),$c['id'],$o['id'],hash('sha256',$raw),$this->secrets->encrypt($raw),$signature]);
-        return ['accepted'=>true]; // No provider/worker network calls in webhook request.
+        return ['accepted'=>true]; // Known links need no network call. Lost Square replies recover only an authenticated opaque order reference; never renew here.
     }
     private static function providerOrderRef(array $event):?string {
         $metadata=is_array($event['metadata']??null)?$event['metadata']:[];
@@ -337,7 +341,12 @@ final class RenewalPayments {
                 else{
                     if($o['provider_link_id']===null){
                         $candidate=$payload['link_id']??null;
-                        if(!is_string($candidate)||!preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$candidate)||self::providerOrderRef($payload)!==$o['id'])throw new Problem(409,'Original payment-link identity is unresolved.');
+                        $ref=self::providerOrderRef($payload);
+                        if($ref===null&&$sender['gateway']==='square'){
+                            $active=$this->settings->connection($o['tenant_id'],'square');$reader=$active&&$active['merchant_id']===$o['merchant_id']&&$active['mode']===$c['mode']?array_replace($c,['api_cipher'=>$active['api_cipher']]):$c;
+                            $ref=$this->gateway->orderReference($reader,$payload);
+                        }
+                        if(!is_string($candidate)||!preg_match('/^[A-Za-z0-9._:-]{1,200}$/D',$candidate)||$ref!==$o['id'])throw new Problem(409,'Original payment-link identity is unresolved.');
                         $o['provider_link_id']=$candidate;
                     }
                     $active=$this->settings->connection($o['tenant_id'],$c['gateway']);$reader=$active&&$active['merchant_id']===$o['merchant_id']&&$active['mode']===$c['mode']?$active:$c;
