@@ -1,5 +1,18 @@
 # Control Center validation
 
+## 0.30.1 existing-invoice polling regression
+
+306 service cases and18 browser checks pass (12 existing plus six actual timed
+polling/race checks). The new checks reproduce the original10-second UI regression,
+keep gateway controls/Canadian warnings visible, refuse a second checkout while
+the original is unresolved, refresh provider-confirmed expiry into the new quote,
+disable switching after payment and ignore stale status after a route change.
+Invoice diagnostics issue only provider status GETs and leave database records
+unchanged. Unpaid-expiry proof checks exact merchant, resource, amount, currency
+and local invoice state; an old local deadline alone does not permit replacement.
+All provider endpoints in tests are synthetic. No real charge or cancellation is
+performed. Native source and schema are unchanged from0.30.0.
+
 ## 0.30.0 country-aware direct Stripe and Square
 
 Release checks pass:304 isolated service cases,12 browser cases,1,031 Android

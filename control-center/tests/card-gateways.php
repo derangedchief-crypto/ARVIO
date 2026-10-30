@@ -207,4 +207,22 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
         try{same(null,$payments->info($token)['renewal']);problem(409,fn()=> $payments->checkout(['session_token'=>$token,'price_id'=>$price['id'],'price_revision'=>(int)$price['revision']+1,'package_fingerprint'=>$price['plan_fingerprint'],'email'=>'receipt@example.test'],'127.0.0.69'));}
         finally{$settings->setPolicy($owner,['enabled'=>false,'testing_only'=>true]);}
     };
+    $tests['invoice diagnostics read provider status without modifying records or requesting another payment']=function()use($app,$c,$tenantA,$gateway,$secrets,&$calls):void{
+        $o=$app->db->one("SELECT o.* FROM renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id WHERE o.tenant_id=? AND c.gateway='square' AND c.mode='sandbox' ORDER BY o.created_at DESC LIMIT 1",[$tenantA['id']]);check($o!==null);
+        $before=$app->db->all('SELECT * FROM renewal_orders ORDER BY id');$count=count($calls);
+        $report=ControlCenter\RenewalInvoiceStatus::probe($app,$c,$o['id'],$gateway);
+        same(false,$report['records_changed']);same(false,$report['payment_requested']);same(false,$report['renewal_requested']);same(false,$report['provider_confirmed_expired_unpaid']);same(true,$report['provider_fully_paid']);
+        same($before,$app->db->all('SELECT * FROM renewal_orders ORDER BY id'));
+        foreach(array_slice($calls,$count) as $call)same(null,$call['body']);
+        $conn=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);check(!str_contains(json_encode($report),$secrets->decrypt($conn['api_cipher'])));check(!str_contains(json_encode($report),$secrets->decrypt($conn['webhook_cipher'])));
+        problem(404,fn()=> ControlCenter\RenewalInvoiceStatus::probe($app,$c,str_repeat('f',32),$gateway));
+    };
+    $tests['only exact merchant-scoped unpaid provider expiry may release an awaiting invoice']=static function():void{
+        $o=['payment_state'=>'awaiting','fulfilment_state'=>'not_paid','merchant_id'=>'merchant','provider_link_id'=>'link','currency'=>'CAD','amount_minor'=>'1000','expires_at'=>'2020-01-01 00:00:00'];
+        $s=['status'=>'expired','fully_paid'=>false,'merchant_id'=>'merchant','link_id'=>'link','currency'=>'CAD','amount_minor'=>1000];
+        same(true,ControlCenter\RampexGateway::unpaidExpiryConfirmed($o,$s));
+        foreach([['status'=>'active'],['fully_paid'=>true],['merchant_id'=>'other'],['link_id'=>'other'],['currency'=>'USD'],['amount_minor'=>999]] as $bad)same(false,ControlCenter\RampexGateway::unpaidExpiryConfirmed($o,array_replace($s,$bad)));
+        same(false,ControlCenter\RampexGateway::unpaidExpiryConfirmed(array_replace($o,['payment_state'=>'paid']),$s));
+        same(false,ControlCenter\RampexGateway::unpaidExpiryConfirmed(array_replace($o,['fulfilment_state'=>'fulfilled']),$s));
+    };
 }

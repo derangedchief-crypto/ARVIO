@@ -7,6 +7,25 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.30.1 — existing-invoice gateway controls survive polling
+
+Fixes the ten-second status poll hiding country/gateway controls, restoring an
+unsupported Canadian Rampex link, and stale in-flight status overwriting a
+successful gateway change. Provider-confirmed retirement refreshes the quote;
+paid/review invoices still block a new checkout. The original invoice is retained.
+Gateway expiry checks use the current valid key for the ORIGINAL merchant and
+environment when it has been rotated, never the selected new gateway's key.
+
+Operator CLI `renewal-invoice-status ORDER_ID` performs only SELECTs and provider
+status GETs. It prints safe status/quote-match flags and configured Canadian route
+names, not merchant secrets, checkout tokens, email or card details. It never
+creates/cancels payments, edits invoices or runs the renewal worker. An active or
+unverified old link cannot be replaced just because the local quote timed out.
+Rampex's public merchant API documents no cancellation endpoint; do not invent one
+or delete a local record to work around an externally payable invoice.
+
+This is a website-only patch: no schema migration, worker update or APK rebuild.
+
 ## 0.30.0 — country-aware direct Stripe and Square checkout
 
 Branded testing app2.0.129 confirms USA or Canada BEFORE requesting a QR. This is

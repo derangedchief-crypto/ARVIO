@@ -185,8 +185,10 @@ final class RenewalPayments {
         $original=$this->currentOrder($s);$expired=null;
         if($original){
             if($original['payment_state']!=='awaiting'||!$original['provider_link_id'])throw new Problem(409,'An unresolved payment already exists. Retain that invoice; do not pay again.');
-            $c=$this->db->one('SELECT * FROM renewal_connections WHERE id=?',[$original['connection_id']]);$status=$this->gateway->status($c,$original);
-            if(($status['status']??null)!=='expired'||($status['fully_paid']??null)!==false||($status['merchant_id']??null)!==$original['merchant_id']||($status['link_id']??null)!==$original['provider_link_id']||($status['amount_minor']??null)!==(int)$original['amount_minor']||($status['currency']??null)!==$original['currency'])throw new Problem(409,'The provider has not confirmed that the old invoice expired unpaid. Do not create another payment.');
+            $c=$this->db->one('SELECT * FROM renewal_connections WHERE id=?',[$original['connection_id']]);
+            $active=$this->settings->connection($s['tenant_id'],$c['gateway']);$reader=$active&&$active['merchant_id']===$original['merchant_id']&&$active['mode']===$c['mode']?$active:$c;
+            $status=$this->gateway->status($reader,$original);
+            if(!RampexGateway::unpaidExpiryConfirmed($original,$status))throw new Problem(409,'The provider has not confirmed that the old invoice expired unpaid. Do not create another payment.');
             $expired=$original['id'];
         }
         $this->db->transaction(function()use($s,$country,$gateway,$expired):void{

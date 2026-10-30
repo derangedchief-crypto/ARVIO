@@ -100,6 +100,12 @@ final class RampexGateway {
         if(($c['gateway']??'rampex')==='rampex')return $country==='US'&&isset(RampexPaymentVerifier::currencyExponents()[$currency]);
         return $this->cards()->supports($c,$country,$currency);
     }
+    public static function unpaidExpiryConfirmed(array $order,array $status):bool {
+        return ($order['payment_state']??null)==='awaiting'&&($order['fulfilment_state']??null)!=='fulfilled'
+            &&($status['status']??null)==='expired'&&($status['fully_paid']??null)===false
+            &&($status['merchant_id']??null)===$order['merchant_id']&&($status['link_id']??null)===$order['provider_link_id']
+            &&($status['amount_minor']??null)===(int)$order['amount_minor']&&($status['currency']??null)===$order['currency'];
+    }
     public function event(array $c,string $raw,string $signature,bool $fresh=true):array {
         if(($c['gateway']??'rampex')!=='rampex')return $this->cards()->event($c,$raw,$signature,$this->config->origin().'/api/renewals/webhooks/'.$c['id'],$fresh);
         if(!RampexPaymentVerifier::signatureValid($raw,$signature,$this->secrets->decrypt($c['webhook_cipher'])))throw new Problem(401,'Invalid payment notification.');

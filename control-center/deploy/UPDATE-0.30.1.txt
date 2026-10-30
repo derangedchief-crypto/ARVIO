@@ -1,0 +1,23 @@
+0.30.1 — existing payment/gateway polling fix (WEBSITE ONLY)
+
+Back up website code and verify the update ZIP checksum. Extract over the existing
+0.30.0 website. config.php, storage, application key, merchant credentials and all
+financial history are omitted from the update and remain untouched. No new schema,
+worker restart, key transfer or APK build is needed.
+
+Refresh the phone checkout, or obtain a fresh QR from the existing2.0.129 testing
+APK if its15-minute checkout expired. Country/gateway controls now remain visible
+through status polling. Choose Canada and Square/Stripe, then use the button to
+check the OLD invoice's unpaid expiry. A still-payable or unverifiable old invoice
+must not be locally cleared to create another charge.
+
+For an operator-only read-only report:
+php -d opcache.enable_cli=0 cli/console.php renewal-invoice-status ORDER_ID
+
+The report exposes no credentials, customer email/card data or checkout token.
+It does not cancel/expire an invoice, request payment, run jobs or renew a line.
+If the original provider still reports ACTIVE, use a provider-supported dashboard
+expiry operation if available, or contact provider support. Rampex's public API
+does not document a cancellation endpoint. Do not guess one or treat404/API failure
+as proof of unpaid expiry. If any money was received, reconcile the original
+invoice instead of charging again. Keep its history and ledger evidence intact.

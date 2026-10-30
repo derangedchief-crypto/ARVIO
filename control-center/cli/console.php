@@ -70,6 +70,10 @@ try {
             if(count($argv)!==2)throw new RuntimeException('Usage: php cli/console.php renewal-worker-check');
             $app=new Application($config);echo json_encode(ControlCenter\RenewalWorkerConnection::probe($app,$config),JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR)."\n";
             break;
+        case 'renewal-invoice-status':
+            if(count($argv)!==3)throw new RuntimeException('Usage: php cli/console.php renewal-invoice-status ORDER_ID');
+            $app=new Application($config);echo json_encode(ControlCenter\RenewalInvoiceStatus::probe($app,$config,$argv[2]),JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR)."\n";
+            break;
         case 'renewal-catalogue-check':
             if(count($argv)!==2)throw new RuntimeException('Usage: php cli/console.php renewal-catalogue-check');
             $app=new Application($config);echo json_encode(ControlCenter\RenewalCatalogueConnection::probe($app,$config),JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR)."\n";
