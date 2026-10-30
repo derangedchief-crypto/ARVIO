@@ -1,5 +1,21 @@
 # Control Center validation
 
+## 0.33.0 generic payment page and provider-specific email collection
+
+325 service tests, 24 browser checks (16 checkout/workspace and eight timed
+polling/race cases), five isolated socket-installer contracts, PHP/JavaScript
+syntax and delivery ZIP checks pass. Logs are in /tmp/opencode under
+generic-payment-page-no-email-validation.log and
+generic-payment-page-polling-validation.log.
+
+Coverage includes email-less Stripe/Square creation, omitted API email-prefill
+properties, captured settlement verification and exactly one renewal without an
+email identifier. Legacy valid-email checkout remains supported; invalid supplied
+addresses are rejected. Rampex missing-email requests fail before order creation.
+Browser contracts check generic title/heading without injected reseller branding,
+conditional Rampex email, cleared/disabled card email fields and omitted card
+submission email. Payment/provider APIs are synthetic; no real charge is created.
+
 ## Automatic job Unix socket repair
 
 Five isolated installer contracts verify the narrow read-only socket bind,

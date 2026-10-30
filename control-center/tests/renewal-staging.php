@@ -173,6 +173,9 @@ function renewalStagingCases(array &$tests,ControlCenter\Application $app,Contro
             same(1050,$p['amount_minor']);same(str_repeat('e',64),$p['package_fingerprint']);check(!isset($p['package_snapshot'])); // Current panel cost can change without inventing/re-saving a reseller plan.
             problem(422,fn()=> $settings->savePrice($alpha,['id'=>$p['id'],'expected_revision'=>$p['revision'],'package_id'=>778,'currency'=>'USD','amount'=>'12.50','enabled'=>true]));
             $checkout=['session_token'=>$token,'price_id'=>$p['id'],'price_revision'=>$p['revision'],'package_fingerprint'=>$p['package_fingerprint'],'email'=>'receipt@example.test'];
+            $count=(int)$app->db->query('SELECT COUNT(*) FROM renewal_orders')->fetchColumn();$withoutEmail=$checkout;unset($withoutEmail['email']);
+            problem(422,fn()=> $payments->checkout($withoutEmail,'127.0.0.98'));
+            same($count,(int)$app->db->query('SELECT COUNT(*) FROM renewal_orders')->fetchColumn());
             problem(422,fn()=> $payments->checkout($checkout+['package_id'=>778],'127.0.0.98'));
             problem(409,fn()=> $payments->checkout(array_replace($checkout,['package_fingerprint'=>str_repeat('d',64)]),'127.0.0.98'));
             problem(409,fn()=> $payments->checkout(array_replace($checkout,['price_id'=>$otherPrice['id'],'price_revision'=>$otherPrice['revision']]),'127.0.0.98'));

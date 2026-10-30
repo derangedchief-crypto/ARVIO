@@ -14,7 +14,7 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             $id=$body['client_reference_id'];same('payment',$body['mode']);same(['card'],$body['allowed_payment_method_types']);same($id,$body['metadata']['order_id']);same($id,$body['payment_intent_data']['metadata']['order_id']);
             same('Payment',$body['line_items'][0]['price_data']['product_data']['name']);same(['order_id'=>$id],$body['metadata']);check(!isset($body['description'],$body['payment_intent_data']['description']));
             check(!isset($body['wallet_addresses'],$body['destination_currency']));check(in_array('Idempotency-Key: '.$id,$headers,true));
-            $live=str_contains(implode('\n',$headers),'_live_');$records[$id]=['id'=>$id,'gateway'=>'stripe','live'=>$live,'amount'=>$body['line_items'][0]['price_data']['unit_amount'],'currency'=>strtoupper($body['line_items'][0]['price_data']['currency'])];
+            $live=str_contains(implode('\n',$headers),'_live_');$records[$id]=['id'=>$id,'gateway'=>'stripe','live'=>$live,'amount'=>$body['line_items'][0]['price_data']['unit_amount'],'currency'=>strtoupper($body['line_items'][0]['price_data']['currency']),'email'=>$body['customer_email']??null,'email_supplied'=>array_key_exists('customer_email',$body)];
             $r=['id'=>'cs_'.$id,'url'=>'https://checkout.stripe.com/c/pay/cs_'.$id,'client_reference_id'=>$id,'amount_total'=>$records[$id]['amount'],'currency'=>strtolower($records[$id]['currency']),'livemode'=>$live];
         }elseif(str_starts_with($path,'stripe/v1/checkout/sessions/cs_')){
             if(str_ends_with($path,'/expire')){
@@ -26,7 +26,7 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
         }elseif($path==='square/v2/online-checkout/payment-links'){
             $id=$body['order']['reference_id'];same($id,$body['idempotency_key']);same('LOC_CA',$body['order']['location_id']);same(false,$body['checkout_options']['allow_tipping']);check(!isset($body['payment_note']));same('Payment',$body['order']['line_items'][0]['name']);
             same(false,$body['checkout_options']['accepted_payment_methods']['cash_app_pay']);same(false,$body['checkout_options']['accepted_payment_methods']['afterpay_clearpay']);
-            $records[$id]=['id'=>$id,'gateway'=>'square','amount'=>$body['order']['line_items'][0]['base_price_money']['amount'],'currency'=>$body['order']['line_items'][0]['base_price_money']['currency']];
+            $records[$id]=['id'=>$id,'gateway'=>'square','amount'=>$body['order']['line_items'][0]['base_price_money']['amount'],'currency'=>$body['order']['line_items'][0]['base_price_money']['currency'],'email'=>$body['pre_populated_data']['buyer_email']??null,'email_supplied'=>array_key_exists('pre_populated_data',$body)];
             $r=['payment_link'=>['id'=>'link_'.$id,'order_id'=>'sq_'.$id,'url'=>'https://square.link/u/'.$id]];
         }elseif(str_starts_with($path,'square/v2/orders/sq_')){
             $id=substr($path,strlen('square/v2/orders/sq_'));$v=$records[$id];
@@ -106,8 +106,11 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             same(true,$opened['available']);same('CA',$opened['country']);same($behavior==='disabled_default'?'stripe':'square',$opened['gateway']);
             $token=$opened['session_token'];if($opened['gateway']!==$provider)$payments->selectRoute(['session_token'=>$token,'country'=>'CA','gateway'=>$provider]);
             $info=$payments->info($token);$price=$info['renewal'];same('CAD',$price['currency']);same(1000,$price['amount_minor']);same($provider,$info['gateway']);
-            $order=$payments->checkout(['session_token'=>$token,'price_id'=>$price['id'],'price_revision'=>$price['revision'],'package_fingerprint'=>$price['package_fingerprint'],'email'=>'receipt@example.test'],'127.0.0.67')['order'];
+            $checkout=['session_token'=>$token,'price_id'=>$price['id'],'price_revision'=>$price['revision'],'package_fingerprint'=>$price['package_fingerprint']]+($behavior==='no_email'?[]:['email'=>'receipt@example.test']);
+            if($behavior==='no_email')problem(422,fn()=> $payments->checkout($checkout+['email'=>'invalid-email'],'127.0.0.67'));
+            $order=$payments->checkout($checkout,'127.0.0.67')['order'];
             $o=$app->db->one('SELECT * FROM renewal_orders WHERE id=?',[$order['id']]);$connection=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);
+            if($behavior==='no_email'){same(null,$records[$o['id']]['email']);same(false,$records[$o['id']]['email_supplied']);same('',$secrets->decrypt($o['email_cipher']));}
             $stripeStatus=static fn($o,$mode,$state='succeeded',$refund=0)=>['id'=>'cs_'.$o['id'],'client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id']],'amount_total'=>(int)$o['amount_minor'],'currency'=>strtolower($o['currency']),'livemode'=>$mode==='live','status'=>'complete','payment_status'=>'paid','payment_intent'=>['id'=>'pi_'.$o['id'],'status'=>$state,'amount_received'=>(int)$o['amount_minor'],'currency'=>strtolower($o['currency']),'metadata'=>['order_id'=>$o['id']],'livemode'=>$mode==='live','latest_charge'=>['paid'=>true,'captured'=>true,'amount_refunded'=>$refund,'payment_method_details'=>['type'=>'card']]]];
             $expiredOrder=null;
             if(in_array($behavior,['handover','rampex_handover','free_switch','rampex_switch'],true)){
@@ -254,6 +257,8 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
     $tests['customer can leave an active Rampex invoice immediately without disabling Rampex or waiting for provider expiry']=fn()=> $flow('stripe','live','998818','rampex_switch');
     $tests['the app login QR automatically uses the next enabled default when the preferred provider is disabled']=fn()=> $flow('stripe','live','998819','disabled_default');
     $tests['Square with no payment note recovers a lost creation reply using its verified opaque order reference']=fn()=> $flow('square','live','998821','lost_reply');
+    $tests['Stripe checkout accepts no website email and still verifies captured payment and renews once']=fn()=> $flow('stripe','live','998822','no_email');
+    $tests['Square checkout accepts no website email and still verifies captured payment and renews once']=fn()=> $flow('square','live','998823','no_email');
     $tests['provider setup reserves its final webhook URL before credentials and retries cannot replace a completed setup']=function()use($app,$c,$alpha,$beta,$tenantA,$settings):void{
         $draft=$settings->prepareConnection($alpha,['gateway'=>'square']);
         same($draft,$settings->prepareConnection($alpha,['gateway'=>'square']));

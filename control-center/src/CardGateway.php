@@ -62,15 +62,15 @@ final class CardGateway {
     public function supports(array $c,string $country,string $currency):bool {
         $options=$this->options($c);return in_array($country,['US','CA'],true)&&in_array($currency,$options['currencies']??[],true)&&is_string($options['country']??null)&&preg_match('/^[A-Z]{2}$/D',$options['country'])===1;
     }
-    public function create(array $c,array $o,string $email,string $return):array {
+    public function create(array $c,array $o,?string $email,string $return):array {
         $g=$c['gateway'];$key=$this->secrets->decrypt($c['api_cipher']);$options=$this->options($c);$amount=(int)$o['amount_minor'];
         if(!$this->supports($c,$o['country'],$o['currency']))throw new RampexLinkRejected('This gateway cannot process the selected country and invoice currency.');
         if($g==='stripe'){
-            $r=$this->request($g,$c['mode'],'/v1/checkout/sessions',$key,['mode'=>'payment','allowed_payment_method_types'=>['card'],'billing_address_collection'=>'required','customer_email'=>$email,'client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id']],'payment_intent_data'=>['metadata'=>['order_id'=>$o['id']]],'line_items'=>[['quantity'=>1,'price_data'=>['currency'=>strtolower($o['currency']),'unit_amount'=>$amount,'product_data'=>['name'=>'Payment']]]],'success_url'=>$return,'cancel_url'=>$return],$o['id']);
+            $r=$this->request($g,$c['mode'],'/v1/checkout/sessions',$key,['mode'=>'payment','allowed_payment_method_types'=>['card'],'billing_address_collection'=>'required','client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id']],'payment_intent_data'=>['metadata'=>['order_id'=>$o['id']]],'line_items'=>[['quantity'=>1,'price_data'=>['currency'=>strtolower($o['currency']),'unit_amount'=>$amount,'product_data'=>['name'=>'Payment']]]],'success_url'=>$return,'cancel_url'=>$return]+($email!==null?['customer_email'=>$email]:[]),$o['id']);
             if(($r['client_reference_id']??null)!==$o['id']||($r['amount_total']??null)!==$amount||strtoupper($r['currency']??'')!==$o['currency']||($r['livemode']??null)!==($c['mode']==='live'))throw new Problem(503,'Stripe quote verification failed; retain the original invoice.');
             return ['link_id'=>self::id($r['id']??null),'checkout_id'=>self::id($r['id']??null),'url'=>self::url($r['url']??null,$g,$c['mode'])];
         }
-        $r=$this->request($g,$c['mode'],'/v2/online-checkout/payment-links',$key,['idempotency_key'=>$o['id'],'order'=>['location_id'=>$options['location_id'],'reference_id'=>$o['id'],'line_items'=>[['name'=>'Payment','quantity'=>'1','base_price_money'=>['amount'=>$amount,'currency'=>$o['currency']]]]],'checkout_options'=>['allow_tipping'=>false,'ask_for_shipping_address'=>false,'redirect_url'=>$return,'accepted_payment_methods'=>['apple_pay'=>true,'google_pay'=>true,'cash_app_pay'=>false,'afterpay_clearpay'=>false]],'pre_populated_data'=>['buyer_email'=>$email]],$o['id']);
+        $r=$this->request($g,$c['mode'],'/v2/online-checkout/payment-links',$key,['idempotency_key'=>$o['id'],'order'=>['location_id'=>$options['location_id'],'reference_id'=>$o['id'],'line_items'=>[['name'=>'Payment','quantity'=>'1','base_price_money'=>['amount'=>$amount,'currency'=>$o['currency']]]]],'checkout_options'=>['allow_tipping'=>false,'ask_for_shipping_address'=>false,'redirect_url'=>$return,'accepted_payment_methods'=>['apple_pay'=>true,'google_pay'=>true,'cash_app_pay'=>false,'afterpay_clearpay'=>false]]]+($email!==null?['pre_populated_data'=>['buyer_email'=>$email]]:[]),$o['id']);
         $p=$r['payment_link']??[];$id=self::id($p['order_id']??null);
         $order=$this->request($g,$c['mode'],'/v2/orders/'.rawurlencode($id),$key)['order']??[];
         $this->squareOrder($order,$o,$options);

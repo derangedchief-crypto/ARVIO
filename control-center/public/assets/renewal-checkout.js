@@ -28,11 +28,12 @@
       return;
     }
     if(!match)throw new Error('Invalid checkout link.');const token=match[1];
-    let routeRevision=0,info=await post('/api/public-renewals/info',{session_token:token});$('seller').textContent=info.reseller;
+    let routeRevision=0,info=await post('/api/public-renewals/info',{session_token:token});$('seller').textContent='Payment Gateway';
     const target=document.createElement('p');target.textContent=info.target_label;target.className='quiet';$('seller').after(target);
     const names={stripe:'Stripe — card',square:'Square — card',rampex:'Rampex'};
     function render(data){
       info=data;$('demo').hidden=!info.simulated;$('order').hidden=true;$('checkout').hidden=true;$('route').hidden=true;
+      const emailRequired=info.gateway==='rampex';$('email-field').hidden=!emailRequired;$('email').required=emailRequired;$('email').disabled=!emailRequired;if(!emailRequired)$('email').value='';
       if(info.order){showOrder(info.order,info.simulated,false,info.country);if(info.order.payment_state!=='awaiting')return;}
       $('route').hidden=false;$('country').value=info.country||'';
       const gateways=(info.gateways||[]).filter(g=>Object.hasOwn(names,g.gateway));$('gateway').replaceChildren();
@@ -47,7 +48,7 @@
       $('details').textContent=p.duration+' '+p.period+' · '+p.max_connections+' connection(s) · '+(p.amount_minor/10**exponent).toFixed(exponent)+' '+p.currency;
       $('pay').disabled=!gateways.some(g=>g.gateway===info.gateway);
       if($('pay').disabled)$('error').textContent='Choose an available gateway, or ask your provider to configure one for this country and currency.';
-      $('checkout').onsubmit=async e=>{e.preventDefault();$('error').textContent='';$('pay').disabled=true;try{const result=await post('/api/public-renewals/checkout',{session_token:token,price_id:p.id,price_revision:p.revision,package_fingerprint:p.package_fingerprint,email:$('email').value});info.order=result.order;showOrder(result.order,info.simulated,true,info.country);if(result.order.payment_url)location.assign(paymentUrl(result.order.payment_url));}catch(error){$('error').textContent=error.message;$('pay').disabled=false;}};
+      $('checkout').onsubmit=async e=>{e.preventDefault();$('error').textContent='';$('pay').disabled=true;try{const result=await post('/api/public-renewals/checkout',{session_token:token,price_id:p.id,price_revision:p.revision,package_fingerprint:p.package_fingerprint,...(emailRequired?{email:$('email').value}:{})});info.order=result.order;showOrder(result.order,info.simulated,true,info.country);if(result.order.payment_url)location.assign(paymentUrl(result.order.payment_url));}catch(error){try{render(await post('/api/public-renewals/info',{session_token:token}));}catch{$('pay').disabled=false;}$('error').textContent=error.message;}};
     }
     async function changeRoute(gateway){if(info.order&&!confirm('Switch to this provider now? The old unpaid invoice will be left behind for reconciliation, not cancelled externally. Do not pay the old link after switching.'))return;const revision=++routeRevision;$('error').textContent='';$('pay').disabled=true;$('apply-route').disabled=true;try{const data=await post('/api/public-renewals/route',{session_token:token,country:$('country').value,...(gateway?{gateway}:{}),cancel_previous:false});if(revision===routeRevision)render(data);}catch(error){if(revision===routeRevision)$('error').textContent=error.message;}finally{if(revision===routeRevision)$('apply-route').disabled=false;}}
     $('country').onchange=()=>changeRoute(null);$('gateway').onchange=()=>changeRoute($('gateway').value);$('apply-route').onclick=()=>changeRoute($('gateway').value||null);render(info);

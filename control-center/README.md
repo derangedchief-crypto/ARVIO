@@ -7,6 +7,32 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.33.0 — generic payment page and no duplicate card email form
+
+Our hosted checkout page now uses Payment Gateway for its title and main heading,
+not the reseller workspace name. It still shows the account suffix, current
+package, amount, currency and payment state so the customer can review the charge.
+The real merchant identity on Stripe/Square's own pages/statements is unchanged.
+
+Stripe and Square no longer ask for an email on our page or include an email in
+its checkout submission. Their API email-prefill fields are omitted when absent;
+no synthetic customer address is generated. Their hosted checkout can still ask
+for required billing/contact data and issue receipts under provider settings.
+Rampex's API requires a customer email, so that field appears only when Rampex
+is selected; missing email is rejected before any new Rampex order is created.
+Switching to Stripe/Square disables and clears that field instead of forwarding
+the previously typed email. Older clients supplying valid email remain compatible.
+
+Payment verification and same-order renewal do not depend on an email address.
+An absent address is stored as an encrypted empty value in the existing non-null
+column; no schema change, guessed address or rewrite of historical data is needed.
+Gateway fallback rechecks the chosen provider before order creation, including
+its email requirement. Checkout errors refresh the quote so a changed fallback
+can show the correct provider-specific field without making another charge.
+
+No new migration after 0.32.x, APK build, worker restart or alteration to the
+already-installed systemd database socket repair. See UPDATE-0.33.0.txt.
+
 ## 0.32.1 — minimal provider-facing payment details
 
 Scheduled-job socket repair: if normal PHP can connect but renewal-jobs.service

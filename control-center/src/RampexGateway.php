@@ -43,12 +43,13 @@ final class RampexGateway {
         $name=is_string($r['business_name']??null)?trim($r['business_name']):'';
         return ['merchant_id'=>$r['merchant_id'],'business_name'=>Input::text(mb_substr($name!==''?$name:'Rampex merchant',0,120),'merchant name',120)];
     }
-    public function create(array $connection,array $order,string $email):array {
+    public function create(array $connection,array $order,?string $email):array {
         if(($connection['gateway']??'rampex')!=='rampex'){
             $session=$this->db->one('SELECT token_cipher FROM renewal_sessions WHERE id=?',[$order['session_id']]);
             if(!$session)throw new Problem(409,'Original checkout session is unavailable.');
             return $this->cards()->create($connection,$order,$email,$this->config->origin().'/renew/'.$this->secrets->decrypt($session['token_cipher']));
         }
+        if($email===null)throw new RampexLinkRejected('Rampex requires an email address. Select Stripe or Square to continue without entering one here.');
         if($connection['mode']==='mock'){
             if(!$this->mockAllowed())throw new Problem(503,'Payment simulator unavailable.');
             $id='mock-'.$order['id'];
