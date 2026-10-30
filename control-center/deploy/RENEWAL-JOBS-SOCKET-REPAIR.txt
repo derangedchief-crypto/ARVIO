@@ -1,0 +1,41 @@
+WEBSITE ONLY — automatic renewal job cannot see aaPanel MySQL Unix socket
+
+Symptom: provider confirms paid, signed webhook notifications stay pending, PHP
+works as www in a normal shell, but renewal-jobs.service repeatedly logs MySQL
+Unix socket not found (SQL 2002). Its PrivateTmp sandbox hides a socket in /tmp.
+The PHP duplicate mbstring/pdo_pgsql warnings are unrelated to this failure.
+
+If a normal existing renewal-jobs invocation has already verified and fulfilled
+the invoice, do not charge again, clear payment evidence or manually extend it.
+
+As root on the website host, run:
+bash deploy/fix-renewal-jobs-socket.sh
+
+The helper checks the existing dedicated job's user and command. It reads only
+the configured client socket path (never prints credentials) and verifies that
+www can connect normally. It adds a unit-specific BindReadOnlyPaths entry for
+that exact socket in renewal-jobs.service.d/30-database-socket.conf. PrivateTmp,
+NoNewPrivileges, service user and private umask remain unchanged. Existing other
+overrides and differing files at this path are preserved rather than overwritten.
+
+It reloads systemd configuration, enables the existing renewal timer and requests
+a non-blocking start of the existing job. It does not stop/restart an in-flight
+renewal, MySQL, PHP, auth, trials or the independent panel worker. Running jobs
+finish first; the next activation uses the socket binding. All normal signature,
+capture, merchant, amount, account, package and idempotency checks still apply.
+The job may fulfil already-verified paid invoices; it cannot create a new charge.
+
+TCP database connections need no binding; the helper exits 2 without changing
+systemd. Missing/unsafe sockets or an unexpected service stop without changes.
+
+After one minute, inspect:
+systemctl show renewal-jobs.service -p PrivateTmp -p BindReadOnlyPaths -p Result -p ExecMainStatus
+journalctl -u renewal-jobs.service --since '-1 minute' --no-pager -o cat
+
+Expect the exact socket binding, PrivateTmp still enabled, and successful job
+exits instead of SQL 2002 errors. Installation itself is not proof of a successful
+sandboxed DB connection: inspect the NEXT job run. No additional paid test is
+needed to check whether the service can connect and run with an empty queue.
+
+The helper can be delivered separately to existing 0.32.1 sites; no APK, schema
+migration or full website replacement is required for this service-only repair.

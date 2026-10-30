@@ -1,5 +1,16 @@
 # Control Center validation
 
+## Automatic job Unix socket repair
+
+Five isolated installer contracts verify the narrow read-only socket bind,
+retained PrivateTmp, safe identical re-installation, preservation of differing
+user overrides, failure before changes for missing/unsafe sockets or a failed
+baseline connection, unexpected service users, and symlink preservation. Shell
+syntax and delivery ZIP checks pass. These fixtures stub systemd/root installation
+and do not claim that a real mount namespace has been exercised. On-server
+acceptance must confirm the next sandboxed job successfully connects, without
+another payment or disabling the job's filesystem isolation.
+
 ## 0.32.1 minimal provider-facing payment details
 
 323 service tests and 14 workspace/checkout browser checks pass. PHP syntax and

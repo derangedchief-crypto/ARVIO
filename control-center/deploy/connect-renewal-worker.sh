@@ -29,6 +29,12 @@ cmp -s "$config" "$backup" || { echo 'Private config changed concurrently; origi
 mv -T -- "$temp" "$config"
 for name in renewal-jobs.service renewal-jobs.timer; do install -m 0644 -o root -g root "$site/deploy/$name" "/etc/systemd/system/$name";done
 systemctl daemon-reload
+if bash "$site/deploy/fix-renewal-jobs-socket.sh"; then
+ :
+else
+ status=$?
+ [[ "$status" == 2 ]] || exit "$status" # TCP databases need no socket mount.
+fi
 systemctl enable --now renewal-jobs.timer
 systemctl is-active --quiet renewal-jobs.timer
 cat "$backup.result.json"

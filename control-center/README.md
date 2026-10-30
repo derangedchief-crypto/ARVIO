@@ -9,6 +9,16 @@ separate centrally signed app release; shared build/source pins are not moved he
 
 ## 0.32.1 — minimal provider-facing payment details
 
+Scheduled-job socket repair: if normal PHP can connect but renewal-jobs.service
+logs MySQL Unix socket not found, its PrivateTmp sandbox may hide aaPanel's
+socket. Run deploy/fix-renewal-jobs-socket.sh as root on the WEBSITE host. It
+verifies the www user's existing connection, discovers the configured client
+socket, and adds only a read-only bind of that socket to the existing job unit.
+PrivateTmp and other restrictions remain enabled. It never changes credentials,
+switches the database to TCP, restarts MySQL/auth/trials or kills an in-flight job.
+The timer's next activation uses the new mount. Existing differing overrides are
+preserved for review. Normal worker setup invokes this repair for socket DSNs.
+
 New Stripe and Square checkouts use the required generic item name `Payment`.
 Square's optional payment note and Rampex's optional description are omitted.
 Stripe metadata retains only the opaque order ID, not country or purchase details.
