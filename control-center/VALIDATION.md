@@ -1,5 +1,23 @@
 # Control Center validation
 
+## 0.31.0 provider-confirmed checkout cancellation
+
+314 service tests and 20 browser checks pass (12 existing plus eight timed
+polling/cancellation checks). PHP/JavaScript syntax and delivery ZIP checks pass.
+
+Synthetic-provider coverage includes immediate Stripe expiration, Square link
+deletion with cancelled-order verification, original Square links without saved
+link IDs, all older unpaid invoices, refused captured/processing payments, unknown
+cancellation outcomes, persistent cross-checkout fences, concurrent switch leases
+and rechecking an uncertain cancellation. Rampex checks ensure no invented cancel
+endpoint is called and an expired link with partial funds cannot release a quote.
+Timed browser checks cover cancellation consent and hidden payment links during
+uncertain cancellation, in addition to the polling/race regressions from 0.30.1.
+No merchant sandbox or live endpoint is called, no real payment is taken or
+cancelled, and no real account is renewed. Merchant-owned sandbox acceptance is
+still required before an explicitly authorized live test. No APK, panel worker,
+auth or trial source changes are included. Migration 031 is additive.
+
 ## 0.30.1 existing-invoice polling regression
 
 306 service cases and18 browser checks pass (12 existing plus six actual timed

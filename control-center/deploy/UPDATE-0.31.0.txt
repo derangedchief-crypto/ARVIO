@@ -1,0 +1,37 @@
+0.31.0 — cancel unpaid Stripe/Square checkout when switching gateways
+
+TESTING/STAGING ONLY. No APK or renewal/auth/trial worker change.
+Back up website code AND database before installing. Extract this update over
+0.30.0/0.30.1, preserving config.php, storage, all keys and invoice history.
+Run the website CLI migration before accepting requests with the new code:
+php -d opcache.enable_cli=0 cli/console.php migrate
+Migration 031 only adds checkout/void metadata and an account-scoped switch table.
+Do not drop it when reverting website code; retain all financial history.
+
+When the customer selects another gateway, confirm cancellation. Stripe's open
+unpaid Checkout Session is expired; Square's link is deleted, cancelling its
+order. The replacement quote opens only after every older account checkout is
+confirmed unpaid and no longer payable. History and audit records are retained.
+
+Square tokens need ORDERS_READ, ORDERS_WRITE and PAYMENTS_READ for link deletion,
+order verification and checking for in-flight funds (plus existing checkout scopes).
+Old Square orders find their original link by order ID. A missing API resource or
+404 is NOT proof of cancellation. API failures block replacement until rechecked.
+Paid/processing/review/uncertain payments cannot be auto-voided; no auto-refund.
+
+RAMPEX LIMITATION: Its public API does not document cancellation. Active links
+still need Rampex-supported provider-side expiry. No local clearing or guessed
+endpoint is used. This update cannot instantly switch away from an ACTIVE Rampex
+invoice without provider cooperation.
+
+Acceptance using the merchant's SANDBOX accounts first:
+1. Start an unpaid Stripe checkout, return and select Square. Confirm. Check that
+   the old Stripe URL is expired before paying through the new Square checkout.
+2. Repeat Square -> Stripe; old Square URL must be unavailable and order canceled.
+3. Retry a failed/timed-out cancellation. No new checkout until status confirms it.
+4. Open two QRs/tabs. While cancelling, neither may create another payable invoice.
+5. Paid or processing attempts must refuse switching; preserve their original IDs.
+6. Sandbox completion must never reactivate a real panel account.
+
+No real cancellation, charge or live renewal was used by automated validation.
+Obtain explicit authorization before a deliberately controlled live acceptance.

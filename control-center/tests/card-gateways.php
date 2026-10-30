@@ -4,8 +4,8 @@ declare(strict_types=1);
 function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCenter\Config $config,array $owner,array $alpha,array $beta,array $tenantA):void {
     $c=new ControlCenter\Config($config->root,array_replace($config->values,['renewal_payments'=>['allow_live_api'=>true,'simulation_enabled'=>true],'renewal_worker'=>['shared_secret'=>str_repeat('a',64)]]));
     $secrets=new ControlCenter\Secrets($c);$records=[];$overrides=[];$calls=[];
-    $transport=static function($path,$body,$headers)use(&$records,&$overrides,&$calls):array {
-        $calls[]=['path'=>$path,'body'=>$body,'headers'=>$headers];
+    $transport=static function($path,$body,$headers,$method='GET')use(&$records,&$overrides,&$calls):array {
+        $calls[]=['path'=>$path,'body'=>$body,'headers'=>$headers,'method'=>$method];
         if(isset($overrides[$path]))return ['status'=>200,'body'=>json_encode($overrides[$path])];
         if($path==='stripe/v1/account')$r=['id'=>'acct_test_CA','country'=>'CA','charges_enabled'=>true,'details_submitted'=>true,'business_profile'=>['name'=>'Synthetic Stripe merchant']];
         elseif($path==='square/v2/merchants/me')$r=['merchant'=>['id'=>'M_CA','country'=>'CA','status'=>'ACTIVE','business_name'=>'Synthetic Square merchant']];
@@ -16,8 +16,12 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             $live=str_contains(implode('\n',$headers),'_live_');$records[$id]=['id'=>$id,'gateway'=>'stripe','live'=>$live,'amount'=>$body['line_items'][0]['price_data']['unit_amount'],'currency'=>strtoupper($body['line_items'][0]['price_data']['currency'])];
             $r=['id'=>'cs_'.$id,'url'=>'https://checkout.stripe.com/c/pay/cs_'.$id,'client_reference_id'=>$id,'amount_total'=>$records[$id]['amount'],'currency'=>strtolower($records[$id]['currency']),'livemode'=>$live];
         }elseif(str_starts_with($path,'stripe/v1/checkout/sessions/cs_')){
+            if(str_ends_with($path,'/expire')){
+                same('POST',$method);$id=substr($path,strlen('stripe/v1/checkout/sessions/cs_'),-strlen('/expire'));same('open',$records[$id]['state']);$records[$id]['state']='expired';return ['status'=>200,'body'=>'{}'];
+            }
             $id=explode('?',substr($path,strlen('stripe/v1/checkout/sessions/cs_')))[0];$v=$records[$id];
             $r=['id'=>'cs_'.$id,'client_reference_id'=>$id,'metadata'=>['order_id'=>$id],'amount_total'=>$v['amount'],'currency'=>strtolower($v['currency']),'livemode'=>$v['live'],'status'=>'complete','payment_status'=>'paid','payment_intent'=>['id'=>'pi_'.$id,'status'=>'succeeded','amount_received'=>$v['amount'],'currency'=>strtolower($v['currency']),'metadata'=>['order_id'=>$id],'livemode'=>$v['live'],'latest_charge'=>['paid'=>true,'captured'=>true,'amount_refunded'=>0,'payment_method_details'=>['type'=>'card']]]];
+            if(isset($v['state']))$r=array_replace($r,['status'=>$v['state'],'payment_status'=>'unpaid','payment_intent'=>null]);
         }elseif($path==='square/v2/online-checkout/payment-links'){
             $id=$body['order']['reference_id'];same($id,$body['idempotency_key']);same('LOC_CA',$body['order']['location_id']);same(false,$body['checkout_options']['allow_tipping']);same('Renewal order '.$id,$body['payment_note']);
             same(false,$body['checkout_options']['accepted_payment_methods']['cash_app_pay']);same(false,$body['checkout_options']['accepted_payment_methods']['afterpay_clearpay']);
@@ -26,6 +30,14 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
         }elseif(str_starts_with($path,'square/v2/orders/sq_')){
             $id=substr($path,strlen('square/v2/orders/sq_'));$v=$records[$id];
             $r=['order'=>['id'=>'sq_'.$id,'reference_id'=>$id,'location_id'=>'LOC_CA','total_money'=>['amount'=>$v['amount'],'currency'=>$v['currency']],'net_amount_due_money'=>['amount'=>0,'currency'=>$v['currency']],'state'=>'OPEN','tenders'=>[['payment_id'=>'pay_'.$id]]]];
+            if(isset($v['state']))$r['order']=array_replace($r['order'],['state'=>$v['state']==='expired'?'CANCELED':'OPEN','tenders'=>[],'created_at'=>'2026-10-01T12:00:00Z']);
+        }elseif(str_starts_with($path,'square/v2/online-checkout/payment-links?')){
+            $r=['payment_links'=>[]];foreach($records as $v)if($v['gateway']==='square')$r['payment_links'][]=['id'=>'link_'.$v['id'],'order_id'=>'sq_'.$v['id']];
+        }elseif(str_starts_with($path,'square/v2/payments?'))$r=['payments'=>[]];
+        elseif(str_starts_with($path,'square/v2/online-checkout/payment-links/link_')){
+            $id=substr($path,strlen('square/v2/online-checkout/payment-links/link_'));
+            if($method==='DELETE'){same('open',$records[$id]['state']);$records[$id]['state']='expired';$r=['id'=>'link_'.$id,'cancelled_order_id'=>'sq_'.$id];}
+            else $r=['payment_link'=>['id'=>'link_'.$id,'order_id'=>'sq_'.$id]];
         }elseif(str_starts_with($path,'square/v2/payments/pay_')){
             $id=substr($path,strlen('square/v2/payments/pay_'));$v=$records[$id];
             $r=['payment'=>['id'=>'pay_'.$id,'order_id'=>'sq_'.$id,'location_id'=>'LOC_CA','status'=>'COMPLETED','source_type'=>'CARD','card_details'=>['status'=>'CAPTURED'],'amount_money'=>['amount'=>$v['amount'],'currency'=>$v['currency']],'tip_money'=>['amount'=>0,'currency'=>$v['currency']],'refunded_money'=>['amount'=>0,'currency'=>$v['currency']]]];
@@ -96,9 +108,26 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             $o=$app->db->one('SELECT * FROM renewal_orders WHERE id=?',[$order['id']]);$connection=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);
             $stripeStatus=static fn($o,$mode,$state='succeeded',$refund=0)=>['id'=>'cs_'.$o['id'],'client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id']],'amount_total'=>(int)$o['amount_minor'],'currency'=>strtolower($o['currency']),'livemode'=>$mode==='live','status'=>'complete','payment_status'=>'paid','payment_intent'=>['id'=>'pi_'.$o['id'],'status'=>$state,'amount_received'=>(int)$o['amount_minor'],'currency'=>strtolower($o['currency']),'metadata'=>['order_id'=>$o['id']],'livemode'=>$mode==='live','latest_charge'=>['paid'=>true,'captured'=>true,'amount_refunded'=>$refund,'payment_method_details'=>['type'=>'card']]]];
             $expiredOrder=null;
+            if(in_array($behavior,['void','void_many','void_legacy'],true)){
+                if($behavior==='void_legacy')$app->db->query('UPDATE renewal_orders SET provider_checkout_id=NULL WHERE id=?',[$o['id']]);
+                $records[$o['id']]['state']='open';$prior=[$o];
+                if($behavior==='void_many'){
+                    $copy=$o;$copy['id']=ControlCenter\Database::id();$copy['provider_link_id']='cs_'.$copy['id'];$copy['provider_checkout_id']=$copy['provider_link_id'];
+                    $columns=array_keys($copy);$app->db->query('INSERT INTO renewal_orders ('.implode(',',$columns).') VALUES ('.implode(',',array_fill(0,count($columns),'?')).')',array_values($copy));
+                    $records[$copy['id']]=array_replace($records[$o['id']],['id'=>$copy['id']]);$prior[]=$copy;
+                }
+                $next=$provider==='stripe'?'square':'stripe';
+                $settings->saveConnection($alpha,['gateway'=>$next,'mode'=>$mode,'api_key'=>$next==='stripe'?($mode==='live'?'sk_live_SYNTHETIC_KEY_ONLY':'sk_test_SYNTHETIC_KEY_ONLY'):'SYNTHETIC_SQUARE_TOKEN_ONLY','webhook_secret'=>'SYNTHETIC_'.$mode.'_WEBHOOK_SECRET','location_id'=>'LOC_CA']);
+                $changed=$payments->selectRoute(['session_token'=>$token,'country'=>'CA','gateway'=>$next,'cancel_previous'=>true]);
+                same($next,$changed['gateway']);same(null,$changed['order']);
+                foreach($prior as $old){$held=$app->db->one('SELECT * FROM renewal_orders WHERE id=?',[$old['id']]);same('expired',$held['payment_state']);same('confirmed',$held['void_state']);same('expired',$records[$old['id']]['state']);}
+                same(0,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$o['id']])->fetchColumn());
+                $provider=$next;$price=$changed['renewal'];$order=$payments->checkout(['session_token'=>$token,'price_id'=>$price['id'],'price_revision'=>$price['revision'],'package_fingerprint'=>$price['package_fingerprint'],'email'=>'receipt@example.test'],'127.0.0.67')['order'];
+                $o=$app->db->one('SELECT * FROM renewal_orders WHERE id=?',[$order['id']]);$connection=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);
+            }
             if($behavior==='switch'){
                 $expiredOrder=$o;$statusPath='stripe/v1/checkout/sessions/cs_'.$o['id'].'?expand%5B%5D=payment_intent.latest_charge';
-                $overrides[$statusPath]=array_replace($stripeStatus($o,$mode),['status'=>'expired','payment_status'=>'unpaid']);
+                $overrides[$statusPath]=array_replace($stripeStatus($o,$mode),['status'=>'expired','payment_status'=>'unpaid','payment_intent'=>null]);
                 $changed=$payments->selectRoute(['session_token'=>$token,'country'=>'CA','gateway'=>'square']);
                 same('square',$changed['gateway']);same('expired',$app->db->one('SELECT payment_state FROM renewal_orders WHERE id=?',[$o['id']])['payment_state']);
                 unset($overrides[$statusPath]);$provider='square';$price=$changed['renewal'];
@@ -182,6 +211,10 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
         foreach([['amount_minor'=>999],['merchant_id'=>'square:OTHER'],['order_ref'=>str_repeat('a',32)],['currency'=>'USD'],['settlement_ref'=>'square:OTHER']] as $bad)problem(409,fn()=> $card->completed($connection,$event,$o,array_replace($status,$bad)));
         problem(503,fn()=> $card->completed($connection,$event,$o,array_replace($status,['status'=>'pending','fully_paid'=>false])));
     };
+    $tests['Stripe unpaid checkout expires immediately before replacement Square checkout and exactly one renewal']=fn()=> $flow('stripe','live','998811','void');
+    $tests['Square unpaid link is deleted and its cancelled order verified before switching to Stripe']=fn()=> $flow('square','live','998812','void');
+    $tests['switch cancels all older unpaid account checkouts and preserves every invoice record']=fn()=> $flow('stripe','live','998813','void_many');
+    $tests['pre-update Square invoice finds the original payment-link ID before cancelling']=fn()=> $flow('square','live','998814','void_legacy');
     $tests['provider setup reserves its final webhook URL before credentials and retries cannot replace a completed setup']=function()use($app,$c,$alpha,$beta,$tenantA,$settings):void{
         $draft=$settings->prepareConnection($alpha,['gateway'=>'square']);
         same($draft,$settings->prepareConnection($alpha,['gateway'=>'square']));
@@ -216,6 +249,61 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
         foreach(array_slice($calls,$count) as $call)same(null,$call['body']);
         $conn=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);check(!str_contains(json_encode($report),$secrets->decrypt($conn['api_cipher'])));check(!str_contains(json_encode($report),$secrets->decrypt($conn['webhook_cipher'])));
         problem(404,fn()=> ControlCenter\RenewalInvoiceStatus::probe($app,$c,str_repeat('f',32),$gateway));
+    };
+    $tests['cancellation refuses captured or processing money and never calls provider mutation']=function()use($app,$tenantA,$gateway,&$calls,&$overrides):void{
+        foreach(['stripe','square'] as $provider){
+            $o=$app->db->one("SELECT o.* FROM renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id WHERE o.tenant_id=? AND c.gateway=? AND o.payment_state='paid' ORDER BY o.created_at DESC,o.id DESC LIMIT 1",[$tenantA['id'],$provider]);
+            $connection=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);$count=count($calls);
+            problem(409,fn()=> $gateway->voidUnpaid($connection,$o));
+            foreach(array_slice($calls,$count) as $call)same('GET',$call['method']);
+            if($provider==='stripe'){
+                $path='stripe/v1/checkout/sessions/'.$o['provider_link_id'].'?expand%5B%5D=payment_intent.latest_charge';
+                $valid=['id'=>$o['provider_link_id'],'client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id']],'amount_total'=>(int)$o['amount_minor'],'currency'=>strtolower($o['currency']),'livemode'=>$connection['mode']==='live','status'=>'open','payment_status'=>'unpaid','payment_intent'=>['status'=>'processing','amount_received'=>0]];
+                $overrides[$path]=$valid;$count=count($calls);problem(409,fn()=> $gateway->voidUnpaid($connection,$o));foreach(array_slice($calls,$count) as $call)same('GET',$call['method']);unset($overrides[$path]);
+            }
+        }
+    };
+    $tests['Rampex has no guessed cancellation endpoint and expired partial funds cannot authorize another payment']=function()use($app,$c,$secrets):void{
+        $state='active';$partial=false;$gets=0;
+        $transport=static function($path,$body,$headers)use(&$state,&$partial,&$gets):array{
+            same('api-get-payment-status?link_id=old-link',$path);same(null,$body);$gets++;
+            return ['status'=>200,'body'=>json_encode(['success'=>true,'data'=>['link_id'=>'old-link','status'=>$state,'currency'=>'CAD','amount'=>'10.00','partial_payment'=>$partial,'received_amount'=>$partial?'1.00':'0.00']])];
+        };
+        $gateway=new ControlCenter\RampexGateway($c,$app->db,$secrets,$transport);$conn=['gateway'=>'rampex','mode'=>'live','merchant_id'=>'old-merchant','api_cipher'=>$secrets->encrypt('SYNTHETIC_RAMPEX_KEY_ONLY')];
+        $o=['payment_state'=>'awaiting','fulfilment_state'=>'not_paid','provider_link_id'=>'old-link','merchant_id'=>'old-merchant','amount_minor'=>1000,'currency'=>'CAD'];
+        problem(409,fn()=> $gateway->voidUnpaid($conn,$o));$state='expired';$partial=true;problem(409,fn()=> $gateway->voidUnpaid($conn,$o));
+        $partial=false;same(true,ControlCenter\RampexGateway::unpaidExpiryConfirmed($o,$gateway->voidUnpaid($conn,$o)));same(3,$gets);
+    };
+    $tests['Square cancellation refuses in-flight funds even when its order has no tenders']=function()use($app,$c,$tenantA,$secrets):void{
+        $o=$app->db->one("SELECT o.* FROM renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id WHERE o.tenant_id=? AND c.gateway='square' AND o.payment_state='paid' ORDER BY o.created_at DESC,o.id DESC LIMIT 1",[$tenantA['id']]);$conn=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);
+        $mutations=0;$paymentState='APPROVED';
+        $transport=static function($path,$body,$headers,$method)use($o,&$paymentState,&$mutations):array{
+            if($method!=='GET')$mutations++;
+            if(str_starts_with($path,'square/v2/orders/'))$r=['order'=>['id'=>$o['provider_link_id'],'reference_id'=>$o['id'],'location_id'=>'LOC_CA','total_money'=>['amount'=>(int)$o['amount_minor'],'currency'=>$o['currency']],'state'=>'OPEN','created_at'=>'2026-10-01T12:00:00Z','tenders'=>[]]];
+            elseif(str_starts_with($path,'square/v2/payments?'))$r=['payments'=>[['id'=>'pending','order_id'=>$o['provider_link_id'],'status'=>$paymentState]]];
+            else throw new RuntimeException('Unexpected cancellation API call.');
+            return ['status'=>200,'body'=>json_encode($r)];
+        };
+        $cards=new ControlCenter\CardGateway($c,$secrets,$transport);
+        foreach(['APPROVED','PENDING','COMPLETED','UNKNOWN'] as $state){$paymentState=$state;problem(409,fn()=> $cards->voidUnpaid($conn,$o));}same(0,$mutations);
+    };
+    $tests['unknown cancellation blocks every checkout until a verified retry completes']=function()use($app,$settings,$tenantA,$gateway,&$overrides,&$records):void{
+        $source=$app->db->one("SELECT o.* FROM renewal_orders o JOIN renewal_connections c ON c.id=o.connection_id WHERE o.tenant_id=? AND c.gateway='stripe' AND o.payment_state='paid' ORDER BY o.created_at DESC,o.id DESC LIMIT 1",[$tenantA['id']]);
+        $o=$source;$o['id']=ControlCenter\Database::id();$o['line_id']='998820';$o['payment_state']='awaiting';$o['fulfilment_state']='not_paid';$o['provider_link_id']='cs_'.$o['id'];$o['provider_checkout_id']=$o['provider_link_id'];$o['void_state']=null;$o['void_token']=null;
+        $columns=array_keys($o);$app->db->query('INSERT INTO renewal_orders ('.implode(',',$columns).') VALUES ('.implode(',',array_fill(0,count($columns),'?')).')',array_values($o));
+        $records[$o['id']]=['id'=>$o['id'],'gateway'=>'stripe','live'=>true,'amount'=>(int)$o['amount_minor'],'currency'=>$o['currency'],'state'=>'open'];
+        $s=['tenant_id'=>$o['tenant_id'],'line_id'=>$o['line_id'],'primary_fingerprint'=>$o['primary_fingerprint'],'country'=>'CA','gateway'=>'stripe'];
+        $voids=new ControlCenter\RenewalCheckoutVoids($app->db,$settings,$gateway,$app->auth);
+        $path='stripe/v1/checkout/sessions/'.$o['provider_link_id'].'/expire';$overrides[$path]=[];
+        problem(503,fn()=> $voids->switch($s,'CA','square',123));
+        same('awaiting',$app->db->one('SELECT payment_state FROM renewal_orders WHERE id=?',[$o['id']])['payment_state']);
+        problem(409,fn()=> $app->db->transaction(fn()=> $voids->assertCheckout($s,123)));
+        unset($overrides[$path]);$voids->switch($s,'CA','square',123);
+        problem(409,fn()=> $app->db->transaction(fn()=> $voids->assertCheckout($s,123)));
+        $app->db->transaction(fn()=> $voids->assertCheckout(array_replace($s,['gateway'=>'square']),123));
+        same('expired',$app->db->one('SELECT payment_state FROM renewal_orders WHERE id=?',[$o['id']])['payment_state']);
+        $app->db->query("UPDATE renewal_route_switches SET state='switching',lease_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 3 MINUTE) WHERE tenant_id=? AND line_id=? AND primary_fingerprint=?",[$s['tenant_id'],$s['line_id'],$s['primary_fingerprint']]);
+        problem(409,fn()=> $voids->switch($s,'CA','stripe',123));
     };
     $tests['only exact merchant-scoped unpaid provider expiry may release an awaiting invoice']=static function():void{
         $o=['payment_state'=>'awaiting','fulfilment_state'=>'not_paid','merchant_id'=>'merchant','provider_link_id'=>'link','currency'=>'CAD','amount_minor'=>'1000','expires_at'=>'2020-01-01 00:00:00'];

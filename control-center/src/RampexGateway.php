@@ -94,7 +94,10 @@ final class RampexGateway {
             if(!preg_match('/^(0|[1-9][0-9]{0,11})(?:\.([0-9]{1,12}))?$/D',$text,$m))$full=false;
             else{$e=RampexPaymentVerifier::exponent($currency);$full=(int)$m[1]*(10**$e)+(int)str_pad(substr($m[2]??'',0,$e),$e,'0')>=$amount;}
         }
-        return ['link_id'=>$r['link_id']??null,'merchant_id'=>$connection['merchant_id'],'status'=>$r['status']??null,'fully_paid'=>$full,'amount_minor'=>$amount,'currency'=>$currency];
+        $status=$r['status']??null;
+        $received=$r['received_amount']??null;$zero=$received===null||((is_string($received)||is_int($received)||is_float($received))&&preg_match('/^0+(?:\.0+)?$/D',(string)$received));
+        if($status==='expired'&&(($r['fully_paid']??false)===true||($r['partial_payment']??false)===true||!$zero))$status='pending';
+        return ['link_id'=>$r['link_id']??null,'merchant_id'=>$connection['merchant_id'],'status'=>$status,'fully_paid'=>$full,'amount_minor'=>$amount,'currency'=>$currency];
     }
     public function supports(array $c,string $country,string $currency):bool {
         if(($c['gateway']??'rampex')==='rampex')return $country==='US'&&isset(RampexPaymentVerifier::currencyExponents()[$currency]);
@@ -105,6 +108,11 @@ final class RampexGateway {
             &&($status['status']??null)==='expired'&&($status['fully_paid']??null)===false
             &&($status['merchant_id']??null)===$order['merchant_id']&&($status['link_id']??null)===$order['provider_link_id']
             &&($status['amount_minor']??null)===(int)$order['amount_minor']&&($status['currency']??null)===$order['currency'];
+    }
+    public function voidUnpaid(array $c,array $o):array {
+        if(($c['gateway']??'rampex')!=='rampex')return $this->cards()->voidUnpaid($c,$o);
+        $status=$this->status($c,$o);if(self::unpaidExpiryConfirmed($o,$status))return $status;
+        throw new Problem(409,'Rampex does not document an automatic cancellation API. The original Rampex link must be expired by Rampex before another gateway can be opened; no invoice was deleted.');
     }
     public function event(array $c,string $raw,string $signature,bool $fresh=true):array {
         if(($c['gateway']??'rampex')!=='rampex')return $this->cards()->event($c,$raw,$signature,$this->config->origin().'/api/renewals/webhooks/'.$c['id'],$fresh);

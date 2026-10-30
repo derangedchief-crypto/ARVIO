@@ -10,7 +10,11 @@
     $('order-title').textContent=done?(simulated?'Demo renewal completed':'Renewal completed'):paid?'Payment received':'Renewal order';
     $('order-state').textContent=done?(simulated?'No real line was changed.':'Your TV will restore access after verifying your account is active.'):paid?'Your renewal is processing. Do not pay again.':order.payment_state==='awaiting'?'Continue your existing payment below.':'This order needs verification. Contact your provider; do not create another payment.';
     $('continue').hidden=!order.payment_url;if(order.payment_url){$('continue').href=paymentUrl(order.payment_url);$('continue').textContent=simulated?'Open demo checkout':'Continue existing payment';}
-    if(awaiting&&keepRoutes)$('apply-route').textContent='Check old invoice expiry and use this option';
+    if(awaiting&&keepRoutes)$('apply-route').textContent='Cancel unpaid checkouts and use this option';
+    if(order.void_state&&order.void_state!=='confirmed'){
+      $('continue').hidden=true;
+      $('order-state').textContent='Previous checkout cancellation has not been confirmed. Do not pay the old link or create another charge; recheck the switch.';
+    }
     if(awaiting&&country==='CA'&&order.gateway==='rampex'){
       $('continue').hidden=true;
       $('order-state').textContent='Your earlier Rampex invoice is unresolved. Check its unpaid expiry below before changing to Stripe or Square for Canada. No second payment will be created while the original is unresolved.';
@@ -33,8 +37,8 @@
       const gateways=(info.gateways||[]).filter(g=>Object.hasOwn(names,g.gateway));$('gateway').replaceChildren();
       for(const g of gateways){const option=document.createElement('option');option.value=g.gateway;option.textContent=names[g.gateway]+(g.sandbox?' — TEST ONLY':'');$('gateway').append(option);}
       $('gateway').value=info.gateway||'';$('gateway-choice').hidden=!gateways.length;
-      $('apply-route').textContent=info.order?'Check old invoice expiry and use this option':'Use this payment option';
-      if(info.order){$('message').textContent='Continue the original invoice, or check whether it has expired unpaid before changing gateway. Do not pay twice.';return;}
+      $('apply-route').textContent=info.order?'Cancel unpaid checkouts and use this option':'Use this payment option';
+      if(info.order){$('message').textContent='Continue the original invoice, or switch by cancelling older unpaid checkouts. Stripe and Square support automatic cancellation; an active Rampex link requires provider-side expiry. Do not pay twice.';return;}
       if(!['US','CA'].includes(info.country)){$('message').textContent='Confirm USA or Canada before continuing. Your current package will not change.';return;}
       if(!info.renewal){$('message').textContent='Renewal is unavailable or this quote expired. Please return to your TV or contact your provider.';return;}
       const p=info.renewal;$('message').textContent='Renew your current package. Review the price and payment gateway before continuing; your package will not change.';$('checkout').hidden=false;
@@ -44,7 +48,7 @@
       if($('pay').disabled)$('error').textContent='Choose an available gateway, or ask your provider to configure one for this country and currency.';
       $('checkout').onsubmit=async e=>{e.preventDefault();$('error').textContent='';$('pay').disabled=true;try{const result=await post('/api/public-renewals/checkout',{session_token:token,price_id:p.id,price_revision:p.revision,package_fingerprint:p.package_fingerprint,email:$('email').value});info.order=result.order;showOrder(result.order,info.simulated,true,info.country);if(result.order.payment_url)location.assign(paymentUrl(result.order.payment_url));}catch(error){$('error').textContent=error.message;$('pay').disabled=false;}};
     }
-    async function changeRoute(gateway){const revision=++routeRevision;$('error').textContent='';$('pay').disabled=true;try{const data=await post('/api/public-renewals/route',{session_token:token,country:$('country').value,...(gateway?{gateway}:{})});if(revision===routeRevision)render(data);}catch(error){if(revision===routeRevision)$('error').textContent=error.message;}}
+    async function changeRoute(gateway){const cancel=!!info.order;if(cancel&&!confirm('Cancel all older unpaid checkouts for this account and switch payment method? Paid or processing payments cannot be voided. A replacement opens only after the provider confirms cancellation.'))return;const revision=++routeRevision;$('error').textContent='';$('pay').disabled=true;$('apply-route').disabled=true;try{const data=await post('/api/public-renewals/route',{session_token:token,country:$('country').value,...(gateway?{gateway}:{}),cancel_previous:cancel});if(revision===routeRevision)render(data);}catch(error){if(revision===routeRevision)$('error').textContent=error.message;}finally{if(revision===routeRevision)$('apply-route').disabled=false;}}
     $('country').onchange=()=>changeRoute(null);$('gateway').onchange=()=>changeRoute($('gateway').value);$('apply-route').onclick=()=>changeRoute($('gateway').value||null);render(info);
     let checks=0;const timer=setInterval(async()=>{if(document.hidden||++checks>180){if(checks>180)clearInterval(timer);return;}const revision=routeRevision;try{const r=await post('/api/public-renewals/status',{session_token:token});if(revision!==routeRevision)return;if(r.order){info.order=r.order;showOrder(r.order,r.simulated,!$('route').hidden,$('country').value||info.country);if(r.order.fulfilment_state==='fulfilled')clearInterval(timer);}else if(info.order){const data=await post('/api/public-renewals/info',{session_token:token});if(revision===routeRevision)render(data);}}catch(error){if(revision===routeRevision){clearInterval(timer);$('error').textContent=error.message;}}},10000);
   }catch(error){$('message').textContent='Unable to open this renewal.';$('error').textContent=error.message;}

@@ -6,7 +6,7 @@ namespace ControlCenter;
  * browser-success trust. Each connection is the reseller's own merchant. */
 final class CardGateway {
     public function __construct(private readonly Config $config,private readonly Secrets $secrets,private readonly ?\Closure $transport=null) {}
-    private function request(string $gateway,string $mode,string $path,string $key,?array $body=null,?string $idempotency=null):array {
+    private function request(string $gateway,string $mode,string $path,string $key,?array $body=null,?string $idempotency=null,?string $method=null):array {
         if(($this->config->get('renewal_payments',[])['allow_live_api']??false)!==true)throw new Problem(503,'Merchant API access is not enabled.');
         if($this->transport===null&&$this->config->local()&&($this->config->get('renewal_payments',[])['simulation_enabled']??false)===true)throw new Problem(503,'External merchant calls are disabled in the isolated simulator.');
         if(!in_array($gateway,['stripe','square'],true)||!in_array($mode,['live','sandbox'],true)||!str_starts_with($path,'/'))throw new \LogicException('Invalid card adapter request.');
@@ -14,16 +14,19 @@ final class CardGateway {
         $headers=['Authorization: Bearer '.$key,'Accept: application/json',$stripe?'Stripe-Version: 2026-10-28.endive':'Square-Version: 2026-09-16',$stripe?'Content-Type: application/x-www-form-urlencoded':'Content-Type: application/json'];
         if($stripe&&$idempotency!==null)$headers[]='Idempotency-Key: '.$idempotency;
         $status=200;
-        if($this->transport){$reply=($this->transport)($gateway.$path,$body,$headers);if(is_array($reply)){$status=$reply['status'];$raw=$reply['body'];}else $raw=$reply;}
+        $method??=$body===null?'GET':'POST';if(!in_array($method,['GET','POST','DELETE'],true))throw new \LogicException('Invalid merchant request method.');
+        if($this->transport){$reply=($this->transport)($gateway.$path,$body,$headers,$method);if(is_array($reply)){$status=$reply['status'];$raw=$reply['body'];}else $raw=$reply;}
         else {
             $raw='';$curl=curl_init($host.$path);
             $options=[CURLOPT_HTTPHEADER=>$headers,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_CONNECTTIMEOUT=>5,CURLOPT_TIMEOUT=>20,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_WRITEFUNCTION=>static function($h,$chunk)use(&$raw){if(strlen($raw)+strlen($chunk)>262144)return 0;$raw.=$chunk;return strlen($chunk);}];
             if($body!==null){$options[CURLOPT_POST]=true;$options[CURLOPT_POSTFIELDS]=$stripe?http_build_query($body,'','&',PHP_QUERY_RFC3986):json_encode($body,JSON_THROW_ON_ERROR);}
+            if($method==='DELETE')$options[CURLOPT_CUSTOMREQUEST]='DELETE';
             curl_setopt_array($curl,$options);$ok=curl_exec($curl);$status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);curl_close($curl);
             if($ok===false)throw new Problem(503,'Payment provider unavailable. Retain the same invoice; do not pay again.');
         }
         if(!in_array($status,[200,201],true)){
-            if($body!==null&&$idempotency!==null&&in_array($status,[400,401,403,404,422],true))throw new RampexLinkRejected('The selected card provider rejected checkout creation. No new checkout was confirmed. Review the merchant settings.');
+            $creation=$method==='POST'&&in_array($path,['/v1/checkout/sessions','/v2/online-checkout/payment-links'],true);
+            if($creation&&$idempotency!==null&&in_array($status,[400,401,403,404,422],true))throw new RampexLinkRejected('The selected card provider rejected checkout creation. No new checkout was confirmed. Review the merchant settings.');
             throw new Problem(in_array($status,[401,403],true)?422:503,'Merchant API request failed. Check the account permissions and environment.');
         }
         try{$r=json_decode($raw,true,32,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new Problem(503,'Invalid merchant response.');}
@@ -65,15 +68,16 @@ final class CardGateway {
         if($g==='stripe'){
             $r=$this->request($g,$c['mode'],'/v1/checkout/sessions',$key,['mode'=>'payment','allowed_payment_method_types'=>['card'],'billing_address_collection'=>'required','customer_email'=>$email,'client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id'],'country'=>$o['country']],'payment_intent_data'=>['metadata'=>['order_id'=>$o['id']]],'line_items'=>[['quantity'=>1,'price_data'=>['currency'=>strtolower($o['currency']),'unit_amount'=>$amount,'product_data'=>['name'=>'Current subscription renewal']]]],'success_url'=>$return,'cancel_url'=>$return],$o['id']);
             if(($r['client_reference_id']??null)!==$o['id']||($r['amount_total']??null)!==$amount||strtoupper($r['currency']??'')!==$o['currency']||($r['livemode']??null)!==($c['mode']==='live'))throw new Problem(503,'Stripe quote verification failed; retain the original invoice.');
-            return ['link_id'=>self::id($r['id']??null),'url'=>self::url($r['url']??null,$g,$c['mode'])];
+            return ['link_id'=>self::id($r['id']??null),'checkout_id'=>self::id($r['id']??null),'url'=>self::url($r['url']??null,$g,$c['mode'])];
         }
         $r=$this->request($g,$c['mode'],'/v2/online-checkout/payment-links',$key,['idempotency_key'=>$o['id'],'order'=>['location_id'=>$options['location_id'],'reference_id'=>$o['id'],'line_items'=>[['name'=>'Current subscription renewal','quantity'=>'1','base_price_money'=>['amount'=>$amount,'currency'=>$o['currency']]]]],'checkout_options'=>['allow_tipping'=>false,'ask_for_shipping_address'=>false,'redirect_url'=>$return,'accepted_payment_methods'=>['apple_pay'=>true,'google_pay'=>true,'cash_app_pay'=>false,'afterpay_clearpay'=>false]],'pre_populated_data'=>['buyer_email'=>$email],'payment_note'=>'Renewal order '.$o['id']],$o['id']);
         $p=$r['payment_link']??[];$id=self::id($p['order_id']??null);
         $order=$this->request($g,$c['mode'],'/v2/orders/'.rawurlencode($id),$key)['order']??[];
         $this->squareOrder($order,$o,$options);
-        return ['link_id'=>$id,'url'=>self::url($p['url']??null,$g,$c['mode'])];
+        return ['link_id'=>$id,'checkout_id'=>self::id($p['id']??null),'url'=>self::url($p['url']??null,$g,$c['mode'])];
     }
     private function squareOrder(array $r,array $o,array $options):void {
+        if(!empty($o['provider_link_id'])&&($r['id']??null)!==$o['provider_link_id'])throw new Problem(409,'Square order identity does not match the original invoice.');
         if(($r['reference_id']??null)!==$o['id']||($r['location_id']??null)!==$options['location_id']||($r['total_money']['amount']??null)!==(int)$o['amount_minor']||($r['total_money']['currency']??null)!==$o['currency'])throw new Problem(409,'Square order does not match the original invoice.');
     }
     public function status(array $c,array $o):array {
@@ -82,14 +86,16 @@ final class CardGateway {
         if($g==='stripe'){
             $r=$this->request($g,$c['mode'],'/v1/checkout/sessions/'.rawurlencode($id).'?expand%5B%5D=payment_intent.latest_charge',$key);
             if(($r['id']??null)!==$id||($r['client_reference_id']??null)!==$o['id']||($r['metadata']['order_id']??null)!==$o['id']||($r['amount_total']??null)!==(int)$o['amount_minor']||strtoupper($r['currency']??'')!==$o['currency']||($r['livemode']??null)!==($c['mode']==='live'))throw new Problem(409,'Stripe payment does not match this invoice.');
-            if(($r['status']??null)==='expired')return array_replace($base,['status'=>'expired']);
             $p=$r['payment_intent']??[];$charge=is_array($p)?($p['latest_charge']??[]):[];
+            $unpaid=($r['payment_status']??null)==='unpaid'&&array_key_exists('payment_intent',$r)&&($r['payment_intent']===null||(is_array($p)&&in_array($p['status']??null,['requires_payment_method','canceled'],true)&&($p['amount_received']??null)===0));
+            if(($r['status']??null)==='expired')return $unpaid?array_replace($base,['status'=>'expired']):$base;
+            if(($r['status']??null)==='open')return array_replace($base,['cancellable'=>$unpaid]);
             if(($r['status']??null)!=='complete'||($r['payment_status']??null)!=='paid'||!is_array($p)||($p['status']??null)!=='succeeded'||!is_array($charge)||($charge['paid']??false)!==true||($charge['captured']??false)!==true)return $base;
             if(($p['amount_received']??null)!==(int)$o['amount_minor']||strtoupper($p['currency']??'')!==$o['currency']||($p['metadata']['order_id']??null)!==$o['id']||($p['livemode']??null)!==($c['mode']==='live')||($charge['amount_refunded']??null)!==0||($charge['payment_method_details']['type']??null)!=='card')throw new Problem(409,'Stripe settlement is not a matching, unrefunded captured card payment.');
             return array_replace($base,['status'=>'completed','fully_paid'=>true,'settlement_ref'=>'stripe:'.self::id($p['id']??null)]);
         }
         $r=$this->request($g,$c['mode'],'/v2/orders/'.rawurlencode($id),$key)['order']??[];$this->squareOrder($r,$o,$options);
-        if(($r['state']??null)==='CANCELED'&&empty($r['tenders']))return array_replace($base,['status'=>'expired']);
+        if(($r['state']??null)==='CANCELED'&&empty($r['tenders'])&&$this->squareNoPaymentInFlight($c,$r,$options))return array_replace($base,['status'=>'expired']);
         // Square checkout may leave a paid digital order OPEN until its
         // fulfilment is completed. Captured Payment status is authoritative.
         if(!in_array($r['state']??null,['OPEN','COMPLETED'],true)||($r['net_amount_due_money']['amount']??0)!==0)return $base;
@@ -98,6 +104,46 @@ final class CardGateway {
         if(($p['status']??null)!=='COMPLETED')return $base;
         if(($p['id']??null)!==$pid||($p['order_id']??null)!==$id||($p['location_id']??null)!==$options['location_id']||($p['amount_money']['amount']??null)!==(int)$o['amount_minor']||($p['amount_money']['currency']??null)!==$o['currency']||($p['refunded_money']['amount']??0)!==0||($p['tip_money']['amount']??0)!==0||($p['source_type']??null)!=='CARD'||($p['card_details']['status']??null)!=='CAPTURED')throw new Problem(409,'Square settlement is not a matching, unrefunded captured card payment.');
         return array_replace($base,['status'=>'completed','fully_paid'=>true,'settlement_ref'=>'square:'.$pid]);
+    }
+    private function squareNoPaymentInFlight(array $c,array $order,array $options):bool {
+        if(!is_string($order['created_at']??null)||!preg_match('/^\d{4}-\d{2}-\d{2}T/',$order['created_at']))throw new Problem(503,'Square order creation time is unavailable; cancellation cannot be confirmed.');
+        try{$begin=(new \DateTimeImmutable($order['created_at']))->modify('-1 second')->format(DATE_ATOM);}catch(\Throwable){throw new Problem(503,'Square order time could not be verified.');}
+        $cursor=null;$key=$this->secrets->decrypt($c['api_cipher']);
+        for($page=0;$page<50;$page++){
+            $path='/v2/payments?'.http_build_query(['begin_time'=>$begin,'location_id'=>$options['location_id'],'sort_order'=>'DESC','limit'=>100]+($cursor!==null?['cursor'=>$cursor]:[]),'','&',PHP_QUERY_RFC3986);
+            $r=$this->request('square',$c['mode'],$path,$key);
+            if(isset($r['payments'])&&!is_array($r['payments']))throw new Problem(503,'Square payment lookup is incomplete.');
+            foreach($r['payments']??[] as $p)if(($p['order_id']??null)===$order['id']&&!in_array($p['status']??null,['FAILED','CANCELED'],true))return false;
+            $cursor=$r['cursor']??null;if($cursor===null||$cursor==='')return true;
+            if(!is_string($cursor)||strlen($cursor)>4096)throw new Problem(503,'Square payment lookup cursor is invalid.');
+        }throw new Problem(503,'Square payment lookup is incomplete; retain the original invoice.');
+    }
+    private function squareLink(array $c,array $o,string $key):string {
+        $known=$o['provider_checkout_id']??null;
+        if($known){$r=$this->request('square',$c['mode'],'/v2/online-checkout/payment-links/'.rawurlencode(self::id($known)),$key);if(($r['payment_link']['id']??null)!==$known||($r['payment_link']['order_id']??null)!==$o['provider_link_id'])throw new Problem(409,'Square checkout identity does not match this invoice.');return $known;}
+        $cursor=null;
+        for($page=0;$page<50;$page++){
+            $r=$this->request('square',$c['mode'],'/v2/online-checkout/payment-links?'.http_build_query(['limit'=>100]+($cursor!==null?['cursor'=>$cursor]:[]),'','&',PHP_QUERY_RFC3986),$key);
+            foreach($r['payment_links']??[] as $p)if(($p['order_id']??null)===$o['provider_link_id'])return self::id($p['id']??null);
+            $cursor=$r['cursor']??null;if($cursor===null||$cursor==='')break;
+            if(!is_string($cursor)||strlen($cursor)>4096)break;
+        }throw new Problem(503,'Original Square checkout link could not be located; retain the invoice.');
+    }
+    public function voidUnpaid(array $c,array $o):array {
+        $status=$this->status($c,$o);if(RampexGateway::unpaidExpiryConfirmed($o,$status))return $status;
+        $key=$this->secrets->decrypt($c['api_cipher']);$id=self::id($o['provider_link_id']);
+        if($c['gateway']==='stripe'){
+            if(($status['cancellable']??false)!==true)throw new Problem(409,'Stripe payment is paid, processing or not safely cancellable. Retain the original invoice.');
+            $this->request('stripe',$c['mode'],'/v1/checkout/sessions/'.rawurlencode($id).'/expire',$key,[],'void-'.$o['id']);
+        }else{
+            $options=$this->options($c);$order=$this->request('square',$c['mode'],'/v2/orders/'.rawurlencode($id),$key)['order']??[];$this->squareOrder($order,$o,$options);
+            if(!in_array($order['state']??null,['DRAFT','OPEN'],true)||!empty($order['tenders'])||!$this->squareNoPaymentInFlight($c,$order,$options))throw new Problem(409,'Square payment is paid or processing. Retain the original invoice.');
+            $link=$this->squareLink($c,$o,$key);$r=$this->request('square',$c['mode'],'/v2/online-checkout/payment-links/'.rawurlencode($link),$key,null,null,'DELETE');
+            if(($r['id']??null)!==$link||($r['cancelled_order_id']??null)!==$id)throw new Problem(503,'Square cancellation reply could not be confirmed.');
+        }
+        $status=$this->status($c,$o);
+        if(!RampexGateway::unpaidExpiryConfirmed($o,$status))throw new Problem(503,'Provider has not confirmed cancellation without payment. No replacement checkout was opened.');
+        return $status;
     }
     public function event(array $c,string $raw,string $signature,string $url,bool $fresh=true):array {
         $g=$c['gateway'];$secret=$this->secrets->decrypt($c['webhook_cipher']);$valid=false;

@@ -4,6 +4,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
 (async()=>{
   const base=process.env.CONTROL_PREVIEW_URL;assert(base&&['127.0.0.1','localhost'].includes(new URL(base).hostname));
   const browser=await chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:360,height:800}});
+  let consent=true,routeRequests=0;page.on('dialog',dialog=>consent?dialog.accept():dialog.dismiss());
   const token='a'.repeat(64),order={id:'b'.repeat(32),gateway:'rampex',country:null,payment_state:'awaiting',fulfilment_state:'not_paid',currency:'USD',amount_minor:1000,payment_url:'https://checkout.rampex.io/pay.php?invoice=synthetic-only'};
   let current={...order},canExpire=false,creates=0,holdNext=false,held=null,onHeld=null;
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -13,6 +14,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     let body,status=200;
     if(path.endsWith('/info'))body=info();
     else if(path.endsWith('/route')){
+      routeRequests++;assert.equal(request.postDataJSON().cancel_previous,!!current);
       if(current&&!canExpire){status=409;body={error:'The provider has not confirmed that the old invoice expired unpaid. Do not create another payment.'};}
       else{current=null;body=info();}
     }else if(path.endsWith('/checkout')){creates++;throw new Error('No checkout should be created by these UI checks.');}
@@ -30,6 +32,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     assert(await page.locator('#route').isVisible());assert(await page.locator('#gateway').isVisible());assert(await page.locator('#continue').isHidden());
     assert((await page.locator('#order-state').innerText()).includes('earlier Rampex invoice'));
     console.log('PASS timed status poll preserves gateway controls and Canadian Rampex warning instead of restoring the old link');
+    consent=false;await page.locator('#apply-route').click();await frames();assert.equal(routeRequests,0);assert.equal(creates,0);consent=true;
+    console.log('PASS declining cancellation confirmation sends no route or payment request');
     await page.locator('#apply-route').click();await page.waitForFunction(()=>document.getElementById('error').textContent.includes('not confirmed'));
     assert.equal(creates,0);assert(await page.locator('#route').isVisible());assert(await page.locator('#continue').isHidden());
     console.log('PASS unresolved provider invoice cannot be replaced by the browser or create a second charge');
@@ -46,6 +50,10 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
     current={...current,payment_state:'paid',fulfilment_state:'pending',payment_url:null};await nextPoll();await frames();
     assert(await page.locator('#route').isHidden());assert(await page.locator('#continue').isHidden());assert(await page.locator('#checkout').isHidden());
     console.log('PASS paid invoice polling hides route changes and prevents new checkout');
+
+    current={...order,gateway:'square',void_state:'uncertain',payment_url:'https://square.link/u/synthetic-only'};await page.reload();await page.locator('#route').waitFor({state:'visible'});
+    assert(await page.locator('#continue').isHidden());assert((await page.locator('#order-state').innerText()).includes('not been confirmed'));
+    console.log('PASS uncertain cancellation hides the old payment link and keeps recheck controls');
 
     current={...order};canExpire=false;await page.reload();await page.locator('#route').waitFor({state:'visible'});
     const requestHeld=new Promise(resolve=>{onHeld=resolve;});holdNext=true;await requestHeld;

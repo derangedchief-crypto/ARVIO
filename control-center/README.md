@@ -7,6 +7,29 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.31.0 — provider-confirmed unpaid checkout cancellation
+
+The customer confirms cancellation when switching gateways. Stripe expires the
+original open, unpaid Checkout Session. Square deletes the original payment link
+and verifies its order is CANCELED and has no completed/approved/pending payment.
+Existing Square invoices can locate their payment-link ID by matching the stored
+order ID. Every older unresolved checkout for the same reseller/account/device
+identity is checked, not just the newest invoice. Local invoice history is kept.
+
+A durable account-scoped switch fence blocks concurrent checkout creation across
+QRs and browser tabs until all cancellations are confirmed. Failed/ambiguous API
+replies remain blocked and can be rechecked. Paid, processing, review or uncertain
+creation records cannot be auto-voided. No refunds or panel renewals are requested
+by the switch. Merchant/environment, invoice reference, amount and currency must
+match the original checkout. This does not cancel paid subscription service.
+
+Rampex has no documented cancellation API: only a provider-confirmed unpaid expiry
+can retire its original link. We do not invent a cancellation request, erase its
+record, or silently allow a second externally payable invoice.
+
+Website-only update with additive migration 031. No APK rebuild or independent
+worker/auth/trial service change. See deploy/UPDATE-0.31.0.txt.
+
 ## 0.30.1 — existing-invoice gateway controls survive polling
 
 Fixes the ten-second status poll hiding country/gateway controls, restoring an
