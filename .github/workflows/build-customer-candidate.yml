@@ -43,6 +43,8 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
+          if not os.environ.get('SUPABASE_URL') or not os.environ.get('SUPABASE_ANON_KEY') or 'your-project.supabase.co' in os.environ['SUPABASE_URL'] or os.environ['SUPABASE_ANON_KEY'].startswith('your-'):
+              raise SystemExit('Real cloud configuration is required for this candidate')
           with Path('secrets.properties').open('a') as out:
               for key in ['TMDB_API_KEY','SENTRY_DSN','SUPABASE_URL','SUPABASE_ANON_KEY','APP_ANON_KEY','ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL','TRAKT_CLIENT_ID','TRAKT_CLIENT_SECRET']:
                   value=os.environ.get(key,'')

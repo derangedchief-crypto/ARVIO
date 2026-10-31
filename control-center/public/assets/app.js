@@ -69,7 +69,22 @@ function presentTrialSections(main){
   const nav=el('nav',null,'trial-sections');nav.setAttribute('aria-label','Trial sections');for(const[id,label,suffix]of [['contacts','Contacts','/contacts'],['settings','Trial settings',''],...(state.user.role==='owner'?[['approvals','Package approvals','/approvals']]:[])]){const a=el('a',label);a.href='#'+base+suffix;if(chosen===id){a.classList.add('active');a.setAttribute('aria-current','page');}nav.append(a);}const picker=main.querySelector(':scope>.workspace-picker');if(picker)picker.after(nav);else main.querySelector('.page-heading')?.after(nav);
   for(const p of main.querySelectorAll(':scope>.panel')){const title=p.querySelector('h2')?.textContent||'';if(p.classList.contains('trial-global-control')){p.hidden=chosen==='contacts';continue;}if(p.hasAttribute('aria-label')&&p.getAttribute('aria-label')==='Trial status'){p.classList.add('trial-status');p.hidden=chosen==='contacts';continue;}const type=title==='Trial contacts'?'contacts':['Global approved trial packages','Trial access','Admin-approved trial plans'].includes(title)?'approvals':'settings';const error=[...p.querySelectorAll('.error')].some(n=>!n.hidden&&n.textContent.trim());p.hidden=chosen!==type&&!error;}
 }
-function boundedOptions(parent,rows,label){const area=el('div',null,'option-browser'),search=el('input');search.type='search';search.placeholder='Search packages…';search.setAttribute('aria-label',label);const count=el('span','','scope-label'),list=el('div'),pages=el('div');let page=1;area.append(search,count,list,pages);parent.append(area);function draw(){const matches=rows.filter(n=>n.textContent.toLowerCase().includes(search.value.toLowerCase().trim())),total=matches.length;page=Math.max(1,Math.min(page,Math.ceil(total/10)||1));list.replaceChildren(...matches.slice((page-1)*10,page*10));count.textContent=rows.filter(n=>n.querySelector('input')?.checked).length+' selected · '+total+' matching';pages.replaceChildren(...(total>10?[pagination({page,pages:Math.ceil(total/10),total},p=>{page=p;draw();})]:[]));}search.oninput=()=>{page=1;draw();};area.addEventListener('change',draw);draw();return area;}
+function boundedOptions(parent,rows,label){
+  const area=el('div',null,'option-browser'),search=el('input');search.type='search';search.placeholder='Search packages…';search.setAttribute('aria-label',label);
+  const count=el('span','','scope-label'),list=el('div'),pages=el('div');let page=1,total=rows.length;area.append(search,count,list,pages);parent.append(area);
+  const updateCount=()=>{count.textContent=rows.filter(n=>n.querySelector('input')?.checked).length+' selected · '+total+' matching';};
+  function draw(){
+    const focused=document.activeElement,focusLabel=pages.contains(focused)?focused.textContent:null;
+    const matches=rows.filter(n=>n.textContent.toLowerCase().includes(search.value.toLowerCase().trim()));total=matches.length;
+    page=Math.max(1,Math.min(page,Math.ceil(total/10)||1));list.replaceChildren(...matches.slice((page-1)*10,page*10));updateCount();
+    pages.replaceChildren(...(total>10?[pagination({page,pages:Math.ceil(total/10),total},p=>{page=p;draw();})]:[]));
+    if(focusLabel){const target=[...pages.querySelectorAll('button')].find(n=>n.textContent===focusLabel&&!n.disabled);(target||search).focus({preventScroll:true});}
+  }
+  search.oninput=()=>{page=1;draw();};
+  // Native checkbox/label activation must finish without detaching the input.
+  // Updating the count alone also preserves keyboard focus and draft selection.
+  area.addEventListener('change',updateCount);draw();return area;
+}
 document.addEventListener('click',e=>{document.querySelectorAll('.context-actions[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!navOpen){const d=e.target.closest?.('.context-actions[open]');if(d){d.open=false;d.querySelector('summary').focus();}}});
 function preferenceLabel(key){return ({default_audio_language:'Audio language',default_subtitle:'Subtitle language',subtitle_size:'Subtitle size',clock_format:'Clock format',auto_play_next:'Play next episode',show_loading_stats:'Show loading details',spoiler_blur:'Hide spoilers',smooth_scrolling:'Smooth scrolling',trailer_auto_play:'Autoplay trailers',volume_boost_db:'Volume boost (dB)'})[key]||key.replaceAll('_',' ');}

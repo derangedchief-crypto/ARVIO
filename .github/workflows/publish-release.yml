@@ -76,6 +76,10 @@ jobs:
           echo "tag=v$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "Releasing version $VERSION_NAME as tag v$VERSION_NAME"
 
+      - name: Verify compatible reseller rollout control before publication
+        if: vars.BRAND_MAIN_ROLLOUT_ENABLED == 'true'
+        run: python3 branding/check_rollout_control.py
+
       - name: Pin exact customer and branded core source before building
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,8 +126,9 @@ jobs:
           if [ -z "${TMDB_API_KEY}" ]; then
             echo "::warning::TMDB_API_KEY is not set — Trending/catalog rows will be empty."
           fi
-          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_ANON_KEY}" ]; then
-            echo "::warning::SUPABASE_URL/SUPABASE_ANON_KEY not set — cloud sync (accounts, watch history, watchlist) will not work in this build."
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_ANON_KEY}" ] || [[ "$SUPABASE_URL" == *your-project.supabase.co* ]] || [[ "$SUPABASE_ANON_KEY" == your-* ]]; then
+            echo "::error::Real cloud URL and anon key are required. Refusing a customer build with placeholder account/sync configuration."
+            exit 1
           fi
 
       - name: Restore release keystore
@@ -172,7 +177,9 @@ jobs:
         id: apk
         run: |
           set -euo pipefail
-          SRC=$(find app/build/outputs/apk/sideload/staging -maxdepth 1 -name '*.apk' | head -n1)
+          mapfile -t candidates < <(find app/build/outputs/apk/sideload/staging -maxdepth 1 -name '*.apk')
+          test "${#candidates[@]}" -eq 1 || { echo '::error::Expected exactly one official APK; publication refused.'; exit 1; }
+          SRC="${candidates[0]}"
           if [ -z "$SRC" ]; then
             echo "::error::No APK found in app/build/outputs/apk/sideload/staging"
             exit 1
@@ -196,6 +203,9 @@ jobs:
           path: app/build/outputs/mapping/sideloadStaging/mapping.txt
           retention-days: 90
           if-no-files-found: warn
+
+      - name: Verify official package signer version and device support
+        run: python3 branding/verify_customer_apk.py "${{ steps.apk.outputs.path }}"
 
       - name: Recheck frozen source and customer tag before publication
         env:

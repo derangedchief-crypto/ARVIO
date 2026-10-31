@@ -7,6 +7,23 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.36.0 — main-promotion rollout safeguards
+
+Production and testing core selection are now channel isolated in both the app
+brand source picker and the central builder's source authorization. A newer
+testing-only core cannot authorize itself for a production reseller build. Known
+historical owner pins remain recognized, and rebuilding with a core older than
+the already-published brand is rejected before queueing. Footer version rendering
+uses the actual website release instead of retaining the old template number.
+
+The next Android core is prepared as 2.0.130/code446, not published. Official apps
+remain standalone with their existing identities/feed and no reseller/provider
+features. Reseller apps retain package, signing, published artwork and channel.
+Customer publication remains manual/main-only and now requires explicit OFF-by-
+default confirmation. An unpublished candidate has a separate artifact-only
+workflow. No customer or reseller APK/feed is changed by merging source.
+See deploy/UPDATE-0.36.0.txt and docs/main-promotion-publication-hold.md.
+
 ## 0.35.0 — seller-friendly website organization
 
 The website now separates daily work from setup. The sidebar groups Dashboard,

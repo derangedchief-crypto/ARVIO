@@ -71,6 +71,7 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         assert 'deploy/UPDATE-0.33.0.txt' in names
         assert 'deploy/UPDATE-0.34.0.txt' in names
         assert 'deploy/UPDATE-0.35.0.txt' in names
+        assert 'deploy/UPDATE-0.36.0.txt' in names
         assert 'deploy/install-ui-cleanup.sh' in names
         assert 'database/migrations/033_trial_conversion_defaults.sql' in names
         assert b'fresh-checkins' in archive.read('cli/console.php')
