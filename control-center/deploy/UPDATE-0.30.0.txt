@@ -1,0 +1,46 @@
+0.30.0 — direct Stripe and Square, with country-confirmed routing
+
+WEBSITE:
+Back up the installed website code/database and original private application key.
+Verify the published update ZIP checksum, then extract over the existing website.
+The update omits config.php, storage and private credentials. Run the existing
+deploy/connect-renewal-worker.sh to migrate and verify the existing worker.
+Migration030 adds country/provider/setup metadata and expands webhook signatures;
+it does not delete accounts, invoices, prices, callbacks, keys or renewal history.
+No auth-worker or renewal-worker update/restart is required for these gateways.
+
+MERCHANT SETUP (each reseller's OWN accounts):
+1. Customer renewals -> Connect Stripe or Connect Square reserves the final webhook
+   URL before asking for endpoint-specific signing credentials. The URL is stable
+   across cancelled/retried setup until that setup is completed.
+2. Create the provider webhook using that EXACT URL in the matching sandbox/live
+   account. Stripe events: checkout.session.completed,
+   checkout.session.async_payment_succeeded, checkout.session.expired.
+   Square events: payment.created and payment.updated.
+3. Enter the API credentials and endpoint signing secret/key in the website ONLY.
+   Square needs its actual active, card-enabled Location ID. Stripe restricted
+   keys need account read, Checkout Sessions read/write and PaymentIntent/Charge
+   read. Square tokens need merchant/location read, orders read/write and payments
+   read/write. The website reads/verifies the merchant before saving credentials.
+4. Save, then send a provider test notification and verify delivery. Keys are
+   encrypted/write-only. Rotation retains old orders and their signing evidence.
+5. Set preferred and alternative gateways for USA/Canada, and appropriate customer
+   money prices for the offered current packages. Square requires its location's
+   currency. Stripe initially supports USD/CAD. No currency conversion is guessed.
+
+APP:
+Queue only the intended existing testing brand from pinned2.0.129/code445 source,
+using queue-brand-testing. Its published package, signer, revision and artwork are
+preserved. Do not publish a generic customer APK or production-brand fanout.
+Install OVER the existing testing app: never uninstall or clear customer data.
+
+The app asks USA/Canada before issuing a QR. It does not pretend to infer verified
+physical location from IP. Providers still enforce their own eligibility rules.
+Canada offers direct Stripe/Square only. An approved alternative can be selected
+on the phone before link creation; an unresolved existing invoice blocks another
+charge until provider-confirmed unpaid expiry. Do not delete/void local financial
+records to work around an old provider link. Recheck original evidence if needed.
+
+Sandbox payments NEVER reactivate real lines. Use sandbox for provider acceptance
+first; a real-money live test requires the owner's deliberately chosen test line.
+No live charge or actual panel renewal is performed by installing this update.

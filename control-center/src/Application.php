@@ -27,6 +27,8 @@ final class Application
     public readonly BrandBuilder $brandBuilder;
     public readonly BrandDownloads $brandDownloads;
     public readonly ModuleLicences $moduleLicences;
+    public readonly RenewalSettings $renewalSettings;
+    public readonly RenewalPayments $renewalPayments;
     public function __construct(public readonly Config $config)
     {
         $this->db = new Database($config);
@@ -52,6 +54,14 @@ final class Application
         $this->brandBuilder=new BrandBuilder($this->db,$config,$this->appBrands,$artifacts,$secrets,$this->auth);
         $this->brandDownloads=new BrandDownloads($config,$artifacts);
         $this->trialSessions=new TrialPublicSessions($this->db,$this->trialOffers,$secrets,$this->auth);$this->trialSignup=new TrialSignupBroker($this->db,$config,$secrets,$this->auth,$this->trialOffers,$this->trialSessions,new TrialBudgets($this->db,$config),$trialWorker,$this->trialContacts);
+        $gateway=new RampexGateway($config,$this->db,$secrets);$workerConfig=$config;$transport=null;
+        if($gateway->mockAllowed()){
+            $workerConfig=new Config($config->root,array_replace($config->values,['renewal_worker'=>['base_url'=>'https://simulation.invalid','shared_secret'=>$secrets->mac('renewal-simulator-bridge-v1')]]));
+            $transport=(new RenewalSimulation($this->db,$workerConfig))->transport();
+        }
+        $renewalWorker=new RenewalWorker($workerConfig,$transport);
+        $this->renewalSettings=new RenewalSettings($this->db,$config,$this->management,$this->auth,$secrets,$gateway,$renewalWorker);
+        $this->renewalPayments=new RenewalPayments($this->db,$config,$this->auth,$this->management,$secrets,$artifacts,$this->renewalSettings,$gateway,$renewalWorker);
     }
 
     public function serve(string $method, string $path): never
@@ -73,6 +83,29 @@ final class Application
             Http::json(['ok' => true], 201);
         }
         if (!$migrations->installed()) throw new Problem(503, 'Owner setup is required.');
+        if($method==='GET'&&(preg_match('~^/renew/[a-f0-9]{64}$~D',$path)||preg_match('~^/renew/demo/[a-f0-9]{32}$~D',$path))){
+            if(!$this->renewalSettings->installed())throw new Problem(404,'Renewal checkout unavailable.');
+            header('Content-Type: text/html; charset=utf-8');$html=file_get_contents($this->config->root.'/public/renew.html');
+            echo str_replace('?v=dev','?v='.rawurlencode(trim(file_get_contents($this->config->root.'/VERSION'))),$html);exit;
+        }
+        if($method==='POST'&&preg_match('~^/api/renewals/webhooks/([a-f0-9]{32})$~D',$path,$match)){
+            if(!$this->renewalSettings->installed())throw new Problem(404,'Payment notification unavailable.');
+            $raw=file_get_contents('php://input',false,null,0,65537);if(strlen($raw)>65536)throw new Problem(413,'Notification too large.');
+            Http::json($this->renewalPayments->webhook($match[1],$raw,$_SERVER['HTTP_STRIPE_SIGNATURE']??$_SERVER['HTTP_X_SQUARE_HMACSHA256_SIGNATURE']??$_SERVER['HTTP_X_RAMPEX_SIGNATURE']??$_SERVER['HTTP_X_WEBHOOK_SIGNATURE']??''));
+        }
+        if($method==='POST'&&str_starts_with($path,'/api/public-renewals/')){
+            Http::sameOrigin($this->config);$input=Http::body(8192);
+            if($path==='/api/public-renewals/info'){Input::keys($input,['session_token']);Http::json($this->renewalPayments->info(Input::text($input['session_token']??null,'checkout token',64)));}
+            if($path==='/api/public-renewals/status'){Input::keys($input,['session_token']);Http::json($this->renewalPayments->status(Input::text($input['session_token']??null,'checkout token',64)));}
+            if($path==='/api/public-renewals/checkout')Http::json($this->renewalPayments->checkout($input,$_SERVER['REMOTE_ADDR']??''));
+            if($path==='/api/public-renewals/route')Http::json($this->renewalPayments->selectRoute($input));
+            throw new Problem(404,'Renewal route not found.');
+        }
+        if($method==='POST'&&$path==='/api/device/renewals/login/challenge')Http::json($this->renewalPayments->loginChallenge(Http::body(8192),$_SERVER['REMOTE_ADDR']??''));
+        if($method==='POST'&&$path==='/api/device/renewals/login/open')Http::json($this->renewalPayments->loginOpen(Http::body(8192),$_SERVER['REMOTE_ADDR']??''));
+        if($method==='POST'&&$path==='/api/device/renewals/challenge')Http::json($this->renewalPayments->challenge(Http::body(8192),$_SERVER['REMOTE_ADDR']??''));
+        if($method==='POST'&&$path==='/api/device/renewals/open')Http::json($this->renewalPayments->open(Http::body(8192),$_SERVER['REMOTE_ADDR']??''));
+        if($method==='POST'&&$path==='/api/device/renewals/status'){ $input=Http::body(8192);Input::keys($input,['session_token']);Http::json($this->renewalPayments->status(Input::text($input['session_token']??null,'checkout token',64))); }
         if($method==='GET'&&$path==='/api/brand-dispatch/queue'){
             header('Cache-Control: private, no-store');header('Vary: Authorization');
             Http::json($this->brandBuilder->poll($_GET,$_SERVER['HTTP_AUTHORIZATION']??null));
@@ -134,6 +167,23 @@ final class Application
             $this->auth->verifyCsrf($token, $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
         }
         if ($method === 'GET' && $path === '/api/me') Http::json(['user' => $actor, 'csrf' => $this->auth->csrf($token)]);
+        if($method==='GET'&&$path==='/api/renewals/settings')Http::json($this->renewalSettings->status($actor,$_GET));
+        if($method==='GET'&&$path==='/api/renewals/catalog')Http::json($this->renewalSettings->catalog($actor,$_GET));
+        if($method==='POST'&&$path==='/api/renewals/policy')Http::json($this->renewalSettings->setPolicy($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/connection')Http::json($this->renewalSettings->saveConnection($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/connection-setup')Http::json($this->renewalSettings->prepareConnection($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/gateway-availability')Http::json($this->renewalSettings->setAvailability($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/trial-conversion')Http::json($this->renewalSettings->saveTrialConversion($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/routing')Http::json($this->renewalSettings->saveRoutes($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/prices')Http::json($this->renewalSettings->savePrice($actor,Http::body()));
+        if($method==='POST'&&$path==='/api/renewals/plans')throw new Problem(422,'Custom renewal plans are not supported. Set money pricing for an offered panel package.');
+        if($method==='GET'&&$path==='/api/renewals/orders')Http::json($this->renewalPayments->orders($actor,$_GET));
+        if($method==='POST'&&preg_match('~^/api/renewals/orders/([a-f0-9]{32})/simulate$~D',$path,$m)){Input::keys(Http::body(),[]);Http::json($this->renewalPayments->simulate($actor,$m[1]));}
+        if($method==='POST'&&preg_match('~^/api/renewals/orders/([a-f0-9]{32})/retry$~D',$path,$m)){Input::keys(Http::body(),[]);Http::json($this->renewalPayments->retry($actor,$m[1]));}
+        if($method==='POST'&&$path==='/api/renewals/process-demo'){
+            Auth::owner($actor);Input::keys(Http::body(),[]);if(!(new RampexGateway($this->config,$this->db,new Secrets($this->config)))->mockAllowed())throw new Problem(404,'Demo processor unavailable.');
+            Http::json($this->renewalPayments->processOne());
+        }
         if($method==='GET'&&$path==='/api/addons')Http::json($this->moduleLicences->status($actor,$_GET));
         if($method==='POST'&&$path==='/api/addons/issue')Http::json($this->moduleLicences->issue($actor,Http::body()),201);
         if($method==='POST'&&$path==='/api/addons/redeem')Http::json($this->moduleLicences->redeem($actor,Http::body()));

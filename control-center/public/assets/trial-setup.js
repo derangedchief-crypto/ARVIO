@@ -6,12 +6,13 @@
     if(root.TrialSelfService){const model=await api('/api/trial-setup/model');if(state.epoch!==epoch||!state.user)return;if(model.global)return root.TrialSelfService.render(epoch,hint);}
     const valid=()=>state.epoch===epoch&&!!state.user,main=$('main');
     main.replaceChildren(heading('Trials & contacts','Allow trials, choose a package, and manage follow-up contacts.'));
-    await root.TrialWorkspace.globalControls(main,epoch);if(!valid())return;
+    if(!location.hash.endsWith('/contacts'))await root.TrialWorkspace.globalControls(main,epoch);if(!valid())return;
     if(hint){await chooseWorkspace(hint);if(!valid())return;}
     const tenant=state.user.role==='owner'?toolWorkspace():state.user.tenant_id;
-    if(state.user.role==='owner')workspacePicker(main,'Trial workspace',tenant,()=>{if(hint)location.hash='trials';else route();});workspaceTitle(tenant);
-    if(!tenant){main.append(el('p','Choose a workspace first.','hint'));return;}
-    let setup;try{setup=await api('/api/trial-setup?tenant_id='+tenant);}catch(e){if(valid())main.append(panel('Trial settings unavailable',el('p',e.message,'error'),button('Reload status',()=>route())));return;}if(!valid())return;
+     if(state.user.role==='owner')workspacePicker(main,'Trial workspace',tenant,()=>{if(hint)location.hash='trials';else route();});workspaceTitle(tenant);
+     if(!tenant){main.append(el('p','Choose a workspace first.','hint'));return;}
+     if(location.hash.endsWith('/contacts')){let worker=false;try{worker=(await api('/api/trial-policy?tenant_id='+tenant)).worker_configured;}catch{}if(valid()){await root.TrialWorkspace.renderContacts(main,tenant,valid,()=>worker);presentTrialSections(main);}return;}
+    let setup;try{setup=await api('/api/trial-setup?tenant_id='+tenant);}catch(e){if(valid()){main.append(panel('Trial settings unavailable',el('p',e.message,'error'),button('Reload status',()=>route())));presentTrialSections(main);}return;}if(!valid())return;
     const status=panel(setup.status);status.setAttribute('aria-label','Trial status');
     if(setup.blockers.length){const list=el('ul');for(const reason of setup.blockers)list.append(el('li',reason));status.append(list);}
     else status.append(el('p',setup.active?'Eligible customers can request the selected trial in your app.':!setup.global_enabled?'The admin has paused new trials. Your app setting is saved.':'Choose your package and switch trials on below.','hint'));
@@ -23,7 +24,7 @@
     if(setup.admin){
       const access=panel('Trial access',el('p',setup.owner_unlimited?'Your owner app has unlimited eligible trials per day.':'Choose which packages this reseller can offer. Saving does not create trial accounts.','hint'));
       if(!setup.owner_unlimited){const allow=el('input');allow.type='checkbox';allow.setAttribute('role','switch');allow.setAttribute('aria-label','Allow trials for this reseller');allow.checked=d.allowed;allow.onchange=()=>{d.allowed=allow.checked;d.adminDirty=true;};const row=el('label',null,'trial-option');row.append(allow,el('span','Allow trials'));access.append(row);}
-      for(const p of setup.admin.packages){const check=el('input');check.type='checkbox';check.checked=d.ids.includes(p.id);check.setAttribute('aria-label','Allow '+p.name);check.onchange=()=>{d.ids=check.checked?[...new Set([...d.ids,p.id])]:d.ids.filter(id=>id!==p.id);d.adminDirty=true;};const row=el('label',null,'trial-option');row.append(check,cellName(p.name,terms(p)));access.append(row);}
+      const choices=[];for(const p of setup.admin.packages){const check=el('input');check.type='checkbox';check.checked=d.ids.includes(p.id);check.setAttribute('aria-label','Allow '+p.name);check.onchange=()=>{d.ids=check.checked?[...new Set([...d.ids,p.id])]:d.ids.filter(id=>id!==p.id);d.adminDirty=true;};const row=el('label',null,'trial-option');row.append(check,cellName(p.name,terms(p)));choices.push(row);}boundedOptions(access,choices,'Search trial access packages');
       if(!setup.admin.packages.length)access.append(el('p','No current trial packages are available. Check the status above, then reload.','hint'));
       let daily=null;if(!setup.owner_unlimited){daily=el('input');daily.type='number';daily.min='1';daily.max='1000';daily.step='1';daily.value=d.daily;daily.setAttribute('aria-label','Trials per day');daily.oninput=()=>{d.daily=daily.value;d.adminDirty=true;};const label=el('label','Trials per day');label.append(daily);access.append(label);}
       access.append(button('Save trial access',async()=>{const limit=setup.owner_unlimited?50:Number(daily.value);if(d.allowed&&(!Number.isSafeInteger(limit)||limit<1||limit>1000)){feedback.textContent='Enter a whole-number daily limit from 1 to 1000.';feedback.hidden=false;return;}const fingerprints={};for(const p of setup.admin.packages)if(d.ids.includes(p.id))fingerprints[p.id]=p.fingerprint;
@@ -42,6 +43,7 @@
       await save('/api/trial-setup/app',body,app,()=>{drafts.delete(tenant);});
     },'primary'));main.append(app);
     await root.TrialWorkspace.renderContacts(main,tenant,valid,()=>setup.worker_configured);
+    if(valid())presentTrialSections(main);
   }
   root.SimpleTrialSetup={render,isDirty:()=>[...drafts.values()].some(d=>d.adminDirty||d.appDirty)||!!root.TrialSelfService?.isDirty(),clear:()=>{drafts.clear();root.TrialSelfService?.clear();}};
 })(window);

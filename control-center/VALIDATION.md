@@ -1,4 +1,318 @@
-# Device management 0.26.0 recovery and fresh check-ins — validation
+# Control Center validation
+
+## 0.36.0 main promotion and update-safety acceptance
+
+The combined promotion passes 335 isolated website/service cases; 68 full browser
+workflow checks, 18 renewal checks, eight timed polling/race checks and 13 owner/
+reseller responsive-matrix cases; 102 branding/publication-policy tests; 53
+independent worker tests and 71 auth/trial regressions. Android validation passes
+1,031 tests with zero failures/errors and one skipped test, official customer-
+variant Kotlin compilation and branded debug Kotlin compilation using synthetic
+artwork. The distributable-brand check correctly refuses missing managed release
+signing; no signing bypass or customer/reseller APK publication was performed.
+
+Channel-isolation coverage proves a newer testing core cannot be selected or
+authorized for production. Publication policy tests require an explicit manual
+main-only approval, exact source pin, stable signing identity, increasing version
+and separate unpublished candidate workflow. The actual customer publication
+path now refuses missing cloud configuration, an old/unavailable rollout control,
+an existing release version, incorrect package/certificate/version and missing
+approved ARM/SDK support. Package manifests and workflow/syntax checks pass.
+
+The full UI matrix exposed a checkbox activation issue in paged trial approval
+selection: repainting rows during native change could undo a click. Selection
+now updates its count without detaching the input, preserving selection/focus.
+New visibility-aware workflow checks cover on-demand build history, owner tools
+and gateway management without weakening any backend permission or write guard.
+Footer versions are rendered accurately by the server and client.
+
+All payment/provider tests are synthetic. No live customer account, merchant key,
+worker service, updater feed, customer release or APK asset was modified by these
+tests. A future signed device update still needs controlled in-place acceptance
+before separately authorized publication; source-level tests are not a promise
+of zero OEM/network/credential issues.
+
+Logs: /tmp/opencode/main-promotion-{android-validation,branded-debug-compile,
+browser-workflows-complete,renewal-browser-complete,renewal-polling-complete,
+ui-matrix-final,branding-final-verification,worker-tests,auth-tests}.log.
+
+## 0.35.0 seller-friendly website cleanup
+
+Presentation-only scope: no backend PHP, migration, worker or native app changes.
+The browser acceptance suite uses an 84-plan synthetic catalogue, paid/review
+orders, live/sandbox/disabled gateways, scoped owner/reseller logins and trial
+approval drafts. It checks payments-first landing, bounded/searchable pricing,
+unchanged save payload/revision guards, on-demand gateway management, tenant/role
+boundaries, retained trial choices and visible stale-draft conflicts. Every page
+is exercised at desktop/tablet/360px in light/dark, with a mutation trap proving
+browsing/filtering/tab changes cannot save settings or enqueue commands.
+
+Existing full browser workflows continue exercising device commands with synthetic
+receipts, playlist/guide/category edits, protected favourites, PIN/profile settings,
+saved setups, branding, trial controls, add-ons and authentication. UI assertions
+follow the new explicit tabs/disclosures rather than accessing hidden controls.
+Public checkout retains payment-state, country/gateway, price and no-repeat guards.
+
+## 0.34.0 isolated trial conversion exception
+
+334 website service tests, 26 browser checks (18 checkout/workspace plus eight
+polling/race checks), 53 independent worker tests, 71 legacy auth/trial regressions
+and five socket-installer contracts pass. Delivery ZIP and syntax checks pass.
+Frozen logs: /tmp/opencode/trial-conversion-{website,worker,polling,auth}-frozen-validation.log.
+Local disk pressure was avoided with CONTROL_TEST_TMPDIR pointing to a private
+/tmp/opencode alias of RAM-backed validation storage; production paths/defaults
+are unchanged. The initial disk-limited test attempt is not the acceptance run.
+
+Coverage distinguishes an expired trial from an ordinary paid account, selects
+only the reseller-configured paid default (not the first offered plan), blocks
+missing/unfunded/changed defaults, preserves existing paid invoice snapshots when
+the default changes, and leaves trial-creation settings/prices unchanged. Normal
+paid lines retain their current package even with another conversion default.
+Settings test workspace ownership, revision conflicts and rejection of an old
+worker without conversion capability. Browser tests show paid conversion terms
+and the separate reseller setting. Customer-supplied conversion flags are rejected.
+
+Real isolated MariaDB tests verify same-line paid conversion, paid credit cost,
+retained credentials/code/PIN/notes/outputs, paid entitlements, cleared trial flag,
+concurrency, source/expiry/status/fingerprint/funding checks, full rollback and
+lost-reply/refresh recovery. Existing normal renewal, native journal, auth and trial
+regressions remain exercised. All payments are synthetic; no live account, charge,
+credit balance, worker service or APK was changed by implementation/validation.
+
+## 0.33.0 generic payment page and provider-specific email collection
+
+325 service tests, 24 browser checks (16 checkout/workspace and eight timed
+polling/race cases), five isolated socket-installer contracts, PHP/JavaScript
+syntax and delivery ZIP checks pass. Logs are in /tmp/opencode under
+generic-payment-page-no-email-validation.log and
+generic-payment-page-polling-validation.log.
+
+Coverage includes email-less Stripe/Square creation, omitted API email-prefill
+properties, captured settlement verification and exactly one renewal without an
+email identifier. Legacy valid-email checkout remains supported; invalid supplied
+addresses are rejected. Rampex missing-email requests fail before order creation.
+Browser contracts check generic title/heading without injected reseller branding,
+conditional Rampex email, cleared/disabled card email fields and omitted card
+submission email. Payment/provider APIs are synthetic; no real charge is created.
+
+## Automatic job Unix socket repair
+
+Five isolated installer contracts verify the narrow read-only socket bind,
+retained PrivateTmp, safe identical re-installation, preservation of differing
+user overrides, failure before changes for missing/unsafe sockets or a failed
+baseline connection, unexpected service users, and symlink preservation. Shell
+syntax and delivery ZIP checks pass. These fixtures stub systemd/root installation
+and do not claim that a real mount namespace has been exercised. On-server
+acceptance must confirm the next sandboxed job successfully connects, without
+another payment or disabling the job's filesystem isolation.
+
+## 0.32.1 minimal provider-facing payment details
+
+323 service tests and 14 workspace/checkout browser checks pass. PHP syntax and
+reproducible delivery ZIP checks pass. Frozen run:
+/tmp/opencode/minimal-payment-details-frozen-validation.log.
+
+Synthetic provider contracts assert the required Stripe/Square label is Payment,
+Square payment_note and Rampex description are absent, and Stripe metadata holds
+only an opaque order reference. All normal Square completion tests omit notes.
+Recovery coverage simulates a lost Square creation reply, then verifies one
+settlement/renewal using its authenticated opaque order reference. Identity,
+location, amount and currency mismatches cannot authorize recovery; unrelated
+orders without an application reference are ignored. Old signed-note compatibility
+is retained. No provider transaction history or merchant descriptor is modified.
+
+## 0.32.0 immediate gateway handover and saved availability
+
+321 service tests and 22 browser checks pass (14 workspace/checkout checks plus
+eight polling/race checks). PHP/JavaScript syntax and reproducible delivery ZIP
+checks pass. Frozen logs: gateway-freedom-frozen-release-validation.log and
+gateway-freedom-frozen-polling-validation.log in /tmp/opencode/.
+
+Coverage includes disabled Rampex with an existing unpaid invoice, immediate
+switching away from still-enabled Rampex, switching between direct card providers
+while the old invoice remains open, default-route fallback in new TV login QRs,
+late old-payment reconciliation without another renewal, tenant isolation,
+availability revisions, preserved encrypted credentials and routing, and merchant
+replacement not re-enabling a disabled provider. UI coverage includes disabling
+and re-enabling without credential fields. All provider traffic is synthetic.
+This version explicitly permits externally payable older links: no claim of
+preventing duplicate payments is made. Superseded captured funds are held for
+manual review, with no automatic second renewal or refund.
+
+## 0.31.0 provider-confirmed checkout cancellation
+
+314 service tests and 20 browser checks pass (12 existing plus eight timed
+polling/cancellation checks). PHP/JavaScript syntax and delivery ZIP checks pass.
+
+Synthetic-provider coverage includes immediate Stripe expiration, Square link
+deletion with cancelled-order verification, original Square links without saved
+link IDs, all older unpaid invoices, refused captured/processing payments, unknown
+cancellation outcomes, persistent cross-checkout fences, concurrent switch leases
+and rechecking an uncertain cancellation. Rampex checks ensure no invented cancel
+endpoint is called and an expired link with partial funds cannot release a quote.
+Timed browser checks cover cancellation consent and hidden payment links during
+uncertain cancellation, in addition to the polling/race regressions from 0.30.1.
+No merchant sandbox or live endpoint is called, no real payment is taken or
+cancelled, and no real account is renewed. Merchant-owned sandbox acceptance is
+still required before an explicitly authorized live test. No APK, panel worker,
+auth or trial source changes are included. Migration 031 is additive.
+
+## 0.30.1 existing-invoice polling regression
+
+306 service cases and18 browser checks pass (12 existing plus six actual timed
+polling/race checks). The new checks reproduce the original10-second UI regression,
+keep gateway controls/Canadian warnings visible, refuse a second checkout while
+the original is unresolved, refresh provider-confirmed expiry into the new quote,
+disable switching after payment and ignore stale status after a route change.
+Invoice diagnostics issue only provider status GETs and leave database records
+unchanged. Unpaid-expiry proof checks exact merchant, resource, amount, currency
+and local invoice state; an old local deadline alone does not permit replacement.
+All provider endpoints in tests are synthetic. No real charge or cancellation is
+performed. Native source and schema are unchanged from0.30.0.
+
+## 0.30.0 country-aware direct Stripe and Square
+
+Release checks pass:304 isolated service cases,12 browser cases,1,031 Android
+tests (zero failures/errors, one skipped), both Android variants compiled,
+45 standalone renewal-worker cases and71 existing auth/trial regression cases.
+Deterministic delivery/archive checks preserve the original config/storage/keys.
+
+New coverage exercises the real country-signed expired-login endpoint, selecting
+the reseller's preferred Canadian Square route before issuing a checkout token;
+direct Stripe is an approved alternative. Missing/altered country cannot mint a
+QR, and client/server both prohibit Canadian Rampex fallback. Merchant identity,
+gateway, environment, location/currency, gross amount and reference mismatches,
+refunds, manual CASH/EXTERNAL Square records and uncaptured payments are rejected.
+An OPEN Square digital order with a captured card payment is correctly accepted.
+
+Synthetic direct-card callbacks plus separate API reads verify the original
+invoice before one same-line renewal. Duplicate/late notifications, capture lag,
+credential-recheck, original-provider expiry before switching gateways and late
+money on an expired invoice retain the original financial evidence. Sandbox
+completions perform ZERO renewal-worker operations. Country-specific disabled
+prices cannot fall through to an unintended default price. Merchant setup reserves
+the final webhook URL before endpoint secrets exist and is scoped/idempotent.
+
+Browser checks cover 360px checkout, country/provider selection, no package or
+amount editing, escaped labels, separate encrypted/write-only merchant forms,
+pre-secret read-only callback URLs and saved Square/Stripe country preferences.
+Native checks cover country confirmation before any checkout request/QR, signed
+country binding, unchanged account verification and rejecting Canadian crypto
+fallback even if a server returned an invalid route.
+
+Provider APIs in these tests are controlled fake transports. No real API key,
+charge, Square/Stripe hosted-payment acceptance, or real panel renewal was used.
+Actual provider sandbox acceptance and a separately approved live test remain the
+owner's controlled checks after the matching website/testing APK are installed.
+
+## 0.29.0 checkout-only expired login
+
+290 isolated service cases, nine browser cases and40 standalone-worker cases
+(including22 real isolated MariaDB cases) pass. Delivery archive tests confirm
+advancing timestamps, deterministic manifests and preservation of config/storage.
+
+The new full simulated flow starts from an expired code with no approved enrollment
+or registered installation/panel-customer binding. It creates only a checkout
+session: device/enrollment/credential counts do not change. Tampered signatures,
+nonce replay, generic apps and known blocked installations are denied. Payment
+still uses the current package and one durable operation, including held-package
+repair, duplicate notifications, expired quotes and paid fulfilment after pause.
+Native SQL tests deny wrong owners/passwords/codes, duplicate codes, active,
+unlimited, disabled and unactivated lines without a panel write or refresh.
+
+Android compile/login-test validation is tracked separately for the rebuilt
+branded testing APK. No new APK is implied by installing the website or worker.
+No real payment or real-line renewal was performed during this development.
+
+## 0.28.0 separate full worker and Rampex account setup
+
+Release validation: 287 isolated website/service cases, nine browser cases and
+29 standalone worker cases (including17 real MariaDB transaction cases) pass.
+The existing auth/trial/bridge regression suite also passes all71 checks. PHP/JS,
+shell/embedded-Python syntax and actual delivery ZIP/manifest checks pass.
+
+The new service has its own folder, port, unprivileged user, Python environment
+and anchored state. Dependency version discovery reads the old environment's
+metadata without executing its packages or the private config; old files/services
+are untouched. Bundles omit private config/env and all old portal/trial routes.
+
+Real isolated MariaDB cases execute the supplied native date/locking/credit-journal
+helpers: one extension/debit, current-package and expired-revision fences, credit
+trigger/no-trigger paths, missing-note rollback, duplicate/concurrent/cross-reseller
+reference fencing, lost commit replies, funding deferral, refresh-only repair,
+preserved credentials/notes/bouquets/connection overrides and unlimited catalogue
+entries not blocking renewable products. HTTP checks cover separate service auth,
+capabilities, original state loss and absence of legacy auth/create/delete routes.
+
+Website contract checks cover full-worker imports, normal owner controls, real
+merchant-key validation adapters, HTTP201 creation, exact37-currency minor units,
+gross invoice vs net payout, ignored signed setup notifications, same-merchant key
+rotation evidence, lost creation replies, unpaid expiry/retry, late accepted money
+and manual/other renewal protection. Asynchronous jobs retain the same operation.
+
+These checks are isolated/synthetic: no live Rampex request with an account key,
+card charge, real line renewal or actual Overcast refresh was performed. Root
+installation/proxy reload and the specific owner test-line/provider/device
+acceptance must be confirmed on the servers; no global production-readiness or
+provider/KYC/chargeback/instant-unlock guarantee follows from local tests.
+Logs: /tmp/opencode/renewal-worker-028-release-validation.log and
+/tmp/opencode/rampex-028-release-validation.log.
+
+## 0.27.3 catalogue-only connection
+
+283 isolated service checks, eight focused browser checks and71 auth-worker
+offline/HTTP/deployment checks pass. New coverage proves signed read-only status,
+owned offered packages/credit costs, READ ONLY transactions with rollback,
+unconditional refusal of renewal/checkout even with a write environment flag,
+preserved original health/trial routes and exact additive source-hook fencing.
+Configuration merge preserves unrelated credentials/builder/trial settings and
+refuses key conflicts; website mode blocks outbound renewal and enabling payment
+rollout. The catalogue-only UI shows explicit OFF status without enablement controls.
+Both archives are allowlisted, manifest-checked and exclude original configs/keys.
+
+Live root installation, service restart/rollback and the private host-to-host file
+transfer still require the user's server execution. No live connection/package
+count, charge, account creation or renewal is claimed from these offline checks.
+
+## 0.27.2 current-package-only pricing
+
+280 isolated service checks and seven focused browser checks pass. Reseller
+money prices are accepted only for currently offered panel packages; custom names,
+terms, connections, credit overrides, duplicate prices and retargeting are denied.
+Both verified owner and reseller checkout flows show only the current package,
+reject another offered/priced package, hold package changes after payment without
+renewing, and repair the original paid order after review without another charge.
+The phone has no package picker. The operator edits money price/currency only.
+All 61 existing/new reseller-worker offline/HTTP checks pass, including native
+current-package locking and refusal of old/non-current-package-only contracts.
+ZIP/manifest checks preserve private config/storage and existing order history.
+These tests use synthetic provider/panel data; real-panel transaction acceptance
+and live Rampex contract verification remain open.
+
+## 0.27.1 verified owner reseller correction
+
+279 isolated service checks and six focused browser checks pass. These include
+the real null-tenant owner login resolving its existing verified workspace,
+owner signed checkout/payment/demo same-line fulfilment, missing-link rejection,
+cross-reseller denial and the owner settings screen rendering with payments OFF.
+No native change, new migration, real payment or panel write is part of this fix.
+Delivery ZIP checks preserve config/storage/keys and validate archive manifests.
+
+## 0.27.0 renewal settings preview
+
+Prior staging integration passed 276 isolated service checks, 59 worker tests,
+68 baseline and five focused browser checks, 1,018 native tests (one skip) and
+33 final targeted access/checkout tests plus both Kotlin variants. Payment cases
+use synthetic merchant data and demo targets, never real charges/panel writes.
+Delivery packaging preserves private config/storage and verifies every manifest.
+The additional one-brand staging queue passes the expanded 277-case isolated
+service suite: immutable staging source registration, same-job retries, preserved
+testing artwork/package/revision and refusal to claim that source for production.
+See `deploy/UPDATE-0.27.0.txt` for the
+required migration and explicit testing-only queue command. No live payment or
+production publication is part of this preview.
+
+## Device management 0.26.0 recovery and fresh check-ins
 
 Final local checks: 1,016 Android tests (zero failures/errors, one existing skip),
 both testing/customer Kotlin variants compiled; 261 isolated MariaDB/service checks,

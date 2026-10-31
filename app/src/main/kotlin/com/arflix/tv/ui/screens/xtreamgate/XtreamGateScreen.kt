@@ -100,6 +100,11 @@ fun XtreamGateScreen(
     onSkip: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    if(uiState.renewalRequested){
+        com.arflix.tv.ui.components.RenewalCheckoutScreen(viewModel.renewalCheckout,
+            onRenewed={viewModel.completeRenewal(onLoginSuccess)},onCancel=viewModel::cancelRenewal)
+        return
+    }
     if(allowTrial&&com.arflix.tv.branding.AppBrand.id.isNotBlank()){
         val trialViewModel: com.arflix.tv.trials.TrialSignupViewModel=hiltViewModel()
         val trial by trialViewModel.uiState.collectAsStateWithLifecycle()

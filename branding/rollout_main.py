@@ -52,7 +52,8 @@ def published_customer_source(run_id):
     return source,version,code
 
 
-def immutable_tag(tag, sha):
+def immutable_tag(tag,sha):
+    """Pre-publication source pin only; post-publication fanout never calls this."""
     path='repos/'+REPO+'/git/ref/tags/'+tag
     result=subprocess.run(['gh','api',path],capture_output=True,timeout=60)
     if result.returncode:

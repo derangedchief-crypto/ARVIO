@@ -1,0 +1,34 @@
+0.33.0 — Payment Gateway page and no website email form for Stripe/Square
+
+TESTING/STAGING ONLY. Back up website code and database. Extract over 0.32.x.
+Config.php, storage, keys, invoice history, merchant connections, country routing,
+device identity and the installed systemd socket override remain unchanged.
+Run php -d opcache.enable_cli=0 cli/console.php preflight afterward.
+No new migration after 0.32.x, no APK update and no service restart are needed.
+Older versions must apply included database migrations as normal before use.
+
+The page served from /renew/ now has title/heading Payment Gateway rather than
+Extreme Hub or another reseller workspace name. Actual provider merchant names
+and statement descriptors are NOT changed. Account suffix, price and package
+terms remain visible so the customer can review what will be renewed.
+
+Stripe/Square: no email field on our page, no submitted website email, and no
+email-prefill API property when absent. The provider may still require contact
+or billing information and issue a receipt under its own rules/settings.
+Rampex: its API requires customer_email, so an email field is shown only for that
+selected gateway. It is cleared/disabled when switching to Stripe or Square.
+No fake customer email is generated. Existing saved emails/history are retained.
+
+Acceptance using new SANDBOX checkouts:
+1. Open a current TV QR: title/heading Payment Gateway, not the reseller brand.
+2. Choose Stripe, then Square: no visible or required email field on our page.
+3. Continue to either provider without entering an email here. Provider-side
+   billing/contact forms may still appear. Verify matching sandbox settlement.
+4. If Rampex is enabled for USA, select it: its email field is visible/required.
+   Switch back to Stripe: the field is hidden, disabled, cleared and not submitted.
+5. A no-email card completion must still fulfil exactly once. Sandbox must never
+   reactivate a real account. Failed creation must not lead to duplicate payment.
+
+This update does not change or undo the dedicated job socket repair. Check the
+existing renewal-jobs.timer remains active; no additional paid test is needed to
+prove that service can connect to MySQL and run its empty queue.

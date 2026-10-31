@@ -7,8 +7,8 @@ final class AppBrands
 {
     private const ASSETS=['loading_asset','logo_asset','icon_asset'];
     // Platform release identity; never selected by reseller inputs.
-    private const APP_VERSION='2.0.126';
-    private const APP_VERSION_CODE=442;
+    private const APP_VERSION='2.0.130';
+    private const APP_VERSION_CODE=446;
     public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly ?BrandArtifacts $artifacts=null,private readonly ?Config $config=null) {}
     private function channel():string {
         $channel=$this->config?->get('brand_release',[])['default_channel']??'testing';if(!in_array($channel,['testing','production'],true))throw new Problem(503,'Invalid owner release channel.');
@@ -19,13 +19,17 @@ final class AppBrands
     }
     private function platform(string $channel):array {
         if($this->config&&($this->config->get('brand_main_updates',[])[$channel.'_enabled']??false)===true&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['018_brand_main_updates.sql'])){
-            $row=$this->db->one('SELECT * FROM brand_main_sources ORDER BY version_code DESC LIMIT 1');if($row)return ['version'=>$row['app_version'],'code'=>(int)$row['version_code'],'sha'=>$row['source_sha']];
+            $modern=(bool)$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['021_production_brand_releases.sql']);
+            $row=$modern?$this->db->one('SELECT s.* FROM brand_main_sources s JOIN brand_main_rollouts r ON r.source_sha=s.source_sha WHERE r.channel=? ORDER BY s.version_code DESC LIMIT 1',[$channel]):$this->db->one('SELECT * FROM brand_main_sources ORDER BY version_code DESC LIMIT 1');
+            if($row)return ['version'=>$row['app_version'],'code'=>(int)$row['version_code'],'sha'=>$row['source_sha']];
         }
         if($channel==='production')throw new Problem(503,'Register the approved production main source before requesting a build.');
         // Historical testing snapshots stay buildable on their explicitly pinned
         // old source during cutover. This never chooses production or a new key.
         $pins=$this->config?->get('brand_builder',[])['sources']??[];
-        if(isset($pins['2.0.115'])&&!isset($pins[self::APP_VERSION]))return ['version'=>'2.0.115','code'=>431,'sha'=>null];
+        foreach([self::APP_VERSION=>self::APP_VERSION_CODE,'2.0.129'=>445,'2.0.126'=>442,'2.0.125'=>441,'2.0.124'=>440,'2.0.115'=>431] as $version=>$code){
+            if(isset($pins[$version])&&is_string($pins[$version])&&preg_match('/^[a-f0-9]{40}$/D',$pins[$version]))return ['version'=>$version,'code'=>$code,'sha'=>null];
+        }
         // Isolated fixtures deliberately exercise the installed historical APK
         // protocol. This override is unavailable on a production website.
         $fixture=$this->config&&$this->config->local()?$this->config->get('development_brand_platform'):null;
@@ -84,6 +88,8 @@ final class AppBrands
             $t=$this->tenant($actor,$input['tenant_id']??null,true);$brand=$this->db->one('SELECT * FROM app_brands WHERE tenant_id=? FOR UPDATE',[$t['id']]);if(!$brand||!$brand['enabled'])throw new Problem(409,'Save an enabled brand first.');
             if((int)$brand['version']!==Input::integer($input['expected_version']??null,1,100000))throw new Problem(409,'Brand changed; reload before requesting a build.');
             $channel=$this->channel();$platform=$this->platform($channel);
+            $published=$this->artifacts?->approved($brand['id'],$channel,true);
+            if($published&&(int)$platform['code']<intdiv((int)$published['version_code'],100000))throw new Problem(409,'The configured build source is older than the installed app. Register an approved current source before rebuilding.');
             $scope=$this->channelScope($channel);$old=$this->db->one('SELECT id,state FROM app_brand_builds WHERE brand_id=? AND brand_version=? AND app_version=?'.$scope,[$brand['id'],$brand['version'],$platform['version']]);
             if($old){
                 if($old['state']==='cancelled'){

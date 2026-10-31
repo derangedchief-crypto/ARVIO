@@ -35,6 +35,19 @@ class LegacyActivationRecoveryTest {
         assertEquals(LegacyRecovery.Fresh,identifyLegacyAccount(false,emptyList(),emptyList()))
         assertEquals(LegacyRecovery.Unresolved,identifyLegacyAccount(true,emptyList(),emptyList()))
     }
+    @Test fun checkoutOnlyIdentityDoesNotTurnFreshLoginIntoAccountRecovery()=runBlocking {
+        val context=ApplicationProvider.getApplicationContext<Application>()
+        context.settingsDataStore.edit{it.clear()}
+        val renewal=ManagementVault(context,"renewal-checkout-v1")
+        val management=ManagementVault(context)
+        assertEquals("control-management-encryption-v1",management.encryptionAlias)
+        assertNotEquals(management.encryptionAlias,renewal.encryptionAlias)
+        val checkout=File(File(context.noBackupFilesDir,"renewal-checkout-v1"),"${"b".repeat(64)}.enc")
+        checkout.writeText("checkout-only encrypted-record fixture")
+        assertEquals(LegacyRecovery.Fresh,LegacyActivationRecovery(context).recover())
+        assertTrue(checkout.isFile)
+        assertTrue(context.settingsDataStore.data.first().asMap().isEmpty())
+    }
     @Test fun originalApprovedIdentityIsIndependentOfOrderLabelAndProfile(){
         for(candidates in listOf(listOf(extra,primary),listOf(primary,extra),listOf(primary,extra,primary)))
             assertEquals(LegacyRecovery.Identified(primary),identifyLegacyAccount(true,candidates,listOf(session(primary))))

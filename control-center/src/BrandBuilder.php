@@ -15,7 +15,11 @@ final class BrandBuilder
     private function channel(array $c,mixed $channel):string {if(!is_string($channel)||!in_array($channel,$c['channels']??['testing'],true))throw new Problem(403,'Build channel is not authorized by the owner.');return $channel;}
     private function source(array $c,string $appVersion,mixed $sha,?string $channel=null):string {
         $expected=$c['sources'][$appVersion]??null;
-        if(in_array($channel,['testing','production'],true)&&is_string($sha)&&preg_match('/^[a-f0-9]{40}$/D',$sha)&&($this->config->get('brand_main_updates',[])[$channel.'_enabled']??false)===true&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['018_brand_main_updates.sql'])&&$this->db->one('SELECT source_sha FROM brand_main_sources WHERE source_sha=? AND app_version=?',[$sha,$appVersion]))return $sha;
+        if($channel==='testing'&&is_string($sha)&&preg_match('/^[a-f0-9]{40}$/D',$sha)&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['026_renewal_payments.sql'])&&$this->db->one('SELECT source_sha FROM brand_staging_sources WHERE source_sha=? AND app_version=?',[$sha,$appVersion]))return $sha;
+        if(in_array($channel,['testing','production'],true)&&is_string($sha)&&preg_match('/^[a-f0-9]{40}$/D',$sha)&&($this->config->get('brand_main_updates',[])[$channel.'_enabled']??false)===true&&$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['018_brand_main_updates.sql'])&&$this->db->one('SELECT source_sha FROM brand_main_sources WHERE source_sha=? AND app_version=?',[$sha,$appVersion])){
+            if($this->db->one('SELECT name FROM schema_migrations WHERE name=?',['021_production_brand_releases.sql'])&&!$this->db->one('SELECT source_sha FROM brand_main_rollouts WHERE source_sha=? AND channel=?',[$sha,$channel]))throw new Problem(409,'This main source is not approved for the selected release channel.');
+            return $sha;
+        }
         if(!is_string($sha)||!preg_match('/^[a-f0-9]{40}$/D',$sha)||!is_string($expected)||!hash_equals($expected,$sha))throw new Problem(409,'Run the owner-pinned source commit for this platform version.');return $sha;
     }
     private function lockJob(string $id):array {

@@ -1,0 +1,163 @@
+# Separate IPTV renewal worker
+
+Expired-line fix1 (0.29.0): enabled lines with a finite expiry in the past may
+have activated=0 in Overcast. They are now eligible for checkout, without changing
+the panel row. Only the verified paid renewal transaction restores activated=1,
+atomically with the expiry extension and credit receipt. enabled=0, unsupported
+activation flags, never-started and future-dated inactive lines remain denied.
+Replay/refresh never performs another activation, debit or extension. Existing
+credentials, package, bouquets, notes and connection overrides are preserved.
+This standalone-worker update needs no website migration or APK rebuild.
+
+Recovery update: installation now runs a read-only startup preflight as the
+renewal user before launching systemd, and retains credential-free stage/error
+evidence in the original private state directory. It allows up to180 seconds for
+native SSH/pool startup instead of the original short polling window. A failed
+preflight never submits renewals or modifies panel schema; it reports which
+prerequisite failed and retains the existing key/ledger/config. This improves
+diagnosis/recovery; it is not proof that an unknown server failure is resolved.
+
+This is a NEW service, not a patch to `iptv-auth-worker` and not the earlier
+catalogue-only extension. Do not run the old catalogue installer for this setup.
+
+0.29.0 adds signed, read-only `identify` requests for expired activation codes or
+the already-bound account credentials. Only the website's separate worker key can
+call this route. It verifies unique identity, enabled/activated state, expiry and
+reseller ownership, returning only line/reseller IDs and a primary fingerprint.
+It never returns passwords, provisions a device or grants playback. The normal
+paid-operation transaction and original line data are unchanged.
+
+Empty package bouquet lists are supported for paid renewal: the customer's
+existing bouquets are preserved, never cleared or replaced by the package list.
+Malformed bouquet data is still rejected, and package fingerprints still prevent
+renewal against a changed package definition.
+
+## Reuse without altering the auth worker
+
+- Own folder `/opt/iptv-renewal-worker`, port `127.0.0.1:19093`, systemd unit
+  `iptv-renewal-worker.service`, and state `/var/lib/iptv-renewal-worker`.
+- Own unprivileged `iptvrenewal` account and own Python environment. Initial
+  dependencies are constrained to the working auth environment's versions, read
+  as metadata only; nothing is installed into/changed in the auth environment.
+  No original ACL changes or auth-service restart. The auth process need not run
+  for the new service to run after setup.
+- Initial setup copies the existing auth worker's server-local `config.py` and
+  `.env` into the NEW private folder, root-owned/group-readable only. Existing
+  copies are preserved on updates. Private values never enter this public ZIP,
+  the website, APKs or chat. The old source/config/env/trial ledger stay untouched.
+- Frozen native helpers come from the supplied reviewed source (SHA256
+  `c5a93d1a4d98f214a4427e8ac0ca7dbdcb03fb5d59632ad4212740a188a7e8d1`).
+  No legacy login/create/delete/change-package/trial routes are included. Native
+  calendar calculation, owner/line locks, credit journal and panel refresh are
+  reused, not guessed REST/billing APIs. Native logs omit private response details.
+
+## Paid renewal contract
+
+Only signed server requests can renew. The caller must prove a verified payment;
+the website performs Rampex signature + merchant status/amount/currency checks.
+The worker independently verifies the real reseller, primary fingerprint, current
+package assignment, enabled/unrestricted status, package eligibility/fingerprint
+and credits under its native DB locks. It never switches packages. The same line's
+expiry extends while credentials, activation code, bouquets, notes and connection
+overrides stay unchanged. There are no public account creation/deletion routes.
+
+The line extension, native credit movement and `BRN1` payment-operation marker
+commit together. The involved tables must support transactions and the journal
+must fit the full marker. Duplicate/lost replies reconcile the same operation;
+native refresh failure retries refresh only. One provider reference cannot be
+reused by another reseller. The worker's independent private ledger key is anchored
+in its environment; missing/corrupt state is held, never reset automatically.
+Never restore an older ledger over newer committed history or recreate keys to
+work around a review state. Back up the original state/env together privately.
+
+## Installation on the existing worker HOST (not website host)
+
+Extract the verified new-worker ZIP in a new root-private directory and run:
+
+```sh
+bash install.sh
+```
+
+Only the NEW renewal service starts/restarts. Its source/unit are backed up and
+rolled back on readiness failure. New ledger/key state is preserved, never rolled
+back over committed operations. Auth-worker files are hash-checked unchanged.
+Startup verifies the DB journal/transaction prerequisites and authenticated status;
+it does not renew a line, charge a card, create a trial or alter panel schema.
+
+The new private website connection file is
+`/root/renewal-worker-website-connection.json` (root0600). Transfer it DIRECTLY to
+`/root/` on the website host by your trusted SSH/SFTP access. Never paste it into
+chat, place it under public/, or reuse the portal/trial/Rampex secrets for this key.
+
+## Public routing
+
+The installer attempts narrow Nginx discovery automatically. It chooses the unique
+existing HTTPS server, or the existing HTTP auth origin behind your established
+TLS proxy, without changing SSL settings. Ambiguous/shared/custom renewal routes
+are retained for review. For an explicit site path, run as root:
+
+```sh
+/opt/iptv-renewal-worker/venv/bin/python /opt/iptv-renewal-worker/configure_proxy.py --site /PATH/TO/EXISTING/WORKER-SITE.conf
+```
+
+Alternatively use `nginx-location.conf` INSIDE that existing service-bearing server,
+on the machine that actually proxies `resellerworker.extremeiptv.net`.
+It routes ONLY `/branded-renewals/` to the new loopback port19093. Existing auth,
+portal and trial paths remain on their current upstream. Back up the relevant
+Nginx file, validate with `nginx -t`, then reload Nginx (not any other worker).
+Do not assume loopback refers to the worker if the proxy is on another host;
+use your established private upstream in that case, never expose port19093 publicly.
+
+Recovery checks that port19093 is free before starting this service. It never
+stops the unrelated listener on9093. Signed readiness must identify the actual
+systemd MainPID, not a previous preflight process or another HTTP server. The
+exact previous managed Nginx route is migrated from9093 to19093; customized
+routes are preserved for review. The existing ledger, keys and private copies
+of configuration are retained.
+
+The full signed `/status`, `/catalog`, `/eligibility` and `/renew` routes are
+available under that prefix. There is no catalogue-only flag blocking the service.
+The website import verifies full capabilities and its offered packages. Connecting
+Rampex verifies each reseller's own merchant key; customer checkout still requires
+the normal owner-enabled rollout, current package pricing and genuine expiry.
+
+## Acceptance and operations
+
+The real-SQL suite uses a new socket-only MariaDB and synthetic rows; no live
+panel credentials/tunnel/HTTP are imported. It tests native credit triggers,
+atomic rollback, concurrency, duplicate/cross-reseller payment fencing, current
+package changes, credential/data preservation and lost-reply/refresh-only repair.
+HTTP checks cover server signatures, capability/status and loss of original state.
+Actual Overcast refresh, Rampex transaction and device unlock must still be checked
+on the owner's specifically chosen test line before a customer rollout is claimed.
+
+Safe logs: `journalctl -u iptv-renewal-worker.service`. Do not send private config,
+env/export files, ledger keys or raw customer records. No customer APK publication
+or main promotion is part of this worker deployment.
+## 0.34.0 trial conversions
+
+The independent worker now advertises signed trial_conversion=1. Eligibility
+reports the panel's authoritative is_trial flag: expired trials can quote offered
+paid packages for the WEBSITE's reseller-specific conversion default, while paid
+lines still quote their current package only. There is no customer-chosen package
+override and no change to free-trial creation or the old auth/trial service.
+
+The signed paid operation can include trial_conversion=true and source_package_id
+only through this service's explicitly opted-in validator. Legacy validation
+still rejects these fields by default. Both modes retain current_package_only=true:
+normal renewal has no package-switch exception; conversion additionally requires
+the original row to be an expired trial with the same source package and expiry.
+The website freezes its default paid target/fingerprint into the verified invoice.
+
+Conversion applies paid package ID/duration/connections, is_trial=0, activated=1,
+and the paid package's nonempty bouquets (empty means preserve current bouquets).
+Credentials, activation code, PIN, notes, outputs and line identity are preserved.
+Normal renewals keep the current package, bouquet and connection overrides.
+Account update, paid credit debit and BRN1 receipt are one atomic transaction;
+replays, concurrent requests, lost replies and refresh retries cannot debit twice.
+
+Install this independent worker update before website 0.34.0, then apply website
+migration 033 and configure Customer renewals -> Trial conversions. Existing
+state/key/ledger must be kept and no private connection rekey/transfer is needed.
+Only iptv-renewal-worker.service restarts. Do not patch/restart auth or trial
+services, publish production APKs or run a paid-live test without authorization.

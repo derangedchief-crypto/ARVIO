@@ -43,7 +43,37 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         assert 'src/DeviceProfiles.php' in names
         assert 'src/DeviceRecovery.php' in names and 'src/DeviceListWindow.php' in names
         assert 'database/migrations/025_device_recovery.sql' in names
+        for name in ['src/BrandTestingUpdates.php','src/RenewalPayments.php','src/RenewalSettings.php','public/renew.html','public/assets/renewals-settings.js','public/assets/renewal-checkout.js','database/migrations/026_renewal_payments.sql','deploy/UPDATE-0.27.0.txt']:
+            assert name in names, name
         assert 'deploy/DEVICE-RECOVERY-AAPANEL.txt' in names
+        assert 'deploy/UPDATE-0.27.1.txt' in names
+        assert 'deploy/UPDATE-0.27.2.txt' in names
+        assert 'database/migrations/027_current_package_pricing.sql' in names
+        for name in ['src/RenewalCatalogueConnection.php','cli/connect-renewal-catalogue.php','deploy/connect-renewal-catalogue.sh','deploy/UPDATE-0.27.3.txt']:
+            assert name in names, name
+        for name in ['src/RenewalWorkerConnection.php','src/RampexLinkRejected.php','cli/connect-renewal-worker.php','deploy/connect-renewal-worker.sh','deploy/renewal-jobs.service','deploy/renewal-jobs.timer','deploy/UPDATE-0.28.0.txt','database/migrations/028_renewal_webhook_readiness.sql']:
+            assert name in names, name
+        assert 'database/migrations/029_renewal_login.sql' in names
+        assert 'deploy/UPDATE-0.29.0.txt' in names
+        assert 'database/migrations/030_country_payment_gateways.sql' in names
+        assert 'src/CardGateway.php' in names
+        assert 'deploy/UPDATE-0.30.0.txt' in names
+        assert 'src/RenewalInvoiceStatus.php' in names
+        assert 'deploy/UPDATE-0.30.1.txt' in names
+        assert 'deploy/UPDATE-0.31.0.txt' in names
+        assert 'src/RenewalCheckoutVoids.php' in names
+        assert 'database/migrations/031_checkout_voids.sql' in names
+        assert 'database/migrations/032_gateway_availability.sql' in names
+        assert 'deploy/UPDATE-0.32.0.txt' in names
+        assert 'deploy/UPDATE-0.32.1.txt' in names
+        assert 'deploy/fix-renewal-jobs-socket.sh' in names
+        assert 'deploy/RENEWAL-JOBS-SOCKET-REPAIR.txt' in names
+        assert 'deploy/UPDATE-0.33.0.txt' in names
+        assert 'deploy/UPDATE-0.34.0.txt' in names
+        assert 'deploy/UPDATE-0.35.0.txt' in names
+        assert 'deploy/UPDATE-0.36.0.txt' in names
+        assert 'deploy/install-ui-cleanup.sh' in names
+        assert 'database/migrations/033_trial_conversion_defaults.sql' in names
         assert b'fresh-checkins' in archive.read('cli/console.php')
         assert 'src/AppBrands.php' in names and 'database/migrations/014_reseller_app_brands.sql' in names
         assert 'src/TrialPolicies.php' in names and 'src/TrialContacts.php' in names and 'database/migrations/015_trial_policies_contacts.sql' in names

@@ -35,7 +35,8 @@ class AccessPolicyTest {
     private fun repo()=PrimaryAccessRepository(ApplicationProvider.getApplicationContext())
     @Test fun primaryVerificationGateContainsNoManualRetryOrSyncControl(){
         val source=java.io.File("src/main/kotlin/com/arflix/tv/ui/components/PrimaryActivationGate.kt").readText()
-        assertFalse(source.contains("TextButton("));assertFalse(source.contains("onClick"));assertFalse(source.contains("Retry primary verification"))
+        val genericNotice=source.substringAfter("private fun AccountAccessNotice").substringBefore("fun ObservePrimaryPlayback")
+        assertFalse(genericNotice.contains("TextButton("));assertFalse(genericNotice.contains("onClick"));assertFalse(source.contains("Retry primary verification"))
     }
     @Test fun allPlaybackRequiresALivePrimaryLeaseEvenForCloudLinks()=runBlocking {
         val r=repo();r.refresh();val binding=r.requirePlayback();assertEquals(binding,r.requirePlayback(binding))

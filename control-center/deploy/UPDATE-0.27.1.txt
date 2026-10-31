@@ -1,0 +1,17 @@
+CONTROL CENTER 0.27.1 — VERIFIED OWNER/ADMIN RESELLER WORKSPACE
+
+Fixes the renewal settings/checkout guard incorrectly rejecting an owner workspace
+that already has a verified panel-reseller link. No new account or relinking needed.
+An admin role WITHOUT that link remains ineligible. Tenant, line ownership,
+installation-key, expiry, administrative restriction and merchant checks remain.
+
+Extract the UPDATE ZIP into /www/wwwroot/control.fecxbrfzku.net on the WEBSITE host.
+The archive preserves config.php, permissions/ACLs of storage, keys and records.
+Hard-refresh, or reload only this site's PHP handler if bytecode remains stale.
+If migration026 is already applied, no new migration or terminal command is needed.
+Do not rerun fresh-checkins, the testing queue command or old automation installers.
+
+The existing signed Extreme Hub1 TESTING build remains pinned to its authorized
+staging source. No APK rebuild, customer/production publication or main change is
+part of this website correction. Existing builder channels/settings stay unchanged.
+Payments remain OFF. No real Rampex request, charge or panel renewal is authorized.

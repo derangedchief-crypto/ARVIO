@@ -1,0 +1,43 @@
+0.35.0 — complete seller-friendly website presentation cleanup
+
+WEBSITE ONLY: control.fecxbrfzku.net, 38.190.133.176,
+/www/wwwroot/control.fecxbrfzku.net. No worker-server access is needed.
+Do not alter other hosted sites, aaPanel/SSH configuration, databases, cron/systemd
+units, merchant credentials, auth/trial workers, IPTV accounts or app artifacts.
+
+Back up the current website code outside the public root. This version changes
+only frontend assets/templates, version metadata and documentation; backend PHP,
+database migrations and financial processing logic are unchanged from 0.34.0.
+No migration or service restart is needed. Keep config.php, storage, download APKs
+and the installed renewal-jobs socket override unchanged. Never restore an old
+financial database merely to undo a visual change.
+
+Deployment must verify the SSH host key, canonical site directory, configured
+origin https://control.fecxbrfzku.net and existing version before writing anything.
+Use a validated release ZIP and its manifest; apply only the changed frontend
+files and VERSION. Never unpack into /www/wwwroot generally or another vhost.
+Root SSH credentials must not be printed, committed or stored in public files.
+
+After deployment: verify the public page advertises 0.35.0, assets load correctly
+and the authenticated owner/reseller pages work. No live provider key changes,
+gateway toggles, trial settings saves, payment retries, builds or device commands
+are part of visual smoke testing. Users with an open old page should reload when
+the existing version notice appears, preserving or explicitly discarding drafts.
+
+Changes:
+- Daily work / App setup / Administration / Account navigation; old links retained.
+- Renewal Payments, Plans & pricing, Gateways, Settings task tabs.
+- Visible payment failures, sandbox/live distinctions and webhook setup warnings.
+- Catalogue search, configured/all/not-priced filters and ten plans per page.
+- One explicit country-price save; confirmation before discarding country edits.
+- Saved gateway management on demand; no changes to disable/fallback/reconciliation.
+- Contacts / Trial settings / owner Package approvals, including legacy views.
+- Searchable paged trial selection with selected IDs and stale guards preserved.
+- Current app download first, artwork and previous builds on demand.
+- Consistent customers/devices, saved setups, activity, add-ons and administration.
+- Generic customer Payment Gateway page with payment state before switch controls.
+
+Validation uses isolated synthetic accounts, 84-package catalogues and mocked
+provider settings only. It must cover owner/reseller permissions, payment errors,
+existing editors, mobile/tablet/desktop, light/dark, keyboard navigation and no
+mutations from browsing. Never perform a new live charge to test this cleanup.

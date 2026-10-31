@@ -1,0 +1,29 @@
+0.32.1 — generic payment labels and no optional purchase notes
+
+TESTING/STAGING ONLY. Back up website code and database before installing.
+Extract this update over 0.32.0. Config.php, storage, credentials, device identity,
+financial history and gateway availability/routing preferences are preserved.
+No new migration is required after 0.32.0; earlier versions must apply included
+migrations as normal. No APK build or renewal/auth/trial worker change is needed.
+
+NEW provider checkouts:
+- Stripe: required item label Payment; opaque order ID in client reference and
+  payment/session metadata; no description or purchase details, no country metadata.
+- Square: required item label Payment; opaque order reference; payment_note omitted.
+- Rampex: optional description omitted; opaque woo_order_id kept for verification.
+
+Verification still checks captured funds, amount, currency, merchant, environment,
+provider link/order, account and package. Square no longer relies on a payment note:
+lost link replies recover their reference using the authenticated Orders API only
+after webhook signature verification. Provider API failures do not authorize money
+or renewal; the provider retries delivery. Ordinary known-link webhooks remain fast.
+
+Existing links/payments may retain their old labels. This update does not rewrite
+provider history, remove legally required records or change merchant statements.
+Merchant identity, required billing/contact details, amounts, currency, return URLs
+and provider transaction IDs remain visible to the provider. This is not anonymity.
+
+Acceptance: create NEW sandbox Stripe/Square checkouts, inspect item name Payment
+and absent optional purchase notes, complete them and verify exactly one matching
+sandbox receipt. Sandbox must never reactivate a real account. Existing records
+must still verify. Automated tests never call real merchant endpoints.

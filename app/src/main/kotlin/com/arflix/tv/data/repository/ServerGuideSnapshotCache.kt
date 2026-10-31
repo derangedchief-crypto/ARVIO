@@ -50,7 +50,8 @@ internal class ServerGuideSnapshotCache(context: Context, client: OkHttpClient, 
             progress(IptvLoadProgress("Checking server guide cache", 0))
             val manifest = try {
                 http.newCall(Request.Builder().url(url.substringBeforeLast('/') + "/manifest").build()).execute().use { response ->
-                    if (!response.isSuccessful) null else JsonParser.parseString(response.body.string()).asJsonObject.let { json ->
+                    val body = response.body ?: return@use null
+                    if (!response.isSuccessful) null else JsonParser.parseString(body.string()).asJsonObject.let { json ->
                         val hash = json.get("sha256")?.asString?.takeIf { hashPattern.matches(it) }?.lowercase()
                         if (hash == null) null else hash to (json.get("bytes")?.asLong ?: 0L)
                     }
@@ -72,11 +73,12 @@ internal class ServerGuideSnapshotCache(context: Context, client: OkHttpClient, 
                 val digest = MessageDigest.getInstance("SHA-256")
                 http.newCall(Request.Builder().url(url).header("Accept-Encoding", "identity").build()).execute().use { response ->
                     check(response.isSuccessful) { "Server guide HTTP ${response.code}" }
-                    val total = response.body.contentLength().takeIf { it > 0 } ?: manifest?.second ?: 0L
+                    val body = requireNotNull(response.body) { "Server guide response was empty" }
+                    val total = body.contentLength().takeIf { it > 0 } ?: manifest?.second ?: 0L
                     var bytes = 0L
                     var lastReport = 0L
                     var lastReportAt = 0L
-                    response.body.byteStream().use { input -> compressed.outputStream().use { output ->
+                    body.byteStream().use { input -> compressed.outputStream().use { output ->
                         val buffer = ByteArray(64 * 1024)
                         while (true) {
                             currentCoroutineContext().ensureActive()

@@ -11,7 +11,7 @@
       if(packages){
         if(!globalDraft?.dirty)globalDraft={ids:[...packages.allowed_plan_ids],revision:packages.revision,dirty:false};const d=globalDraft;
         const box=panel('Global approved trial packages');
-        for(const p of packages.packages){const check=el('input');check.type='checkbox';check.checked=d.ids.includes(p.id);check.setAttribute('aria-label','Globally approve '+p.name);check.onchange=()=>{d.ids=check.checked?[...new Set([...d.ids,p.id])]:d.ids.filter(id=>id!==p.id);d.dirty=true;};const row=el('label',null,'trial-option');row.append(check,cellName(p.name,terms(p)));box.append(row);}
+        const choices=[];for(const p of packages.packages){const check=el('input');check.type='checkbox';check.checked=d.ids.includes(p.id);check.setAttribute('aria-label','Globally approve '+p.name);check.onchange=()=>{d.ids=check.checked?[...new Set([...d.ids,p.id])]:d.ids.filter(id=>id!==p.id);d.dirty=true;};const row=el('label',null,'trial-option');row.append(check,cellName(p.name,terms(p)));choices.push(row);}boundedOptions(box,choices,'Search global trial packages');
         if(!packages.catalog_fresh)box.append(el('p','Current packages could not be checked. Reload shortly; the global pause switch still works.','notice'));
         const feedback=el('p',null,'error');feedback.hidden=true;feedback.setAttribute('role','alert');box.append(feedback);
         if(d.dirty&&d.revision!==packages.revision){feedback.textContent='Global approvals changed elsewhere. Discard package edits and review the latest settings.';feedback.hidden=false;}
@@ -22,8 +22,8 @@
     const tenant=state.user.role==='owner'?toolWorkspace():state.user.tenant_id;
     if(state.user.role==='owner')workspacePicker(main,'Trial workspace',tenant,()=>{if(hint)location.hash=contactsOnly?'trials/contacts':'trials';else route();});workspaceTitle(tenant);
     if(!tenant){main.append(el('p','Choose a workspace to view its app and contacts.','hint'));return;}
-    if(contactsOnly){let worker=false;try{worker=(await api('/api/trial-policy?tenant_id='+tenant)).worker_configured;}catch{/* Contacts remain readable even if panel-policy setup is unavailable. */}if(valid())await root.TrialWorkspace.renderContacts(main,tenant,valid,()=>worker);return;}
-    let setup;try{setup=await api('/api/trial-setup?tenant_id='+tenant);}catch(e){if(valid())main.append(panel('Trial settings unavailable',el('p',e.message,'error'),button('Reload status',()=>route())));return;}if(!valid())return;
+    if(contactsOnly){let worker=false;try{worker=(await api('/api/trial-policy?tenant_id='+tenant)).worker_configured;}catch{/* Contacts remain readable even if panel-policy setup is unavailable. */}if(valid()){await root.TrialWorkspace.renderContacts(main,tenant,valid,()=>worker);presentTrialSections(main);}return;}
+    let setup;try{setup=await api('/api/trial-setup?tenant_id='+tenant);}catch(e){if(valid()){main.append(panel('Trial settings unavailable',el('p',e.message,'error'),button('Reload status',()=>route())));presentTrialSections(main);}return;}if(!valid())return;
     const status=panel(setup.status);status.setAttribute('aria-label','Trial status');if(setup.blockers.length){const ul=el('ul');for(const text of setup.blockers)ul.append(el('li',text));status.append(ul);}status.append(button('Reload status',()=>route(),'quiet'));main.append(status);
     const readOnly=state.user.role==='owner'&&setup.workspace_kind==='reseller';
     const app=panel(setup.workspace_kind==='owner'?'Owner app trials':'App trial settings');
@@ -43,6 +43,7 @@
       },'primary'),button('Discard app edits',()=>{drafts.delete(tenant);route();},'quiet'));
     }
     main.append(app);
+    presentTrialSections(main);
   }
   root.TrialSelfService={render,isDirty:()=>!!globalDraft?.dirty||[...drafts.values()].some(d=>d.dirty),clear:()=>{drafts.clear();globalDraft=null;}};
 })(window);

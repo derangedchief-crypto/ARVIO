@@ -3,6 +3,7 @@
 const $ = id => document.getElementById(id);
 const state = { user: null, csrf: '', tenants: [], workspaceSelf: null, workspaceScope: '', toolWorkspace: null, epoch: 0, deviceTab: null, layoutEditors: new Map(), favouritesSelection: new Map(), sourceEditors: new Map(), preferenceEditors: new Map() };
 const siteVersion=document.querySelector('meta[name="control-version"]')?.content||'';
+if(siteVersion){const footer=document.querySelector('.sidebar-foot .subtle');if(footer)footer.textContent='Version '+siteVersion;}
 function checkSiteVersion(version){if(!siteVersion||!/^\d+\.\d+\.\d+$/.test(version||'')||version===siteVersion)return;const notice=$('site-update');if(!notice||!notice.hidden)return;notice.replaceChildren(el('span','The website has been updated. Reload to use the current workspace controls.'),button('Reload updated website',()=>{if(hasUnsentDrafts()&&!confirm('Reload and discard unsaved browser edits? Saved settings and app data are unaffected.'))return;location.reload();}));notice.hidden=false;}
 const requestKeys = new Map();
 let toastTimer;
@@ -54,6 +55,38 @@ function panel(title, ...children) { const n = el('section', null, 'panel'); if 
 function heading(title, description, actions = []) { const h = el('div', null, 'page-heading'); const left = el('div'); left.append(el('h1', title), el('p', description)); const right = el('div', null, 'actions'); right.append(...actions); h.append(left, right); return h; }
 function helpDetails(title,text){const d=el('details',null,'inline-help');d.append(el('summary',title),el('p',text));return d;}
 function workflowSteps(...steps){const row=el('div',null,'workflow-strip');row.setAttribute('aria-label','Workflow');steps.forEach((step,index)=>row.append(el('span',(index+1)+'. '+step)));return row;}
+const viewTabs=new Map(),disclosureViews=new Map();let viewCounter=0;
+function sectionTabs(parent,key,items,initial=null,onSelect=null){
+  const root=el('div',null,'section-workspace'),nav=el('nav',null,'section-tabs'),panes=new Map(),buttons=[];nav.setAttribute('role','tablist');nav.setAttribute('aria-label',key.split(':')[0]+' sections');root.append(nav);parent.append(root);const prefix='section-'+(++viewCounter)+'-';
+  function select(id,focus=false){if(!panes.has(id))id=items[0][0];buttons.forEach(b=>{const active=b.dataset.section===id;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;panes.get(b.dataset.section).hidden=!active;if(active&&focus)b.focus();});viewTabs.set(key,id);onSelect?.(id);}
+  items.forEach(([id,label],i)=>{const pane=el('section',null,'section-pane');pane.id=prefix+id;pane.setAttribute('role','tabpanel');pane.setAttribute('aria-labelledby',prefix+'tab-'+id);const b=button(label,()=>select(id));b.id=prefix+'tab-'+id;b.dataset.section=id;b.setAttribute('role','tab');b.setAttribute('aria-controls',pane.id);b.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const n=e.key==='Home'?0:e.key==='End'?items.length-1:(i+(e.key==='ArrowRight'?1:-1)+items.length)%items.length;select(items[n][0],true);};buttons.push(b);panes.set(id,pane);nav.append(b);root.append(pane);});
+  select(initial||viewTabs.get(key)||items[0][0]);return {root,nav,panes,select};
+}
+function disclosure(title,...children){const d=el('details',null,'panel disclosure'),key=[state.user?.id,toolWorkspace(),location.hash,title].join(':');d.append(el('summary',title),...children);d.open=disclosureViews.get(key)===true;d.ontoggle=()=>{if(d.isConnected)disclosureViews.set(key,d.open);};const reveal=()=>{if([...d.querySelectorAll('.error')].some(n=>!n.hidden&&n.textContent.trim()))d.open=true;};new MutationObserver(reveal).observe(d,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['hidden']});reveal();return d;}
+function actionMenu(title,actions){const d=el('details',null,'context-actions');d.append(el('summary',title),...actions);return d;}
+function presentTrialSections(main){
+  main.querySelector(':scope>.trial-sections')?.remove();const parts=location.hash.slice(1).split('/'),base='trials'+(/^[a-f0-9]{32}$/.test(parts[1]||'')?'/'+parts[1]:'');const chosen=parts.at(-1)==='contacts'?'contacts':parts.at(-1)==='approvals'&&state.user.role==='owner'?'approvals':'settings';
+  const nav=el('nav',null,'trial-sections');nav.setAttribute('aria-label','Trial sections');for(const[id,label,suffix]of [['contacts','Contacts','/contacts'],['settings','Trial settings',''],...(state.user.role==='owner'?[['approvals','Package approvals','/approvals']]:[])]){const a=el('a',label);a.href='#'+base+suffix;if(chosen===id){a.classList.add('active');a.setAttribute('aria-current','page');}nav.append(a);}const picker=main.querySelector(':scope>.workspace-picker');if(picker)picker.after(nav);else main.querySelector('.page-heading')?.after(nav);
+  for(const p of main.querySelectorAll(':scope>.panel')){const title=p.querySelector('h2')?.textContent||'';if(p.classList.contains('trial-global-control')){p.hidden=chosen==='contacts';continue;}if(p.hasAttribute('aria-label')&&p.getAttribute('aria-label')==='Trial status'){p.classList.add('trial-status');p.hidden=chosen==='contacts';continue;}const type=title==='Trial contacts'?'contacts':['Global approved trial packages','Trial access','Admin-approved trial plans'].includes(title)?'approvals':'settings';const error=[...p.querySelectorAll('.error')].some(n=>!n.hidden&&n.textContent.trim());p.hidden=chosen!==type&&!error;}
+}
+function boundedOptions(parent,rows,label){
+  const area=el('div',null,'option-browser'),search=el('input');search.type='search';search.placeholder='Search packages…';search.setAttribute('aria-label',label);
+  const count=el('span','','scope-label'),list=el('div'),pages=el('div');let page=1,total=rows.length;area.append(search,count,list,pages);parent.append(area);
+  const updateCount=()=>{count.textContent=rows.filter(n=>n.querySelector('input')?.checked).length+' selected · '+total+' matching';};
+  function draw(){
+    const focused=document.activeElement,focusLabel=pages.contains(focused)?focused.textContent:null;
+    const matches=rows.filter(n=>n.textContent.toLowerCase().includes(search.value.toLowerCase().trim()));total=matches.length;
+    page=Math.max(1,Math.min(page,Math.ceil(total/10)||1));list.replaceChildren(...matches.slice((page-1)*10,page*10));updateCount();
+    pages.replaceChildren(...(total>10?[pagination({page,pages:Math.ceil(total/10),total},p=>{page=p;draw();})]:[]));
+    if(focusLabel){const target=[...pages.querySelectorAll('button')].find(n=>n.textContent===focusLabel&&!n.disabled);(target||search).focus({preventScroll:true});}
+  }
+  search.oninput=()=>{page=1;draw();};
+  // Native checkbox/label activation must finish without detaching the input.
+  // Updating the count alone also preserves keyboard focus and draft selection.
+  area.addEventListener('change',updateCount);draw();return area;
+}
+document.addEventListener('click',e=>{document.querySelectorAll('.context-actions[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!navOpen){const d=e.target.closest?.('.context-actions[open]');if(d){d.open=false;d.querySelector('summary').focus();}}});
 function preferenceLabel(key){return ({default_audio_language:'Audio language',default_subtitle:'Subtitle language',subtitle_size:'Subtitle size',clock_format:'Clock format',auto_play_next:'Play next episode',show_loading_stats:'Show loading details',spoiler_blur:'Hide spoilers',smooth_scrolling:'Smooth scrolling',trailer_auto_play:'Autoplay trailers',volume_boost_db:'Volume boost (dB)'})[key]||key.replaceAll('_',' ');}
 function activityLabel(key){return ({'command.queued':'Device action queued','command.cancelled':'Device action cancelled','trial.global_gate_changed':'Global trial switch changed','trial.global_packages_saved':'Approved trial packages changed','trial.offer_published':'App trial settings saved','trial.offer_unpublished':'App trials switched off','brand.saved':'App artwork saved','brand.build_requested':'App build requested','reseller.created':'Reseller added','customer.created':'Customer added'})[key]||String(key).replace(/[._]/g,' ').replace(/^./,c=>c.toUpperCase());}
 function currentRequestBox(data,names={},goRequests=null){const box=el('div',null,'current-request');const r=data.current_request;box.hidden=!r;if(!r)return box;box.setAttribute('aria-label','Current request status');const active=['pending','delivered','running'].includes(r.status);const top=el('div',null,'actions');top.append(el('strong',names[r.kind]||r.kind.replaceAll('_',' ')),badge(r.status));if(data.active_count>1)top.append(el('span',data.active_count+' active','scope-label'));box.append(top,el('p',r.result?.summary||(active?'Waiting for the app':'No additional details'),'request-result'),el('span',(active?'Requested: ':'Finished: ')+date(r.finished_at||r.created_at),'scope-label'));if(data.active_count>1&&goRequests)box.append(button('View active requests',goRequests,'quiet'));return box;}
@@ -75,7 +108,8 @@ function fields(form, schema) {
     else if (input.tagName !== 'SELECT') input.maxLength = field.max || (field.type === 'textarea' ? 2000 : 120);
     if (field.type === 'number') { input.min = 1; input.max = 100000; input.step = 1; }
     if (field.options) for (const [value, name] of field.options) { const option = el('option', name); option.value = value; input.append(option); }
-    input.required = field.required !== false; if (field.value !== undefined && field.value !== null) input.value = field.value;
+     input.required = field.required !== false; if (field.value !== undefined && field.value !== null) input.value = field.value;
+     if (field.readOnly) input.readOnly = true;
     form.append(label, input); if (field.hint) {input.title=field.hint;input.setAttribute('aria-description',field.hint);if(field.type==='password'&&['password','new_password'].includes(field.key)&&(field.min??14)>0)input.placeholder='14+ characters';}
   }
 }
@@ -91,6 +125,7 @@ $('modal').addEventListener('close',()=>{$('modal-form').querySelectorAll('input
 function signedOut() { window.TrialWorkspace?.clear();window.AppBranding?.clear();window.DeviceWorkspace?.clear();window.WorkspaceLibrary?.clear();state.user = null; state.csrf = ''; state.tenants = []; state.workspaceSelf=null;state.workspaceScope='';state.toolWorkspace=null;state.deviceTab = null; state.layoutEditors.clear(); state.favouritesSelection.clear(); state.sourceEditors.clear(); state.preferenceEditors.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
 function entryCard(title, description) { const card = el('div', null, 'entry-card'); card.append(el('span', 'E', 'brand-mark'), el('h1', title), el('p', description, 'subtle')); $('entry').replaceChildren(card); return card; }
 function loginForm() {
+  viewTabs.clear();disclosureViews.clear();
   setNavOpen(false,false);
   const card = entryCard('Welcome back', 'Sign in to your owner or reseller workspace.'); const form = el('form');
   const schema = [{ key: 'email', label: 'Email address', type: 'email', max: 254 }, { key: 'password', label: 'Password', type: 'password' }]; fields(form, schema); form.elements.password.autocomplete = 'current-password'; form.elements.password.removeAttribute('minlength');
@@ -111,15 +146,12 @@ async function enter() {
   workspaceTitle();
   const nav = $('navigation'); nav.replaceChildren();
   const groups = [
-    ['Overview', [['overview','Dashboard','overview']]],
-    ['Customers', [['customers','Customers','customers'],['devices','Devices','devices'],['trials','Trials & contacts','profiles']]],
-    ['Saved setups', [['library','Channel layouts','layouts'],['library/settings','Playback settings','presets'],['library/profiles','Device setups','profiles'],['library/defaults','Automatic setup','defaults']]],
+    ['Daily work', [['overview','Dashboard','overview'],['customers','Customers','customers'],['devices','Devices','devices'],['trials','Trials & contacts','profiles'],['renewals','Customer renewals','key']]],
+    ['App setup', [['branding','My app','profiles'],['library','Saved setups','layouts'],['addons','Add-ons','key']]],
     ...(state.user.role==='owner'?[['Administration',[['resellers','Resellers','resellers'],['enrollments','Website settings','enrollments']]]]:[]),
-    [state.user.role==='owner'?'Apps':'My app', [['branding','Name & artwork','profiles']]],
-    ['Subscriptions', [['addons','Add-ons','key']]],
     ['Account', [['audit','Activity','audit'],['more','Tools','more']]]
   ];
-  groups.forEach(([title,links],index)=>{const group=el('section',null,'nav-group');const label=el('div',title,'nav-group-title');label.id='nav-group-'+index;group.setAttribute('aria-labelledby',label.id);group.append(label);links.forEach(([key,text,glyph])=>{const link=el('a');link.append(icon(glyph),el('span',text));link.href='#'+key;link.dataset.page=key;group.append(link);});nav.append(group);});setNavOpen(false,false);
+  groups.forEach(([title,links],index)=>{const group=el('section',null,'nav-group');const label=el('div',title,'nav-group-title');label.id='nav-group-'+index;group.setAttribute('aria-labelledby',label.id);group.append(label);links.forEach(([key,text,glyph])=>{const link=el('a');link.append(icon(glyph),el('span',text));link.href='#'+(key==='trials'?'trials/contacts':key);link.dataset.page=key;group.append(link);});nav.append(group);});setNavOpen(false,false);
   await route();
 }
 function rememberWorkspace(t){if(!t||!t.id)return;const index=state.tenants.findIndex(w=>w.id===t.id);if(index<0)state.tenants.push(t);else state.tenants[index]={...state.tenants[index],...t};}
@@ -168,8 +200,8 @@ async function overview(epoch) {
   scopePicker(main);
   const enrollmentNote=el('details',null,'context-note');enrollmentNote.append(el('summary','How enrollment and check-ins work'),el('p','Only devices from created, verified linked resellers enter this service. Unmatched resellers are quietly ignored: no pending device or customer is created. Existing owner-managed/unassigned inventory is retained. Local simulators remain labelled TEST.'));
   const cards = el('div', null, 'stats'); [['Devices', stats.total, `${stats.not_enrolled} awaiting connection`], ['Apps seen recently', stats.connected, ''], ['Customers', stats.customers, ''], ['Pending actions', stats.pending_commands, '']].forEach(([label, count, note]) => { const card = el('div', null, 'stat'); card.append(el('div', label, 'stat-label'), el('strong', count));if(note)card.append(el('span', note));cards.append(card); });
-  const quick=el('div',null,'quick-links');for(const[label,hash,glyph]of [['Customers','customers','customers'],['Devices','devices','devices'],['My app',state.user.role==='owner'?'branding/'+state.workspaceSelf.id:'branding','profiles'],['Trials & contacts','trials','profiles']]){const a=el('a');a.href='#'+hash;a.append(icon(glyph),el('span',label));quick.append(a);}
-  main.append(cards,quick,panel('Recent devices', devicesTable(devices.items)),enrollmentNote);
+  const attention=stats.pending_commands?el('p',stats.pending_commands+' device action(s) waiting for the app. Open a device to review its current requests.','notice'):el('p','Manage customers and devices from the navigation. App contact and access policy are shown separately below.','hint');
+  main.append(cards,attention,panel('Recent devices', devicesTable(devices.items)),enrollmentNote);
 }
 async function records(resource, epoch,customerId=null) {
   if(resource==='devices')return fleetPage(epoch,customerId);
@@ -194,7 +226,7 @@ async function fleetPage(epoch,customerId=null){
     actions.push(button('Start fresh check-in list',async()=>{if(!confirm('Start a fresh visible device list for YOUR WORKSPACE AND ALL RESELLERS? Nothing is deleted or logged out. Devices reappear after their next check-in. Notes, history, restrictions and device allocation remain unchanged.'))return;await api('/api/device-list-window',{scope:'all_workspaces',confirm:true});visibility.value='current';await load(1);toast('Fresh list started for all workspaces. Refresh to see devices check back in.');}));
     actions.push(button('Automatic reconnection',()=>modal('Automatic device reconnection',[{key:'enabled',label:'Recovery',value:recoveryEnabled?'yes':'no',options:[['yes','Enabled'],['no','Disabled']]}],async values=>{await api('/api/device-recovery/settings',{enabled:values.enabled==='yes'});await load(1);toast('Recovery policy saved. Matching hints are not hardware authentication.');})));
   }
-  const head=heading('Devices','',actions);head.querySelector('p').replaceWith(count);main.replaceChildren(head);main.classList.add('fleet-page');
+  const head=heading('Devices','',[actions[0],...(actions.length>1?[actionMenu('Device tools',actions.slice(1))]:[])]);head.querySelector('p').replaceWith(count);main.replaceChildren(head);main.classList.add('fleet-page');
   scopePicker(main);
   const form=el('form',null,'fleet-filters');const search=el('input');search.type='search';search.placeholder='Search device, model or customer…';search.setAttribute('aria-label','Search');const policy=el('select');policy.setAttribute('aria-label','App access filter');for(const[value,text]of [['','All current devices'],['active','Active'],['suspended','Suspended'],['blocked','Blocked'],['removed','Access revoked']]){const o=el('option',text);o.value=value;policy.append(o);}
   const visibility=el('select');visibility.setAttribute('aria-label','Device list view');for(const[value,text]of [['current','Fresh check-ins'],['all','All retained records']]){const o=el('option',text);o.value=value;visibility.append(o);}
@@ -205,7 +237,7 @@ async function fleetPage(epoch,customerId=null){
 }
 async function resellers(epoch) {
   const main = $('main'); main.replaceChildren(heading('Resellers', '', [button('Create reseller', resellerForm, 'primary')]));
-  const own=panel('My owner workspace');for(const[label,hash]of [['My customers','customers'],['My devices','devices'],['My app brand','branding/'+state.workspaceSelf.id],['My trials & contacts','trials/'+state.workspaceSelf.id],['My device defaults','library/defaults/workspace/'+state.workspaceSelf.id]])own.append(button(label,()=>{if(hash==='customers'||hash==='devices')state.workspaceScope=state.workspaceSelf.id;location.hash=hash;}));main.append(own);
+  const own=disclosure('My owner workspace');for(const[label,hash]of [['My customers','customers'],['My devices','devices'],['My app brand','branding/'+state.workspaceSelf.id],['My trials & contacts','trials/'+state.workspaceSelf.id],['My device defaults','library/defaults/workspace/'+state.workspaceSelf.id]])own.append(button(label,()=>{if(hash==='customers'||hash==='devices')state.workspaceScope=state.workspaceSelf.id;location.hash=hash;}));main.append(own);
   const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
   if (system.pending_migrations.length) { main.replaceChildren(heading('Database upgrade required', 'Open Enrollments and apply the database upgrade before linking panel resellers.')); return; }
   const links = (await api('/api/panel-resellers')).items; if (epoch !== state.epoch) return;
@@ -222,6 +254,7 @@ async function resellers(epoch) {
         if (!linked) actions.append(button('Link panel reseller', () => modal('Link existing panel reseller', [{ key: 'username', label: 'Exact panel login username', value: t.name, max: 150, hint: 'The worker must verify this active account. This permanent ID link enables automatic device/customer enrollment. Existing ownership is never silently transferred.' }], async values => { await api('/api/tenants/' + t.id + '/panel-link', values); toast('Panel reseller verified and linked. Pending apps will retry with fresh ownership proofs.'); })));
         if (t.kind !== 'owner') actions.append(button('Manage', () => modal('Reseller policy', [{ key: 'status', label: 'Status', value: t.status, options: [['active', 'Active'], ['suspended', 'Suspended — signs reseller out']] }, { key: 'device_limit', label: 'Device allocation', type: 'number', value: t.device_limit }], async values => { if (values.status === 'suspended' && !confirm('Suspend this reseller and cancel pending device actions? This does not wipe customer data.')) throw new Error('No changes made.'); await api('/api/tenants/' + t.id, values); toast('Reseller policy saved.'); })));
         if(t.kind==='owner')actions.append(button('Owner device allocation',()=>modal('Owner device allocation',[{key:'device_limit',label:'Device allocation',type:'number',value:t.device_limit}],v=>api('/api/tenants/'+t.id,{status:'active',device_limit:v.device_limit}))));
+         const options=[...actions.children],primary=options.find(n=>n.textContent==='Link panel reseller')||options.find(n=>n.textContent==='Manage')||options.find(n=>n.textContent==='Owner device allocation')||options[0];if(options.length>2)actions.replaceChildren(primary,actionMenu('Workspace tools',options.filter(n=>n!==primary)));
          return [cellName(workspaceName(t), linked ? `Panel: ${linked.username}` : 'Panel account not linked'), badge(t.status), `${t.devices_used} / ${t.device_limit}`, actions];
       });
        results.replaceChildren(table(['Workspace', 'Status', 'Devices used / allowance', 'Actions'], rows), pagination(data, load));
@@ -833,11 +866,12 @@ async function route() {
   $('main').classList.remove('fleet-page');
   if (!state.user||!state.workspaceSelf) return; const epoch = ++state.epoch; const hash = location.hash.slice(1) || 'overview'; const section = hash.startsWith('device/')||hash.startsWith('devices/') ? 'devices' : hash.startsWith('library')||hash==='presets'?'library':hash.startsWith('branding')?'branding':hash.startsWith('trials')?'trials':['resellers','enrollments','audit'].includes(hash)?'more':hash;
   workspaceTitle();
-  const navKey=hash==='presets'?'library/settings':hash.startsWith('library/layout/')?'library':hash.startsWith('library/layouts')?'library':hash.startsWith('library/')?hash.split('/').slice(0,2).join('/'):['resellers','enrollments','audit'].includes(hash)?hash:section;
+  const navKey=hash==='presets'||hash.startsWith('library')?'library':hash.startsWith('renewals')?'renewals':['resellers','enrollments','audit'].includes(hash)?hash:section;
   document.querySelectorAll('#navigation a').forEach(a => a.classList.toggle('active', a.dataset.page === navKey));
   document.querySelectorAll('#bottom-nav a').forEach(a=>{const key=a.getAttribute('href').slice(1);a.classList.toggle('active',key===section||(key==='more'&&section==='library'));});
   document.querySelectorAll('#navigation a').forEach(a=>{if(a.dataset.page===navKey)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});const titles={addons:'Add-ons',overview:'Dashboard',devices:'Devices',customers:'Customers',library:'Saved setups',more:'Tools',presets:'Saved setups',resellers:'Resellers',enrollments:'Website settings',audit:'Activity log'};$('section-name').textContent=hash.startsWith('device/')?'Device details':titles[hash]||titles[section]||'Workspace';document.title=$('section-name').textContent+' · Extreme Control';
   try {
+    $('main').setAttribute('aria-busy','true');
     if (hash === 'overview') await overview(epoch);
     else if(hash==='addons')await addonsPage(epoch);
     else if (hash === 'devices' || hash === 'customers') await records(hash, epoch);
@@ -846,12 +880,14 @@ async function route() {
     else if (hash === 'presets'||hash.startsWith('library')) {if(window.WorkspaceLibrary)await WorkspaceLibrary.render(hash,epoch);else await presetsPage(epoch);}
     else if(hash==='more')await morePage(epoch);
     else if(hash==='branding'||/^branding\/[a-f0-9]{32}$/.test(hash)){document.title='My app brand · Extreme Control';await AppBranding.render(epoch,hash.split('/')[1]);}
-    else if(/^trials(?:\/[a-f0-9]{32})?(?:\/contacts)?$/.test(hash)){document.title='Trials & contacts · Extreme Control';const part=hash.split('/')[1];await TrialWorkspace.render(epoch,part==='contacts'?undefined:part);}
+    else if(/^renewals(?:\/(?:payments|plans|gateways|settings))?$/.test(hash)){document.title='Customer renewals · Extreme Control';await Renewals.render(epoch,hash.split('/')[1]);}
+    else if(/^trials(?:\/[a-f0-9]{32})?(?:\/(?:contacts|approvals))?$/.test(hash)){document.title='Trials & contacts · Extreme Control';const part=hash.split('/')[1];await TrialWorkspace.render(epoch,/^[a-f0-9]{32}$/.test(part||'')?part:undefined);}
     else if(/^devices\/customer\/[a-f0-9]{32}$/.test(hash))await records('devices',epoch,hash.split('/')[2]);
     else if (hash === 'enrollments' && state.user.role === 'owner') await enrollments(epoch);
     else if (/^device\/[a-f0-9]{32}$/.test(hash)) await devicePage(hash.split('/')[1], epoch);
     else location.hash = 'overview';
   } catch (e) { if (epoch === state.epoch) { $('main').replaceChildren(panel('Unable to load this view', el('p', e.message, 'error'), button('Retry', route))); } }
+  finally {if(epoch===state.epoch)$('main').removeAttribute('aria-busy');}
 }
 $('modal-close').addEventListener('click', closeModal);
 $('modal').addEventListener('close', () => { $('modal-form').replaceChildren(); $('modal-form').onsubmit = null; });

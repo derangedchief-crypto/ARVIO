@@ -46,11 +46,11 @@ class MainRolloutTests(unittest.TestCase):
     def test_tag_conflicts_and_unavailable_github_never_overwrite_source(self):
         for result in [SimpleNamespace(returncode=0,stderr=b''),SimpleNamespace(returncode=1,stderr=b'HTTP 503')]:
             with patch.object(rollout.subprocess,'run',return_value=result),patch.object(rollout,'gh_json',return_value={'object':{'sha':'f'*40,'type':'commit'}}),patch.object(rollout,'command') as command:
-                with self.assertRaises((ValueError,RuntimeError)):rollout.immutable_tag(TAG,SHA)
+                with self.assertRaises((ValueError,RuntimeError)):rollout.verify_immutable_tag(TAG,SHA)
                 command.assert_not_called()
 
     def test_missing_publication_run_causes_no_tag_no_bridge_no_build(self):
-        with patch.dict(os.environ,{'BRAND_CUSTOMER_RELEASE_RUN_ID':'','BRAND_OPERATOR_SHA':SHA}),patch.object(rollout,'command',return_value=SHA),patch.object(rollout,'gh_json') as api,patch.object(rollout,'immutable_tag') as tag,patch.object(rollout,'Bridge') as bridge:
+        with patch.dict(os.environ,{'BRAND_CUSTOMER_RELEASE_RUN_ID':'','BRAND_OPERATOR_SHA':SHA}),patch.object(rollout,'command',return_value=SHA),patch.object(rollout,'gh_json') as api,patch.object(rollout,'verify_immutable_tag') as tag,patch.object(rollout,'Bridge') as bridge:
             with self.assertRaises(ValueError):rollout.main()
             api.assert_not_called();tag.assert_not_called();bridge.assert_not_called()
 

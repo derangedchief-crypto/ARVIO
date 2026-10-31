@@ -1,0 +1,31 @@
+CONTROL CENTER 0.27.2 — CURRENT-PACKAGE RENEWAL, OFFERED-PACKAGE MONEY PRICING
+
+The panel defines offered packages, terms, connections and reseller CREDIT costs.
+Resellers set only a customer MONEY price/currency and availability for those
+existing packages. There is no custom name/term/connection/package creator.
+The phone displays only the customer's current package and its price; no package
+picker, upgrades or downgrades. Legacy price/order records remain in place.
+
+Website server: /www/wwwroot/control.fecxbrfzku.net
+Back up, extract the UPDATE ZIP into that existing folder, then run:
+
+  /www/server/php/84/bin/php -d opcache.enable_cli=0 cli/console.php migrate
+
+Migration027 adds only a nullable current-package field to synthetic simulator
+targets. Existing demo rows without an explicit assignment fail closed. It does
+not touch real panel SQL, accounts, credits, credentials, notes or trial history.
+Hard-refresh afterward. Private config.php/storage/keys and builder policies stay
+unchanged. No APK requeue, main promotion or customer publication is required.
+
+The existing worker candidate MUST recheck customers.package_id under its native
+reseller/line locks before any first paid commit. Another offered package is NOT
+an acceptable substitute. Assignment/package changes after payment are held for
+review, without changing the line or creating another customer charge. Duplicate
+and uncertain operations retain their original ID and refresh-only repair rules.
+Historical fulfilled receipts are not a permanent playback entitlement.
+
+The offered package list requires the separate authenticated reseller worker
+catalog connection; missing/old worker responses do not create guessed packages.
+Worker deployment/real-panel transaction acceptance remains a separate gate.
+No live worker update, Rampex call, payment, renewal or payment enablement occurs
+from this website ZIP. Payments remain OFF and real-money testing is unapproved.

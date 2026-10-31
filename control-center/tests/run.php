@@ -36,7 +36,7 @@ if (!str_starts_with($socket, '/') || !file_exists($socket)) throw new RuntimeEx
 $dbUser = getenv('CONTROL_TEST_USER') ?: getenv('USER');
 $server = new PDO('mysql:unix_socket=' . $socket . ';charset=utf8mb4', $dbUser, '', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 $name = 'control_test_' . bin2hex(random_bytes(6));
-$fixture = '/tmp/opencode/' . $name;
+$fixture = rtrim(getenv('CONTROL_TEST_TMPDIR') ?: '/tmp/opencode','/') . '/' . $name;
 umask(0077);
 mkdir($fixture, 0700, true);
 foreach (['src','database','public'] as $directory) copyTree($root . '/' . $directory, $fixture . '/' . $directory);
@@ -162,6 +162,12 @@ require __DIR__.'/primary-access.php';
 primaryAccessCases($tests,$app,$config,$owner);
 require __DIR__.'/device-recovery.php';
 deviceRecoveryCases($tests,$app,$config,$owner,$beta,$fixture);
+require __DIR__.'/rampex-contract.php';
+rampexContractCases($tests);
+require __DIR__.'/renewal-staging.php';
+renewalStagingCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA,$tenantB);
+require __DIR__.'/card-gateways.php';
+cardGatewayCases($tests,$app,$config,$owner,$alpha,$beta,$tenantA);
 $passed=0; $failures=[]; $started=microtime(true);
 try {
     foreach($tests as $label=>$test) {

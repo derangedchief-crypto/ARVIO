@@ -2,10 +2,367 @@
 
 PHP 8.3 / MariaDB backend and responsive owner/reseller dashboard for
 `https://control.fecxbrfzku.net`, delivered as an aaPanel Nginx upload/extract ZIP.
-Website changes are tested on `control-center-owner-trials` and synchronized into
-`staging/testing` and `main` without running the customer APK publication workflow.
+Current development and delivery use `staging/testing`; updating `main` requires
+separate explicit owner approval. Website delivery never publishes a customer APK.
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
+
+## 0.36.0 — main-promotion rollout safeguards
+
+Production and testing core selection are now channel isolated in both the app
+brand source picker and the central builder's source authorization. A newer
+testing-only core cannot authorize itself for a production reseller build. Known
+historical owner pins remain recognized, and rebuilding with a core older than
+the already-published brand is rejected before queueing. Footer version rendering
+uses the actual website release instead of retaining the old template number.
+
+The next Android core is prepared as 2.0.130/code446, not published. Official apps
+remain standalone with their existing identities/feed and no reseller/provider
+features. Reseller apps retain package, signing, published artwork and channel.
+Customer publication remains manual/main-only and now requires explicit OFF-by-
+default confirmation. An unpublished candidate has a separate artifact-only
+workflow. No customer or reseller APK/feed is changed by merging source.
+See deploy/UPDATE-0.36.0.txt and docs/main-promotion-publication-hold.md.
+
+## 0.35.0 — seller-friendly website organization
+
+The website now separates daily work from setup. The sidebar groups Dashboard,
+Customers, Devices, Trials and Customer renewals together, with App setup and
+owner-only Administration separate. Saved setups has one navigation entry and
+clear task-specific subpages; all existing deep links remain supported.
+
+Renewals opens on Payments, with paid-but-unfulfilled/review cases visible above
+the tabs. Plans & pricing uses searchable ten-row pages and one focused country
+price editor per plan. Trial conversion defaults stay separate from trial creation.
+Gateways are compact status rows with management/setup instructions on demand;
+country routing and owner rollout controls live in Settings. Secrets remain
+write-only, sandbox/live labels and webhook warnings remain explicit, and no tab,
+filter, page view or search writes settings or creates a payment.
+
+Trials separates contacts, app settings and owner package approvals, including
+legacy and global-package views. Package selection is searchable/paged without
+losing selected IDs or dirty drafts. Existing pause states and actual blockers
+remain visible. App branding prioritizes the current download; artwork and previous
+builds are available on demand. Other pages share consistent headers, controls,
+tables, mobile targets and light/dark surfaces. Public checkout prioritizes payment
+state and keeps generic Payment Gateway branding, terms and no-repeat warnings.
+
+The old competing horizontal/sidebar/compact CSS overrides are consolidated into
+workspace.css. The former compact.css URL remains as a harmless compatibility
+stub for cached documents. Layout/device editors retain their specific controls.
+
+Frontend-only update: no new migration, backend/payment-rule change, worker update,
+APK build, credential change or service restart. The installed database-socket
+repair and private configuration are untouched. See deploy/UPDATE-0.35.0.txt.
+
+## 0.34.0 — verified expired-trial conversions to a reseller paid default
+
+Customer renewals -> Trial conversions -> Set trial conversion plan selects a
+separate default PAID package for expired trials. This does not change the default
+free-trial creation package, app trial quotas or normal paid renewals. Set the
+selected paid package's customer price for the applicable country/currency.
+Conversions are disabled until explicitly configured; never pick a first/cheapest
+package or fall back to renewing the trial when the setting is missing/invalid.
+
+The independent renewal worker signs the authoritative panel is_trial flag and
+current source package/expiry. Only expired, enabled, owned trials can use the
+conversion exception. Paid lines still require the same current package. Customer
+requests cannot supply a trial flag, source package or arbitrary target package.
+The selected paid package/fingerprint and original trial/expiry are frozen into
+the invoice. Default changes after checkout cannot change that paid invoice.
+
+Only verified captured payment can convert the same account: apply the selected
+paid package's duration, package ID and connection limit; clear is_trial; activate
+the line; apply its nonempty bouquets (empty lists preserve existing bouquets).
+Credentials, activation code, notes, parent PIN, outputs and account identity stay.
+Normal paid renewal continues preserving its current package, bouquets and
+connection overrides. Credit debit, line update and durable journal marker share
+one transaction. Payment deduplication, expiry revision, replay and refresh-only
+retries remain in force. Sandbox payments cannot change real accounts.
+
+Deploy the independent renewal-worker update FIRST, then this website update and
+migration 033. Its signed status must advertise trial_conversion=1 before a default
+can be enabled. Only this independent worker opts into the extra conversion
+fields; the shared legacy validator still rejects them by default. No existing
+auth/trial worker service is patched/restarted and no APK rebuild is required.
+See deploy/UPDATE-0.34.0.txt for installation order and acceptance checks.
+
+## 0.33.0 — generic payment page and no duplicate card email form
+
+Our hosted checkout page now uses Payment Gateway for its title and main heading,
+not the reseller workspace name. It still shows the account suffix, current
+package, amount, currency and payment state so the customer can review the charge.
+The real merchant identity on Stripe/Square's own pages/statements is unchanged.
+
+Stripe and Square no longer ask for an email on our page or include an email in
+its checkout submission. Their API email-prefill fields are omitted when absent;
+no synthetic customer address is generated. Their hosted checkout can still ask
+for required billing/contact data and issue receipts under provider settings.
+Rampex's API requires a customer email, so that field appears only when Rampex
+is selected; missing email is rejected before any new Rampex order is created.
+Switching to Stripe/Square disables and clears that field instead of forwarding
+the previously typed email. Older clients supplying valid email remain compatible.
+
+Payment verification and same-order renewal do not depend on an email address.
+An absent address is stored as an encrypted empty value in the existing non-null
+column; no schema change, guessed address or rewrite of historical data is needed.
+Gateway fallback rechecks the chosen provider before order creation, including
+its email requirement. Checkout errors refresh the quote so a changed fallback
+can show the correct provider-specific field without making another charge.
+
+No new migration after 0.32.x, APK build, worker restart or alteration to the
+already-installed systemd database socket repair. See UPDATE-0.33.0.txt.
+
+## 0.32.1 — minimal provider-facing payment details
+
+Scheduled-job socket repair: if normal PHP can connect but renewal-jobs.service
+logs MySQL Unix socket not found, its PrivateTmp sandbox may hide aaPanel's
+socket. Run deploy/fix-renewal-jobs-socket.sh as root on the WEBSITE host. It
+verifies the www user's existing connection, discovers the configured client
+socket, and adds only a read-only bind of that socket to the existing job unit.
+PrivateTmp and other restrictions remain enabled. It never changes credentials,
+switches the database to TCP, restarts MySQL/auth/trials or kills an in-flight job.
+The timer's next activation uses the new mount. Existing differing overrides are
+preserved for review. Normal worker setup invokes this repair for socket DSNs.
+
+New Stripe and Square checkouts use the required generic item name `Payment`.
+Square's optional payment note and Rampex's optional description are omitted.
+Stripe metadata retains only the opaque order ID, not country or purchase details.
+Opaque client/order references still bind transactions to private website records.
+No package name, channel list, panel login, activation code, renewal term or
+subscription description is supplied in these provider-facing item/note fields.
+
+Square receipts no longer need a human-readable payment note for verification.
+Known links still queue without a provider call. If a Square link-creation reply
+was lost, a signed webhook can recover the opaque reference through the reseller's
+authenticated order API, checking order ID, location, total and currency. The job
+repeats the binding and verifies captured payment before any renewal. Unrelated
+Square orders without an application reference are ignored. Older note-bearing
+webhooks remain supported.
+
+This is data minimization, not anonymity: the provider still receives the amount,
+currency, required customer/billing information, merchant identity and return URL,
+and retains normal transaction records. Provider/merchant business names and
+statement descriptors are unchanged. Existing checkout records are not rewritten.
+Website-only patch; no new migration, APK or worker update after 0.32.0.
+
+## 0.32.0 — saved gateway switches and immediate provider handover
+
+Each connected gateway has an Enable/Disable new-checkouts control. Its encrypted
+API key, webhook secret, account/location details, webhook URL and country routing
+are retained. Re-enable without entering credentials again. Replacement merchant
+connections inherit the gateway's off/on policy; saving new keys cannot turn a
+disabled gateway back on. Changes are workspace scoped and revision checked.
+
+Disabling a gateway immediately supersedes its old unpaid attempts locally and
+automatically uses the first enabled eligible gateway in the reseller's country
+preference order. Existing QRs and stale checkout submissions use this same
+fallback. No enabled eligible provider means checkout unavailable, not fallback
+to a disabled gateway or an unsupported country/currency.
+
+Customer provider switches also immediately supersede older unpaid attempts. They
+do NOT wait for Rampex (or another provider) to expire/cancel an invoice. Superseded
+records, merchant keys and webhook handling remain intact. Late verified funds
+on a superseded invoice are recorded as paid/needs_review with settlement evidence,
+never sent to the renewal worker or replayed by the retry action. A payment already
+known locally to be paid continues its existing renewal instead of a new charge.
+
+IMPORTANT: this is local handover, NOT external payment cancellation. An old
+provider link can still accept money, including a duplicate payment. The reseller
+must reconcile/refund those funds manually. This deliberately prioritizes customer
+freedom to switch over waiting for provider-side cancellation. The customer page
+warns not to pay the old link. Normal renewal writes still require captured funds
+and exact merchant, amount, currency, account and package verification.
+
+Migration 032 is additive; the rollout remains testing-only by default. No APK,
+renewal/auth/trial worker or production publication changes. See UPDATE-0.32.0.txt.
+
+## 0.31.0 — provider-confirmed unpaid checkout cancellation
+
+The customer confirms cancellation when switching gateways. Stripe expires the
+original open, unpaid Checkout Session. Square deletes the original payment link
+and verifies its order is CANCELED and has no completed/approved/pending payment.
+Existing Square invoices can locate their payment-link ID by matching the stored
+order ID. Every older unresolved checkout for the same reseller/account/device
+identity is checked, not just the newest invoice. Local invoice history is kept.
+
+A durable account-scoped switch fence blocks concurrent checkout creation across
+QRs and browser tabs until all cancellations are confirmed. Failed/ambiguous API
+replies remain blocked and can be rechecked. Paid, processing, review or uncertain
+creation records cannot be auto-voided. No refunds or panel renewals are requested
+by the switch. Merchant/environment, invoice reference, amount and currency must
+match the original checkout. This does not cancel paid subscription service.
+
+Rampex has no documented cancellation API: only a provider-confirmed unpaid expiry
+can retire its original link. We do not invent a cancellation request, erase its
+record, or silently allow a second externally payable invoice.
+
+Website-only update with additive migration 031. No APK rebuild or independent
+worker/auth/trial service change. See deploy/UPDATE-0.31.0.txt.
+
+## 0.30.1 — existing-invoice gateway controls survive polling
+
+Fixes the ten-second status poll hiding country/gateway controls, restoring an
+unsupported Canadian Rampex link, and stale in-flight status overwriting a
+successful gateway change. Provider-confirmed retirement refreshes the quote;
+paid/review invoices still block a new checkout. The original invoice is retained.
+Gateway expiry checks use the current valid key for the ORIGINAL merchant and
+environment when it has been rotated, never the selected new gateway's key.
+
+Operator CLI `renewal-invoice-status ORDER_ID` performs only SELECTs and provider
+status GETs. It prints safe status/quote-match flags and configured Canadian route
+names, not merchant secrets, checkout tokens, email or card details. It never
+creates/cancels payments, edits invoices or runs the renewal worker. An active or
+unverified old link cannot be replaced just because the local quote timed out.
+Rampex's public merchant API documents no cancellation endpoint; do not invent one
+or delete a local record to work around an externally payable invoice.
+
+This is a website-only patch: no schema migration, worker update or APK rebuild.
+
+## 0.30.0 — country-aware direct Stripe and Square checkout
+
+Branded testing app2.0.129 confirms USA or Canada BEFORE requesting a QR. This is
+customer confirmation, not a claim that an IP address or a TV proves physical
+location. The payment provider independently verifies payment eligibility. Country
+is bound into the device signature; missing/unsupported country never defaults to
+the USA. Canadian routing excludes Rampex's crypto/card route on both client and
+server. Direct Stripe Checkout is ordinary fiat card checkout, not a crypto onramp.
+
+Each verified reseller/owner workspace connects its OWN Stripe, Square and/or
+Rampex merchant. Connections coexist; rotation preserves old invoice credentials
+and callbacks. Keys remain encrypted/write-only on the website, never in APKs or
+QRs. Click Connect to reserve the FINAL callback URL BEFORE creating a Stripe or
+Square webhook and copying its endpoint signing secret. Complete provider setup
+in the matching sandbox/live environment, save, then send a provider test event.
+Square additionally verifies its selected location belongs to the merchant and
+has card processing enabled. Account approval and business eligibility remain the
+provider's responsibility; code never overrides provider restrictions.
+
+Resellers choose ordered preferred/alternative gateways separately for US/Canada.
+Only configured routes matching the invoice currency are offered. Stripe card
+presentment initially supports USD/CAD; Square uses the actual location currency.
+Country-specific package money prices override the default price; an explicit
+disabled country price does not fall back. Package terms and wholesale credit cost
+still come from the panel, and only the customer's CURRENT package is renewable.
+
+The phone can select another approved gateway BEFORE a payment link exists. An
+unresolved invoice cannot be abandoned or duplicated: changing an existing route
+requires a merchant-API-confirmed unpaid expiry, preserving old financial history.
+Late money on an expired invoice is retained for review, never a second extension.
+
+Stripe uses timestamped raw-body webhook signatures plus fresh merchant-scoped
+Checkout/PaymentIntent/captured-charge verification. Square verifies raw-body plus
+EXACT callback URL HMAC, original order/reference/location and completed Payment.
+An OPEN Square digital order may already be paid; captured payment is authoritative.
+Wrong merchant, environment, amount, currency, references and refunds fail closed.
+Capture/API lag retries original evidence without another charge. Credential repair
+can recheck the same invoice; no operator action can simply declare money paid.
+
+Stripe/Square sandbox completions NEVER call the real renewal worker or unlock
+real accounts. Live completions retain the existing one-operation paid transaction,
+expiry revision guard, credit journal, current-package protection and active-account
+reverification. No real merchant keys, charges or panel writes are used by tests.
+
+Migration030 adds provider/country/setup metadata while retaining existing Rampex
+connections, prices and orders. No new renewal worker, port, credentials transfer,
+or ledger reset is needed. See `deploy/UPDATE-0.30.0.txt`. Deliver only the selected
+centrally signed branded TESTING APK; no customer/production APK or main promotion.
+
+## 0.29.0 — renewal at expired-code login and without management enrollment
+
+The branded testing app can offer checkout when a previously activated account
+expires, or when an expired activation code is entered on the login screen.
+Checkout no longer depends on an approved management enrollment. The separate
+renewal worker verifies the real line, expiry, reseller and current package; code
+and password lookups return only a checkout target, never account credentials.
+Unknown, ambiguous, disabled, active, unlimited and wrong-reseller lines are denied.
+
+Login challenges are short-lived, one-use, key-signed and bound to the submitted
+identity, installation and branded package. Generic apps are excluded. Known
+device restrictions and the normal reseller/brand/payment policy remain enforced.
+Migration029 adds checkout-only identity metadata and permits sessions without a
+managed device; it does not create enrollment credentials or grant app access.
+Payment still renews the same line once. The app must verify normal active-account
+access afterward; fresh login repeats the original activation flow after payment.
+
+Install the new renewal worker before the website update, then migrate the website.
+Private worker settings, keys, ledger and existing device data are retained. A new
+centrally signed branded TESTING APK is required for the native login/UI changes.
+No customer/production APK or main promotion is part of this delivery.
+
+## 0.28.0 — independent full renewal worker and Rampex setup
+
+The owner selected a NEW service, replacing the earlier catalogue-only deployment
+approach. See `deploy/UPDATE-0.28.0.txt` and `reseller-renewal-worker/README.md` in
+the source repository. Recovery updates use19093 with its own unit/folder/ledger,
+copies the existing auth config/env privately on-host and never modifies/restarts
+the existing auth/trial worker. Only the renewal URL prefix moves to it.
+
+The full import verifies signed atomic/current-package capabilities and real
+package scope, enables merchant API setup, and installs automatic verified-order
+processing. Resellers connect their own Rampex API key/webhook secret, configure
+the displayed callback URL and set money prices for offered packages. The normal
+owner rollout switch remains available; this is not a catalogue-only write block.
+API validation/setup itself does not charge anyone. A signed webhook ping is not a
+payment; provider completion and immutable amount/currency/reference are checked.
+The documented37 link currencies use their proper minor units (JPY/UGX/VND are
+zero-decimal); no guessed USD/FX amount cap or200-package business cap is imposed.
+Provider rules and technical storage/request boundaries are validated separately.
+
+Invoices snapshot CURRENT panel terms/cost and the expired line revision. A later
+manual/other renewal or package change cannot debit/add another period. Duplicate
+and lost replies reconcile one durable operation; temporary funding/network and
+native refresh retry without another customer charge. A local QR timeout does not
+discard already accepted money. Already paid obligations can complete when new
+checkout is paused, but account/device/tenant restrictions remain mandatory.
+
+Rampex has no documented fake-money sandbox. The supplied native helpers and
+merchant contract have isolated tests; actual panel refresh, real provider payment
+and device unlock still require the owner's controlled acceptance test. No new
+customer APK or main promotion is part of this server-side delivery.
+
+## 0.27.3 — catalogue-only worker connection (historical deployment option)
+
+See `deploy/UPDATE-0.27.3.txt` and the separate auth-worker catalogue bundle.
+The existing worker gains signed offered-package reads under a READ ONLY database
+transaction, without installing any paid-renewal adapter. Its new checkout/renew
+routes are unconditionally denied, not merely hidden by a configurable write flag.
+A new private catalogue key is transferred directly between the two server roots,
+never through chat or public storage. The website verifies signed read-only status
+and its verified owner's real packages before importing the key. Payment rollout,
+live Rampex calls and simulated payments stay off; website catalogue-only mode
+also blocks outbound checkout/renew calls. Original portal/trial configuration,
+credentials, state, builder settings and application keys remain untouched.
+
+## 0.27.2 — current-package renewal and package pricing
+
+The panel defines offered package names, terms, connections and CREDIT costs.
+Resellers set only the customer MONEY price/currency and availability for those
+fixed packages. The customer phone page displays the current package only, with
+no package selector or upgrade/downgrade flow. Assignment is checked again under
+the existing worker's native locks before a paid renewal; a changed package holds
+the paid order for review, not another charge. The paid contract explicitly
+requires current-package-only support, so old workers fail closed.
+
+Legacy price/order storage is retained. Migration027 adds an explicit package
+assignment to isolated demo targets only; it never changes real panel data.
+See `deploy/UPDATE-0.27.2.txt`. Payment rollout remains OFF and real worker/payment
+acceptance is still separate. No new APK is required for this website-side UI.
+
+## 0.27.0 — renewal settings preview and one-brand testing queue
+
+0.27.1 corrects verified owner/admin reseller workspaces being rejected merely
+because their workspace kind is `owner` and their login's tenant_id is null.
+The existing panel-reseller link and all tenant/primary/payment guards still
+apply; an admin login alone does not qualify. No new migration or APK is needed.
+
+See `deploy/UPDATE-0.27.0.txt`. Migration026 adds renewal settings/orders with payment
+rollout OFF and a separate immutable staging-testing source registry. The owner CLI
+can queue one existing branded TESTING identity from its last published artwork,
+without changing private config or main/production sources. It never publishes by
+itself. Rampex live API calls and worker writes remain disabled; the no-money
+simulator is restricted to an isolated localhost staging website. Installing this
+website update does not enable a live QR pilot or install any worker/APK.
 
 ## Current source update — 0.25.0 primary-line and playback safeguards
 

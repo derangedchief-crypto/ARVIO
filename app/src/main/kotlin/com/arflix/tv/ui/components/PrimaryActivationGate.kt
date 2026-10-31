@@ -18,6 +18,13 @@ import com.arflix.tv.access.gatePage
 import com.arflix.tv.ui.screens.xtreamgate.XtreamGateScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import com.arflix.tv.BuildConfig
+import com.arflix.tv.management.RenewalCheckoutState
+import com.arflix.tv.management.RenewalCheckoutRepository
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 
 val LocalPrimaryAccess=staticCompositionLocalOf<PrimaryAccessRepository?> { null }
 val LocalPrimaryState=staticCompositionLocalOf { PrimaryAccessState() }
@@ -37,10 +44,61 @@ fun PrimaryActivationGate(controller:PrimaryAccessRepository,content: @Composabl
                     Box(Modifier.weight(1f)){XtreamGateScreen(allowTrial=!state.bound,onLoginSuccess={controller.finishActivation();controller.retry()},onSkip={})}
                 }
             }
-            PrimaryGatePage.ACCOUNT_INACTIVE -> AccountAccessNotice(inactive=true)
+            PrimaryGatePage.ACCOUNT_INACTIVE -> if(BuildConfig.BRAND_ID.isBlank())AccountAccessNotice(inactive=true) else BrandedExpiredAccount(controller)
             PrimaryGatePage.ACCOUNT_RECOVERY -> AccountRecoveryNotice()
             PrimaryGatePage.VERIFICATION_UNAVAILABLE -> AccountAccessNotice(inactive=false)
             PrimaryGatePage.CONTENT -> key(state.restrictionEpoch){content()}
+        }
+    }
+}
+
+@Composable
+private fun BrandedExpiredAccount(controller:PrimaryAccessRepository){
+    val repository=remember(controller){controller.renewalCheckout}
+    LaunchedEffect(repository){repository.load()}
+    RenewalCheckoutScreen(repository)
+}
+
+@Composable
+internal fun RenewalCheckoutScreen(repository:RenewalCheckoutRepository,onRenewed:(()->Unit)?=null,onCancel:(()->Unit)?=null){
+    val checkout by repository.state.collectAsState()
+    var showQr by remember { mutableStateOf(false) }
+    val lifecycle=LocalLifecycleOwner.current.lifecycle
+    val scope=rememberCoroutineScope()
+    DisposableEffect(repository){onDispose{repository.clear()}}
+    LaunchedEffect(checkout.fulfilled){if(checkout.fulfilled)onRenewed?.invoke()}
+    LaunchedEffect(repository,showQr,checkout.url){
+        var checks=0
+        if(showQr&&checkout.url!=null)lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED){while(isActive&&checks++<180){repository.poll();delay(10_000)}}
+    }
+    RenewalAccountNotice(checkout,showQr,{showQr=true},{scope.launch{repository.refresh()}},onCancel,
+        onCountry={country->showQr=false;scope.launch{repository.chooseCountry(country)}})
+}
+
+@Composable
+internal fun RenewalAccountNotice(checkout:RenewalCheckoutState,showQr:Boolean,onShowQr:()->Unit,onRefresh:()->Unit,onCancel:(()->Unit)?=null,onCountry:((String?)->Unit)?=null){
+    BackHandler{}
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),contentAlignment=Alignment.Center){
+        Column(Modifier.widthIn(max=700.dp).verticalScroll(rememberScrollState()).padding(32.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(16.dp)){
+            Text(if(checkout.needsCountry)"Confirm your payment country" else if(checkout.url!=null)"Your subscription has expired" else "Your account is expired or inactive",style=MaterialTheme.typography.headlineMedium,textAlign=TextAlign.Center)
+            Text(if(checkout.needsCountry)"Choose where you are paying from. Your provider's available payment gateways will be checked before a QR is issued. The payment provider verifies eligibility at checkout." else if(checkout.url!=null)"Renew your current package securely using your phone." else "Please contact your provider to renew or reactivate your account.",textAlign=TextAlign.Center)
+            if(checkout.needsCountry&&onCountry!=null){
+                Button(onClick={onCountry("US")}){Text("United States")}
+                Button(onClick={onCountry("CA")}){Text("Canada")}
+            }
+            if(checkout.loading)CircularProgressIndicator()
+            if(checkout.url!=null){
+                Text("${if(checkout.country=="CA")"Canada" else "United States"} · ${when(checkout.gateway){"stripe"->"Stripe card checkout";"square"->"Square card checkout";else->"Rampex checkout"}}",textAlign=TextAlign.Center)
+                if(checkout.simulated)Text("DEMO ONLY — no money or real renewal",color=MaterialTheme.colorScheme.error,textAlign=TextAlign.Center)
+                if(showQr&&checkout.qrExpired){Text("This QR has expired. Refresh the link to continue the same renewal.",textAlign=TextAlign.Center);Button(onClick=onRefresh){Text("Refresh QR")}}
+                else if(showQr){QrCodeImage(checkout.url,256,Modifier.size(220.dp));Text("Scan with your phone to view your provider’s renewal options.",textAlign=TextAlign.Center)}
+                else Button(onClick=onShowQr){Text("Renew subscription")}
+            }
+            checkout.message?.let{Text(it,textAlign=TextAlign.Center)}
+            if(!checkout.loading&&checkout.url==null&&!checkout.needsCountry)Button(onClick=onRefresh){Text("Retry renewal")}
+            if(!checkout.loading&&!checkout.needsCountry&&onCountry!=null)TextButton(onClick={onCountry(null)}){Text("Change payment country")}
+            if(onCancel!=null)TextButton(onClick=onCancel){Text("Use a different activation code")}
+            Text("Access returns only after your account is verified active. Do not uninstall or clear app data.",style=MaterialTheme.typography.bodySmall,textAlign=TextAlign.Center)
         }
     }
 }

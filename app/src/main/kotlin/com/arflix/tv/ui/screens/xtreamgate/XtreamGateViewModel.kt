@@ -35,7 +35,8 @@ data class XtreamGateUiState(
     val activationCode: String = "",
     val isSubmitting: Boolean = false,
     val progressText: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val renewalRequested: Boolean = false
 )
 
 @HiltViewModel
@@ -48,13 +49,29 @@ class XtreamGateViewModel @Inject constructor(
     // Lazy on purpose: StreamRepository is a heavy singleton (addon health load,
     // quality-filter warmup, Telegram resolver) and this gate is on the cold-start
     // path. Only construct it if the package actually grants or revokes an addon.
-    private val streamRepository: Lazy<StreamRepository>
+    private val streamRepository: Lazy<StreamRepository>,
+    primaryAccess: com.arflix.tv.access.PrimaryAccessRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamGateUiState())
     val uiState: StateFlow<XtreamGateUiState> = _uiState.asStateFlow()
+    val renewalCheckout=primaryAccess.renewalCheckout
+    fun cancelRenewal(){renewalCheckout.clear();_uiState.value=_uiState.value.copy(renewalRequested=false,isSubmitting=false,progressText=null)}
+    fun completeRenewal(onSuccess:()->Unit){cancelRenewal();submit(onSuccess)}
+    private suspend fun offerRenewal(code:String,message:String){
+        if(com.arflix.tv.branding.AppBrand.id.isNotBlank()){
+            _uiState.value=_uiState.value.copy(progressText="Checking renewal options…")
+            renewalCheckout.loadCode(code)
+            if(renewalCheckout.state.value.url!=null||renewalCheckout.state.value.needsCountry){
+                _uiState.value=_uiState.value.copy(isSubmitting=false,progressText=null,errorMessage=null,renewalRequested=true)
+                return
+            }
+        }
+        _uiState.value=_uiState.value.copy(isSubmitting=false,progressText=null,errorMessage=message+" "+(renewalCheckout.state.value.message?:""))
+    }
 
     fun onActivationCodeChange(value: String) {
+        if(_uiState.value.isSubmitting||_uiState.value.renewalRequested)return
         _uiState.value = _uiState.value.copy(
             activationCode = value.filter(Char::isDigit).take(6),
             errorMessage = null,
@@ -74,22 +91,14 @@ class XtreamGateViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val credentials = activationRepository.resolve(activationCode).getOrElse { error ->
-                    _uiState.value = _uiState.value.copy(
-                        isSubmitting = false,
-                        progressText = null,
-                        errorMessage = error.message ?: "Invalid or inactive activation code.",
-                    )
+                    offerRenewal(activationCode,error.message ?: "Invalid or inactive activation code.")
                     return@launch
                 }
                 val username = credentials.username
                 val password = credentials.password
                 val result = iptvRepository.verifyXtreamLogin(XTREAM_GATE_HOST_URL, username, password)
                 if (!result.success) {
-                    _uiState.value = _uiState.value.copy(
-                        isSubmitting = false,
-                        progressText = null,
-                        errorMessage = result.message ?: "Invalid username or password."
-                    )
+                    offerRenewal(activationCode,result.message ?: "Invalid or inactive activation code.")
                     return@launch
                 }
 
