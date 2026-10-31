@@ -31,6 +31,8 @@ different certificate before building/publishing.
 - The customer publisher checks out its exact dispatched commit, verifies real
   cloud build inputs, pins the immutable customer/branded source before building
   and rechecks the pin immediately before publication.
+  An existing release for that customer version (including a partial/draft one)
+  is refused rather than silently replacing the APK under the same version.
 - Only a successfully published, source-verified customer release can authorize
   production brand fanout. Fanout has contents/read + actions/read and verifies
   the existing source tag; it does not create or retarget tags after publication.

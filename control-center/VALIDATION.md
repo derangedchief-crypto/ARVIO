@@ -1,5 +1,41 @@
 # Control Center validation
 
+## 0.36.0 main promotion and update-safety acceptance
+
+The combined promotion passes 335 isolated website/service cases; 68 full browser
+workflow checks, 18 renewal checks, eight timed polling/race checks and 13 owner/
+reseller responsive-matrix cases; 102 branding/publication-policy tests; 53
+independent worker tests and 71 auth/trial regressions. Android validation passes
+1,031 tests with zero failures/errors and one skipped test, official customer-
+variant Kotlin compilation and branded debug Kotlin compilation using synthetic
+artwork. The distributable-brand check correctly refuses missing managed release
+signing; no signing bypass or customer/reseller APK publication was performed.
+
+Channel-isolation coverage proves a newer testing core cannot be selected or
+authorized for production. Publication policy tests require an explicit manual
+main-only approval, exact source pin, stable signing identity, increasing version
+and separate unpublished candidate workflow. The actual customer publication
+path now refuses missing cloud configuration, an old/unavailable rollout control,
+an existing release version, incorrect package/certificate/version and missing
+approved ARM/SDK support. Package manifests and workflow/syntax checks pass.
+
+The full UI matrix exposed a checkbox activation issue in paged trial approval
+selection: repainting rows during native change could undo a click. Selection
+now updates its count without detaching the input, preserving selection/focus.
+New visibility-aware workflow checks cover on-demand build history, owner tools
+and gateway management without weakening any backend permission or write guard.
+Footer versions are rendered accurately by the server and client.
+
+All payment/provider tests are synthetic. No live customer account, merchant key,
+worker service, updater feed, customer release or APK asset was modified by these
+tests. A future signed device update still needs controlled in-place acceptance
+before separately authorized publication; source-level tests are not a promise
+of zero OEM/network/credential issues.
+
+Logs: /tmp/opencode/main-promotion-{android-validation,branded-debug-compile,
+browser-workflows-complete,renewal-browser-complete,renewal-polling-complete,
+ui-matrix-final,branding-final-verification,worker-tests,auth-tests}.log.
+
 ## 0.35.0 seller-friendly website cleanup
 
 Presentation-only scope: no backend PHP, migration, worker or native app changes.

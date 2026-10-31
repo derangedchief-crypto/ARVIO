@@ -76,6 +76,20 @@ jobs:
           echo "tag=v$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "Releasing version $VERSION_NAME as tag v$VERSION_NAME"
 
+      - name: Refuse replacing an existing customer release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUSTOMER_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import os,subprocess
+          result=subprocess.run(['gh','api','repos/'+os.environ['GITHUB_REPOSITORY']+'/releases/tags/'+os.environ['CUSTOMER_TAG']],capture_output=True,text=True)
+          if result.returncode==0:
+              raise SystemExit('This customer version already has a release. Reconcile it or increase the version; no APK will be overwritten.')
+          if '(HTTP 404)' not in result.stderr:
+              raise SystemExit('Customer release lookup unavailable; publication refused.')
+          PY
+
       - name: Verify compatible reseller rollout control before publication
         if: vars.BRAND_MAIN_ROLLOUT_ENABLED == 'true'
         run: python3 branding/check_rollout_control.py

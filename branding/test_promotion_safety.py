@@ -14,6 +14,10 @@ class PromotionSafetyTests(unittest.TestCase):
         self.assertIn('default: false',s);self.assertIn('ref: ${{ github.sha }}',s)
         self.assertNotIn('875bb03c7c2f376295252a235d578fe2b4355a89',s)
         self.assertIn('branding/prepare_customer_source.py --verify',s)
+        self.assertIn('Refuse replacing an existing customer release',s)
+        self.assertIn("if '(HTTP 404)' not in result.stderr",s)
+        self.assertIn('branding/verify_customer_apk.py',s)
+        self.assertIn('branding/check_rollout_control.py',s)
         self.assertNotIn('-x :app:validateReleaseCloudSecrets',s)
         self.assertIn('3273d0b0294a689565ab4b0c8ef7e1887e2ca680240718f5521628b5c46328b7',s)
     def test_candidate_has_no_release_tag_feed_or_rollout_write(self):
