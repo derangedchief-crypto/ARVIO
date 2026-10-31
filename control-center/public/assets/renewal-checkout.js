@@ -40,7 +40,7 @@
       for(const g of gateways){const option=document.createElement('option');option.value=g.gateway;option.textContent=names[g.gateway]+(g.sandbox?' — TEST ONLY':'');$('gateway').append(option);}
       $('gateway').value=info.gateway||'';$('gateway-choice').hidden=!gateways.length;
       $('apply-route').textContent=info.order?'Switch to this payment option':'Use this payment option';
-      if(info.order){$('message').textContent='Switch payment provider immediately. Older unpaid invoices are retained for reconciliation, not waited on. Old external links may still accept money; do not pay an old link after switching.';return;}
+      if(info.order){$('message').textContent='Continue your existing payment attempt, or choose another provider below. Switching is immediate. Do not pay an old link after switching.';return;}
       if(!['US','CA'].includes(info.country)){$('message').textContent='Confirm USA or Canada before continuing. Your current package will not change.';return;}
       if(!info.renewal){$('message').textContent='Renewal is unavailable or this quote expired. Please return to your TV or contact your provider.';return;}
       const p=info.renewal,conversion=p.kind==='trial_conversion';$('package-context').textContent=conversion?'Paid plan for your expired trial':'Your current package';$('message').textContent=conversion?'Convert your expired trial to the paid plan selected by your provider. Review its price and terms. Your existing account and saved app settings are retained.':'Renew your current package. Review the price and payment gateway before continuing; your package will not change.';$('checkout').hidden=false;

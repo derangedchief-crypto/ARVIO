@@ -7,6 +7,37 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.35.0 — seller-friendly website organization
+
+The website now separates daily work from setup. The sidebar groups Dashboard,
+Customers, Devices, Trials and Customer renewals together, with App setup and
+owner-only Administration separate. Saved setups has one navigation entry and
+clear task-specific subpages; all existing deep links remain supported.
+
+Renewals opens on Payments, with paid-but-unfulfilled/review cases visible above
+the tabs. Plans & pricing uses searchable ten-row pages and one focused country
+price editor per plan. Trial conversion defaults stay separate from trial creation.
+Gateways are compact status rows with management/setup instructions on demand;
+country routing and owner rollout controls live in Settings. Secrets remain
+write-only, sandbox/live labels and webhook warnings remain explicit, and no tab,
+filter, page view or search writes settings or creates a payment.
+
+Trials separates contacts, app settings and owner package approvals, including
+legacy and global-package views. Package selection is searchable/paged without
+losing selected IDs or dirty drafts. Existing pause states and actual blockers
+remain visible. App branding prioritizes the current download; artwork and previous
+builds are available on demand. Other pages share consistent headers, controls,
+tables, mobile targets and light/dark surfaces. Public checkout prioritizes payment
+state and keeps generic Payment Gateway branding, terms and no-repeat warnings.
+
+The old competing horizontal/sidebar/compact CSS overrides are consolidated into
+workspace.css. The former compact.css URL remains as a harmless compatibility
+stub for cached documents. Layout/device editors retain their specific controls.
+
+Frontend-only update: no new migration, backend/payment-rule change, worker update,
+APK build, credential change or service restart. The installed database-socket
+repair and private configuration are untouched. See deploy/UPDATE-0.35.0.txt.
+
 ## 0.34.0 — verified expired-trial conversions to a reseller paid default
 
 Customer renewals -> Trial conversions -> Set trial conversion plan selects a

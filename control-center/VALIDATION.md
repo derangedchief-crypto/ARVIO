@@ -1,5 +1,22 @@
 # Control Center validation
 
+## 0.35.0 seller-friendly website cleanup
+
+Presentation-only scope: no backend PHP, migration, worker or native app changes.
+The browser acceptance suite uses an 84-plan synthetic catalogue, paid/review
+orders, live/sandbox/disabled gateways, scoped owner/reseller logins and trial
+approval drafts. It checks payments-first landing, bounded/searchable pricing,
+unchanged save payload/revision guards, on-demand gateway management, tenant/role
+boundaries, retained trial choices and visible stale-draft conflicts. Every page
+is exercised at desktop/tablet/360px in light/dark, with a mutation trap proving
+browsing/filtering/tab changes cannot save settings or enqueue commands.
+
+Existing full browser workflows continue exercising device commands with synthetic
+receipts, playlist/guide/category edits, protected favourites, PIN/profile settings,
+saved setups, branding, trial controls, add-ons and authentication. UI assertions
+follow the new explicit tabs/disclosures rather than accessing hidden controls.
+Public checkout retains payment-state, country/gateway, price and no-repeat guards.
+
 ## 0.34.0 isolated trial conversion exception
 
 334 website service tests, 26 browser checks (18 checkout/workspace plus eight

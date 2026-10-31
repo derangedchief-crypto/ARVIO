@@ -43,9 +43,10 @@
       const schedule=()=>{clearTimeout(timer);timer=setTimeout(poll,['building','publishing'].includes(lastState)?10000:30000);};
       async function poll(){if(!valid()){stop();return;}if(document.hidden||fetching){schedule();return;}fetching=true;try{const fresh=await api('/api/app-brand?tenant_id='+tenant);if(!valid()){stop();return;}if(fresh.brand?.id!==brand.id)throw new Error('Brand identity changed; reload this workspace before continuing.');lastState=fresh.builds[0]?.state;updateBuilds(fresh);pollNote.textContent='';request.disabled=!fresh.brand.enabled||fresh.brand.version!==brand.version;if(fresh.brand.version!==brand.version){pollNote.textContent='The saved brand changed in another session. Reload before requesting a build; your current draft has not been replaced.';}}catch(e){if(valid()){pollNote.textContent='Build status could not refresh: '+e.message;const eta=current.querySelector('.build-eta');if(eta)eta.textContent='ETA unavailable until status refresh succeeds.';}}finally{fetching=false;if(valid())schedule();}}
       document.addEventListener('visibilitychange',()=>{if(!valid()){stop();return;}if(!document.hidden){clearTimeout(timer);poll();}},{signal:controller.signal});schedule();
-      const details=el('details',null,'advanced-details');details.append(el('summary','App identity'),detailRows([['Package',brand.package_name],['Saved brand version',brand.version]]));builds.append(details);main.append(builds);
+      const details=el('details',null,'advanced-details');details.append(el('summary','App identity'),detailRows([['Package',brand.package_name],['Saved brand version',brand.version]]));builds.append(details);main.insertBefore(builds,editor||box);
+      if(data.builds.length>1)main.append(disclosure('Previous builds',table(['Brand version','Status','Requested'],data.builds.slice(1).map(j=>[j.brand_version,buildStates[j.state]||'Needs review',date(j.created_at)]))));
     }
-    main.append(panel('Trials & contacts',button('Open trials & contacts',()=>{location.hash='trials/'+tenant;})));
+    const related=el('div',null,'brand-links');related.append(button('Open trials & contacts',()=>{location.hash='trials/'+tenant;},'quiet'));main.append(related);
   }
   root.AppBranding={render,isDirty:()=>[...drafts.values()].some(d=>d?.dirty),clear:()=>{stopPolling?.();stopPolling=null;drafts.clear();}};
 })(window);
