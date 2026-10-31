@@ -8,7 +8,7 @@ use ControlCenter\Commands;
 use ControlCenter\Config;
 
 $source = dirname(__DIR__);
-$base = '/tmp/opencode/control-center-preview-' . bin2hex(random_bytes(4));
+$base = rtrim(getenv('CONTROL_TEST_TMPDIR') ?: '/tmp/opencode','/') . '/control-center-preview-' . bin2hex(random_bytes(4));
 umask(0077); mkdir($base,0700,true);
 function copyPreview(string $source, string $dest): void {
     if (!is_dir($dest)) mkdir($dest,0700,true);

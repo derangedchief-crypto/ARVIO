@@ -183,7 +183,7 @@ while True:
   last['reported_pid']=value.get('service_pid') if isinstance(value.get('service_pid'),int) else None
   if expected_pid<1 or value.get('service')!='iptv-renewal-worker' or value.get('service_pid')!=expected_pid:raise RuntimeError('wrong-listener-process')
   last['phase']='response-capabilities'
-  if value.get('mode')!='renewals' or value.get('writes_enabled') is not True or value.get('atomic_renewal')!=1 or value.get('current_package_only') is not True:raise RuntimeError()
+  if value.get('mode')!='renewals' or value.get('writes_enabled') is not True or value.get('atomic_renewal')!=1 or value.get('current_package_only') is not True or value.get('trial_conversion')!=1:raise RuntimeError()
   break
  except Exception as error:
   last['error_type']=type(error).__name__

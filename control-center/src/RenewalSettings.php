@@ -25,6 +25,27 @@ final class RenewalSettings {
         if(($t['kind']!=='reseller'&&!$ownerWorkspace)||$t['status']!=='active'||!$this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$t['id']]))throw new Problem(409,'Renewals require an active workspace with a verified panel reseller link.');return $t;
     }
     public function connection(string $tenant,string $gateway='rampex'):?array {return $this->db->one('SELECT * FROM renewal_connections WHERE tenant_id=? AND gateway=? AND enabled=1 ORDER BY created_at DESC,id DESC LIMIT 1',[$tenant,$gateway]);}
+    public function trialConversion(string $tenant):array {
+        $r=$this->db->one('SELECT package_id,plan_fingerprint,enabled,revision FROM renewal_trial_conversions WHERE tenant_id=?',[$tenant]);
+        return ['package_id'=>$r&&$r['package_id']!==null?(int)$r['package_id']:null,'plan_fingerprint'=>$r['plan_fingerprint']??null,'enabled'=>(bool)($r['enabled']??false),'revision'=>(int)($r['revision']??0)];
+    }
+    public function saveTrialConversion(array $actor,array $input):array {
+        Input::keys($input,['tenant_id','package_id','enabled','expected_revision']);$t=$this->workspace($actor,$input['tenant_id']??null);
+        if(!is_bool($input['enabled']??null))throw new Problem(422,'Choose whether paid trial conversion is enabled.');
+        $expected=Input::integer($input['expected_revision']??null,0,2147483647);$enabled=$input['enabled'];$package=null;$fingerprint=null;
+        if($enabled){
+            if(($this->worker->productionStatus()['trial_conversion']??false)!==true)throw new Problem(409,'Update the separate renewal worker for verified trial conversions first.');
+            $id=Input::integer($input['package_id']??null,1,2147483647);
+            foreach($this->catalog($actor,['tenant_id'=>$t['id']])['packages'] as $p)if($p['id']===$id){$package=$id;$fingerprint=$p['fingerprint'];}
+            if($package===null)throw new Problem(409,'Choose a currently offered paid package for trial conversions.');
+        }
+        $this->db->transaction(function()use($actor,$t,$expected,$enabled,$package,$fingerprint):void{
+            $this->db->one('SELECT id FROM tenants WHERE id=? FOR UPDATE',[$t['id']]);$old=$this->trialConversion($t['id']);
+            if($old['revision']!==$expected)throw new Problem(409,'Trial conversion settings changed; refresh before saving.');
+            $this->db->query('INSERT INTO renewal_trial_conversions (tenant_id,package_id,plan_fingerprint,enabled,revision,updated_by) VALUES (?,?,?,?,1,?) ON DUPLICATE KEY UPDATE package_id=VALUES(package_id),plan_fingerprint=VALUES(plan_fingerprint),enabled=VALUES(enabled),revision=revision+1,updated_by=VALUES(updated_by)',[$t['id'],$package,$fingerprint,(int)$enabled,$actor['id']]);
+            $this->auth->audit($actor,'renewals.trial_conversion_saved',null,$t['id'],['package_id'=>$package,'enabled'=>$enabled]);
+        });return $this->status($actor,['tenant_id'=>$t['id']]);
+    }
     public function connections(string $tenant):array {return $this->db->all('SELECT * FROM renewal_connections WHERE tenant_id=? AND enabled=1 ORDER BY created_at DESC,id DESC',[$tenant]);}
     public function availability(string $tenant):array {
         $out=array_fill_keys(['stripe','square','rampex'],['enabled'=>true,'revision'=>0]);
@@ -83,7 +104,7 @@ final class RenewalSettings {
         foreach($plans as &$p){$p['amount_minor']=(int)$p['amount_minor'];$p['currency_exponent']=RampexPaymentVerifier::exponent($p['currency']);$p['package_id']=(int)$p['package_id'];$p['revision']=(int)$p['revision'];$p['enabled']=(bool)$p['enabled'];$p['package']=json_decode($p['package_snapshot'],true,16,JSON_THROW_ON_ERROR);unset($p['package_snapshot']);}unset($p);
         $availability=$this->availability($t['id']);
         $public=fn($v)=>['id'=>$v['id'],'gateway'=>$v['gateway'],'merchant_id'=>$v['merchant_id'],'business_name'=>$v['business_name'],'mode'=>$v['mode'],'checkout_enabled'=>$availability[$v['gateway']]['enabled'],'availability_revision'=>$availability[$v['gateway']]['revision'],'api_key_saved'=>true,'webhook_secret_saved'=>true,'webhook_verified_at'=>$v['webhook_verified_at']??null,'webhook_url'=>$this->config->origin().'/api/renewals/webhooks/'.$v['id']];
-        return ['tenant_id'=>$t['id'],'policy'=>$this->policy(),'currency_exponents'=>RampexPaymentVerifier::currencyExponents(),'catalogue_only'=>($this->config->get('renewal_worker',[])['mode']??null)==='catalogue_only','connection'=>$c?$public($c):null,'connections'=>array_map($public,$this->connections($t['id'])),'routing'=>$this->routing($t['id']),'prices'=>$plans,'simulation_allowed'=>$this->gateway->mockAllowed()];
+        return ['tenant_id'=>$t['id'],'policy'=>$this->policy(),'currency_exponents'=>RampexPaymentVerifier::currencyExponents(),'catalogue_only'=>($this->config->get('renewal_worker',[])['mode']??null)==='catalogue_only','connection'=>$c?$public($c):null,'connections'=>array_map($public,$this->connections($t['id'])),'routing'=>$this->routing($t['id']),'trial_conversion'=>$this->trialConversion($t['id']),'prices'=>$plans,'simulation_allowed'=>$this->gateway->mockAllowed()];
     }
     public function saveConnection(array $actor,array $input):array {
         Input::keys($input,['tenant_id','api_key','webhook_secret','mode','gateway','location_id','setup_id']);$t=$this->workspace($actor,$input['tenant_id']??null);$gateway=$input['gateway']??'rampex';

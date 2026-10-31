@@ -1,5 +1,31 @@
 # Control Center validation
 
+## 0.34.0 isolated trial conversion exception
+
+334 website service tests, 26 browser checks (18 checkout/workspace plus eight
+polling/race checks), 53 independent worker tests, 71 legacy auth/trial regressions
+and five socket-installer contracts pass. Delivery ZIP and syntax checks pass.
+Frozen logs: /tmp/opencode/trial-conversion-{website,worker,polling,auth}-frozen-validation.log.
+Local disk pressure was avoided with CONTROL_TEST_TMPDIR pointing to a private
+/tmp/opencode alias of RAM-backed validation storage; production paths/defaults
+are unchanged. The initial disk-limited test attempt is not the acceptance run.
+
+Coverage distinguishes an expired trial from an ordinary paid account, selects
+only the reseller-configured paid default (not the first offered plan), blocks
+missing/unfunded/changed defaults, preserves existing paid invoice snapshots when
+the default changes, and leaves trial-creation settings/prices unchanged. Normal
+paid lines retain their current package even with another conversion default.
+Settings test workspace ownership, revision conflicts and rejection of an old
+worker without conversion capability. Browser tests show paid conversion terms
+and the separate reseller setting. Customer-supplied conversion flags are rejected.
+
+Real isolated MariaDB tests verify same-line paid conversion, paid credit cost,
+retained credentials/code/PIN/notes/outputs, paid entitlements, cleared trial flag,
+concurrency, source/expiry/status/fingerprint/funding checks, full rollback and
+lost-reply/refresh recovery. Existing normal renewal, native journal, auth and trial
+regressions remain exercised. All payments are synthetic; no live account, charge,
+credit balance, worker service or APK was changed by implementation/validation.
+
 ## 0.33.0 generic payment page and provider-specific email collection
 
 325 service tests, 24 browser checks (16 checkout/workspace and eight timed

@@ -36,7 +36,7 @@ if (!str_starts_with($socket, '/') || !file_exists($socket)) throw new RuntimeEx
 $dbUser = getenv('CONTROL_TEST_USER') ?: getenv('USER');
 $server = new PDO('mysql:unix_socket=' . $socket . ';charset=utf8mb4', $dbUser, '', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 $name = 'control_test_' . bin2hex(random_bytes(6));
-$fixture = '/tmp/opencode/' . $name;
+$fixture = rtrim(getenv('CONTROL_TEST_TMPDIR') ?: '/tmp/opencode','/') . '/' . $name;
 umask(0077);
 mkdir($fixture, 0700, true);
 foreach (['src','database','public'] as $directory) copyTree($root . '/' . $directory, $fixture . '/' . $directory);

@@ -10,7 +10,7 @@ import tempfile
 import time
 
 root=Path(__file__).resolve().parent.parent
-state=Path(tempfile.mkdtemp(prefix='renewal-native-mysql-',dir='/tmp/opencode'));state.chmod(0o700)
+state=Path(tempfile.mkdtemp(prefix='renewal-native-mysql-',dir=os.environ.get('CONTROL_TEST_TMPDIR','/tmp/opencode')));state.chmod(0o700)
 env={**os.environ,'CONTROL_DEV_DIR':str(state),'RENEWAL_TEST_SOCKET':str(state/'database.sock')}
 with (state/'startup.log').open('wb') as log:
     process=subprocess.Popen(['bash','control-center/dev/start-db.sh'],cwd=root,env=env,stdout=log,stderr=log,start_new_session=True)

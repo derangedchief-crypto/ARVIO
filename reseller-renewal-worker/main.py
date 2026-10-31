@@ -50,6 +50,7 @@ def state_ready():
 
 
 class AnchoredOperations(RenewalOperations):
+    def validate_request(self,value):return validate(value,allow_trial_conversion=True)
     @contextlib.contextmanager
     def storage(self,operation):
         state_ready()
@@ -85,7 +86,7 @@ app=FastAPI(title='IPTV Renewal Worker',lifespan=lifespan)
 
 def status():
     state_ready()
-    return {'schema_version':1,'service':'iptv-renewal-worker','service_pid':os.getpid(),'configured':True,'mode':'renewals','catalogue_only':False,'writes_enabled':True,'atomic_renewal':1,'unique_payment_reference':1,'current_package_only':True,'renewal_login':1,'expired_line_reactivation':1}
+    return {'schema_version':1,'service':'iptv-renewal-worker','service_pid':os.getpid(),'configured':True,'mode':'renewals','catalogue_only':False,'writes_enabled':True,'atomic_renewal':1,'unique_payment_reference':1,'current_package_only':True,'renewal_login':1,'expired_line_reactivation':1,'trial_conversion':1}
 
 
 @app.get('/health')
@@ -119,7 +120,7 @@ async def request(action:str,request:Request):
             if not isinstance(value,dict) or set(value)!={'reseller_id','line_id','primary_fingerprint'} or any(not isinstance(value[k],str) or not re.fullmatch('[1-9][0-9]{0,18}',value[k]) for k in ['reseller_id','line_id']) or not isinstance(value['primary_fingerprint'],str) or not re.fullmatch('[a-f0-9]{64}',value['primary_fingerprint']):raise ValueError()
             result=await run_in_threadpool(adapter.eligibility,value['reseller_id'],value['line_id'],value['primary_fingerprint'])
         else:
-            spec=validate(value)
+            spec=validate(value,allow_trial_conversion=True)
             result=await run_in_threadpool(AnchoredOperations(directory,adapter).request,spec)
             if result.get('state')=='needs_review':result={**result,'state':'reconcile_pending'}
         payload=json.dumps(result,separators=(',',':'))

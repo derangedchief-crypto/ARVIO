@@ -56,7 +56,14 @@ window.Renewals={async render(epoch){
       ],v=>api('/api/renewals/prices',{...v,country:v.country==='default'?'':v.country,tenant_id:tenant,id:old?.id||'',expected_revision:old?.revision||0,package_id:pkg.id,enabled:v.enabled==='yes'}));
     }
     try{
-      const catalog=await api('/api/renewals/catalog?tenant_id='+encodeURIComponent(tenant));if(epoch!==state.epoch)return;
+       const catalog=await api('/api/renewals/catalog?tenant_id='+encodeURIComponent(tenant));if(epoch!==state.epoch)return;
+       const conversion=data.trial_conversion||{enabled:false,package_id:null,revision:0},conversionPlan=catalog.packages.find(p=>p.id===conversion.package_id);
+       const conversions=panel('Trial conversions',el('p','Only verified expired trials use this default paid plan. Existing paid subscriptions always renew their current package. Missing or unavailable conversion defaults cannot create a checkout. Trial creation settings are separate.','scope-label'),el('p',conversion.enabled?(conversionPlan?'Default paid plan: '+conversionPlan.name:'Configured paid plan is no longer offered — conversions unavailable'):'Trial conversions are disabled.'));
+       main.append(conversions);
+       if(!data.catalogue_only)conversions.append(button('Set trial conversion plan',()=>modal('Default paid plan for trial conversions',[
+         {key:'enabled',label:'Paid trial conversions',value:conversion.enabled?'yes':'no',options:[['no','Disabled'],['yes','Enabled']]},
+         {key:'package_id',label:'Default paid conversion plan',value:String(conversion.package_id||''),options:[['','Choose a paid plan'],...catalog.packages.map(p=>[String(p.id),p.name+' · '+p.duration+' '+p.period+' · '+p.max_connections+' connection(s)'])],hint:'Only this reseller-selected paid plan is offered to expired trials. Set its customer prices below. Requires the trial-conversion renewal worker update.'}
+       ],v=>api('/api/renewals/trial-conversion',{tenant_id:tenant,enabled:v.enabled==='yes',package_id:v.package_id?Number(v.package_id):null,expected_revision:conversion.revision}))));
       prices.append(table(['Offered package','Panel credits','Customer price','Actions'],catalog.packages.map(pkg=>{
         const saved=data.prices.filter(p=>p.package_id===pkg.id),old=saved.find(p=>!p.country),actions=el('div',null,'actions');
         actions.append(button(old?'Edit default price':'Set price',()=>priceForm(pkg,old)));

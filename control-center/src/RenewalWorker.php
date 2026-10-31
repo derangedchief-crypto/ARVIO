@@ -51,7 +51,7 @@ final class RenewalWorker {
         $r=$this->request('status',[]);
         if(($r['schema_version']??null)!==1||($r['service']??null)!=='iptv-renewal-worker'||($r['mode']??null)!=='renewals'||($r['catalogue_only']??null)!==false||($r['configured']??null)!==true||($r['writes_enabled']??null)!==true||($r['atomic_renewal']??null)!==1||($r['unique_payment_reference']??null)!==1||($r['current_package_only']??null)!==true)throw new Problem(503,'The separate renewal worker has not confirmed its payment/renewal safeguards.');
         if(($r['renewal_login']??null)!==1)throw new Problem(503,'Update the separate renewal worker for expired-code checkout before connecting this website version.');
-        return ['connected'=>true,'mode'=>'renewals','writes_enabled'=>true,'atomic_renewal'=>true,'current_package_only'=>true,'renewal_login'=>true];
+        return ['connected'=>true,'mode'=>'renewals','writes_enabled'=>true,'atomic_renewal'=>true,'current_package_only'=>true,'renewal_login'=>true,'trial_conversion'=>($r['trial_conversion']??null)===1];
     }
     public static function plan(array $p):void {
         foreach(['id','duration','max_connections'] as $k)if(!is_int($p[$k]??null)||$p[$k]<1)throw new Problem(503,'Invalid renewal package limits.');
@@ -62,8 +62,11 @@ final class RenewalWorker {
         $r=$this->request('eligibility',['reseller_id'=>$reseller,'line_id'=>$line,'primary_fingerprint'=>$fingerprint]);
         if(($r['reseller_id']??null)!==$reseller||($r['line_id']??null)!==$line||!is_bool($r['primary_match']??null)||!in_array($r['state']??null,['expired','active','restricted','unlimited','unavailable'],true)||!is_int($r['checked_at']??null)||abs(time()-$r['checked_at'])>60||!is_array($r['plans']??null)||!array_is_list($r['plans']))throw new Problem(503,'Renewal identity/expiry verification failed.');
         if($r['state']==='expired'&&(($r['primary_match']??false)!==true||!is_int($r['expires_at']??null)||$r['expires_at']<1||$r['expires_at']>time()))throw new Problem(503,'Expiry has not been confirmed by server time.');
-        if($r['state']==='expired'&&(!is_int($r['current_package_id']??null)||$r['current_package_id']<1||count($r['plans'])>1))throw new Problem(503,'Current package has not been confirmed.');
-        foreach($r['plans'] as $p){self::plan($p);if($p['id']!==($r['current_package_id']??null))throw new Problem(503,'Renewal may only use the current package.');}return $r;
+        if(isset($r['is_trial'])&&!is_bool($r['is_trial']))throw new Problem(503,'Trial status has not been verified.');
+        $trial=($r['is_trial']??false)===true;
+        if($trial&&($r['trial_conversion_supported']??null)!==1)throw new Problem(503,'Worker cannot safely convert this trial.');
+        if($r['state']==='expired'&&(!is_int($r['current_package_id']??null)||$r['current_package_id']<1||(!$trial&&count($r['plans'])>1)))throw new Problem(503,'Current package has not been confirmed.');
+        foreach($r['plans'] as $p){self::plan($p);if(!$trial&&$p['id']!==($r['current_package_id']??null))throw new Problem(503,'Renewal may only use the current package.');}return $r;
     }
     public function renew(array $spec):array {
         // Legacy workers reject this extra mandatory field before any write;

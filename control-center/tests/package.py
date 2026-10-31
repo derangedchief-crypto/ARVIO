@@ -69,6 +69,8 @@ with tempfile.TemporaryDirectory(prefix='control-package-', dir='/tmp/opencode')
         assert 'deploy/fix-renewal-jobs-socket.sh' in names
         assert 'deploy/RENEWAL-JOBS-SOCKET-REPAIR.txt' in names
         assert 'deploy/UPDATE-0.33.0.txt' in names
+        assert 'deploy/UPDATE-0.34.0.txt' in names
+        assert 'database/migrations/033_trial_conversion_defaults.sql' in names
         assert b'fresh-checkins' in archive.read('cli/console.php')
         assert 'src/AppBrands.php' in names and 'database/migrations/014_reseller_app_brands.sql' in names
         assert 'src/TrialPolicies.php' in names and 'src/TrialContacts.php' in names and 'database/migrations/015_trial_policies_contacts.sql' in names

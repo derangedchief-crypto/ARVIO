@@ -1,0 +1,56 @@
+0.34.0 — expired-trial conversion to the reseller's default paid package
+
+TESTING/STAGING ONLY. TWO components: independent renewal worker + website.
+No APK rebuild, no main promotion, no auth/trial-worker replacement or restart.
+Do not use the free-trial creation default as the paid conversion default.
+
+Back up website code/database and the independent renewal worker's original
+private state/config/code. Preserve /var/lib/iptv-renewal-worker, its renewal.key,
+renewals.sqlite ledger and /etc/iptv-renewal-worker.env. NEVER reset the ledger or
+rotate keys for this update. Do not restore a stale financial DB over new payments.
+
+ORDER:
+1. WORKER HOST 38.190.133.171: install the matching Extreme-Renewal-Worker-0.34.0.zip
+   using its install.sh as root. Only iptv-renewal-worker.service is updated and
+   restarted; auth files/processes are guarded and untouched. It retains its
+   existing bridge secret, ledger key anchor, invoices and operation history.
+   Signed readiness now verifies trial_conversion=1 as well as the real PID,
+   atomic renewal and normal current-package-only safeguards.
+2. WEBSITE HOST 38.190.133.176: extract this website update, preserving config.php,
+   storage, merchant secrets and the installed renewal-jobs socket drop-in. Run:
+   /www/server/php/84/bin/php -d opcache.enable_cli=0 cli/console.php migrate
+   /www/server/php/84/bin/php -d opcache.enable_cli=0 cli/console.php preflight
+   /www/server/php/84/bin/php -d opcache.enable_cli=0 cli/console.php renewal-worker-check
+   Confirm trial_conversion=true. No new private connection transfer/rekey is
+   needed when the existing independent worker connection already works.
+3. Customer renewals -> Trial conversions -> Set trial conversion plan. Enable
+   and choose the reseller's offered PAID package. Save its country/currency
+   customer prices. A missing/disabled/stale/unfunded default produces no checkout.
+
+Migration 033 adds reseller conversion defaults and a flag to the LOCAL isolated
+simulation targets only. It does not alter panel schema, trials, customers or
+existing financial records. Normal paid subscription renewals retain their current
+package, bouquet and connection overrides. Existing paid invoices keep snapshots.
+
+Trial conversion changes ONLY a server-verified expired trial: same line and
+credentials, target paid package/duration/connections, trial flag cleared and line
+activated. Target nonempty bouquets are applied; an empty package list preserves
+the existing line bouquets. Parent PIN, notes and outputs stay. Saved device keys,
+activation code, APK data, playlists and favourites are not cleared or recreated.
+
+Financial safeguards: captured funds and exact merchant/link/amount/currency are
+verified before invoking the worker. Original trial package, ownership, primary,
+expiry and current trial flag are locked/rechecked. Target package must still be
+enabled, offered and fingerprint-identical; only its paid credit cost is debited.
+Same payment/order retries cannot extend/debit twice, including after a lost reply.
+Changing a reseller default after creating an invoice does not alter its target.
+Old workers reject conversion fields rather than silently switching paid plans.
+
+Acceptance with sandbox/synthetic fixtures first:
+- Expired trial -> configured paid target and displayed paid terms, not its trial.
+- Ordinary paid line -> current package even with a different conversion default.
+- Missing/unfunded/stale/default-price-disabled -> no link and no new charge.
+- Active/restricted/unlimited/wrong-owner trial -> no checkout/conversion.
+- Sandbox completion -> no real panel conversion. No paid-live acceptance without
+  deliberate separate authorization for that controlled test.
+- Do not enable production app rollout or publish customer APKs for this update.

@@ -72,7 +72,7 @@ class DeploymentTests(unittest.TestCase):
                 stamp=self.headers['X-Renewal-Timestamp'];nonce=self.headers['X-Renewal-Nonce']
                 expected=hmac.new(secret.encode(),b'branded-renewal-request-v1\n'+stamp.encode()+b'\n'+nonce.encode()+b'\n'+raw,hashlib.sha256).hexdigest()
                 if self.headers['X-Renewal-Signature']!=expected:self.send_error(403);return
-                payload=json.dumps({'service':'iptv-renewal-worker','service_pid':12345,'mode':'renewals','writes_enabled':True,'atomic_renewal':1,'current_package_only':True})
+                payload=json.dumps({'service':'iptv-renewal-worker','service_pid':12345,'mode':'renewals','writes_enabled':True,'atomic_renewal':1,'current_package_only':True,'trial_conversion':1})
                 reply=json.dumps({'payload':payload,'signature':hmac.new(secret.encode(),('branded-renewal-result-v1\n'+stamp+'\n'+nonce+'\n'+payload).encode(),hashlib.sha256).hexdigest()}).encode()
                 self.send_response(200);self.send_header('Content-Length',str(len(reply)));self.end_headers();self.wfile.write(reply)
         server=http.server.HTTPServer(('127.0.0.1',0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()

@@ -7,6 +7,38 @@ separate explicit owner approval. Website delivery never publishes a customer AP
 The site archive never installs an APK or worker. Native source changes require a
 separate centrally signed app release; shared build/source pins are not moved here.
 
+## 0.34.0 — verified expired-trial conversions to a reseller paid default
+
+Customer renewals -> Trial conversions -> Set trial conversion plan selects a
+separate default PAID package for expired trials. This does not change the default
+free-trial creation package, app trial quotas or normal paid renewals. Set the
+selected paid package's customer price for the applicable country/currency.
+Conversions are disabled until explicitly configured; never pick a first/cheapest
+package or fall back to renewing the trial when the setting is missing/invalid.
+
+The independent renewal worker signs the authoritative panel is_trial flag and
+current source package/expiry. Only expired, enabled, owned trials can use the
+conversion exception. Paid lines still require the same current package. Customer
+requests cannot supply a trial flag, source package or arbitrary target package.
+The selected paid package/fingerprint and original trial/expiry are frozen into
+the invoice. Default changes after checkout cannot change that paid invoice.
+
+Only verified captured payment can convert the same account: apply the selected
+paid package's duration, package ID and connection limit; clear is_trial; activate
+the line; apply its nonempty bouquets (empty lists preserve existing bouquets).
+Credentials, activation code, notes, parent PIN, outputs and account identity stay.
+Normal paid renewal continues preserving its current package, bouquets and
+connection overrides. Credit debit, line update and durable journal marker share
+one transaction. Payment deduplication, expiry revision, replay and refresh-only
+retries remain in force. Sandbox payments cannot change real accounts.
+
+Deploy the independent renewal-worker update FIRST, then this website update and
+migration 033. Its signed status must advertise trial_conversion=1 before a default
+can be enabled. Only this independent worker opts into the extra conversion
+fields; the shared legacy validator still rejects them by default. No existing
+auth/trial worker service is patched/restarted and no APK rebuild is required.
+See deploy/UPDATE-0.34.0.txt for installation order and acceptance checks.
+
 ## 0.33.0 — generic payment page and no duplicate card email form
 
 Our hosted checkout page now uses Payment Gateway for its title and main heading,

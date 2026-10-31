@@ -134,3 +134,30 @@ on the owner's specifically chosen test line before a customer rollout is claime
 Safe logs: `journalctl -u iptv-renewal-worker.service`. Do not send private config,
 env/export files, ledger keys or raw customer records. No customer APK publication
 or main promotion is part of this worker deployment.
+## 0.34.0 trial conversions
+
+The independent worker now advertises signed trial_conversion=1. Eligibility
+reports the panel's authoritative is_trial flag: expired trials can quote offered
+paid packages for the WEBSITE's reseller-specific conversion default, while paid
+lines still quote their current package only. There is no customer-chosen package
+override and no change to free-trial creation or the old auth/trial service.
+
+The signed paid operation can include trial_conversion=true and source_package_id
+only through this service's explicitly opted-in validator. Legacy validation
+still rejects these fields by default. Both modes retain current_package_only=true:
+normal renewal has no package-switch exception; conversion additionally requires
+the original row to be an expired trial with the same source package and expiry.
+The website freezes its default paid target/fingerprint into the verified invoice.
+
+Conversion applies paid package ID/duration/connections, is_trial=0, activated=1,
+and the paid package's nonempty bouquets (empty means preserve current bouquets).
+Credentials, activation code, PIN, notes, outputs and line identity are preserved.
+Normal renewals keep the current package, bouquet and connection overrides.
+Account update, paid credit debit and BRN1 receipt are one atomic transaction;
+replays, concurrent requests, lost replies and refresh retries cannot debit twice.
+
+Install this independent worker update before website 0.34.0, then apply website
+migration 033 and configure Customer renewals -> Trial conversions. Existing
+state/key/ledger must be kept and no private connection rekey/transfer is needed.
+Only iptv-renewal-worker.service restarts. Do not patch/restart auth or trial
+services, publish production APKs or run a paid-live test without authorization.

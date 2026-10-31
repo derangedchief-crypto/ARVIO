@@ -8,9 +8,9 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
   assert(base&&['127.0.0.1','localhost'].includes(new URL(base).hostname));
   const browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:360,height:800}});
   const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
-   const token='a'.repeat(64),id='b'.repeat(32);let current=null,submitted=null,quoteCurrency='USD',country='US',gateway='rampex',routeSubmission=null;
+   const token='a'.repeat(64),id='b'.repeat(32);let current=null,submitted=null,quoteCurrency='USD',country='US',gateway='rampex',routeSubmission=null,quoteKind='renewal';
    const order={id,payment_state:'awaiting',fulfilment_state:'not_paid',currency:'USD',amount_minor:1050,payment_url:null};
-   const info=()=>({reseller:'TEST <img src=x onerror=alert(1)>',target_label:'Existing account ending 1234',country,gateway,gateways:country==='CA'?[{gateway:'square',sandbox:true},{gateway:'stripe',sandbox:true}]:[{gateway:'rampex',sandbox:true}],renewal:current?null:{id:'c'.repeat(32),package_id:77,package_fingerprint:'d'.repeat(64),name:'One month',revision:3,currency:quoteCurrency,currency_exponent:quoteCurrency==='JPY'?0:2,amount_minor:quoteCurrency==='JPY'?1500:1050,duration:1,period:'months',max_connections:2},order:current,simulated:true});
+   const info=()=>({reseller:'TEST <img src=x onerror=alert(1)>',target_label:'Existing account ending 1234',country,gateway,gateways:country==='CA'?[{gateway:'square',sandbox:true},{gateway:'stripe',sandbox:true}]:[{gateway:'rampex',sandbox:true}],renewal:current?null:{id:'c'.repeat(32),package_id:77,package_fingerprint:'d'.repeat(64),name:'One month',kind:quoteKind,revision:3,currency:quoteCurrency,currency_exponent:quoteCurrency==='JPY'?0:2,amount_minor:quoteCurrency==='JPY'?1500:1050,duration:1,period:'months',max_connections:2},order:current,simulated:true});
   await page.route('**/api/public-renewals/**',async route=>{
     const req=route.request(),path=new URL(req.url()).pathname;
     assert.equal(req.method(),'POST');assert.equal(req.postDataJSON().session_token,token);
@@ -61,9 +61,13 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
       current=null;gateway='square';await page.reload();await page.getByRole('heading',{name:'One month',exact:true}).waitFor();assert(await page.locator('#email-field').isHidden());
       await page.getByRole('button',{name:'Continue to payment',exact:true}).click();await page.locator('#order').waitFor({state:'visible'});assert(!Object.hasOwn(submitted,'email'));
       console.log('PASS Square submits payment checkout without collecting an email on our page');
+      current=null;quoteKind='trial_conversion';await page.reload();await page.getByRole('heading',{name:'One month',exact:true}).waitFor();
+      assert.equal(await page.locator('#package-context').innerText(),'Paid plan for your expired trial');assert((await page.locator('#message').innerText()).includes('paid plan selected by your provider'));
+      assert.equal(await page.locator('select').count(),2);assert(await page.locator('#email-field').isHidden());
+      console.log('PASS expired-trial checkout shows its configured paid conversion plan and terms without a customer package picker');
     const credentials=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));assert.equal(credentials.email,'owner@preview.test');
     const operator=await context.newPage();operator.on('pageerror',e=>errors.push(e.message));
-     let priceSubmission=null,routingSubmission=null;
+     let priceSubmission=null,routingSubmission=null,conversionSubmission=null;
     await operator.route('**/api/renewals/catalog?**',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({packages:[{id:77,name:'Provider monthly',duration:1,period:'months',max_connections:2,credits:'2',fingerprint:'d'.repeat(64),funded:true}]})}));
      await operator.route('**/api/renewals/prices',r=>{priceSubmission=r.request().postDataJSON();return r.fulfill({status:200,contentType:'application/json',body:'{"saved":true}'});});
      await operator.route('**/api/renewals/routing',r=>{routingSubmission=r.request().postDataJSON();return r.fulfill({status:200,contentType:'application/json',body:'{"saved":true}'});});
@@ -110,7 +114,12 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
      await operator.getByLabel('Preferred gateway',{exact:true}).selectOption('square');await operator.getByLabel('First alternative',{exact:true}).selectOption('stripe');
      await operator.locator('#modal-form').getByRole('button',{name:'Save',exact:true}).click();await operator.locator('#modal').waitFor({state:'hidden'});
      assert.equal(routingSubmission.country,'CA');assert.deepEqual(routingSubmission.gateways,['square','stripe']);
-     console.log('PASS reseller can save Square preference and Stripe alternative for Canada without an empty-option validation trap');
+      console.log('PASS reseller can save Square preference and Stripe alternative for Canada without an empty-option validation trap');
+      await operator.route('**/api/renewals/trial-conversion',r=>{conversionSubmission=r.request().postDataJSON();return r.fulfill({status:200,contentType:'application/json',body:'{"saved":true}'});});
+      await operator.getByRole('button',{name:'Set trial conversion plan',exact:true}).click();await operator.getByLabel('Paid trial conversions',{exact:true}).selectOption('yes');await operator.getByLabel('Default paid conversion plan',{exact:true}).selectOption('77');
+      await operator.locator('#modal-form').getByRole('button',{name:'Save',exact:true}).click();await operator.locator('#modal').waitFor({state:'hidden'});
+      assert.equal(conversionSubmission.package_id,77);assert.equal(conversionSubmission.enabled,true);assert.equal(conversionSubmission.expected_revision,0);
+      console.log('PASS reseller trial-conversion default is saved separately from trial creation and normal package prices');
     assert.deepEqual(errors,[]);console.log('PASS actual reseller renewal workspace renders with write-only password fields; no live connection submitted');
      const readonly=await operator.evaluate(async tenant=>(await(await fetch('/api/renewals/settings?tenant_id='+tenant)).json()),tenant);
      let gatewayOn=true,toggleSubmission=null;

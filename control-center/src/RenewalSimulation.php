@@ -15,6 +15,7 @@ final class RenewalSimulation {
         return json_encode(['payload'=>$payload,'signature'=>hash_hmac('sha256',"branded-renewal-result-v1\n$stamp\n$nonce\n$payload",$key)],JSON_THROW_ON_ERROR);
     };}
     private function handle(string $action,array $input):array {
+        if($action==='status')return ['schema_version'=>1,'service'=>'iptv-renewal-worker','configured'=>true,'mode'=>'renewals','catalogue_only'=>false,'writes_enabled'=>true,'atomic_renewal'=>1,'unique_payment_reference'=>1,'current_package_only'=>true,'renewal_login'=>1,'trial_conversion'=>1];
         if($action==='catalog'){
             $rows=$this->db->all('SELECT plans FROM renewal_simulated_targets WHERE reseller_id=?',[$input['reseller_id']]);$plans=[];
             foreach($rows as $row)foreach(json_decode($row['plans'],true,16,JSON_THROW_ON_ERROR) as $p)$plans[$p['id']]=$p;
@@ -25,21 +26,22 @@ final class RenewalSimulation {
         $plans=json_decode($target['plans'],true,16,JSON_THROW_ON_ERROR);
         if($action==='eligibility'){
             $current=(int)($target['package_id']??0);
-            return ['reseller_id'=>$input['reseller_id'],'line_id'=>$input['line_id'],'state'=>$current>0?$target['state']:'unavailable','primary_match'=>true,'checked_at'=>time(),'expires_at'=>(int)$target['expires_at'],'current_package_id'=>$current?:null,'plans'=>$target['state']==='expired'?array_values(array_filter($plans,static fn($p)=>$p['id']===$current)):[]];
+            return ['reseller_id'=>$input['reseller_id'],'line_id'=>$input['line_id'],'state'=>$current>0?$target['state']:'unavailable','primary_match'=>true,'checked_at'=>time(),'expires_at'=>(int)$target['expires_at'],'current_package_id'=>$current?:null,'is_trial'=>(bool)$target['is_trial'],'trial_conversion_supported'=>1,'plans'=>$target['state']==='expired'?array_values(array_filter($plans,static fn($p)=>(bool)$target['is_trial']||$p['id']===$current)):[]];
         }
         if(($input['current_package_only']??null)!==true)throw new Problem(422,'Current-package renewal contract is required.');
         return $this->db->transaction(function()use($input,$target,$plans):array{
             $fresh=$this->db->one('SELECT * FROM renewal_simulated_targets WHERE reseller_id=? AND line_id=? FOR UPDATE',[$input['reseller_id'],$input['line_id']]);
             $fp=hash('sha256',json_encode($input,JSON_THROW_ON_ERROR));$old=$this->db->one('SELECT * FROM renewal_simulated_operations WHERE operation_id=?',[$input['operation_id']]);
             if($old){if(!hash_equals($fp,$old['fingerprint']))throw new Problem(409,'Simulation operation mismatch.');return json_decode($old['receipt'],true,16,JSON_THROW_ON_ERROR);}
-            if((int)($fresh['package_id']??0)!==$input['package_id'])throw new Problem(409,'Current package changed; simulation will not switch packages.');
+            $conversion=($input['trial_conversion']??false)===true;
+            if((bool)$fresh['is_trial']!==$conversion||(int)($fresh['package_id']??0)!==($conversion?($input['source_package_id']??null):$input['package_id']))throw new Problem(409,'Original package or trial status changed; simulation cannot switch it.');
             if((int)$fresh['expires_at']!==($input['expected_expiry']??null))throw new Problem(409,'Line was already renewed or its invoice revision changed.');
             $plans=json_decode($fresh['plans'],true,16,JSON_THROW_ON_ERROR);
             $plan=null;foreach($plans as $p)if($p['id']===$input['package_id']&&hash_equals($p['fingerprint'],$input['plan_fingerprint']))$plan=$p;
             if(!$plan||!$plan['funded']||!hash_equals($fresh['primary_fingerprint'],$input['primary_fingerprint'])||!in_array($fresh['state'],['expired','active'],true))throw new Problem(409,'Simulation plan unavailable.');
             $expiry=self::expiry(max(time(),(int)$fresh['expires_at']),$plan); // DEMO data only.
             $receipt=['state'=>'fulfilled','operation_id'=>$input['operation_id'],'reseller_id'=>$input['reseller_id'],'line_id'=>$input['line_id'],'package_id'=>$input['package_id'],'expires_at'=>$expiry,'simulated'=>true];
-            $this->db->query('UPDATE renewal_simulated_targets SET state=\'active\',expires_at=? WHERE reseller_id=? AND line_id=?',[$expiry,$input['reseller_id'],$input['line_id']]);
+            $this->db->query('UPDATE renewal_simulated_targets SET state=\'active\',expires_at=?,package_id=?,is_trial=0 WHERE reseller_id=? AND line_id=?',[$expiry,$input['package_id'],$input['reseller_id'],$input['line_id']]);
             $this->db->query('INSERT INTO renewal_simulated_operations VALUES (?,?,?)',[$input['operation_id'],$fp,json_encode($receipt,JSON_THROW_ON_ERROR)]);
             return $receipt;
         });

@@ -98,6 +98,7 @@ final class RenewalPayments {
     }
     private function eligibility(array $s):array {
         $r=$this->worker->eligibility($s['reseller_id'],$s['line_id'],$s['primary_fingerprint']);
+        if($this->settings->trialConversion($s['tenant_id'])['enabled']&&(!is_bool($r['is_trial']??null)||($r['trial_conversion_supported']??null)!==1))throw new Problem(503,'The renewal worker must verify trial status before checkout.');
         if($r['state']!=='expired'||($r['primary_match']??false)!==true)throw new Problem(409,'This account is not eligible for expired-line renewal.');return $r;
     }
     public function challenge(array $input,string $ip):array {
@@ -152,17 +153,24 @@ final class RenewalPayments {
     }
     private function eligiblePrice(array $s,array $eligibility):?array {
         $country=$s['country']??'';
-        $rows=$this->db->all('SELECT * FROM renewal_plans WHERE tenant_id=? AND package_id=? AND country=?',[$s['tenant_id'],$eligibility['current_package_id']??0,$country]);
-        if(!$rows&&$country!=='')$rows=$this->db->all("SELECT * FROM renewal_plans WHERE tenant_id=? AND package_id=? AND country=''",[$s['tenant_id'],$eligibility['current_package_id']??0]);
+        $trial=($eligibility['is_trial']??false)===true;$conversion=null;$package=$eligibility['current_package_id']??0;
+        if($trial){
+            $default=$this->settings->trialConversion($s['tenant_id']);
+            if(!$default['enabled']||!$default['package_id']||!is_string($default['plan_fingerprint'])||!preg_match('/^[a-f0-9]{64}$/D',$default['plan_fingerprint']))return null;
+            $package=$default['package_id'];$conversion=['source_package_id'=>$eligibility['current_package_id'],'default_revision'=>$default['revision'],'plan_fingerprint'=>$default['plan_fingerprint']];
+        }
+        $rows=$this->db->all('SELECT * FROM renewal_plans WHERE tenant_id=? AND package_id=? AND country=?',[$s['tenant_id'],$package,$country]);
+        if(!$rows&&$country!=='')$rows=$this->db->all("SELECT * FROM renewal_plans WHERE tenant_id=? AND package_id=? AND country=''",[$s['tenant_id'],$package]);
         // An explicitly disabled country price must not fall through to a
         // default currency/price that the reseller did not enable there.
         $rows=array_values(array_filter($rows,static fn($r)=>(bool)$r['enabled']));
         if(count($rows)!==1)return null; // Never choose the cheapest duplicate.
-        $p=$rows[0];$current=$eligibility['plans'][0]??null;
+        $p=$rows[0];$current=null;foreach($eligibility['plans'] as $candidate)if($candidate['id']===$package)$current=$candidate;
         if(!$current||$current['id']!==(int)$p['package_id']||!$current['funded'])return null;
+        if($conversion&&!hash_equals($conversion['plan_fingerprint'],$current['fingerprint']))return null;
         // A reseller prices an offered PACKAGE ID, not an invented frozen plan.
         // Fresh panel terms/cost become the invoice snapshot at checkout.
-        return ['id'=>$p['id'],'package_id'=>$current['id'],'name'=>$current['name'],'revision'=>(int)$p['revision'],'package_fingerprint'=>$current['fingerprint'],'package_snapshot'=>$current,'currency'=>$p['currency'],'currency_exponent'=>RampexPaymentVerifier::exponent($p['currency']),'amount_minor'=>(int)$p['amount_minor'],'duration'=>$current['duration'],'period'=>$current['period'],'max_connections'=>$current['max_connections']];
+        return ['id'=>$p['id'],'package_id'=>$current['id'],'name'=>$current['name'],'revision'=>(int)$p['revision'],'package_fingerprint'=>$current['fingerprint'],'package_snapshot'=>$current,'kind'=>$trial?'trial_conversion':'renewal','trial_conversion'=>$conversion,'currency'=>$p['currency'],'currency_exponent'=>RampexPaymentVerifier::exponent($p['currency']),'amount_minor'=>(int)$p['amount_minor'],'duration'=>$current['duration'],'period'=>$current['period'],'max_connections'=>$current['max_connections']];
     }
     private function currentOrder(array $s):?array {
         // Timeouts alone do not retire links. Explicit provider handover or
@@ -220,10 +228,15 @@ final class RenewalPayments {
             $this->db->one('SELECT panel_id FROM panel_customers WHERE panel_id=? FOR UPDATE',[$s['line_id']]);
             if($old=$this->currentOrder($s)){$this->db->query('UPDATE renewal_sessions SET order_id=? WHERE id=?',[$old['id'],$s['id']]);return ['created'=>false,'order'=>$old];}
             if($connection['gateway']==='rampex'&&$email===null)throw new Problem(422,'Rampex requires an email address. Select Stripe or Square to continue without entering one here.');
+            if($plan['trial_conversion']){
+                $default=$this->settings->trialConversion($s['tenant_id']);
+                if(!$default['enabled']||$default['package_id']!==$plan['package_id']||$default['revision']!==$plan['trial_conversion']['default_revision']||!hash_equals($default['plan_fingerprint'],$plan['package_fingerprint']))throw new Problem(409,'The trial conversion default changed. Refresh before paying.');
+            }
             if(!$this->db->one('SELECT id FROM renewal_connections WHERE id=? AND tenant_id=? AND enabled=1 FOR UPDATE',[$connection['id'],$s['tenant_id']]))throw new Problem(409,'Merchant connection changed. Refresh before paying.');
             $snapshot=$this->db->one('SELECT * FROM renewal_plans WHERE id=? AND tenant_id=? FOR UPDATE',[$plan['id'],$s['tenant_id']]);
             if(!$snapshot||!(bool)$snapshot['enabled']||(int)$snapshot['revision']!==$plan['revision']||(int)$snapshot['package_id']!==$plan['package_id'])throw new Problem(409,'Current package price changed before checkout.');
             $snapshot['name']=$plan['name'];$snapshot['plan_fingerprint']=$plan['package_fingerprint'];$snapshot['package_snapshot']=json_encode($plan['package_snapshot'],JSON_THROW_ON_ERROR);
+            if($plan['trial_conversion'])$snapshot['trial_conversion']=$plan['trial_conversion'];
             $id=Database::id();
             $this->db->query('INSERT INTO renewal_orders (id,session_id,tenant_id,brand_id,reseller_id,line_id,primary_fingerprint,connection_id,merchant_id,plan_id,plan_snapshot,currency,amount_minor,email_cipher,expires_at,country) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE),?)',[$id,$s['id'],$s['tenant_id'],$s['brand_id'],$s['reseller_id'],$s['line_id'],$s['primary_fingerprint'],$connection['id'],$connection['merchant_id'],$plan['id'],json_encode($snapshot,JSON_THROW_ON_ERROR),$plan['currency'],$plan['amount_minor'],$this->secrets->encrypt($email??''),$s['country']]);
             $this->db->query('UPDATE renewal_orders SET quoted_expiry=? WHERE id=?',[$eligibility['expires_at'],$id]);
@@ -382,7 +395,9 @@ final class RenewalPayments {
                 }
                 $p=json_decode($o['plan_snapshot'],true,16,JSON_THROW_ON_ERROR);
                 if(!is_numeric($o['quoted_expiry']??null)||(int)$o['quoted_expiry']<1)throw new Problem(409,'Original invoice expiry revision is unavailable; retain this paid order for review.');
-                $r=$this->worker->renew(['operation_id'=>$o['id'],'brand_id'=>$o['brand_id'],'reseller_id'=>$o['reseller_id'],'line_id'=>$o['line_id'],'package_id'=>(int)$p['package_id'],'plan_fingerprint'=>$p['plan_fingerprint'],'merchant_id'=>$o['merchant_id'],'payment_link_id'=>$o['provider_link_id'],'primary_fingerprint'=>$o['primary_fingerprint'],'expected_expiry'=>(int)$o['quoted_expiry']]);
+                $spec=['operation_id'=>$o['id'],'brand_id'=>$o['brand_id'],'reseller_id'=>$o['reseller_id'],'line_id'=>$o['line_id'],'package_id'=>(int)$p['package_id'],'plan_fingerprint'=>$p['plan_fingerprint'],'merchant_id'=>$o['merchant_id'],'payment_link_id'=>$o['provider_link_id'],'primary_fingerprint'=>$o['primary_fingerprint'],'expected_expiry'=>(int)$o['quoted_expiry']];
+                if(isset($p['trial_conversion']))$spec+=['trial_conversion'=>true,'source_package_id'=>(int)$p['trial_conversion']['source_package_id']];
+                $r=$this->worker->renew($spec);
                 $this->db->query('UPDATE renewal_orders SET fulfilment_state=?,receipt=?,next_attempt_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 MINUTE) WHERE id=? AND lease_token=?',[$r['state'],json_encode($r,JSON_THROW_ON_ERROR),$o['id'],$lease]);
             }
         }catch(Problem $error){

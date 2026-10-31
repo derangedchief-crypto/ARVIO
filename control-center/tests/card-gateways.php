@@ -87,6 +87,13 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
         $reseller=$app->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$tenantA['id']])['panel_id'];
         $p=$worker->catalog($reseller)[0];$p['id']=777;$primary=str_repeat('e',64);
         $app->db->query('INSERT INTO renewal_simulated_targets (reseller_id,line_id,primary_fingerprint,expires_at,plans,package_id) VALUES (?,?,?,?,?,777)',[$reseller,$line,$primary,time()-120,json_encode([$p])]);
+        $conversion=in_array($behavior,['conversion','conversion_missing','conversion_changed','conversion_unfunded','conversion_terms_changed'],true);$withDefault=$conversion||$behavior==='paid_with_default';
+        if($conversion){$alternative=array_replace($p,['id'=>779,'name'=>'Not the configured conversion plan']);$app->db->query('UPDATE renewal_simulated_targets SET is_trial=1,package_id=776,plans=? WHERE reseller_id=? AND line_id=?',[json_encode([$alternative,$p]),$reseller,$line]);}
+        if($withDefault)$settings->saveTrialConversion($alpha,['enabled'=>$behavior!=='conversion_missing','package_id'=>$behavior==='paid_with_default'?778:777,'expected_revision'=>$settings->trialConversion($tenantA['id'])['revision']]);
+        if(in_array($behavior,['conversion_unfunded','conversion_terms_changed'],true)){
+            $changed=$p;if($behavior==='conversion_unfunded')$changed['funded']=false;else $changed['fingerprint']=str_repeat('9',64);
+            $app->db->query('UPDATE renewal_simulated_targets SET plans=? WHERE reseller_id=? AND line_id=?',[json_encode([$changed]),$reseller,$line]);
+        }
         $private=openssl_pkey_new(['private_key_type'=>OPENSSL_KEYTYPE_EC,'curve_name'=>'prime256v1']);$public=preg_replace('~-----[^\n]+-----|\s~','',openssl_pkey_get_details($private)['key']);$fingerprint=hash('sha256',base64_decode($public));
         $base=(new ControlCenter\RenewalSimulation($app->db,$c))->transport();
         $loginWorker=new ControlCenter\RenewalWorker($c,static function($action,$raw,$headers)use($base,$reseller,$line,$primary):string{
@@ -103,14 +110,19 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             openssl_sign(ControlCenter\RenewalPayments::loginSigningText($challenge['challenge'],$install,$package,$fingerprint,$identity,'CA'),$signature,$private,OPENSSL_ALGO_SHA256);
             if($behavior==='disabled_default'){$sq=$settings->connection($tenantA['id'],'square');$settings->setAvailability($alpha,['gateway'=>'square','connection_id'=>$sq['id'],'enabled'=>false,'expected_revision'=>$settings->availability($tenantA['id'])['square']['revision']]);}
             $opened=$payments->loginOpen(['installation_id'=>$install,'app_package'=>$package,'public_key'=>$public,'challenge'=>$challenge['challenge'],'identity'=>$identity,'signature'=>base64_encode($signature),'country'=>'CA'],$ip);
+            if(in_array($behavior,['conversion_missing','conversion_unfunded','conversion_terms_changed'],true)){same(false,$opened['available']);same('package_price_unavailable',$opened['reason']);return;}
             same(true,$opened['available']);same('CA',$opened['country']);same($behavior==='disabled_default'?'stripe':'square',$opened['gateway']);
             $token=$opened['session_token'];if($opened['gateway']!==$provider)$payments->selectRoute(['session_token'=>$token,'country'=>'CA','gateway'=>$provider]);
             $info=$payments->info($token);$price=$info['renewal'];same('CAD',$price['currency']);same(1000,$price['amount_minor']);same($provider,$info['gateway']);
-            $checkout=['session_token'=>$token,'price_id'=>$price['id'],'price_revision'=>$price['revision'],'package_fingerprint'=>$price['package_fingerprint']]+($behavior==='no_email'?[]:['email'=>'receipt@example.test']);
+            if($conversion){same('trial_conversion',$price['kind']);same(777,$price['package_id']);same(776,$price['trial_conversion']['source_package_id']);}
+            if($behavior==='paid_with_default'){same('renewal',$price['kind']);same(777,$price['package_id']);same(null,$price['trial_conversion']);}
+            $checkout=['session_token'=>$token,'price_id'=>$price['id'],'price_revision'=>$price['revision'],'package_fingerprint'=>$price['package_fingerprint']]+($behavior==='no_email'||$conversion?[]:['email'=>'receipt@example.test']);
             if($behavior==='no_email')problem(422,fn()=> $payments->checkout($checkout+['email'=>'invalid-email'],'127.0.0.67'));
+            if($conversion)problem(422,fn()=> $payments->checkout($checkout+['trial_conversion'=>true,'source_package_id'=>776],'127.0.0.67'));
             $order=$payments->checkout($checkout,'127.0.0.67')['order'];
             $o=$app->db->one('SELECT * FROM renewal_orders WHERE id=?',[$order['id']]);$connection=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$o['connection_id']]);
-            if($behavior==='no_email'){same(null,$records[$o['id']]['email']);same(false,$records[$o['id']]['email_supplied']);same('',$secrets->decrypt($o['email_cipher']));}
+            if($behavior==='no_email'||$conversion){same(null,$records[$o['id']]['email']);same(false,$records[$o['id']]['email_supplied']);same('',$secrets->decrypt($o['email_cipher']));}
+            if($behavior==='conversion_changed')$settings->saveTrialConversion($alpha,['enabled'=>true,'package_id'=>778,'expected_revision'=>$settings->trialConversion($tenantA['id'])['revision']]);
             $stripeStatus=static fn($o,$mode,$state='succeeded',$refund=0)=>['id'=>'cs_'.$o['id'],'client_reference_id'=>$o['id'],'metadata'=>['order_id'=>$o['id']],'amount_total'=>(int)$o['amount_minor'],'currency'=>strtolower($o['currency']),'livemode'=>$mode==='live','status'=>'complete','payment_status'=>'paid','payment_intent'=>['id'=>'pi_'.$o['id'],'status'=>$state,'amount_received'=>(int)$o['amount_minor'],'currency'=>strtolower($o['currency']),'metadata'=>['order_id'=>$o['id']],'livemode'=>$mode==='live','latest_charge'=>['paid'=>true,'captured'=>true,'amount_refunded'=>$refund,'payment_method_details'=>['type'=>'card']]]];
             $expiredOrder=null;
             if(in_array($behavior,['handover','rampex_handover','free_switch','rampex_switch'],true)){
@@ -197,6 +209,8 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             $payments->webhook($connection['id'],$raw,$signature);$payments->processOne();
             same($mode==='sandbox'?0:1,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$id])->fetchColumn());
             same(1,(int)$app->db->query('SELECT COUNT(*) FROM renewal_settlements WHERE order_id=?',[$id])->fetchColumn());
+            if($conversion&&$mode==='live'){$target=$app->db->one('SELECT package_id,is_trial FROM renewal_simulated_targets WHERE reseller_id=? AND line_id=?',[$reseller,$line]);same(777,(int)$target['package_id']);same(0,(int)$target['is_trial']);}
+            if($conversion&&$mode==='sandbox'){$target=$app->db->one('SELECT package_id,is_trial FROM renewal_simulated_targets WHERE reseller_id=? AND line_id=?',[$reseller,$line]);same(776,(int)$target['package_id']);same(1,(int)$target['is_trial']);}
             if($expiredOrder){
                 $old=$expiredOrder;$oldConnection=$app->db->one('SELECT * FROM renewal_connections WHERE id=?',[$old['connection_id']]);
                 $expiry=(int)$app->db->one('SELECT expires_at FROM renewal_simulated_targets WHERE reseller_id=? AND line_id=?',[$reseller,$line])['expires_at'];
@@ -208,6 +222,8 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
                 same(0,(int)$app->db->query('SELECT COUNT(*) FROM renewal_simulated_operations WHERE operation_id=?',[$old['id']])->fetchColumn());
             }
         } finally {
+            if(in_array($behavior,['conversion_unfunded','conversion_terms_changed'],true))$app->db->query('UPDATE renewal_simulated_targets SET plans=? WHERE reseller_id=? AND line_id=?',[json_encode([$p]),$reseller,$line]);
+            if($withDefault)$settings->saveTrialConversion($alpha,['enabled'=>false,'package_id'=>null,'expected_revision'=>$settings->trialConversion($tenantA['id'])['revision']]);
             if($behavior==='disabled_default'){$sq=$settings->connection($tenantA['id'],'square');$settings->setAvailability($alpha,['gateway'=>'square','connection_id'=>$sq['id'],'enabled'=>true,'expected_revision'=>$settings->availability($tenantA['id'])['square']['revision']]);}
             if(in_array($behavior,['handover','rampex_handover'],true)){$g=$behavior==='rampex_handover'?'rampex':'stripe';$active=$settings->connection($tenantA['id'],$g);$settings->setAvailability($alpha,['gateway'=>$g,'connection_id'=>$active['id'],'enabled'=>true,'expected_revision'=>$settings->availability($tenantA['id'])[$g]['revision']]);}
             $settings->setPolicy($owner,['enabled'=>false,'testing_only'=>true]);
@@ -259,6 +275,13 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
     $tests['Square with no payment note recovers a lost creation reply using its verified opaque order reference']=fn()=> $flow('square','live','998821','lost_reply');
     $tests['Stripe checkout accepts no website email and still verifies captured payment and renews once']=fn()=> $flow('stripe','live','998822','no_email');
     $tests['Square checkout accepts no website email and still verifies captured payment and renews once']=fn()=> $flow('square','live','998823','no_email');
+    $tests['verified expired trial converts only to the reseller default paid plan after captured payment']=fn()=> $flow('square','live','998824','conversion');
+    $tests['expired trial without configured paid conversion plan cannot obtain a checkout']=fn()=> $flow('square','live','998825','conversion_missing');
+    $tests['a changed reseller conversion default cannot alter the package on an already paid invoice']=fn()=> $flow('stripe','live','998826','conversion_changed');
+    $tests['normal paid renewals ignore a different configured trial-conversion default']=fn()=> $flow('square','live','998827','paid_with_default');
+    $tests['sandbox trial conversion never changes the real target or calls its renewal worker']=fn()=> $flow('square','sandbox','998828','conversion');
+    $tests['expired trial with an unfunded paid default cannot create a payment link']=fn()=> $flow('square','live','998829','conversion_unfunded');
+    $tests['changed paid conversion package terms require reseller confirmation before another checkout']=fn()=> $flow('square','live','998830','conversion_terms_changed');
     $tests['provider setup reserves its final webhook URL before credentials and retries cannot replace a completed setup']=function()use($app,$c,$alpha,$beta,$tenantA,$settings):void{
         $draft=$settings->prepareConnection($alpha,['gateway'=>'square']);
         same($draft,$settings->prepareConnection($alpha,['gateway'=>'square']));
@@ -383,6 +406,26 @@ function cardGatewayCases(array &$tests,ControlCenter\Application $app,ControlCe
             foreach([['id'=>'other_order'],['total_money'=>['amount'=>999,'currency'=>$o['currency']]],['total_money'=>['amount'=>(int)$o['amount_minor'],'currency'=>'USD']]] as $bad){$overrides[$path]=['order'=>array_replace($base,$bad)];problem(409,fn()=> $gateway->orderReference($c,$event));}
             foreach([['location_id'=>'OTHER_LOCATION'],['reference_id'=>'unrelated-shop-order']] as $unrelated){$overrides[$path]=['order'=>array_replace($base,$unrelated)];same(null,$gateway->orderReference($c,$event));}
         }finally{unset($overrides[$path]);}
+    };
+    $tests['trial conversion settings enforce reseller ownership valid paid catalogue and stale revision protection']=function()use($app,$settings,$alpha,$beta,$tenantA):void{
+        $before=$settings->trialConversion($tenantA['id']);$trials=$app->db->all('SELECT * FROM trial_reseller_defaults ORDER BY tenant_id');$prices=$app->db->all('SELECT * FROM renewal_plans ORDER BY id');
+        problem(404,fn()=> $settings->saveTrialConversion($beta,['tenant_id'=>$tenantA['id'],'enabled'=>true,'package_id'=>777,'expected_revision'=>$before['revision']]));
+        problem(409,fn()=> $settings->saveTrialConversion($alpha,['enabled'=>true,'package_id'=>2147483647,'expected_revision'=>$before['revision']]));
+        same($before,$settings->trialConversion($tenantA['id']));
+        $settings->saveTrialConversion($alpha,['enabled'=>true,'package_id'=>777,'expected_revision'=>$before['revision']]);
+        problem(409,fn()=> $settings->saveTrialConversion($alpha,['enabled'=>false,'package_id'=>null,'expected_revision'=>$before['revision']]));
+        $settings->saveTrialConversion($alpha,['enabled'=>false,'package_id'=>null,'expected_revision'=>$before['revision']+1]);
+        same($trials,$app->db->all('SELECT * FROM trial_reseller_defaults ORDER BY tenant_id'));same($prices,$app->db->all('SELECT * FROM renewal_plans ORDER BY id'));
+    };
+    $tests['a legacy renewal worker cannot enable trial conversions or change the stored default']=function()use($app,$c,$alpha,$tenantA,$settings,$secrets,$gateway):void{
+        $base=(new ControlCenter\RenewalSimulation($app->db,$c))->transport();
+        $legacy=new ControlCenter\RenewalWorker($c,static function($action,$raw,$headers)use($base):string{
+            $response=json_decode($base($action,$raw,$headers),true);if($action!=='status')return json_encode($response);
+            $p=json_decode($response['payload'],true);unset($p['trial_conversion']);$payload=json_encode($p);$h=[];foreach($headers as $line){[$k,$v]=explode(': ',$line,2);$h[$k]=$v;}
+            return json_encode(['payload'=>$payload,'signature'=>hash_hmac('sha256',"branded-renewal-result-v1\n".$h['X-Renewal-Timestamp']."\n".$h['X-Renewal-Nonce']."\n".$payload,str_repeat('a',64))]);
+        });
+        $legacySettings=new ControlCenter\RenewalSettings($app->db,$c,$app->management,$app->auth,$secrets,$gateway,$legacy);$before=$settings->trialConversion($tenantA['id']);
+        problem(409,fn()=> $legacySettings->saveTrialConversion($alpha,['enabled'=>true,'package_id'=>777,'expected_revision'=>$before['revision']]));same($before,$settings->trialConversion($tenantA['id']));
     };
     $tests['only exact merchant-scoped unpaid provider expiry may release an awaiting invoice']=static function():void{
         $o=['payment_state'=>'awaiting','fulfilment_state'=>'not_paid','merchant_id'=>'merchant','provider_link_id'=>'link','currency'=>'CAD','amount_minor'=>'1000','expires_at'=>'2020-01-01 00:00:00'];

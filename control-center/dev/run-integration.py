@@ -14,7 +14,7 @@ import shutil
 
 repository = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(); parser.add_argument('--browser', action='store_true'); parser.add_argument('--browser-only', action='store_true', help='UI development only: skip service tests; release validation uses --browser'); parser.add_argument('--browser-script',default='control-center/tests/browser.cjs',help='Local-only focused browser suite'); parser.add_argument('--keep-db', action='store_true'); args = parser.parse_args()
-state = Path(tempfile.mkdtemp(prefix='control-enrollment-tests-', dir='/tmp/opencode'))
+state = Path(tempfile.mkdtemp(prefix='control-enrollment-tests-', dir=os.environ.get('CONTROL_TEST_TMPDIR','/tmp/opencode')))
 state.chmod(0o700)
 environment = {**os.environ, 'CONTROL_DEV_DIR': str(state), 'CONTROL_TEST_SOCKET': str(state / 'database.sock')}
 with (state / 'startup.log').open('wb') as log:

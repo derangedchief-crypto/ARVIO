@@ -24,10 +24,12 @@ ROOT=Path(__file__).resolve().parent.parent
 sys.path.insert(0,str(ROOT/'reseller-auth-worker'))
 from adapter import RenewalAdapter
 from build_native import build
-from branded_renewals import RenewalOperations,RenewalRejected
+from branded_renewals import RenewalOperations,RenewalRejected,validate
 from renewal_packages import package_document
 
 SOCKET=os.environ.get('RENEWAL_TEST_SOCKET','')
+class ConversionOperations(RenewalOperations):
+    def validate_request(self,value):return validate(value,allow_trial_conversion=True)
 FUNCTIONS={'_utcnow','_from_ts','_add_months','_add_duration','_renewal_window','_log_credit_change','_credit_trigger_active','_set_credits','_lock_reseller_row','_lock_line_row','_parse_id_list','_reseller_package_scope','_package_allowed'}
 
 
@@ -98,6 +100,66 @@ class NativeMysqlTests(unittest.TestCase):
         first=self.run_operation();self.assertEqual('fulfilled',first['state']);self.assertEqual(first,self.run_operation())
         row=self.preserved();self.assertEqual(first['expires_at'],row['exp_date']);self.assertGreater(row['exp_date'],time.time());self.assertEqual(8,self.one('SELECT credits FROM users WHERE id=101')['credits'])
         logs=self.sql('SELECT * FROM users_credits_log');self.assertEqual(1,len(logs));self.assertTrue(logs[0]['note'].startswith('BRN1|'));self.assertEqual(-2,logs[0]['amount']);self.assertEqual(1,self.refreshes)
+    def trial(self):
+        self.sql("INSERT INTO users_packages VALUES (3,'Free trial',0,24,'hours',0,'[10]',1,'[2]',1,1,1)")
+        self.sql('UPDATE customers SET package_id=3,is_trial=1,duration=24,duration_period=\'hours\' WHERE id=999')
+        self.before=self.one('SELECT * FROM customers WHERE id=999')
+        p=package_document(self.one('SELECT * FROM users_packages WHERE id=8'))
+        return self.spec(package_id=8,plan_fingerprint=p['fingerprint'],trial_conversion=True,source_package_id=3)
+    def convert(self,spec):return ConversionOperations(self.state,self.adapter).request(spec)
+    def test_expired_trial_quotes_paid_catalogue_without_grants_or_trial_package(self):
+        self.trial();r=self.adapter.eligibility('101','999',hashlib.sha256(b'user\npass').hexdigest())
+        self.assertTrue(r['is_trial']);self.assertEqual(3,r['current_package_id']);self.assertEqual([7,8],[p['id'] for p in r['plans']]);self.untouched();self.assertEqual(0,self.refreshes)
+    def test_trial_conversion_changes_only_package_entitlements_once_and_charges_paid_credits(self):
+        spec=self.trial();receipt=self.convert(spec);self.assertEqual('fulfilled',receipt['state']);self.assertEqual(receipt,self.convert(spec))
+        row=self.one('SELECT * FROM customers WHERE id=999')
+        self.assertEqual(8,row['package_id']);self.assertEqual(0,row['is_trial']);self.assertEqual(1,row['activated']);self.assertEqual(1,row['max_connections']);self.assertEqual('[11]',row['bouquet'])
+        for k in ['username','password','activation_code','parent_pin','reseller_notes','admin_notes','allowed_outputs','enabled']:self.assertEqual(self.before[k],row[k],k)
+        self.assertEqual(5,self.one('SELECT credits FROM users WHERE id=101')['credits']);self.assertEqual(1,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n']);self.assertEqual(1,self.refreshes)
+        current=self.adapter.eligibility('101','999',hashlib.sha256(b'user\npass').hexdigest());self.assertFalse(current['is_trial']);self.assertEqual(8,current['current_package_id'])
+        with self.assertRaises(RenewalRejected):self.convert(dict(spec,operation_id='e'*32,payment_link_id='another'))
+        self.assertEqual(5,self.one('SELECT credits FROM users WHERE id=101')['credits'])
+    def test_paid_account_cannot_request_trial_conversion_and_trial_cannot_use_normal_renewal(self):
+        p=package_document(self.one('SELECT * FROM users_packages WHERE id=8'))
+        with self.assertRaises(RenewalRejected):self.convert(self.spec(package_id=8,plan_fingerprint=p['fingerprint'],trial_conversion=True,source_package_id=7))
+        self.untouched();self.sql('UPDATE customers SET is_trial=1 WHERE id=999');self.before=self.one('SELECT * FROM customers WHERE id=999')
+        with self.assertRaises(RenewalRejected):self.run_operation()
+        self.untouched()
+    def test_legacy_contract_rejects_conversion_fields_and_forged_source_is_rejected(self):
+        spec=self.trial()
+        with self.assertRaises(RenewalRejected):validate(spec)
+        with self.assertRaises(RenewalRejected):self.convert(dict(spec,source_package_id=7))
+        with self.assertRaises(RenewalRejected):self.convert(dict(spec,trial_conversion=False))
+        self.untouched()
+    def test_conversion_rechecks_source_expiry_target_fingerprint_and_funding_without_writes(self):
+        spec=self.trial()
+        for field,value in [('is_trial',0),('enabled',0),('exp_date',int(time.time())+600),('package_id',7)]:
+            self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(value,))
+            with self.assertRaises(RenewalRejected):self.convert(spec)
+            self.sql('UPDATE customers SET '+field+'=%s WHERE id=999',(self.before[field],));self.untouched()
+        self.sql('UPDATE users_packages SET credits=6 WHERE id=8')
+        with self.assertRaises(RenewalRejected):self.convert(spec)
+        self.sql('UPDATE users_packages SET credits=5 WHERE id=8');self.sql('UPDATE users SET credits=1 WHERE id=101')
+        with self.assertRaises(RenewalRejected):self.convert(spec)
+        self.assertEqual(self.before,self.one('SELECT * FROM customers WHERE id=999'));self.assertEqual(0,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n'])
+    def test_concurrent_trial_conversions_extend_and_charge_only_once(self):
+        spec=self.trial()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(lambda _:self.convert(spec),range(2)))
+        self.assertEqual(results[0],results[1]);self.assertEqual(5,self.one('SELECT credits FROM users WHERE id=101')['credits']);self.assertEqual(1,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n'])
+    def test_conversion_commit_lost_reply_and_refresh_repair_do_not_convert_or_charge_twice(self):
+        spec=self.trial()
+        class LostReply(RenewalAdapter):
+            def renew_once(self,*args):super().renew_once(*args);raise ConnectionError('Synthetic lost reply')
+        self.assertEqual('needs_review',ConversionOperations(self.state,LostReply(self.native)).request(spec)['state'])
+        expiry=self.one('SELECT exp_date FROM customers WHERE id=999')['exp_date'];self.ready=False
+        self.assertEqual('refresh_pending',self.convert(spec)['state']);self.ready=True;self.assertEqual('fulfilled',self.convert(spec)['state'])
+        self.assertEqual(expiry,self.one('SELECT exp_date FROM customers WHERE id=999')['exp_date']);self.assertEqual(5,self.one('SELECT credits FROM users WHERE id=101')['credits']);self.assertEqual(1,self.one('SELECT COUNT(*) AS n FROM users_credits_log')['n'])
+    def test_trial_conversion_rolls_back_entitlements_and_balance_when_journal_fails(self):
+        spec=self.trial()
+        class Rollback(RenewalAdapter):
+            def journal(self,*args):super().journal(*args);raise RuntimeError('Synthetic rollback')
+        self.assertEqual('needs_review',ConversionOperations(self.state,Rollback(self.native)).request(spec)['state']);self.untouched()
+        self.assertEqual('fulfilled',self.convert(spec)['state']);self.assertEqual(5,self.one('SELECT credits FROM users WHERE id=101')['credits'])
     def test_reported_empty_bouquet_offers_do_not_block_catalogue(self):
         for ident,duration,credits,connections in [(15,1,1,2),(16,1,3,4),(80,12,44,8)]:
             self.sql("INSERT INTO users_packages VALUES (%s,'Existing package',%s,%s,'months',%s,'[]',%s,'[2]',0,1,1)",(ident,credits,duration,duration,connections))

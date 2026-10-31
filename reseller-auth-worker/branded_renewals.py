@@ -30,8 +30,10 @@ class RenewalDefinitive(RenewalRejected):
     pass
 
 
-def validate(spec):
+def validate(spec,allow_trial_conversion=False):
     fields={'operation_id','brand_id','reseller_id','line_id','package_id','plan_fingerprint','merchant_id','payment_link_id','primary_fingerprint','current_package_only','expected_expiry'}
+    conversion=isinstance(spec,dict) and spec.get('trial_conversion') is True
+    if conversion and allow_trial_conversion:fields|={'trial_conversion','source_package_id'}
     if not isinstance(spec,dict) or set(spec)!=fields:raise RenewalRejected('Invalid renewal operation fields')
     if spec['current_package_only'] is not True:raise RenewalRejected('Current-package-only renewal contract is required')
     if type(spec['expected_expiry']) is not int or not 1<=spec['expected_expiry']<=int(time.time()):raise RenewalRejected('The original expired invoice revision is required')
@@ -40,6 +42,7 @@ def validate(spec):
     for field in ['reseller_id','line_id']:
         if not isinstance(spec[field],str) or not re.fullmatch('[1-9][0-9]{0,18}',spec[field]):raise RenewalRejected('Invalid verified panel identity')
     if type(spec['package_id']) is not int or not 1<=spec['package_id']<=2147483647:raise RenewalRejected('Invalid renewal plan')
+    if conversion and (type(spec['source_package_id']) is not int or not 1<=spec['source_package_id']<=2147483647):raise RenewalRejected('Invalid original trial package')
     for field in ['merchant_id','payment_link_id']:
         if not isinstance(spec[field],str) or not re.fullmatch('[A-Za-z0-9._:-]{1,200}',spec[field]):raise RenewalRejected('Invalid verified payment reference')
     return dict(spec)
@@ -104,8 +107,10 @@ class RenewalOperations:
             raise RenewalRejected('Renewal receipt does not match the original order')
         return {**expected,'expires_at':value['expires_at']}
 
+    def validate_request(self,value):return validate(value)
+
     def request(self,value):
-        spec=validate(value)
+        spec=self.validate_request(value)
         if getattr(self.panel,'capabilities',{})!={'atomic_renewal':1,'unique_payment_reference':1}:
             raise RenewalRejected('Existing worker needs its atomic renewal/payment guard first')
         with self.storage(spec['operation_id']) as (db,key):
