@@ -3,6 +3,7 @@
 const $ = id => document.getElementById(id);
 const state = { user: null, csrf: '', tenants: [], workspaceSelf: null, workspaceScope: '', toolWorkspace: null, epoch: 0, deviceTab: null, layoutEditors: new Map(), favouritesSelection: new Map(), sourceEditors: new Map(), preferenceEditors: new Map() };
 const siteVersion=document.querySelector('meta[name="control-version"]')?.content||'';
+if(siteVersion){const footer=document.querySelector('.sidebar-foot .subtle');if(footer)footer.textContent='Version '+siteVersion;}
 function checkSiteVersion(version){if(!siteVersion||!/^\d+\.\d+\.\d+$/.test(version||'')||version===siteVersion)return;const notice=$('site-update');if(!notice||!notice.hidden)return;notice.replaceChildren(el('span','The website has been updated. Reload to use the current workspace controls.'),button('Reload updated website',()=>{if(hasUnsentDrafts()&&!confirm('Reload and discard unsaved browser edits? Saved settings and app data are unaffected.'))return;location.reload();}));notice.hidden=false;}
 const requestKeys = new Map();
 let toastTimer;

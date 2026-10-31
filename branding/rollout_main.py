@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 
-from central_builder import Bridge, REPO, command
+from central_builder import Bridge, REPO, ToolFailure, command
 
 
 def platform(text):
@@ -52,7 +52,8 @@ def published_customer_source(run_id):
     return source,version,code
 
 
-def immutable_tag(tag, sha):
+def immutable_tag(tag,sha):
+    """Pre-publication source pin only; post-publication fanout never calls this."""
     path='repos/'+REPO+'/git/ref/tags/'+tag
     result=subprocess.run(['gh','api',path],capture_output=True,timeout=60)
     if result.returncode:
@@ -62,6 +63,12 @@ def immutable_tag(tag, sha):
     if actual.get('object',{}).get('sha')!=sha or actual.get('object',{}).get('type')!='commit':raise ValueError('Immutable main source tag conflict.')
 
 
+def verify_immutable_tag(tag,sha):
+    actual=gh_json('git/ref/tags/'+tag)
+    if actual.get('object',{}).get('sha')!=sha or actual.get('object',{}).get('type')!='commit':
+        raise ValueError('Customer publication must first pin the exact immutable branded source.')
+
+
 def main():
     os.umask(0o077)
     operator=os.environ.get('BRAND_OPERATOR_SHA','')
@@ -69,10 +76,12 @@ def main():
     if channel!='production':raise ValueError('Customer releases update production brands only.')
     if not re.fullmatch('[a-f0-9]{40}',operator):raise ValueError('Reviewed operator identity required.')
     if command(['git','rev-parse','HEAD']).strip()!=operator:raise ValueError('Operator checkout must match the protected source pin.')
+    print('Verifying completed customer publication.',flush=True)
     source,version,code=published_customer_source(os.environ.get('BRAND_CUSTOMER_RELEASE_RUN_ID',''))
     gh_json('contents/branding/central_builder.py?ref='+source)
     tag='brand-source-'+version+'-'+source
-    immutable_tag(tag,source)
+    print('Verifying immutable released-source tag.',flush=True)
+    verify_immutable_tag(tag,source)
     temp=Path(os.environ['RUNNER_TEMP'])
     key=temp/'brand-main-bridge-key';hosts=temp/'brand-main-known-hosts'
     try:
@@ -80,6 +89,7 @@ def main():
             with open(path,'x',opener=lambda p,f:os.open(p,f,0o600)) as stream:stream.write(value.rstrip()+'\n')
         os.environ['BRAND_BUILDER_SSH_KEY_FILE']=str(key);os.environ['BRAND_BUILDER_KNOWN_HOSTS_FILE']=str(hosts)
         bridge=Bridge();total=0
+        print('Submitting production branded queue batches.',flush=True)
         for _ in range(1000):
             result=bridge.call('fanout',{'source_sha':source,'workflow_ref':tag,'app_version':version,'version_code':code,**({'channel':'production'} if channel=='production' else {})})
             if set(result)!={'complete','queued'} or type(result['complete']) is not bool or type(result['queued']) is not int or not 0<=result['queued']<=100:raise ValueError('Invalid bounded fanout response.')
@@ -92,4 +102,5 @@ def main():
 
 if __name__=='__main__':
     try:main()
+    except ToolFailure as error:raise SystemExit('Brand fanout tool failure: '+error.category+' (exit '+str(error.code)+'); private output withheld.')
     except Exception:raise SystemExit('Main-to-brand fanout stopped safely; no unapproved rollout or private output.')

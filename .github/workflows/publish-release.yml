@@ -1,4 +1,4 @@
-name: Build Unpublished Customer Candidate
+name: Publish Customer Release
 
 # Builds the sideloadStaging APK (release-grade: R8 + resource shrinking +
 # baseline profile) and publishes it as a GitHub Release. This is the build
@@ -35,19 +35,26 @@ on:
         description: "What's new in this release (shown in the app's update dialog). Leave blank to auto-generate from commits."
         required: false
         type: string
+      confirmed_publication:
+        description: "Publish the customer APK and permit the approved reseller rollout. Leave OFF for a code-only merge."
+        required: true
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish-release:
-    name: Build customer APK artifact only (publication disabled)
+    if: github.ref == 'refs/heads/main' && inputs.confirmed_publication == true
+    name: Build and publish explicitly approved customer APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: 875bb03c7c2f376295252a235d578fe2b4355a89
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -69,6 +76,16 @@ jobs:
           echo "tag=v$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "Releasing version $VERSION_NAME as tag v$VERSION_NAME"
 
+      - name: Pin exact customer and branded core source before building
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 branding/prepare_customer_source.py
+
+      - name: Pin exact customer and branded core source before building
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 branding/prepare_customer_source.py
+
       - name: Prepare build configuration
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
@@ -76,6 +93,9 @@ jobs:
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          APP_ANON_KEY: ${{ secrets.APP_ANON_KEY }}
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+          TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           cp secrets.defaults.properties secrets.properties
@@ -95,6 +115,9 @@ jobs:
           set_secret SENTRY_DSN "${SENTRY_DSN}"
           set_secret SUPABASE_URL "${SUPABASE_URL}"
           set_secret SUPABASE_ANON_KEY "${SUPABASE_ANON_KEY}"
+          set_secret APP_ANON_KEY "${APP_ANON_KEY}"
+          set_secret TRAKT_CLIENT_ID "${TRAKT_CLIENT_ID}"
+          set_secret TRAKT_CLIENT_SECRET "${TRAKT_CLIENT_SECRET}"
 
           if [ -z "${TMDB_API_KEY}" ]; then
             echo "::warning::TMDB_API_KEY is not set — Trending/catalog rows will be empty."
@@ -130,13 +153,18 @@ jobs:
           keyPassword=${RELEASE_KEY_PASSWORD}
           EOF
 
+          certificate_sha=$(keytool -exportcert -keystore app/release.keystore -alias "$RELEASE_KEY_ALIAS" -storepass:env RELEASE_KEYSTORE_PASSWORD 2>/dev/null | sha256sum | cut -d ' ' -f 1)
+          test "$certificate_sha" = 3273d0b0294a689565ab4b0c8ef7e1887e2ca680240718f5521628b5c46328b7 || {
+            echo '::error::Signing certificate differs from the installed customer/reseller identity. Publication refused.'
+            exit 1
+          }
+
       - name: Build staging APK
         # `staging` = initWith(release): R8 full mode, resource shrinking,
         # baseline profile, isDebuggable=false. Picks up signingConfigs.release
         # automatically now that keystore.properties exists (see above step).
         run: >-
           ./gradlew :app:assembleSideloadStaging
-          -x :app:validateReleaseCloudSecrets
           --no-daemon
           --stacktrace
 
@@ -169,5 +197,18 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-      # Staging-only compatibility run: artifact upload is the final operation.
-      # No release creation and no repository write permission.
+      - name: Recheck frozen source and customer tag before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 branding/prepare_customer_source.py --verify
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Extreme TV ${{ steps.version.outputs.name }}
+          body: ${{ github.event.inputs.release_notes || format('Automated release build from {0}.', github.ref_name) }}
+          draft: false
+          prerelease: false
+          files: ${{ steps.apk.outputs.path }}

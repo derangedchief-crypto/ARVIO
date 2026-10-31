@@ -50,7 +50,8 @@ jobs:
     timeout-minutes: 30
     environment: brand-build-only
     permissions:
-      contents: write
+      contents: read
+      actions: read
     steps:
       - name: Require owner-pinned trusted operator source
         env:
