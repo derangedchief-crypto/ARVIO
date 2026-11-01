@@ -14,19 +14,27 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class DetailsInitializationTest {
     @Test fun streamingGraphIsDeferredOffNavigationThreadAndScrapersStayLazy()=runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val store=ViewModelStore()
+        val releaseConstruction=CountDownLatch(1)
         try {
             val navigationThread=Thread.currentThread()
             var constructedOn:Thread?=null
             val stream=mockk<StreamRepository>()
             every { stream.extremeCloudAccess } returns flowOf(true)
             val streams=mockk<dagger.Lazy<StreamRepository>>()
-            every { streams.get() } answers { constructedOn=Thread.currentThread();stream }
+            every { streams.get() } answers {
+                constructedOn=Thread.currentThread()
+                assertNotSame(navigationThread,constructedOn)
+                assertTrue("Provider construction was not released",releaseConstruction.await(10,TimeUnit.SECONDS))
+                stream
+            }
             val plugins=mockk<dagger.Lazy<PluginManager>>()
             val media=mockk<MediaRepository>()
             every { media.episodeRatingsUpdated } returns MutableSharedFlow()
@@ -36,11 +44,14 @@ class DetailsInitializationTest {
                 animeMapper=mockk(),tmdbApi=mockk(),watchHistoryRepository=mockk(),
                 watchlistRepository=mockk(),cloudSyncRepository=mockk(),launcherContinueWatchingRepository=mockk())
             store.put("details",vm)
-            verify(exactly=0){streams.get()};verify(exactly=0){plugins.get()}
+            // Eager sharing may legitimately start IO before this assertion.
+            // It must never wait for provider construction on navigation's thread.
+            verify(exactly=0){plugins.get()}
+            releaseConstruction.countDown()
             runCurrent()
             val allowed=withContext(Dispatchers.Default){withTimeout(5000){vm.canSearchExtremeCloud.first{it}}}
-            assertTrue(allowed);assertNotSame(navigationThread,constructedOn)
+            assertTrue(allowed);assertNotNull(constructedOn);assertNotSame(navigationThread,constructedOn)
             verify(exactly=1){streams.get()};verify(exactly=0){plugins.get()}
-        }finally{store.clear();runCurrent();Dispatchers.resetMain()}
+        }finally{releaseConstruction.countDown();store.clear();runCurrent();Dispatchers.resetMain()}
     }
 }
