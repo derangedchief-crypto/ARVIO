@@ -19,6 +19,7 @@ import threading
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from zipfile import ZipFile
 
 REPO = 'derangedchief-crypto/ARVIO'
 ANDROID = '{http://schemas.android.com/apk/res/android}'
@@ -243,6 +244,12 @@ def sdk_tool(kind):
     return str(sorted(tools, key=lambda p: [int(n) for n in re.findall(r'\d+', str(p))])[-1])
 
 
+def verify_network_resources(entries):
+    # OkHttp 4 uses a classpath gzip; OkHttp 5 Android uses an asset list.
+    if not {'okhttp3/internal/publicsuffix/publicsuffixes.gz','assets/PublicSuffixDatabase.list'}.intersection(entries):
+        raise ValueError('APK is missing the public suffix database required for network hostname policy.')
+
+
 def verify_apk(apk, expected, run=command):
     if not apk.is_file() or apk.is_symlink() or not 1024 <= apk.stat().st_size <= 536870912:
         raise ValueError('Invalid or oversized APK artifact.')
@@ -250,6 +257,8 @@ def verify_apk(apk, expected, run=command):
     verify_signer(run([sdk_tool('apksigner'), 'verify', '--verbose', '--print-certs', str(apk)]), expected['signer_sha256'])
     print('Builder checkpoint: verifying APK package and version.', flush=True)
     manifest_identity(run([sdk_tool('apkanalyzer'), 'manifest', 'print', str(apk)]), expected)
+    with ZipFile(apk) as archive:
+        verify_network_resources([item.filename for item in archive.infolist() if item.file_size>0])
     return {'apk_sha256': digest(apk), 'apk_size_bytes': apk.stat().st_size}
 
 

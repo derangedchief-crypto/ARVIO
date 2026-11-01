@@ -7,14 +7,16 @@ import subprocess
 import sys
 from zipfile import ZipFile
 from rollout_main import platform
+from central_builder import verify_network_resources
 
 SIGNER='3273d0b0294a689565ab4b0c8ef7e1887e2ca680240718f5521628b5c46328b7'
 
 def verify(version,code,badging,certificates,entries):
+    verify_network_resources(entries)
     package=re.search(r"^package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'",badging,re.M)
     if not package or package[1]!='com.arvio.tv.beta' or int(package[2])!=code or package[3]!=version+'-beta':
         raise ValueError('Official customer package/version differs from its installed update identity')
-    sdk=re.search(r"^sdkVersion:'(\d+)'",badging,re.M)
+    sdk=re.search(r"^(?:sdkVersion|minSdkVersion):'(\d+)'",badging,re.M)
     if not sdk or int(sdk[1])!=26:raise ValueError('Customer update differs from the approved Android 8+ baseline')
     signers={s.lower() for s in re.findall(r'certificate SHA-256 digest: ([a-fA-F0-9]{64})',certificates)}
     if signers!={SIGNER}:raise ValueError('Official APK certificate differs from the installed signer')
@@ -31,7 +33,7 @@ def main():
     if tools is None:raise ValueError('APK inspection tools are unavailable')
     badging=subprocess.check_output([str(tools/'aapt2'),'dump','badging',str(apk)],text=True)
     cert=subprocess.check_output([str(tools/'apksigner'),'verify','--print-certs',str(apk)],text=True)
-    with ZipFile(apk) as z:verify(*identity,badging,cert,z.namelist())
+    with ZipFile(apk) as z:verify(*identity,badging,cert,[item.filename for item in z.infolist() if item.file_size>0])
     print('Official APK package, increasing source version, installed signer and ARM/SDK support verified.')
 
 if __name__=='__main__':

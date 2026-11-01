@@ -72,7 +72,7 @@ class DeviceManagementAgent @Inject constructor(
 
     fun onInteraction() { lastInteraction = SystemClock.elapsedRealtime() }
     fun checkInNow() {
-        val current=active ?: return
+        val current=active ?: run { wake.trySend(Unit); return }
         scope.launch {
             try { change(current) { it.copy(unmanagedUntilMs = 0) }; wake.trySend(Unit) }
             catch (cancelled: CancellationException) { throw cancelled }
@@ -133,12 +133,20 @@ class DeviceManagementAgent @Inject constructor(
                     _state.value = preparingManagementAccount(previous, sameAccount)
                     if (sameAccount) previous.policy else null
                 }
-                try {
+                runManagementSessionWithRetry(
+                    onFailure = {
+                        // Preserve known restrictions; never clear customer stores
+                        // or recreate identity to work around unavailable state.
+                        _state.value = _state.value.copy(checkingLocalState = false, status = "Management key/state unavailable")
+                    },
+                    waitForRetry = { waitForNextCheckIn(15_000) },
+                ) {
                     val key = vault.publicKey(account.scope)
                     val fingerprint = managementHash(key)
                     var saved = vault.load(account.scope) ?: ManagementSession(account.scope, newInstallation())
                     if(saved.catalogSecret?.matches(Regex("[a-f0-9]{64}"))!=true)saved=saved.copy(catalogSecret=managementHash(UUID.randomUUID().toString()+UUID.randomUUID().toString()))
-                    if (knownPolicy in setOf("suspended", "blocked", "removed")) saved = saved.copy(policy = knownPolicy)
+                    val retainedPolicy=_state.value.policy?.takeIf { it in setOf("suspended", "blocked", "removed") } ?: knownPolicy
+                    saved=preserveObservedManagementRestriction(saved,retainedPolicy)
                     if (saved.keyFingerprint.isNotEmpty() && saved.keyFingerprint != fingerprint) {
                         // A lost signing key cannot silently reuse another identity.
                         // Keep known restrictions until another owner-approved enrollment.
@@ -165,10 +173,6 @@ class DeviceManagementAgent @Inject constructor(
                             waitForNextCheckIn((10_000L shl (failures - 1)).coerceAtMost(300_000) + Random.nextLong(0, 3000))
                         }
                     }
-                } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) {
-                    // No plaintext fallback and no clearing customer/profile stores.
-                    _state.value = _state.value.copy(checkingLocalState = false, status = "Management key/state unavailable")
                 }
             }
         }
@@ -215,7 +219,7 @@ class DeviceManagementAgent @Inject constructor(
             when (result.getString("status")) {
                 "pending" -> {
                     if(result.optString("recovery_state").isNotBlank()){
-                        current.status="Checking previous device identity"
+                        current.status=managementRecoveryStatus(result.optString("recovery_state"))
                         current.heartbeat=300
                         if(result.optBoolean("recovery_retry"))change(current){it.copy(requestId=null,pollToken=null)}
                     }else { current.status = "Awaiting provider approval"; current.heartbeat = 60 }
@@ -225,7 +229,8 @@ class DeviceManagementAgent @Inject constructor(
                     val id = result.getString("device_id").also { require(it.matches(Regex("[a-f0-9]{32}"))) }
                     val token = result.getString("credential").also { require(it.matches(Regex("[a-f0-9]{64}"))) }
                     val expiry = parseManagementTime(result.getString("credential_expires_at"))
-                    change(current) { it.copy(deviceId = id, credential = token, credentialExpiresAtMs = expiry) }
+                    change(current) { approvedRecoveryPolicy(it.copy(deviceId = id, credential = token, credentialExpiresAtMs = expiry),
+                        result.getString("status"),result.optString("recovery_state"),result.optString("recovery_policy")) }
                     confirm(current)
                 }
                 else -> error("Unknown enrollment status")

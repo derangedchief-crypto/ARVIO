@@ -10486,12 +10486,7 @@ private fun InputModal(
 
     fun showKeyboardFor(index: Int) {
         val edit = editTextRefs.getOrNull(index) ?: return
-        val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        edit.post {
-            edit.requestFocus()
-            val shown = imm?.showSoftInput(edit, InputMethodManager.SHOW_IMPLICIT) ?: false
-            if (!shown) imm?.showSoftInput(edit, InputMethodManager.SHOW_FORCED)
-        }
+        com.arflix.tv.ui.components.showEditorKeyboard(edit)
     }
 
     LaunchedEffect(title, fields.size) {

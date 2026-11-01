@@ -157,21 +157,12 @@ object OkHttpProvider {
     val dns: Dns = object : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
             val provider = selectedDnsProvider
-            return try {
-                selectedDns(provider).lookup(hostname)
-            } catch (selectedFailure: UnknownHostException) {
-                if (provider == AppDnsProvider.SYSTEM) {
-                    throw selectedFailure
-                }
-
-                try {
-                    val fallback = systemDns.lookup(hostname)
-                    Log.w(TAG, "DNS provider=$provider failed for $hostname, using system DNS fallback")
-                    fallback
-                } catch (_: UnknownHostException) {
-                    throw selectedFailure
-                }
-            }
+            return lookupDnsWithFallback(provider != AppDnsProvider.SYSTEM,
+                selected = { selectedDns(provider).lookup(hostname) },
+                system = {
+                    Log.w(TAG, "Custom DNS unavailable; using system DNS fallback")
+                    systemDns.lookup(hostname)
+                })
         }
     }
 

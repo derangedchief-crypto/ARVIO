@@ -489,8 +489,10 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setDiagnosticsSharingEnabled(enabled: Boolean) {
-        DiagnosticsManager.setReportingEnabled(context, enabled)
-        _uiState.value = _uiState.value.copy(diagnosticsSharingEnabled = enabled)
+        viewModelScope.launch(Dispatchers.IO) {
+            DiagnosticsManager.setReportingEnabled(context, enabled)
+            _uiState.value = _uiState.value.copy(diagnosticsSharingEnabled = enabled)
+        }
     }
 
     private fun loadSettings() {

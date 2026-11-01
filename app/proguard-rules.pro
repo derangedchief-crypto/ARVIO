@@ -74,6 +74,8 @@
 -keepattributes Exceptions
 
 # OkHttp platform used only on JVM and when Conscrypt dependency is available
+# Public suffix implementations can locate their resource relative to this name.
+-keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
 -dontwarn okhttp3.internal.platform.**
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**

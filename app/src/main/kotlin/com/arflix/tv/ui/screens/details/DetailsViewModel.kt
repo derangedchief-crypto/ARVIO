@@ -48,6 +48,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
@@ -202,11 +205,11 @@ class DetailsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val mediaRepository: MediaRepository,
     private val mdbListRepository: MdbListRepository,
-    private val pluginManager: PluginManager,
+    private val pluginManagerProvider: dagger.Lazy<PluginManager>,
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
     private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
-    private val streamRepository: StreamRepository,
+    private val streamRepositoryProvider: dagger.Lazy<StreamRepository>,
     private val animeMapper: AnimeMapper,
     private val tmdbApi: TmdbApi,
     private val watchHistoryRepository: WatchHistoryRepository,
@@ -214,6 +217,11 @@ class DetailsViewModel @Inject constructor(
     private val cloudSyncRepository: CloudSyncRepository,
     private val launcherContinueWatchingRepository: LauncherContinueWatchingRepository
 ) : ViewModel() {
+
+    // Creating a details destination must not eagerly construct the scraper/
+    // streaming graph on Compose's main-thread navigation/measure path.
+    private val pluginManager: PluginManager by lazy { pluginManagerProvider.get() }
+    private val streamRepository: StreamRepository by lazy { streamRepositoryProvider.get() }
 
     companion object {
         private const val TAG = "DetailsViewModel"
@@ -225,7 +233,9 @@ class DetailsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(DetailsUiState())
     val uiState: StateFlow<DetailsUiState> = _uiState.asStateFlow()
-    val canSearchExtremeCloud = streamRepository.extremeCloudAccess.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val canSearchExtremeCloud = flow { emitAll(streamRepository.extremeCloudAccess) }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private var currentMediaType: MediaType = MediaType.MOVIE
     private var currentMediaId: Int = 0
