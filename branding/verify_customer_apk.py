@@ -16,7 +16,7 @@ def verify(version,code,badging,certificates,entries):
     package=re.search(r"^package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'",badging,re.M)
     if not package or package[1]!='com.arvio.tv.beta' or int(package[2])!=code or package[3]!=version+'-beta':
         raise ValueError('Official customer package/version differs from its installed update identity')
-    sdk=re.search(r"^sdkVersion:'(\d+)'",badging,re.M)
+    sdk=re.search(r"^(?:sdkVersion|minSdkVersion):'(\d+)'",badging,re.M)
     if not sdk or int(sdk[1])!=26:raise ValueError('Customer update differs from the approved Android 8+ baseline')
     signers={s.lower() for s in re.findall(r'certificate SHA-256 digest: ([a-fA-F0-9]{64})',certificates)}
     if signers!={SIGNER}:raise ValueError('Official APK certificate differs from the installed signer')

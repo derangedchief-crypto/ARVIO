@@ -7,6 +7,10 @@ class CustomerApkIdentityTests(unittest.TestCase):
         self.cert='Signer #1 certificate SHA-256 digest: '+policy.SIGNER
         self.entries=['lib/armeabi-v7a/decoder.so','lib/arm64-v8a/decoder.so','assets/PublicSuffixDatabase.list']
     def test_official_identity_is_accepted(self):policy.verify('2.0.130',446,self.badging,self.cert,self.entries)
+    def test_new_aapt_min_sdk_label_has_identical_strict_baseline(self):
+        modern=self.badging.replace('sdkVersion:','minSdkVersion:')
+        policy.verify('2.0.130',446,modern,self.cert,self.entries)
+        with self.assertRaises(ValueError):policy.verify('2.0.130',446,modern.replace("'26'","'27'"),self.cert,self.entries)
     def test_brand_testing_base_or_wrong_version_cannot_become_a_customer_update(self):
         for old,new in [('com.arvio.tv.beta','com.extreme.brand.b'+'a'*32),('com.arvio.tv.beta','com.arvio.tv.test'),('com.arvio.tv.beta','com.arvio.tv'),('446','445'),('2.0.130-beta','2.0.129-beta')]:
             with self.assertRaises(ValueError):policy.verify('2.0.130',446,self.badging.replace(old,new),self.cert,self.entries)

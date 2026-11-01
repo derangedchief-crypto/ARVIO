@@ -52,8 +52,8 @@ def main():
     if existing.returncode==0 or '(HTTP 404)' not in existing.stderr:
         raise ValueError('Release already exists or lookup unavailable; no replacement/retry authorized.')
     active=json.loads(gh('run','list','--repo',REPO,'--workflow','publish-release.yml','--limit','100','--json','status,headSha,createdAt'))
-    if any(r['headSha']==args.expected_main and r['status']!='completed' for r in active):
-        raise ValueError('Publication already queued/running; do not dispatch twice.')
+    if any(r['headSha']==args.expected_main for r in active):
+        raise ValueError('Publication was already dispatched for this source; inspect/reconcile instead of automatically retrying.')
     # Recheck time and source at the final mutation; workflow enforces source too.
     if not allowed_time(datetime.now(timezone.utc)) or json.loads(gh('api','repos/'+REPO+'/git/ref/heads/main'))['object']['sha']!=args.expected_main:
         raise ValueError('Publication time/source changed during preflight.')
