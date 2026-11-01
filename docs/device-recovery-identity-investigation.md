@@ -68,6 +68,12 @@ signed proofs, poll tokens, credential ciphertext, private keys or passwords.
 
 ## Delivery boundary
 
+Validation: 90 management tests pass with zero failures/errors/skips, including
+four vault regressions and two recovery-status cases. Official customer-variant
+Kotlin compilation also passes. Before the patch, both interrupted-state cases
+failed while genuine first enrollment passed. These are synthetic regressions,
+not evidence collected from the customer's device or signed in-place acceptance.
+
 Source-only fix for review. No live website update, worker restart, APK publication
 or customer rollout. Existing installed 2.0.126 apps do not acquire this reader/UI
 fix until a separately approved signed in-place app update. Keep production
