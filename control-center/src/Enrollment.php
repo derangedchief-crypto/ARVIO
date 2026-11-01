@@ -286,6 +286,7 @@ final class Enrollment
                 if($existing['customer_id']!==$customer['id']) throw new Problem(409,'This enrollment is already assigned to another customer.');
                 return $existing;
             }
+            if(!empty($row['recovery_state']))throw new Problem(409,'This is a recovery hold, not a new-device assignment. Review legacy recovery or the existing device restriction.');
             $tenant=$this->management->tenant($actor,$customer['tenant_id'],true);
             if($tenant['status']!=='active') throw new Problem(409,'This reseller is suspended.');
             if(!$row['device_id']&&!$this->db->one('SELECT panel_id FROM panel_resellers WHERE panel_id=? AND tenant_id=?',[$row['panel_reseller_id'],$tenant['id']]))throw new Problem(409,'Only requests from a verified linked reseller can be approved in that workspace.');

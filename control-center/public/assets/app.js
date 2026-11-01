@@ -850,7 +850,8 @@ async function enrollments(epoch) {
         const a = el('div', null, 'actions');
         if (r.status !== 'approved') {
           if(r.status==='pending'&&r.recovery_state==='unidentified')a.append(button('Review recovery',()=>reviewLegacyRecovery(r,()=>load(page)).catch(e=>toast(e.message))));
-          else a.append(button('Approve / assign', () => approveEnrollment(r).catch(e => toast(e.message))));
+          else if(!r.recovery_state)a.append(button('Approve / assign', () => approveEnrollment(r).catch(e => toast(e.message))));
+          else if(r.device_id)a.append(button('View previous device',()=>{location.hash='device/'+r.device_id;}));
           if (r.status === 'pending') a.append(button('Reject', async () => {
             if (!confirm('Reject this management enrollment request? This does not erase the app’s saved data or change its IPTV activation.')) return;
             try { await api('/api/enrollments/' + r.id + '/reject', {}); await load(page); } catch (e) { toast(e.message); }

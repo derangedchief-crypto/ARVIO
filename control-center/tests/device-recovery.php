@@ -112,6 +112,7 @@ function deviceRecoveryCases(array &$tests,ControlCenter\Application $app,Contro
         $pending=$register($b,$hint);$id=$pending['request_id'];$total=$count();
         problem(403,fn()=> $recovery->previewLegacy($other,$id));
         $before=$app->db->one('SELECT * FROM devices WHERE id=?',[$old['device_id']]);
+        problem(409,fn()=> $app->enrollment->approve($owner,$id,['customer_id'=>$before['customer_id']]));same($total,$count());
         $preview=$recovery->previewLegacy($owner,$id);same($old['device_id'],$preview['device_id']);
         check(!isset($preview['credential'])&&!isset($preview['poll_token'])&&!isset($preview['hint_hash']));
         same($before,$app->db->one('SELECT * FROM devices WHERE id=?',[$old['device_id']]));
