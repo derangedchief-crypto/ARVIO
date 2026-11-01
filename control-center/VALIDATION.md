@@ -1,5 +1,28 @@
 # Control Center validation
 
+## 0.37.0 recovery hardening
+
+Android validation passes 1,042 unit tests (zero failures/errors, one skipped),
+including all 95 management cases, and official customer-variant Kotlin
+compilation. Regressions cover interrupted atomic identity state, startup retries
+and lifecycle cancellation, retained restrictions and applying validated recovered
+policy without waiting for a second network response. These are synthetic checks,
+not signed in-place acceptance on the customer's physical device.
+
+Website validation passes 338 isolated service cases and four owner-recovery
+browser checks. The broad browser workflow run passes 68 checks; its accompanying
+service snapshot had 337 cases before the last guard test was added. Five isolated
+0.37 installer contracts cover exact-file scope, private/old-asset preservation,
+reinstallation/conflicts, rollback, unsafe paths and pre-install PHP lint refusal.
+Reproducible update package/manifest checks pass. No live customer records, worker
+services, billing configuration, APKs or updater feeds were changed by validation.
+
+The held recovery incident is resolved server-side based on owner-supplied
+approved/recovered/confirmed records. Its next-day enrollment timing has not been
+fully explained by available historical logs. This release hardens independently
+confirmed failure modes and adds safe owner recovery; it is not a claim of zero
+future failures or proof that interrupted saving caused this particular reset.
+
 ## 0.36.0 main promotion and update-safety acceptance
 
 The combined promotion passes 335 isolated website/service cases; 68 full browser
