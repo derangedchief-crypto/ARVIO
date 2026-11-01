@@ -25,6 +25,33 @@ are needed before claiming that the retry loop stopped or why.
 
 ## Reproduced defect and prevention
 
+### Subsequent owner-provided history
+
+The owner subsequently confirmed that app data had been wiped after update
+problems, then the customer logged back in and playback initially worked. The
+read-only historical comparison shows the same account/model/Android version
+but a different signing key. A data reset explains a fresh management session
+and key; the interrupted-save defect alone does not explain key replacement.
+
+The delayed-lockout mechanism is visible in the code: management publishes local
+state with no policy for a new session, independently of successful IPTV login;
+network/enrollment unavailability is informational. A later authenticated
+registration/poll response for an unidentified historical record supplies
+`recovery_policy=suspended`. The agent persists that synthetic recovery hold and
+the gate replaces playback. Therefore working playback after re-login was not
+proof of completed device enrollment. The exact duration/reason for delayed
+registration still requires endpoint/lifecycle evidence; do not invent a token
+expiry, server outage or a second identity reset after playback resumed.
+
+This exposes a legacy-reset migration/UX gap: the old record had no hint, so
+fresh account proof plus a new key could not establish physical-device continuity.
+The server's safety hold prevents guessing but the app misrepresents it as a
+short automatic reconnection. PR #13 addresses the separate atomic-file defect
+and honest retry/status UI, not a complete legacy-reset recovery workflow.
+Prevention must also make pending enrollment explicit after re-login, verify
+signed hint backfill on existing installations, and provide scoped audited
+owner recovery for legacy records without weakening real device restrictions.
+
 ManagementVault.load checked only AtomicFile.baseFile.exists before readFully.
 On Android versions using legacy AtomicFile backup replacement, a process death
 can leave the old valid record only in `.bak`. The early check skipped Android's
