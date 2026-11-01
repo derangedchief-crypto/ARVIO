@@ -44,6 +44,7 @@ try {
         $html=preg_replace('~(/assets/[^" ?]+)\?v=[0-9.]+~','${1}?v='.$version,$html);
         $html=preg_replace('~(<meta name="control-version" content=")[^"]*~','${1}'.$version,$html);
         $html=preg_replace('~Device management · [0-9.]+~','Device management · '.$version,$html);
+        $html=preg_replace('~Version [0-9.]+(?=</span>)~','Version '.$version,$html);
         echo $html;exit;
     }
     if (!$config->configured()) {

@@ -3,6 +3,7 @@
 const $ = id => document.getElementById(id);
 const state = { user: null, csrf: '', tenants: [], workspaceSelf: null, workspaceScope: '', toolWorkspace: null, epoch: 0, deviceTab: null, layoutEditors: new Map(), favouritesSelection: new Map(), sourceEditors: new Map(), preferenceEditors: new Map() };
 const siteVersion=document.querySelector('meta[name="control-version"]')?.content||'';
+if(siteVersion){const footer=document.querySelector('.sidebar-foot .subtle');if(footer)footer.textContent='Version '+siteVersion;}
 function checkSiteVersion(version){if(!siteVersion||!/^\d+\.\d+\.\d+$/.test(version||'')||version===siteVersion)return;const notice=$('site-update');if(!notice||!notice.hidden)return;notice.replaceChildren(el('span','The website has been updated. Reload to use the current workspace controls.'),button('Reload updated website',()=>{if(hasUnsentDrafts()&&!confirm('Reload and discard unsaved browser edits? Saved settings and app data are unaffected.'))return;location.reload();}));notice.hidden=false;}
 const requestKeys = new Map();
 let toastTimer;
@@ -68,7 +69,22 @@ function presentTrialSections(main){
   const nav=el('nav',null,'trial-sections');nav.setAttribute('aria-label','Trial sections');for(const[id,label,suffix]of [['contacts','Contacts','/contacts'],['settings','Trial settings',''],...(state.user.role==='owner'?[['approvals','Package approvals','/approvals']]:[])]){const a=el('a',label);a.href='#'+base+suffix;if(chosen===id){a.classList.add('active');a.setAttribute('aria-current','page');}nav.append(a);}const picker=main.querySelector(':scope>.workspace-picker');if(picker)picker.after(nav);else main.querySelector('.page-heading')?.after(nav);
   for(const p of main.querySelectorAll(':scope>.panel')){const title=p.querySelector('h2')?.textContent||'';if(p.classList.contains('trial-global-control')){p.hidden=chosen==='contacts';continue;}if(p.hasAttribute('aria-label')&&p.getAttribute('aria-label')==='Trial status'){p.classList.add('trial-status');p.hidden=chosen==='contacts';continue;}const type=title==='Trial contacts'?'contacts':['Global approved trial packages','Trial access','Admin-approved trial plans'].includes(title)?'approvals':'settings';const error=[...p.querySelectorAll('.error')].some(n=>!n.hidden&&n.textContent.trim());p.hidden=chosen!==type&&!error;}
 }
-function boundedOptions(parent,rows,label){const area=el('div',null,'option-browser'),search=el('input');search.type='search';search.placeholder='Search packages…';search.setAttribute('aria-label',label);const count=el('span','','scope-label'),list=el('div'),pages=el('div');let page=1;area.append(search,count,list,pages);parent.append(area);function draw(){const matches=rows.filter(n=>n.textContent.toLowerCase().includes(search.value.toLowerCase().trim())),total=matches.length;page=Math.max(1,Math.min(page,Math.ceil(total/10)||1));list.replaceChildren(...matches.slice((page-1)*10,page*10));count.textContent=rows.filter(n=>n.querySelector('input')?.checked).length+' selected · '+total+' matching';pages.replaceChildren(...(total>10?[pagination({page,pages:Math.ceil(total/10),total},p=>{page=p;draw();})]:[]));}search.oninput=()=>{page=1;draw();};area.addEventListener('change',draw);draw();return area;}
+function boundedOptions(parent,rows,label){
+  const area=el('div',null,'option-browser'),search=el('input');search.type='search';search.placeholder='Search packages…';search.setAttribute('aria-label',label);
+  const count=el('span','','scope-label'),list=el('div'),pages=el('div');let page=1,total=rows.length;area.append(search,count,list,pages);parent.append(area);
+  const updateCount=()=>{count.textContent=rows.filter(n=>n.querySelector('input')?.checked).length+' selected · '+total+' matching';};
+  function draw(){
+    const focused=document.activeElement,focusLabel=pages.contains(focused)?focused.textContent:null;
+    const matches=rows.filter(n=>n.textContent.toLowerCase().includes(search.value.toLowerCase().trim()));total=matches.length;
+    page=Math.max(1,Math.min(page,Math.ceil(total/10)||1));list.replaceChildren(...matches.slice((page-1)*10,page*10));updateCount();
+    pages.replaceChildren(...(total>10?[pagination({page,pages:Math.ceil(total/10),total},p=>{page=p;draw();})]:[]));
+    if(focusLabel){const target=[...pages.querySelectorAll('button')].find(n=>n.textContent===focusLabel&&!n.disabled);(target||search).focus({preventScroll:true});}
+  }
+  search.oninput=()=>{page=1;draw();};
+  // Native checkbox/label activation must finish without detaching the input.
+  // Updating the count alone also preserves keyboard focus and draft selection.
+  area.addEventListener('change',updateCount);draw();return area;
+}
 document.addEventListener('click',e=>{document.querySelectorAll('.context-actions[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!navOpen){const d=e.target.closest?.('.context-actions[open]');if(d){d.open=false;d.querySelector('summary').focus();}}});
 function preferenceLabel(key){return ({default_audio_language:'Audio language',default_subtitle:'Subtitle language',subtitle_size:'Subtitle size',clock_format:'Clock format',auto_play_next:'Play next episode',show_loading_stats:'Show loading details',spoiler_blur:'Hide spoilers',smooth_scrolling:'Smooth scrolling',trailer_auto_play:'Autoplay trailers',volume_boost_db:'Volume boost (dB)'})[key]||key.replaceAll('_',' ');}
@@ -786,6 +802,22 @@ async function approveEnrollment(request) {
     }, 300);
   });
 }
+async function reviewLegacyRecovery(request,refresh){
+  const preview=await api('/api/enrollments/'+request.id+'/recovery');
+  modal('Review previous device recovery',[
+    {key:'confirmation',label:'Authorize this installation to recover the previous device',options:[['','Choose explicitly…'],['authorize','I approve recovery of this existing device']]}
+  ],async values=>{
+    if(values.confirmation!=='authorize')throw new Error('Explicit recovery approval is required.');
+    await api('/api/enrollments/'+request.id+'/recovery',{expected_revision:preview.expected_revision,confirm:true});
+    toast('Association approved. The app must complete a fresh signed retry; allow up to ten minutes online.');
+    await refresh();
+  },'Authorize recovery');
+  $('modal-form').prepend(el('p','Verified account: '+(preview.line_username||request.account_hint)),
+    el('p','Previous device: '+preview.previous_label+' · '+preview.device_id),
+    el('p','Incoming installation: '+preview.installation_id+' · '+preview.model),
+    el('p','Last previous check-in: '+date(preview.previous_last_seen_at)),
+    el('p','An account match is not proof of the same physical TV. Authorize only a recovery you approve. This preserves the existing device record and requires a fresh signed app retry. It does not unblock a restricted device.','notice'));
+}
 async function enrollments(epoch) {
   const main = $('main'); main.replaceChildren(heading('Website settings', ''));
   const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
@@ -817,13 +849,15 @@ async function enrollments(epoch) {
       const rows = data.items.map(r => {
         const a = el('div', null, 'actions');
         if (r.status !== 'approved') {
-          a.append(button('Approve / assign', () => approveEnrollment(r).catch(e => toast(e.message))));
+          if(r.status==='pending'&&r.recovery_state==='unidentified')a.append(button('Review recovery',()=>reviewLegacyRecovery(r,()=>load(page)).catch(e=>toast(e.message))));
+          else if(!r.recovery_state)a.append(button('Approve / assign', () => approveEnrollment(r).catch(e => toast(e.message))));
+          else if(r.device_id)a.append(button('View previous device',()=>{location.hash='device/'+r.device_id;}));
           if (r.status === 'pending') a.append(button('Reject', async () => {
             if (!confirm('Reject this management enrollment request? This does not erase the app’s saved data or change its IPTV activation.')) return;
             try { await api('/api/enrollments/' + r.id + '/reject', {}); await load(page); } catch (e) { toast(e.message); }
           }, 'danger'));
         } else if (r.device_id) a.append(button('View device', () => { location.hash = 'device/' + r.device_id; }));
-        return [cellName(r.label, r.installation_id), cellName(r.model || 'App-reported device', r.os_version), r.account_hint, cellName(r.app_version, r.app_package), badge(r.status), date(r.last_request_at), a];
+        return [cellName(r.label, r.installation_id), cellName(r.model || 'App-reported device', r.os_version), r.account_hint, cellName(r.app_version, r.app_package), cellName(r.status,r.recovery_state?'Recovery: '+r.recovery_state:''), date(r.last_request_at), a];
       });
       const roster = table(['Device / installation', 'Reported details', 'Verified account', 'App build', 'Review', 'Last request', 'Actions'], rows);
       roster.classList.add('enrollment-table');

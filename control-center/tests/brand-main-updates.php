@@ -66,4 +66,19 @@ function brandMainUpdateCases(array &$tests,ControlCenter\Application $app,Contr
         $new=$brands->requestBuild($owner,['tenant_id'=>$current['tenant_id'],'expected_version'=>$saved['version']]);
         $row=$app->db->one('SELECT * FROM app_brand_builds WHERE id=?',[$new['id']]);same('2.0.116',$row['app_version']);same($input['source_sha'],$row['source_sha']);same('testing',$row['build_channel']);check($app->db->one('SELECT build_id FROM brand_main_jobs WHERE build_id=?',[$new['id']])!==null);
     };
+    $tests['newer testing core cannot select or authorize itself for a production reseller build']=function()use($app,$config,$artifacts):void{
+        $prod=substr(hash('sha256','production-source-fixture'),0,40);$test=substr(hash('sha256','testing-source-fixture'),0,40);
+        $c=new ControlCenter\Config($config->root,array_replace($config->values,['brand_main_updates'=>['testing_enabled'=>true,'production_enabled'=>true],'brand_builder'=>['sources'=>['9.8.2'=>$test]]]));
+        $brands=new ControlCenter\AppBrands($app->db,$app->management,$app->auth,$artifacts,$c);$builder=new ControlCenter\BrandBuilder($app->db,$c,$brands,$artifacts,new ControlCenter\Secrets($c),$app->auth);
+        $app->db->pdo->beginTransaction();
+        try{
+            foreach([[$prod,'9.8.1',8000,'production'],[$test,'9.8.2',8001,'testing']] as [$sha,$version,$code,$channel]){
+                $app->db->query('INSERT INTO brand_main_sources (source_sha,app_version,version_code,workflow_ref) VALUES (?,?,?,?)',[$sha,$version,$code,'brand-source-'.$version.'-'.$sha]);
+                $app->db->query('INSERT INTO brand_main_rollouts (source_sha,channel) VALUES (?,?)',[$sha,$channel]);
+            }
+            $platform=new ReflectionMethod($brands,'platform');same('9.8.1',$platform->invoke($brands,'production')['version']);same('9.8.2',$platform->invoke($brands,'testing')['version']);
+            $source=new ReflectionMethod($builder,'source');problem(409,fn()=> $source->invoke($builder,[],'9.8.2',$test,'production'));
+            same($test,$source->invoke($builder,[],'9.8.2',$test,'testing'));same($prod,$source->invoke($builder,[],'9.8.1',$prod,'production'));
+        }finally{$app->db->pdo->rollBack();}
+    };
 }

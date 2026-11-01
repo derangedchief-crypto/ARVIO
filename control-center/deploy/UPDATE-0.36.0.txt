@@ -1,0 +1,28 @@
+0.36.0 — main-promotion rollout safeguards (website backend + frontend)
+
+This is NOT the 0.35.0 frontend-only cleanup installer. It includes reviewed
+AppBrands/BrandBuilder channel guards and footer rendering, so a future website
+deployment must install the matching backend code as well as frontend assets.
+No new migration, worker update, credential change or service restart is required
+after 0.34.x/0.35.x. Do not use install-ui-cleanup.sh to apply this archive: that
+helper deliberately accepts only the immutable 0.35.0 frontend package.
+
+Preserve config.php, storage, application/bridge/merchant keys, private financial
+history, current customer APKs, package IDs, branding and the existing job socket
+binding. No rollout gate, source registration, build queue or updater feed is
+changed merely by installing source code. Only the intended website may be changed.
+
+Production app builds now select the newest source approved for PRODUCTION,
+never a newer testing-only core. The builder independently verifies that channel's
+rollout exists. Old configured owner pins remain recognized; manual rebuilds using
+a core older than the published branded app are refused early rather than fail
+after signing or be offered as a downgrade.
+
+The official app stays standalone with no reseller/provider branding, trial offer
+or renewal payment flow. Reseller applications retain their own package/signing,
+published artwork, account/merchant binding and testing/production update feeds.
+Prepared Android version 2.0.130/code446 is not an APK publication or live rollout.
+
+Do not dispatch publication workflows, publish production APKs or activate billing
+rollout as part of this merge. Future publication requires separate confirmation
+and controlled update acceptance. See docs/main-promotion-publication-hold.md.

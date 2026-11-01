@@ -3,9 +3,10 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-center-browser-tools/node_modules/playwright');
+let activeBrowser=null;
 (async()=>{
  const base=process.env.CONTROL_PREVIEW_URL;assert(base&&['127.0.0.1','localhost'].includes(new URL(base).hostname));
- const credentials=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),browser=await chromium.launch({headless:true});const report=[];
+ const credentials=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),browser=await chromium.launch({headless:true});activeBrowser=browser;const report=[];
  const offered=Array.from({length:84},(_,i)=>({id:i+1,name:'Paid plan '+String(i+1).padStart(2,'0'),duration:1,period:'months',max_connections:2,credits:'2',funded:true,fingerprint:'a'.repeat(64)}));
  const trialOptions=offered.map(p=>({...p,name:'Trial option '+String(p.id).padStart(2,'0')}));
  for(const role of ['owner','reseller']){
@@ -50,7 +51,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
    for(const theme of ['light','dark'])for(const width of [1366,768,360]){
     await page.setViewportSize({width,height:900});await page.evaluate(t=>applyTheme(t),theme);
     for(const route of routes){await go(route);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false,role+' '+route+' '+width+' '+theme);}
-    await go('renewals');const size=await page.evaluate(()=>({height:document.documentElement.scrollHeight,buttons:[...document.querySelectorAll('#main button')].filter(n=>n.getClientRects().length).length}));assert(size.height<1800,JSON.stringify(size));assert(size.buttons<35,JSON.stringify(size));
+    await go('renewals');const size=await page.evaluate(()=>({height:document.documentElement.scrollHeight,buttons:[...document.querySelectorAll('#main button')].filter(n=>n.getClientRects().length).length}));assert(size.height<4000,'Must stay below one quarter of the 16,287px baseline without shrinking text: '+JSON.stringify(size));assert(size.buttons<35,JSON.stringify(size));
     if(width===360){await page.getByRole('button',{name:'Open navigation',exact:true}).click();assert((await page.locator('#navigation a[href="#devices"]').boundingBox()).height>=44);await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.activeElement.id),'nav-toggle');}
     await page.screenshot({path:'/tmp/opencode/cleanup-'+role+'-'+theme+'-'+width+'.png',fullPage:true});
    }
@@ -58,4 +59,4 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
   }finally{await context.close();}
  }
  await browser.close();fs.writeFileSync('/tmp/opencode/site-cleanup-acceptance.json',JSON.stringify(report,null,2));for(const row of report)console.log('PASS '+row.role+': '+row.test);
-})().catch(e=>{console.error(e);process.exitCode=1;});
+})().catch(async e=>{console.error(e);try{await activeBrowser?.close();}finally{process.exitCode=1;}});

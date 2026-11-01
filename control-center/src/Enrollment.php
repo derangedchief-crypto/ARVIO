@@ -173,7 +173,12 @@ final class Enrollment
             }
             if($enabled&&isset($claim['panel'])&&$row['status']==='pending'&&$row['device_id']===null&&$match===null&&empty($row['recovery_state'])) $this->autoApprove($row,$claim['panel']);
             $this->db->query('UPDATE enrollment_challenges SET used_at=UTC_TIMESTAMP(),request_id=? WHERE nonce_hash=?',[$row['id'],$nonceHash]);
-            if($row['id']===$candidate) $this->auth->audit(null,'enrollment.requested',$row['id'],null,['app_package'=>$claim['package']]);
+            if($row['id']===$candidate) $this->auth->audit(null,'enrollment.requested',$row['id'],null,[
+                'app_package'=>$claim['package'],
+                'identity_path'=>$known?'known_identity_refresh':($match!==null?'historical_recovery':'new_verified_installation'),
+                'recovery_state'=>$match['state']??null,
+                'signed_hint_present'=>$hintHash!==null
+            ]);
             $fresh=$this->db->one('SELECT * FROM enrollment_requests WHERE id=?',[$row['id']]);
             $recovery->storeForRequest($fresh);
             return $this->registrationResponse($fresh);
@@ -265,7 +270,8 @@ final class Enrollment
         $status=$input['status']??'pending'; if(!in_array($status,['pending','approved','rejected'],true)) throw new Problem(422,'Invalid enrollment status.');
         $visible="(device_id IS NOT NULL OR EXISTS (SELECT 1 FROM panel_resellers p JOIN tenants t ON t.id=p.tenant_id WHERE p.panel_id=enrollment_requests.panel_reseller_id AND t.status='active'))";
         $total=(int)$this->db->query("SELECT COUNT(*) FROM enrollment_requests WHERE status=? AND $visible",[$status])->fetchColumn();
-        $rows=$this->db->all("SELECT id,installation_id,key_fingerprint,account_hint,app_package,label,model,os_version,app_version,status,device_id,panel_reseller_id,created_at,last_request_at,confirmed_at FROM enrollment_requests WHERE status=? AND $visible ORDER BY last_request_at DESC,id LIMIT 25 OFFSET $offset",[$status]);
+        $recovery=DeviceListWindow::installed($this->db)?'recovery_state':'NULL AS recovery_state';
+        $rows=$this->db->all("SELECT id,installation_id,key_fingerprint,account_hint,app_package,label,model,os_version,app_version,status,device_id,panel_reseller_id,created_at,last_request_at,confirmed_at,$recovery FROM enrollment_requests WHERE status=? AND $visible ORDER BY last_request_at DESC,id LIMIT 25 OFFSET $offset",[$status]);
         return ['items'=>$rows,'page'=>$page,'pages'=>max(1,(int)ceil($total/25)),'total'=>$total];
     }
     public function approve(array $actor, string $id, array $input): array
@@ -280,6 +286,7 @@ final class Enrollment
                 if($existing['customer_id']!==$customer['id']) throw new Problem(409,'This enrollment is already assigned to another customer.');
                 return $existing;
             }
+            if(!empty($row['recovery_state']))throw new Problem(409,'This is a recovery hold, not a new-device assignment. Review legacy recovery or the existing device restriction.');
             $tenant=$this->management->tenant($actor,$customer['tenant_id'],true);
             if($tenant['status']!=='active') throw new Problem(409,'This reseller is suspended.');
             if(!$row['device_id']&&!$this->db->one('SELECT panel_id FROM panel_resellers WHERE panel_id=? AND tenant_id=?',[$row['panel_reseller_id'],$tenant['id']]))throw new Problem(409,'Only requests from a verified linked reseller can be approved in that workspace.');

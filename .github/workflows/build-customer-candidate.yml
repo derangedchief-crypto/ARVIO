@@ -1,0 +1,72 @@
+name: Build Unpublished Customer Candidate
+
+# Separate from the production publication workflow. No release/tag/feed writes
+# and no reseller fanout, even if this manually dispatched build succeeds.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Prepare private candidate inputs
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          APP_ANON_KEY: ${{ secrets.APP_ANON_KEY }}
+          ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL: ${{ secrets.ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL }}
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+          TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          cp secrets.defaults.properties secrets.properties
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          if not os.environ.get('SUPABASE_URL') or not os.environ.get('SUPABASE_ANON_KEY') or 'your-project.supabase.co' in os.environ['SUPABASE_URL'] or os.environ['SUPABASE_ANON_KEY'].startswith('your-'):
+              raise SystemExit('Real cloud configuration is required for this candidate')
+          with Path('secrets.properties').open('a') as out:
+              for key in ['TMDB_API_KEY','SENTRY_DSN','SUPABASE_URL','SUPABASE_ANON_KEY','APP_ANON_KEY','ENTITLEMENT_CLOUD_STREAM_MANIFEST_URL','TRAKT_CLIENT_ID','TRAKT_CLIENT_SECRET']:
+                  value=os.environ.get(key,'')
+                  if value:
+                      if '\n' in value or '\r' in value:raise SystemExit('Invalid private property format')
+                      out.write('\n'+key+'='+value+'\n')
+          PY
+          test -n "$RELEASE_KEYSTORE_BASE64"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > app/release.keystore
+          cat > keystore.properties <<EOF
+          storeFile=release.keystore
+          storePassword=${RELEASE_KEYSTORE_PASSWORD}
+          keyAlias=${RELEASE_KEY_ALIAS}
+          keyPassword=${RELEASE_KEY_PASSWORD}
+          EOF
+          certificate_sha=$(keytool -exportcert -keystore app/release.keystore -alias "$RELEASE_KEY_ALIAS" -storepass:env RELEASE_KEYSTORE_PASSWORD 2>/dev/null | sha256sum | cut -d ' ' -f 1)
+          test "$certificate_sha" = 3273d0b0294a689565ab4b0c8ef7e1887e2ca680240718f5521628b5c46328b7
+      - name: Build artifact only
+        run: ./gradlew :app:assembleSideloadStaging --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unpublished-customer-candidate-${{ github.sha }}
+          path: app/build/outputs/apk/sideload/staging/*.apk
+          retention-days: 14
+          if-no-files-found: error

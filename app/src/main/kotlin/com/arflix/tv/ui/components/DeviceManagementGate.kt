@@ -37,6 +37,7 @@ val LocalDeviceManagementCheckIn = staticCompositionLocalOf<() -> Unit> { {} }
 @Composable
 fun DeviceManagementGate(state: DeviceManagementState, onDismissMessage: (String) -> Unit, content: @Composable () -> Unit) {
     val recovering=state.recoveryPending&&state.policy=="suspended"
+    val retryCheckIn=LocalDeviceManagementCheckIn.current
     if (state.checkingLocalState || state.restricted) {
         BackHandler { /* A known provider restriction cannot expose playback. */ }
         Box(Modifier.fillMaxSize().background(Color(0xFF090D15)), contentAlignment = Alignment.Center) {
@@ -45,9 +46,10 @@ fun DeviceManagementGate(state: DeviceManagementState, onDismissMessage: (String
                 Text(if(recovering)"Reconnecting this device" else when (state.policy) { "suspended" -> "Service suspended"; "blocked" -> "Device blocked"; "removed" -> "Device enrollment removed"; else -> "Checking device status" },
                     color = Color.White, fontSize = 28.sp, textAlign = TextAlign.Center)
                 if (state.restricted) {
-                    Text(if(recovering)"We’re checking the previous device record. This may take a few minutes. Do not reinstall again or clear data. If it does not complete, contact your provider." else "Contact your provider. Your login, profiles and saved favourites have not been erased.", color = Color(0xFFD5DBE5), fontSize = 18.sp, textAlign = TextAlign.Center)
+                    Text(if(recovering)"We’re checking the previous device record. Provider approval may be required. Do not reinstall or clear data. After your provider approves recovery, keep the app online and retry the connection." else "Contact your provider. Your login, profiles and saved favourites have not been erased.", color = Color(0xFFD5DBE5), fontSize = 18.sp, textAlign = TextAlign.Center)
                     Text("Device ID: ${state.installationId}", color = Color(0xFF9AA8BC), fontSize = 13.sp, textAlign = TextAlign.Center)
                     Text(state.status, color = Color(0xFF9AA8BC), fontSize = 13.sp, textAlign = TextAlign.Center)
+                    if(recovering)TextButton(onClick=retryCheckIn){Text("Retry connection")}
                 } else CircularProgressIndicator()
             }
         }

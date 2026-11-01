@@ -1,0 +1,34 @@
+0.37.0 — audited legacy device recovery and readiness visibility
+
+Website backend/frontend update; this does not update installed Android apps.
+Use install-control-037.sh only on the authorized website after 0.36.0. Do not
+reuse the fixed-file 0.36 installer or the frontend-only 0.35 installer.
+
+Website settings / Connection requests now offers Review recovery for eligible
+unidentified legacy resets. Review explicitly shows the previous device, verified
+username (when recorded), incoming installation and last old check-in. Owner
+confirmation plus a fresh review revision is mandatory. The operation refuses
+nonunique matches, expired delivery, wrong panel/account/workspace, recently active
+or restricted devices, stale revisions and existing/foreign hint associations.
+Ordinary device assignment cannot bypass a recovery hold. Approval records an
+association and actor audit only; fresh signed enrollment still reconnects the
+same record and rotates credentials. It never clears a genuine block or guesses
+identity from a username/model/IP. Existing notes, ownership and allocation stay.
+
+Device detail distinguishes recovery association readiness from active access
+and online presence. New enrollment audits record redacted identity-path metadata.
+There is no database migration, worker update, payment-policy change, global
+recovery toggle, APK publication, release feed change or service restart.
+
+The scoped installer replaces four PHP files (DeviceRecovery, Enrollment,
+Management, Application), HTML/version pointers and staged versioned assets.
+Other PHP, config.php, storage, application/bridge/merchant keys, old root assets,
+existing versioned assets, downloadable APKs and the job socket repair are retained.
+A root-only rollback ZIP is created before replacing live files; protected-file
+hashes and post-update read-only database/origin/key checks are enforced.
+
+The matching Android fix preserves AtomicFile identity backups, retries transient
+startup state errors, uses current policy from validated recovered delivery, and
+adds accurate recovery statuses/retry. Those client changes require a separately
+approved signed in-place app release. Website installation alone cannot retrofit
+them into installed 2.0.126 apps. Do not clear app data as a recovery procedure.

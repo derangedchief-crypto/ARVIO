@@ -106,17 +106,77 @@ function deviceRecoveryCases(array &$tests,ControlCenter\Application $app,Contro
         $request=$body($identity(),str_repeat('a',64));$request['recovery_hint']=str_repeat('b',64);$total=$count();
         problem(403,fn()=> $app->enrollment->register($request,'127.0.0.91'));same($total,$count());
     };
+    $tests['owner can review a unique legacy reset without credentials or policy bypass; fresh signature completes recovery']=function()use($app,$config,$owner,$other,$identity,$register,$poll,$quiet,$count):void{
+        $recovery=new ControlCenter\DeviceRecovery($app->db,$config,new ControlCenter\Secrets($config),$app->auth);
+        $a=$identity();$old=$poll($register($a));$quiet($old['device_id']);$b=$identity($a['account']);$hint=hash('sha256','owner-reset-'.$a['install']);
+        $pending=$register($b,$hint);$id=$pending['request_id'];$total=$count();
+        problem(403,fn()=> $recovery->previewLegacy($other,$id));
+        $before=$app->db->one('SELECT * FROM devices WHERE id=?',[$old['device_id']]);
+        problem(409,fn()=> $app->enrollment->approve($owner,$id,['customer_id'=>$before['customer_id']]));same($total,$count());
+        $preview=$recovery->previewLegacy($owner,$id);same($old['device_id'],$preview['device_id']);
+        check(!isset($preview['credential'])&&!isset($preview['poll_token'])&&!isset($preview['hint_hash']));
+        same($before,$app->db->one('SELECT * FROM devices WHERE id=?',[$old['device_id']]));
+        problem(403,fn()=> $recovery->authorizeLegacy($other,$id,['expected_revision'=>$preview['expected_revision'],'confirm'=>true]));
+        problem(422,fn()=> $recovery->authorizeLegacy($owner,$id,['expected_revision'=>$preview['expected_revision'],'confirm'=>false]));
+        problem(409,fn()=> $recovery->authorizeLegacy($owner,$id,['expected_revision'=>str_repeat('f',64),'confirm'=>true]));
+        same('awaiting_signed_retry',$recovery->authorizeLegacy($owner,$id,['expected_revision'=>$preview['expected_revision'],'confirm'=>true])['state']);
+        $waiting=$poll($pending);same('pending',$waiting['status']);same('owner_authorized',$waiting['recovery_state']);same(true,$waiting['recovery_retry']);same($before,$app->db->one('SELECT * FROM devices WHERE id=?',[$old['device_id']]));
+        same($old['device_id'],$app->commands->deviceIdentity($old['credential'])['id']);
+        problem(409,fn()=> $recovery->authorizeLegacy($owner,$id,['expected_revision'=>$preview['expected_revision'],'confirm'=>true]));
+        check($app->db->one("SELECT id FROM audit_events WHERE action='device.recovery_owner_authorized' AND resource_id=?",[$old['device_id']])!==null);
+        $quiet($old['device_id']);$new=$poll($register($b,$hint));same('approved',$new['status']);same('recovered',$new['recovery_state']);same($old['device_id'],$new['device_id']);same($total,$count());
+        problem(401,fn()=> $app->commands->deviceIdentity($old['credential']));same('active',$app->commands->checkIn($new['credential'],[],'127.0.0.91')['policy']);
+    };
+    $tests['legacy owner review refuses busy restricted stale cross-identity and expired records']=function()use($app,$config,$owner,$identity,$register,$poll,$quiet):void{
+        $recovery=new ControlCenter\DeviceRecovery($app->db,$config,new ControlCenter\Secrets($config),$app->auth);
+        $a=$identity();$old=$poll($register($a));$b=$identity($a['account']);$pending=$register($b,hash('sha256','guarded-reset-'.$a['install']));$id=$pending['request_id'];
+        problem(409,fn()=> $recovery->previewLegacy($owner,$id));$quiet($old['device_id']);$preview=$recovery->previewLegacy($owner,$id);
+        foreach(['blocked','suspended','removed'] as $policy){
+            $app->db->query('UPDATE devices SET policy=? WHERE id=?',[$policy,$old['device_id']]);
+            problem(409,fn()=> $recovery->authorizeLegacy($owner,$id,['expected_revision'=>$preview['expected_revision'],'confirm'=>true]));
+        }
+        $app->db->query("UPDATE devices SET policy='active' WHERE id=?",[$old['device_id']]);
+        $original=$app->db->one('SELECT * FROM enrollment_requests WHERE id=?',[$id]);
+        foreach(['panel_customer_id','panel_reseller_id'] as $field){
+            $app->db->query("UPDATE enrollment_requests SET $field=? WHERE id=?",['99999999999',$id]);
+            problem(409,fn()=> $recovery->previewLegacy($owner,$id));
+            $app->db->query("UPDATE enrollment_requests SET $field=? WHERE id=?",[$original[$field],$id]);
+        }
+        $app->db->query('UPDATE enrollment_requests SET key_fingerprint=? WHERE id=?',[str_repeat('f',64),$id]);
+        problem(409,fn()=> $recovery->authorizeLegacy($owner,$id,['expected_revision'=>$preview['expected_revision'],'confirm'=>true]));
+        $app->db->query('UPDATE enrollment_requests SET key_fingerprint=?,poll_expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE id=?',[$original['key_fingerprint'],$id]);
+        problem(409,fn()=> $recovery->previewLegacy($owner,$id));
+        same(null,$app->db->one('SELECT device_id FROM device_recovery_hints WHERE device_id=?',[$old['device_id']]));
+    };
+    $tests['legacy owner review never guesses between two historical TVs or replaces an existing hint']=function()use($app,$config,$owner,$window,$identity,$register,$poll,$quiet,$count):void{
+        $recovery=new ControlCenter\DeviceRecovery($app->db,$config,new ControlCenter\Secrets($config),$app->auth);
+        $a=$identity();$first=$poll($register($a));
+        $window->setRecovery($owner,['enabled'=>false]);
+        try{$second=$poll($register($identity($a['account'])));}
+        finally{$window->setRecovery($owner,['enabled'=>true]);}
+        $quiet($first['device_id']);$quiet($second['device_id']);$total=$count();
+        $pending=$register($identity($a['account']),hash('sha256','ambiguous-owner-legacy'));
+        problem(409,fn()=> $recovery->previewLegacy($owner,$pending['request_id']));same($total,$count());
+        $a=$identity();$old=$poll($register($a));$quiet($old['device_id']);$b=$identity($a['account']);
+        $pending=$register($b,hash('sha256','do-not-replace-legacy'));$review=$recovery->previewLegacy($owner,$pending['request_id']);
+        $row=$app->db->one('SELECT * FROM enrollment_requests WHERE id=?',[$pending['request_id']]);
+        $app->db->query('INSERT INTO device_recovery_hints (device_id,account_ref,app_package,panel_reseller_id,hint_hash) VALUES (?,?,?,?,?)',[$old['device_id'],$row['account_ref'],$row['app_package'],$row['panel_reseller_id'],str_repeat('e',64)]);
+        problem(409,fn()=> $recovery->authorizeLegacy($owner,$pending['request_id'],['expected_revision'=>$review['expected_revision'],'confirm'=>true]));
+        same(str_repeat('e',64),$app->db->one('SELECT hint_hash FROM device_recovery_hints WHERE device_id=?',[$old['device_id']])['hint_hash']);
+    };
     $tests['same hint cannot transfer another account or reseller record']=function()use($app,$identity,$body,$register,$poll,$quiet,$count):void{
         $a=$identity();$hint=hash('sha256',$a['install']);$old=$poll($register($a,$hint));$quiet($old['device_id']);
         $foreign=$poll($register($identity(),$hint));check($foreign['device_id']!==$old['device_id']);
         $total=$count();$other=$app->enrollment->register($body($identity($a['account']),$hint,'com.arvio.tv.test','9002'),'127.0.0.91');
         same('pending',$other['status']);same($total,$count());same($a['install'],$app->db->one('SELECT installation_id FROM devices WHERE id=?',[$old['device_id']])['installation_id']);
     };
-    $tests['authenticated existing signing key can backfill hint without exposing raw value']=function()use($app,$identity,$register,$poll):void{
+    $tests['authenticated existing signing key can backfill hint without exposing raw value']=function()use($app,$owner,$identity,$register,$poll):void{
         $a=$identity();$old=$poll($register($a));$hint=hash('sha256','protected-client-hint');
+        same(false,$app->management->device($owner,$old['device_id'])['recovery_ready']);
         openssl_sign(ControlCenter\DeviceRecovery::hintSigningText($old['device_id'],'com.arvio.tv.test',$hint),$signature,$a['private'],OPENSSL_ALGO_SHA256);
         $reply=$app->commands->checkIn($old['credential'],['recovery_hint'=>$hint,'recovery_signature'=>base64_encode($signature)],'127.0.0.91');same(1,$reply['device_recovery_version']);
         $row=$app->db->one('SELECT * FROM device_recovery_hints WHERE device_id=?',[$old['device_id']]);check($row!==null&&$row['hint_hash']!==$hint);
+        same(true,$app->management->device($owner,$old['device_id'])['recovery_ready']);
         problem(403,fn()=> $app->commands->checkIn($old['credential'],['recovery_hint'=>str_repeat('b',64),'recovery_signature'=>base64_encode($signature)],'127.0.0.91'));
         same($row['hint_hash'],$app->db->one('SELECT hint_hash FROM device_recovery_hints WHERE device_id=?',[$old['device_id']])['hint_hash']);
     };

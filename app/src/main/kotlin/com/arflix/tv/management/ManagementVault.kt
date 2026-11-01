@@ -40,7 +40,13 @@ internal class ManagementVault(context: Context, directoryName: String = "device
     }
     fun load(scope: String): ManagementSession? {
         val file = file(scope)
-        if (!file.baseFile.exists()) return null
+        // Older Android AtomicFile implementations may leave ONLY .bak after
+        // process death. readFully() restores that backup; do not mistake it
+        // for first enrollment and overwrite the customer's installation ID.
+        if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) {
+            check(!File(file.baseFile.path + ".new").exists()) { "Unfinished management state requires recovery" }
+            return null
+        }
         val bytes = file.readFully()
         check(bytes.size in 29..1048576 && bytes[0] == 1.toByte()) { "Invalid management state" }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")

@@ -36,6 +36,20 @@ internal fun enrollmentSigningText(nonce: String, proof: String, install: String
     else "ECENROLL2\n$nonce\n${managementHash(proof)}\n$install\n$appPackage\n$fingerprint\n$recoveryHint"
 
 internal val MANAGEMENT_POLICIES = setOf("active", "suspended", "blocked", "removed")
+internal fun managementRecoveryStatus(state: String): String = when (state) {
+    "unidentified" -> "Provider approval needed — previous device has no verified recovery match"
+    "ambiguous" -> "Provider review needed — more than one device identity may match"
+    "busy" -> "Waiting for the previous installation to stop checking in"
+    "owner_authorized" -> "Provider approved recovery — completing signed reconnection"
+    "restricted" -> "Previous device access is restricted — contact your provider"
+    else -> "Checking previous device identity"
+}
+/** Called after enrollment delivery identity/credential fields are validated.
+ * A recovered approval includes the current server policy; do not keep an old
+ * synthetic recovery suspension until a second network request succeeds. */
+internal fun approvedRecoveryPolicy(session: ManagementSession, status: String, recoveryState: String, policy: String): ManagementSession =
+    if(status=="approved"&&recoveryState=="recovered"&&policy in MANAGEMENT_POLICIES)
+        session.copy(policy=policy,recoveryPending=false) else session
 internal val MANAGEMENT_CAPABILITIES = listOf("request_checkin", "show_message", "refresh_playlist", "reload_epg", "get_settings", "get_diagnostics", "set_settings", "get_categories", "set_categories", "get_category_layout", "apply_category_layout", "backup_favourites", "preview_favourites_restore", "restore_favourites", "set_live_buffer", "clear_cache", "restart_app", "get_sources", "apply_sources", "get_preferences", "apply_preferences", "get_support_bundle", "capture_app_screen")
 internal fun managementLiveBufferRevision(profileRef: String, accountScope: String, seconds: Int): String =
     managementHash("device-live-buffer-v1\n$profileRef\n$accountScope\n$seconds")
