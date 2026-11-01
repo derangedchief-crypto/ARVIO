@@ -7,8 +7,8 @@ final class AppBrands
 {
     private const ASSETS=['loading_asset','logo_asset','icon_asset'];
     // Platform release identity; never selected by reseller inputs.
-    private const APP_VERSION='2.0.130';
-    private const APP_VERSION_CODE=446;
+    private const APP_VERSION='2.0.131';
+    private const APP_VERSION_CODE=447;
     public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly ?BrandArtifacts $artifacts=null,private readonly ?Config $config=null) {}
     private function channel():string {
         $channel=$this->config?->get('brand_release',[])['default_channel']??'testing';if(!in_array($channel,['testing','production'],true))throw new Problem(503,'Invalid owner release channel.');
@@ -27,7 +27,7 @@ final class AppBrands
         // Historical testing snapshots stay buildable on their explicitly pinned
         // old source during cutover. This never chooses production or a new key.
         $pins=$this->config?->get('brand_builder',[])['sources']??[];
-        foreach([self::APP_VERSION=>self::APP_VERSION_CODE,'2.0.129'=>445,'2.0.126'=>442,'2.0.125'=>441,'2.0.124'=>440,'2.0.115'=>431] as $version=>$code){
+        foreach([self::APP_VERSION=>self::APP_VERSION_CODE,'2.0.130'=>446,'2.0.129'=>445,'2.0.126'=>442,'2.0.125'=>441,'2.0.124'=>440,'2.0.115'=>431] as $version=>$code){
             if(isset($pins[$version])&&is_string($pins[$version])&&preg_match('/^[a-f0-9]{40}$/D',$pins[$version]))return ['version'=>$version,'code'=>$code,'sha'=>null];
         }
         // Isolated fixtures deliberately exercise the installed historical APK

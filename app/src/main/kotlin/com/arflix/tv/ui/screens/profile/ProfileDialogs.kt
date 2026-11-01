@@ -204,14 +204,7 @@ private fun ProfileDialogContent(
     val confirmButtonFocusRequester = remember { FocusRequester() }
 
     fun showKeyboard(editText: EditText) {
-        editText.post {
-            val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            val shown = imm?.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT) ?: false
-            if (!shown) {
-                @Suppress("DEPRECATION")
-                imm?.showSoftInput(editText, InputMethodManager.SHOW_FORCED)
-            }
-        }
+        com.arflix.tv.ui.components.showEditorKeyboard(editText)
     }
 
     fun hideKeyboard(editText: EditText? = editTextRef) {

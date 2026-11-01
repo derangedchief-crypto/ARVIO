@@ -98,12 +98,7 @@ fun TextInputModal(
     // Show/hide keyboard using the EditText window token (toggleSoftInput can get stuck on some TV IMEs).
     fun showKeyboard() {
         val editText = editTextRef ?: return
-        val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        editText.post {
-            editText.requestFocus()
-            val shown = imm?.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT) ?: false
-            if (!shown) imm?.showSoftInput(editText, InputMethodManager.SHOW_FORCED)
-        }
+        showEditorKeyboard(editText)
     }
 
     fun hideKeyboard() {
@@ -275,9 +270,7 @@ fun TextInputModal(
                                     if (hasFocus) {
                                         focusedButton = -1
                                         v.postDelayed({
-                                            val imm = ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                                            val shown = imm?.showSoftInput(v, InputMethodManager.SHOW_IMPLICIT) ?: false
-                                            if (!shown) imm?.showSoftInput(v, InputMethodManager.SHOW_FORCED)
+                                            showEditorKeyboard(v)
                                         }, 100)
                                     }
                                 }
@@ -291,9 +284,7 @@ fun TextInputModal(
                             if (isVisible && !editText.hasFocus()) {
                                 editText.requestFocus()
                                 editText.postDelayed({
-                                    val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                                    val shown = imm?.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT) ?: false
-                                    if (!shown) imm?.showSoftInput(editText, InputMethodManager.SHOW_FORCED)
+                                    showEditorKeyboard(editText)
                                 }, 100)
                             }
                         }

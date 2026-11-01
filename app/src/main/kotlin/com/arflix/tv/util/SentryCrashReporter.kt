@@ -76,6 +76,9 @@ data object SentryCrashReporter : AppLogger.CrashContextProvider {
                 options.getLogs().setEnabled(false)
                 options.getMetrics().setEnabled(false)
                 options.setBeforeSend { event, _ ->
+                    // Initialization/close may now run on IO; an opt-out must
+                    // remain authoritative even while SDK shutdown is pending.
+                    if(!DiagnosticsManager.isReportingEnabled(context))return@setBeforeSend null
                     val isCrashed = event.isCrashed || event.level == SentryLevel.FATAL
                     if (!CrashReportFilter.shouldSendSentryEvent(event.throwable, event.level, isCrashed)) {
                         return@setBeforeSend null

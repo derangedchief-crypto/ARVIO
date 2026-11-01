@@ -289,10 +289,11 @@ fun SearchScreen(
         if (!isTouchDevice) runCatching { searchFocusRequester.requestFocus() }
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
     }
+    val imeHostView=androidx.compose.ui.platform.LocalView.current
     LaunchedEffect(isSearchEditing, searchEditRequestNonce) {
         if (isSearchEditing) {
             runCatching { textInputFocusRequester.requestFocus() }
-            keyboardController?.show()
+            com.arflix.tv.ui.components.requestImeOnce(imeHostView) { if(isSearchEditing)keyboardController?.show() }
         }
     }
 

@@ -127,8 +127,6 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             runCatching { OkHttpProvider.dns.lookup("image.tmdb.org") }
         }
 
-        DiagnosticsManager.initialize(this)
-
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
@@ -145,6 +143,12 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             } finally {
                 defaultHandler?.uncaughtException(thread, throwable) ?: android.os.Process.killProcess(android.os.Process.myPid())
             }
+        }
+
+        // Install our local crash fallback first, then let Sentry wrap it on IO.
+        // SDK class/resource loading must not block Application.onCreate/main.
+        appScope.launch(Dispatchers.IO) {
+            DiagnosticsManager.initialize(this@ArflixApplication)
         }
 
         // Initialize active profile asynchronously to avoid blocking cold start.

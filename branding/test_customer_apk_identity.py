@@ -5,7 +5,7 @@ class CustomerApkIdentityTests(unittest.TestCase):
     def setUp(self):
         self.badging="package: name='com.arvio.tv.beta' versionCode='446' versionName='2.0.130-beta'\nsdkVersion:'26'\n"
         self.cert='Signer #1 certificate SHA-256 digest: '+policy.SIGNER
-        self.entries=['lib/armeabi-v7a/decoder.so','lib/arm64-v8a/decoder.so']
+        self.entries=['lib/armeabi-v7a/decoder.so','lib/arm64-v8a/decoder.so','assets/PublicSuffixDatabase.list']
     def test_official_identity_is_accepted(self):policy.verify('2.0.130',446,self.badging,self.cert,self.entries)
     def test_brand_testing_base_or_wrong_version_cannot_become_a_customer_update(self):
         for old,new in [('com.arvio.tv.beta','com.extreme.brand.b'+'a'*32),('com.arvio.tv.beta','com.arvio.tv.test'),('com.arvio.tv.beta','com.arvio.tv'),('446','445'),('2.0.130-beta','2.0.129-beta')]:
@@ -16,3 +16,6 @@ class CustomerApkIdentityTests(unittest.TestCase):
     def test_missing_abi_or_raised_sdk_is_refused(self):
         with self.assertRaises(ValueError):policy.verify('2.0.130',446,self.badging,self.cert,self.entries[:1])
         with self.assertRaises(ValueError):policy.verify('2.0.130',446,self.badging.replace("'26'","'27'"),self.cert,self.entries)
+    def test_missing_public_suffix_resource_is_refused(self):
+        with self.assertRaises(ValueError):policy.verify('2.0.130',446,self.badging,self.cert,self.entries[:2])
+        policy.verify('2.0.130',446,self.badging,self.cert,self.entries[:2]+['okhttp3/internal/publicsuffix/publicsuffixes.gz'])
