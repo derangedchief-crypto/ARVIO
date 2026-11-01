@@ -136,11 +136,14 @@ the immutable fixed-file 0.36 installer is NOT suitable for deploying these chan
 No new schema migration is needed on an already-upgraded website. Customer app
 reader/retry/UI changes still require a separately approved signed in-place APK.
 
-Validation: 90 management tests pass with zero failures/errors/skips, including
-four vault regressions and two recovery-status cases. Official customer-variant
-Kotlin compilation also passes. Before the patch, both interrupted-state cases
-failed while genuine first enrollment passed. These are synthetic regressions,
-not evidence collected from the customer's device or signed in-place acceptance.
+Final Android validation: 1,042 tests pass with zero failures/errors and one
+pre-existing skipped test, including all 95 management tests. Official customer-
+variant Kotlin compilation also passes. Before the patch, both interrupted-state
+cases failed while genuine first enrollment passed. Extended website validation
+passes 338 service cases, four focused owner-recovery browser checks, and 68 broad
+browser workflows (the broad run's service snapshot had 337 cases before the last
+guard case was added). These are synthetic regressions, not evidence collected
+from the customer's device or signed in-place acceptance.
 
 Source-only fix for review. No live website update, worker restart, APK publication
 or customer rollout. Existing installed 2.0.126 apps do not acquire this reader/UI
