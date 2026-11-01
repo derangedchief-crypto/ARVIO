@@ -120,6 +120,12 @@ normal runner without wiping customer state. New enrollment audit metadata recor
 known-identity vs historical-recovery vs new-installation paths and signed-hint
 presence without logging keys, tokens, passwords or raw device identifiers.
 
+Validated recovered credential delivery now applies the current server policy
+immediately, including genuine restrictions, instead of retaining a synthetic
+recovery suspension until a second check-in request succeeds. Only an approved,
+recovered response with validated delivery fields and a recognized policy can
+take this path; pending/rejected/unknown responses cannot lift a restriction.
+
 This hardens the failure modes but does not establish exactly why this incident's
 first recovery registration occurred the night after its reset. Do not claim that
 uncaptured network/lifecycle history has been reconstructed or that every future

@@ -229,7 +229,8 @@ class DeviceManagementAgent @Inject constructor(
                     val id = result.getString("device_id").also { require(it.matches(Regex("[a-f0-9]{32}"))) }
                     val token = result.getString("credential").also { require(it.matches(Regex("[a-f0-9]{64}"))) }
                     val expiry = parseManagementTime(result.getString("credential_expires_at"))
-                    change(current) { it.copy(deviceId = id, credential = token, credentialExpiresAtMs = expiry) }
+                    change(current) { approvedRecoveryPolicy(it.copy(deviceId = id, credential = token, credentialExpiresAtMs = expiry),
+                        result.getString("status"),result.optString("recovery_state"),result.optString("recovery_policy")) }
                     confirm(current)
                 }
                 else -> error("Unknown enrollment status")
