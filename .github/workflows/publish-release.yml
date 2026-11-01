@@ -40,6 +40,15 @@ on:
         required: true
         type: boolean
         default: false
+      expected_source_sha:
+        description: "Optional approved main commit; scheduled publication refuses any different source."
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: customer-release-publisher
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -55,6 +64,18 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Refuse source drift from a scheduled approval
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPECTED_SOURCE_SHA" ]; then
+            [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] && [ "$GITHUB_SHA" = "$EXPECTED_SOURCE_SHA" ] || {
+              echo '::error::Main differs from the approved publication source. Publication refused.'
+              exit 1
+            }
+          fi
 
       - name: Set up Java
         uses: actions/setup-java@v5
