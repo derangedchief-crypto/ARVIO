@@ -40,6 +40,7 @@ internal fun managementRecoveryStatus(state: String): String = when (state) {
     "unidentified" -> "Provider approval needed — previous device has no verified recovery match"
     "ambiguous" -> "Provider review needed — more than one device identity may match"
     "busy" -> "Waiting for the previous installation to stop checking in"
+    "owner_authorized" -> "Provider approved recovery — completing signed reconnection"
     "restricted" -> "Previous device access is restricted — contact your provider"
     else -> "Checking previous device identity"
 }

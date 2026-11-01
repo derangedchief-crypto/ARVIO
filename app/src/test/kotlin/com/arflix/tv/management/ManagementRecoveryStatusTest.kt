@@ -11,6 +11,7 @@ class ManagementRecoveryStatusTest {
     @Test fun busyAndRestrictedStatesRemainDistinct() {
         assertTrue(managementRecoveryStatus("busy").contains("previous installation"))
         assertTrue(managementRecoveryStatus("restricted").contains("restricted"))
+        assertTrue(managementRecoveryStatus("owner_authorized").contains("completing signed reconnection"))
         assertEquals("Checking previous device identity",managementRecoveryStatus("future-state"))
     }
 }

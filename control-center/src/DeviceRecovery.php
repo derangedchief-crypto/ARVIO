@@ -88,4 +88,51 @@ final class DeviceRecovery {
         if(!$this->available()||empty($request['recovery_hint_hash'])||empty($request['device_id'])||empty($request['panel_reseller_id'])||$request['status']!=='approved')return;
         $this->db->query('INSERT INTO device_recovery_hints (device_id,account_ref,app_package,panel_reseller_id,hint_hash) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE hint_hash=VALUES(hint_hash),updated_at=UTC_TIMESTAMP()',[$request['device_id'],$request['account_ref'],$request['app_package'],$request['panel_reseller_id'],$request['recovery_hint_hash']]);
     }
+    /** Explicit owner association for legacy records; fresh signed enrollment
+     * still performs reconnection and credential rotation. No policy is lifted. */
+    private function legacyCandidate(string $id,bool $lock=false):array {
+        if(!$this->enabled())throw new Problem(409,'Device recovery is not enabled.');
+        $suffix=$lock?' FOR UPDATE':'';
+        $r=$this->db->one('SELECT *,poll_expires_at>UTC_TIMESTAMP() AS delivery_valid FROM enrollment_requests WHERE id=?'.$suffix,[Input::id($id)]);
+        if(!$r)throw new Problem(404,'Enrollment request not found.');
+        if($r['status']!=='pending'||$r['recovery_state']!=='unidentified'||$r['device_id']!==null||!$r['delivery_valid']||!is_string($r['recovery_hint_hash'])||!preg_match('/^[a-f0-9]{64}$/D',$r['recovery_hint_hash']))throw new Problem(409,'This request is not an eligible live legacy recovery hold.');
+        $matches=$this->db->all("SELECT device_id FROM enrollment_requests WHERE account_ref=? AND app_package=? AND status='approved' AND device_id IS NOT NULL".$suffix,[$r['account_ref'],$r['app_package']]);
+        $ids=array_map(static fn($id)=>['device_id'=>$id],array_values(array_unique(array_column($matches,'device_id'))));
+        if(count($ids)!==1)throw new Problem(409,'The historical device match is not unique.');
+        $d=$this->db->one('SELECT d.*,t.status AS workspace_status,t.kind AS workspace_kind,TIMESTAMPDIFF(SECOND,d.last_seen_at,UTC_TIMESTAMP()) AS seen_age FROM devices d JOIN tenants t ON t.id=d.tenant_id WHERE d.id=?'.$suffix,[$ids[0]['device_id']]);
+        if(!$d||$d['policy']!=='active'||$d['workspace_status']!=='active'||$d['is_test']||$d['app_package']!==$r['app_package']||$d['seen_age']===null||(int)$d['seen_age']<300)throw new Problem(409,'The previous device is restricted or recently active. No recovery association was changed.');
+        $old=$this->db->one("SELECT * FROM enrollment_requests WHERE device_id=? AND key_fingerprint=? AND app_package=? AND status='approved' ORDER BY created_at DESC,id DESC LIMIT 1".$suffix,[$d['id'],$d['key_fingerprint'],$r['app_package']]);
+        if(!$old||$old['account_ref']!==$r['account_ref']||empty($r['panel_reseller_id'])||empty($r['panel_customer_id'])||$old['panel_reseller_id']!==$r['panel_reseller_id']||$old['panel_customer_id']!==$r['panel_customer_id'])throw new Problem(409,'Verified account or panel identity differs.');
+        $binding=$this->db->one('SELECT customer_id,tenant_id FROM managed_accounts WHERE account_ref=?'.$suffix,[$r['account_ref']]);
+        $link=$this->db->one('SELECT tenant_id FROM panel_resellers WHERE panel_id=?'.$suffix,[$r['panel_reseller_id']]);
+        if(!$binding||$binding['customer_id']!==$d['customer_id']||$binding['tenant_id']!==$d['tenant_id']||($d['workspace_kind']!=='owner'&&(!$link||$link['tenant_id']!==$d['tenant_id'])))throw new Problem(409,'Customer/workspace ownership differs.');
+        if($this->db->one('SELECT device_id FROM device_recovery_hints WHERE device_id=? OR (account_ref=? AND app_package=? AND panel_reseller_id=? AND hint_hash=?)'.$suffix,[$d['id'],$r['account_ref'],$r['app_package'],$r['panel_reseller_id'],$r['recovery_hint_hash']]))throw new Problem(409,'A recovery association already exists; refresh and review instead of replacing it.');
+        if($this->db->one('SELECT id FROM devices WHERE installation_id=?'.$suffix,[$r['installation_id']]))throw new Problem(409,'The new installation is already assigned.');
+        $revision=$this->secrets->mac('legacy-recovery-review:v1\n'.json_encode([$r['id'],$r['account_ref'],$r['app_package'],$r['installation_id'],$r['key_fingerprint'],$r['recovery_hint_hash'],$r['panel_reseller_id'],$r['panel_customer_id'],$d['id'],$d['installation_id'],$d['key_fingerprint'],$d['policy'],$d['tenant_id'],$d['customer_id']],JSON_THROW_ON_ERROR));
+        return ['request'=>$r,'device'=>$d,'revision'=>$revision];
+    }
+    public function previewLegacy(array $actor,string $id):array {
+        Auth::owner($actor);$v=$this->legacyCandidate($id);$r=$v['request'];$d=$v['device'];
+        $name=$this->db->one('SELECT username FROM verified_line_usernames WHERE account_ref=?',[$r['account_ref']]);
+        return ['request_id'=>$r['id'],'device_id'=>$d['id'],'installation_id'=>$r['installation_id'],'app_package'=>$r['app_package'],'model'=>$r['model'],'previous_label'=>$d['label'],'previous_last_seen_at'=>$d['last_seen_at'],'line_username'=>$name['username']??null,'expected_revision'=>$v['revision']];
+    }
+    public function authorizeLegacy(array $actor,string $id,array $input):array {
+        Auth::owner($actor);Input::keys($input,['expected_revision','confirm']);
+        if(($input['confirm']??null)!==true)throw new Problem(422,'Explicit owner confirmation is required.');
+        $expected=EnrollmentProof::hex($input['expected_revision']??null,64);
+        $this->auth->limit('legacy-recovery-approval',$actor['id'],20,3600);
+        return $this->db->transaction(function()use($actor,$id,$expected):array {
+            $r=$this->db->one('SELECT account_ref,app_package FROM enrollment_requests WHERE id=?',[Input::id($id)]);
+            if(!$r)throw new Problem(404,'Enrollment request not found.');
+            $this->lockScope($r['account_ref'],$r['app_package']);
+            // Current locking reads prevent stale approval after a policy change,
+            // another owner review or a competing signed recovery attempt.
+            $v=$this->legacyCandidate($id,true);$r=$v['request'];$d=$v['device'];
+            if(!hash_equals($v['revision'],$expected))throw new Problem(409,'Recovery review is stale. Refresh and review again.');
+            $this->db->query('INSERT INTO device_recovery_hints (device_id,account_ref,app_package,panel_reseller_id,hint_hash) VALUES (?,?,?,?,?)',[$d['id'],$r['account_ref'],$r['app_package'],$r['panel_reseller_id'],$r['recovery_hint_hash']]);
+            $this->db->query("UPDATE enrollment_requests SET recovery_state='owner_authorized' WHERE id=?",[$id]);
+            $this->auth->audit($actor,'device.recovery_owner_authorized',$d['id'],$d['tenant_id'],['request_id'=>$r['id'],'method'=>'explicit legacy recovery review; signed retry required']);
+            return ['request_id'=>$id,'device_id'=>$d['id'],'state'=>'awaiting_signed_retry'];
+        });
+    }
 }

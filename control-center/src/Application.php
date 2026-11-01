@@ -200,6 +200,11 @@ final class Application
         if($method==='POST'&&$path==='/api/enrollments/settings') Http::json($this->enrollment->setEnabled($actor,Http::body()));
         if($method==='POST'&&$path==='/api/enrollments/bridge-configuration') { Input::keys(Http::body(),[]); Http::json($this->enrollment->bridgeConfiguration($actor)); }
         if($method==='GET'&&$path==='/api/enrollments') Http::json($this->enrollment->listing($actor,$_GET));
+        if(preg_match('~^/api/enrollments/([a-f0-9]{32})/recovery$~D',$path,$match)) {
+            $recovery=new DeviceRecovery($this->db,$this->config,new Secrets($this->config),$this->auth);
+            if($method==='GET')Http::json($recovery->previewLegacy($actor,$match[1]));
+            if($method==='POST')Http::json($recovery->authorizeLegacy($actor,$match[1],Http::body()));
+        }
         if($method==='POST'&&preg_match('~^/api/enrollments/([a-f0-9]{32})/approve$~D',$path,$match)) Http::json($this->enrollment->approve($actor,$match[1],Http::body()));
         if($method==='POST'&&preg_match('~^/api/enrollments/([a-f0-9]{32})/reject$~D',$path,$match)) { Input::keys(Http::body(),[]); Http::json($this->enrollment->reject($actor,$match[1])); }
         if ($method === 'POST' && $path === '/api/logout') {

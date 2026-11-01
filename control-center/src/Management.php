@@ -142,6 +142,9 @@ final class Management
         $line=$this->deviceUsernameSql('d');
         $row = $this->db->one("SELECT d.*, TIMESTAMPDIFF(SECOND, d.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, COALESCE($line,c.name) AS customer_name, $line AS line_username, t.name AS tenant_name FROM devices d JOIN customers c ON c.id = d.customer_id JOIN tenants t ON t.id = d.tenant_id WHERE d.id = ? AND $scope" . ($lock ? ' FOR UPDATE' : ''), $args);
         if (!$row) throw new Problem(404, 'Record not found.');
+        if(DeviceListWindow::installed($this->db)){
+            $row['recovery_ready']=(bool)$this->db->one("SELECT h.device_id FROM device_recovery_hints h JOIN enrollment_requests r ON r.device_id=h.device_id AND r.account_ref=h.account_ref AND r.app_package=h.app_package AND r.panel_reseller_id=h.panel_reseller_id WHERE h.device_id=? AND r.key_fingerprint=? AND r.app_package=? AND r.status='approved' LIMIT 1",[$row['id'],$row['key_fingerprint'],$row['app_package']]);
+        }
         return $this->publicDevice($row);
     }
     public function createDevice(array $actor, array $input): array

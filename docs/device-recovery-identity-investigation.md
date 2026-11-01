@@ -95,6 +95,41 @@ signed proofs, poll tokens, credential ciphertext, private keys or passwords.
 
 ## Delivery boundary
 
+### Extended reset/recovery hardening (same PR)
+
+An owner-only legacy recovery preview/approval is now implemented in Website
+settings / Connection requests. A live unidentified hold must have exactly one
+historical approved device for the account/package, matching verified panel
+customer/reseller and customer/workspace binding. Restricted/recently active
+devices, existing/foreign hints, expired delivery and stale review revisions are
+refused. Approval records the association and `owner_authorized` state with the
+real actor audit; it does not issue credentials or lift policy. Fresh signed
+enrollment still performs recovery and retires the previous credential. The
+browser sends only explicit confirmation plus a server-generated review revision.
+
+Device detail now distinguishes recovery-association readiness from active access
+and presence. Readiness is not proof of physical-device continuity or a guarantee
+of recovery after every possible reset. Healthy existing installations still need
+signed hint backfill; a legacy installation already reset without that evidence
+needs owner review. Never automatically match by username/model/IP.
+
+The foreground management runner now retries transient startup state/keystore
+errors instead of becoming inert until a process restart/account emission. Retry
+preserves known restrictions and lifecycle cancellation. Recovery UI can wake the
+normal runner without wiping customer state. New enrollment audit metadata records
+known-identity vs historical-recovery vs new-installation paths and signed-hint
+presence without logging keys, tokens, passwords or raw device identifiers.
+
+This hardens the failure modes but does not establish exactly why this incident's
+first recovery registration occurred the night after its reset. Do not claim that
+uncaptured network/lifecycle history has been reconstructed or that every future
+reset can safely recover automatically.
+
+The extended website changes require a new matching backend/frontend deployment;
+the immutable fixed-file 0.36 installer is NOT suitable for deploying these changes.
+No new schema migration is needed on an already-upgraded website. Customer app
+reader/retry/UI changes still require a separately approved signed in-place APK.
+
 Validation: 90 management tests pass with zero failures/errors/skips, including
 four vault regressions and two recovery-status cases. Official customer-variant
 Kotlin compilation also passes. Before the patch, both interrupted-state cases

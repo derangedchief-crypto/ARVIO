@@ -802,6 +802,22 @@ async function approveEnrollment(request) {
     }, 300);
   });
 }
+async function reviewLegacyRecovery(request,refresh){
+  const preview=await api('/api/enrollments/'+request.id+'/recovery');
+  modal('Review previous device recovery',[
+    {key:'confirmation',label:'Authorize this installation to recover the previous device',options:[['','Choose explicitly…'],['authorize','I approve recovery of this existing device']]}
+  ],async values=>{
+    if(values.confirmation!=='authorize')throw new Error('Explicit recovery approval is required.');
+    await api('/api/enrollments/'+request.id+'/recovery',{expected_revision:preview.expected_revision,confirm:true});
+    toast('Association approved. The app must complete a fresh signed retry; allow up to ten minutes online.');
+    await refresh();
+  },'Authorize recovery');
+  $('modal-form').prepend(el('p','Verified account: '+(preview.line_username||request.account_hint)),
+    el('p','Previous device: '+preview.previous_label+' · '+preview.device_id),
+    el('p','Incoming installation: '+preview.installation_id+' · '+preview.model),
+    el('p','Last previous check-in: '+date(preview.previous_last_seen_at)),
+    el('p','An account match is not proof of the same physical TV. Authorize only a recovery you approve. This preserves the existing device record and requires a fresh signed app retry. It does not unblock a restricted device.','notice'));
+}
 async function enrollments(epoch) {
   const main = $('main'); main.replaceChildren(heading('Website settings', ''));
   const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
@@ -833,13 +849,14 @@ async function enrollments(epoch) {
       const rows = data.items.map(r => {
         const a = el('div', null, 'actions');
         if (r.status !== 'approved') {
-          a.append(button('Approve / assign', () => approveEnrollment(r).catch(e => toast(e.message))));
+          if(r.status==='pending'&&r.recovery_state==='unidentified')a.append(button('Review recovery',()=>reviewLegacyRecovery(r,()=>load(page)).catch(e=>toast(e.message))));
+          else a.append(button('Approve / assign', () => approveEnrollment(r).catch(e => toast(e.message))));
           if (r.status === 'pending') a.append(button('Reject', async () => {
             if (!confirm('Reject this management enrollment request? This does not erase the app’s saved data or change its IPTV activation.')) return;
             try { await api('/api/enrollments/' + r.id + '/reject', {}); await load(page); } catch (e) { toast(e.message); }
           }, 'danger'));
         } else if (r.device_id) a.append(button('View device', () => { location.hash = 'device/' + r.device_id; }));
-        return [cellName(r.label, r.installation_id), cellName(r.model || 'App-reported device', r.os_version), r.account_hint, cellName(r.app_version, r.app_package), badge(r.status), date(r.last_request_at), a];
+        return [cellName(r.label, r.installation_id), cellName(r.model || 'App-reported device', r.os_version), r.account_hint, cellName(r.app_version, r.app_package), cellName(r.status,r.recovery_state?'Recovery: '+r.recovery_state:''), date(r.last_request_at), a];
       });
       const roster = table(['Device / installation', 'Reported details', 'Verified account', 'App build', 'Review', 'Last request', 'Actions'], rows);
       roster.classList.add('enrollment-table');

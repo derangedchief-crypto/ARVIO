@@ -133,12 +133,20 @@ class DeviceManagementAgent @Inject constructor(
                     _state.value = preparingManagementAccount(previous, sameAccount)
                     if (sameAccount) previous.policy else null
                 }
-                try {
+                runManagementSessionWithRetry(
+                    onFailure = {
+                        // Preserve known restrictions; never clear customer stores
+                        // or recreate identity to work around unavailable state.
+                        _state.value = _state.value.copy(checkingLocalState = false, status = "Management key/state unavailable")
+                    },
+                    waitForRetry = { waitForNextCheckIn(15_000) },
+                ) {
                     val key = vault.publicKey(account.scope)
                     val fingerprint = managementHash(key)
                     var saved = vault.load(account.scope) ?: ManagementSession(account.scope, newInstallation())
                     if(saved.catalogSecret?.matches(Regex("[a-f0-9]{64}"))!=true)saved=saved.copy(catalogSecret=managementHash(UUID.randomUUID().toString()+UUID.randomUUID().toString()))
-                    if (knownPolicy in setOf("suspended", "blocked", "removed")) saved = saved.copy(policy = knownPolicy)
+                    val retainedPolicy=_state.value.policy?.takeIf { it in setOf("suspended", "blocked", "removed") } ?: knownPolicy
+                    saved=preserveObservedManagementRestriction(saved,retainedPolicy)
                     if (saved.keyFingerprint.isNotEmpty() && saved.keyFingerprint != fingerprint) {
                         // A lost signing key cannot silently reuse another identity.
                         // Keep known restrictions until another owner-approved enrollment.
@@ -165,10 +173,6 @@ class DeviceManagementAgent @Inject constructor(
                             waitForNextCheckIn((10_000L shl (failures - 1)).coerceAtMost(300_000) + Random.nextLong(0, 3000))
                         }
                     }
-                } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) {
-                    // No plaintext fallback and no clearing customer/profile stores.
-                    _state.value = _state.value.copy(checkingLocalState = false, status = "Management key/state unavailable")
                 }
             }
         }
