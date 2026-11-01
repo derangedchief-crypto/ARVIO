@@ -72,7 +72,7 @@ class DeviceManagementAgent @Inject constructor(
 
     fun onInteraction() { lastInteraction = SystemClock.elapsedRealtime() }
     fun checkInNow() {
-        val current=active ?: return
+        val current=active ?: run { wake.trySend(Unit); return }
         scope.launch {
             try { change(current) { it.copy(unmanagedUntilMs = 0) }; wake.trySend(Unit) }
             catch (cancelled: CancellationException) { throw cancelled }
