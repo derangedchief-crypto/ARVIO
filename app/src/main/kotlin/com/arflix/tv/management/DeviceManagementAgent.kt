@@ -215,7 +215,7 @@ class DeviceManagementAgent @Inject constructor(
             when (result.getString("status")) {
                 "pending" -> {
                     if(result.optString("recovery_state").isNotBlank()){
-                        current.status="Checking previous device identity"
+                        current.status=managementRecoveryStatus(result.optString("recovery_state"))
                         current.heartbeat=300
                         if(result.optBoolean("recovery_retry"))change(current){it.copy(requestId=null,pollToken=null)}
                     }else { current.status = "Awaiting provider approval"; current.heartbeat = 60 }
