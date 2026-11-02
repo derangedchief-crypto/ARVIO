@@ -829,14 +829,19 @@ async function recoveryHolds(epoch) {
     }
     const choices=p.devices.filter(d=>d.policy==='active');
     if(!choices.length){toast('No active existing device is available. Review the device policy below before allowing recovery.');return;}
+    // Count all matches, including restricted records: filtering first must not
+    // turn an ambiguous identity into an apparently unique recommendation.
+    const matches=p.devices.filter(d=>d.hint_matches===true);
+    const recommended=matches.length===1&&matches[0].policy==='active'?matches[0]:null;
     modal('Allow reconnection to an existing device',[
-      {key:'device_id',label:'Existing device to reconnect — no new record will be created',options:[['','Select the actual device…'],...choices.map(d=>[d.id,`${d.label} · ${d.model} · ${d.id.slice(-8)}${d.hint_matches?' · matching hint':''}`])]},
+      {key:'device_id',label:'Existing device to reconnect — no new record will be created',value:recommended?.id||'',options:[['','Select the actual device…'],...choices.map(d=>[d.id,`${d.label} · ${d.model} · ${d.id.slice(-8)}${d.hint_matches?' · matching hint':''}`])]},
       {key:'confirmation',label:'Confirm this is the same physical device',options:[['','Choose…'],['yes','Reconnect the selected existing device']]}
     ],async values=>{
       if(!values.device_id||values.confirmation!=='yes')throw new Error('Select and confirm the existing device.');
       await api('/api/recovery-holds/'+request.id,{action:'allow',device_id:values.device_id,expected_revision:p.expected_revision,confirm:true});
       toast('Allowed. Keep the app open and retry connection. Completion requires a fresh signed check-in.');await load();
     },'Allow reconnection');
+    $('modal-form').prepend(el('p',recommended?'Matching device selected automatically: '+recommended.label+'. Its recovery hint matches within this account and app. Confirm below to reconnect the existing record.':'No unique verified match. Select the actual existing device; matching names or models alone are not enough.','notice'));
   }
   async function load(page=1,restrictedPage=1){
     const data=await api('/api/recovery-holds?page='+page+'&restricted_page='+restrictedPage);if(epoch!==state.epoch)return;

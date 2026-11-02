@@ -1,0 +1,13 @@
+0.38.1 — recovery hold device recommendation
+
+Requires website0.38.0. Use install-control-0381.sh on the website host only.
+Only frontend assets and HTML/VERSION pointers are installed. PHP, configuration,
+database, device records, APKs and worker services are unchanged.
+
+Allow now preselects the existing device if exactly one candidate has a matching
+recovery hint and that candidate is active. Matching is already account/package
+scoped by the preview API. All candidates count toward ambiguity, including
+restricted devices. No match or multiple matches means no automatic selection.
+The recommendation is explained in the dialog. The reseller still confirms the
+selected device; opening the dialog never submits an approval. Existing server
+revision, ownership, quiet-period and policy checks remain authoritative.
