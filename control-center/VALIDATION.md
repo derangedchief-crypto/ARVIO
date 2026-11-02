@@ -1,5 +1,28 @@
 # Control Center validation
 
+## 0.40.0 reference-matched dashboard
+
+The user rejected 0.39.0's composition. 0.40.0 implements the subsequently
+approved top-header, two metric rows, activity/donut and compact queue layout.
+Owner/reseller browser checks exercise the actual four metric cards, four
+secondary stats, two SVG charts and seven-row accessible chart data table,
+hidden desktop drawer, top navigation, and every workspace route at 320/390/1440px.
+Local screenshots use synthetic fixture accounts, never live customer records.
+
+All 347 isolated service contracts and 68 broad browser workflow checks pass,
+along with the focused recovery-hold and responsive chart/layout checks.
+The service suite includes a new fixture proving access
+slices sum to the visible total, removed devices do not enter the charts, foreign
+workspace selection is denied and a new contact moves a device between dates
+instead of inventing an extra historical event.
+
+The new read-only overview aggregates retain the existing authenticated scope.
+The activity chart shows latest-contact dates and enrollment dates, explicitly
+not historical check-in volume. Access slices are mutually exclusive; removed
+devices are excluded. Installer tests cover all new assets and Management.php,
+backups, private/other-backend preservation, immutable reruns, edited-asset refusal,
+symlink isolation and PHP syntax failure before website writes.
+
 ## 0.39.0 reseller workspace redesign
 
 346 isolated service contracts and 68 broad browser workflow checks pass with zero failures, covering tenant isolation,

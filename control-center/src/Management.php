@@ -280,6 +280,27 @@ final class Management
         $stats = $this->db->one("SELECT COUNT(*) AS total, COALESCE(SUM(enrolled_at IS NULL),0) AS not_enrolled, COALESCE(SUM(last_seen_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL $threshold SECOND)),0) AS connected, COALESCE(SUM(policy != 'active'),0) AS restricted FROM devices WHERE $scope AND policy != 'removed' AND $visible", $args);
         $stats['customers'] = (int) $this->db->query("SELECT COUNT(*) FROM customers WHERE $scope", $args)->fetchColumn();
         $stats['pending_commands'] = (int) $this->db->query("SELECT COUNT(*) FROM commands WHERE $scope AND status IN ('pending','delivered','running') AND expires_at > UTC_TIMESTAMP()", $args)->fetchColumn();
+        $accountScope = str_replace('tenant_id', 'a.tenant_id', $scope);
+        $recoveryScope = "FROM enrollment_requests r JOIN managed_accounts a ON a.account_ref=r.account_ref WHERE $accountScope AND r.status='pending' AND r.recovery_state IS NOT NULL";
+        $stats['recovery_holds'] = (int) $this->db->query("SELECT COUNT(*) $recoveryScope", $args)->fetchColumn();
+        $stats['recovery_requests'] = $this->db->all("SELECT r.label,r.model,r.last_request_at $recoveryScope ORDER BY r.last_request_at DESC,r.id LIMIT 3", $args);
+        $stats['payment_review'] = (int) $this->db->query("SELECT COUNT(*) FROM renewal_orders WHERE $scope AND ((payment_state='paid' AND fulfilment_state!='fulfilled') OR payment_state IN ('review','verification_pending','link_uncertain'))", $args)->fetchColumn();
+        // A snapshot of current records, not a fabricated check-in event history.
+        // Keep every series on the same tenant and visible-device boundaries.
+        $deviceScope = "$scope AND policy != 'removed' AND $visible";
+        $access = $this->db->all("SELECT CASE WHEN policy='blocked' THEN 'blocked' WHEN policy='suspended' THEN 'suspended' WHEN enrolled_at IS NULL THEN 'pending' ELSE 'active' END AS state, COUNT(*) AS total FROM devices WHERE $deviceScope GROUP BY state", $args);
+        $stats['access'] = ['active'=>0,'pending'=>0,'suspended'=>0,'blocked'=>0];
+        foreach ($access as $row) $stats['access'][$row['state']] = (int) $row['total'];
+        $latest = $this->db->all("SELECT DATE(last_seen_at) AS day, COUNT(*) AS total FROM devices WHERE $deviceScope AND last_seen_at >= UTC_DATE() - INTERVAL 6 DAY AND last_seen_at < UTC_DATE() + INTERVAL 1 DAY GROUP BY day", $args);
+        $enrolled = $this->db->all("SELECT DATE(enrolled_at) AS day, COUNT(*) AS total FROM devices WHERE $deviceScope AND enrolled_at >= UTC_DATE() - INTERVAL 6 DAY AND enrolled_at < UTC_DATE() + INTERVAL 1 DAY GROUP BY day", $args);
+        $latest = array_column($latest, 'total', 'day');
+        $enrolled = array_column($enrolled, 'total', 'day');
+        $today = $this->db->query('SELECT UTC_DATE()')->fetchColumn();
+        $stats['activity'] = [];
+        for ($days = 6; $days >= 0; $days--) {
+            $day = (new \DateTimeImmutable($today, new \DateTimeZone('UTC')))->modify("-$days days")->format('Y-m-d');
+            $stats['activity'][] = ['day'=>$day,'latest_contact'=>(int)($latest[$day]??0),'enrolled'=>(int)($enrolled[$day]??0)];
+        }
         return $stats;
     }
 

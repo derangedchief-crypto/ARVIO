@@ -1,0 +1,39 @@
+Extreme Control Center 0.40.0 — approved reference-matched layout
+
+Supersedes the rejected 0.39.0 design. Install this release directly over
+0.38.0, 0.38.1 or 0.39.0 using install-control-0400.sh on the fixed website:
+/www/wwwroot/control.fecxbrfzku.net
+
+The new composition replaces the persistent desktop sidebar with a slim branded
+header, direct top navigation and an on-demand full menu. The dashboard has four
+primary metric panels, four compact secondary stats, a large activity chart
+beside a donut chart, and a small review queue. The same full-width shell applies
+to customers, device support, recovery, renewals, trials, branding, saved setups,
+add-ons, activity and owner administration. Phones retain direct bottom navigation.
+
+Charts contain real scoped data only. The activity series groups each currently
+visible device by its LATEST contact date and enrollment date, over seven UTC
+days. It is not a history of all check-ins, nor an uptime chart. Access slices are
+disjoint: restricted policy takes precedence, then awaiting enrollment, then
+enrolled active records. Removed records are excluded consistently with overview
+totals. Empty workspaces show zero/empty states rather than sample data.
+
+Management.php adds read-only aggregates to the existing authorized overview.
+Customer scope, recovery decisions, financial mutations, enrollment, commands,
+credentials, package/signing identities, update feeds and workers are unchanged.
+There is no schema migration or APK publication.
+
+Installer scope: 13 frontend assets under public/assets/portal-0.40.0;
+src/Management.php; public/index.html; public/renew.html; VERSION.
+The ZIP manifest and PHP syntax are checked before website writes. Original
+credentials/key and other PHP files are hash-checked. Existing asset folders
+remain available for rollback. Edited release files or symlinks are refused.
+
+Each run reports /root/control-0400-backup-*/website-before.zip. Restore only
+the four backed-up paths from that exact archive to undo the update. No database
+or app-data restore is needed. Keep the old asset directories.
+
+After installation reload the site, verify /api/status reports 0.40.0 and the
+index loads portal-0.40.0/dashboard.js plus the other versioned assets. Check the
+real reseller view and the owner workspace selector, chart data table, customer
+and device workspaces, explicit recovery review, and mobile menu navigation.

@@ -27,6 +27,19 @@ function ownerWorkspaceCases(array &$tests,ControlCenter\Application $app,Contro
         $all=$app->management->overview($owner);check((int)$all['total']>=(int)$own['total']);$audit=$app->management->audit($owner,['tenant_id'=>$space['id']]);same((int)$app->db->query('SELECT COUNT(*) FROM audit_events WHERE tenant_id=?',[$space['id']])->fetchColumn(),$audit['total']);
         problem(404,fn()=> $app->management->overview($alpha,['tenant_id'=>$space['id']]));problem(404,fn()=> $app->management->audit($alpha,['tenant_id'=>$space['id']]));problem(404,fn()=> $app->management->listing($alpha,'devices',['tenant_id'=>$space['id']]));same($app->management->overview($alpha),$app->management->overview($owner,['tenant_id'=>$tenantA['id']]));
     };
+    $tests['dashboard charts use disjoint access states and scoped latest-contact dates rather than invented history']=function()use($app,$owner,$alpha,$password):void {
+        $tenant=$app->management->createReseller($owner,['company'=>'TEST analytics','name'=>'TEST analytics','email'=>'analytics-fixture@example.test','password'=>$password]);
+        $customer=$app->management->createCustomer($owner,['tenant_id'=>$tenant['id'],'name'=>'TEST analytics customer']);
+        $ids=[];foreach(['pending','active','suspended','blocked','removed'] as $state){
+            $device=$app->management->createDevice($owner,['customer_id'=>$customer['id'],'label'=>'TEST '.$state]);$ids[$state]=$device['id'];
+            if($state!=='pending')$app->db->query("UPDATE devices SET policy=?,enrolled_at=UTC_DATE()-INTERVAL 1 DAY,last_seen_at=UTC_DATE()-INTERVAL 1 DAY WHERE id=?",[$state,$device['id']]);
+        }
+        $stats=$app->management->overview($owner,['tenant_id'=>$tenant['id']]);
+        same(4,(int)$stats['total']);same(['active'=>1,'pending'=>1,'suspended'=>1,'blocked'=>1],$stats['access']);same(0,$stats['recovery_holds']);same(0,$stats['payment_review']);same([],$stats['recovery_requests']);same(7,count($stats['activity']));
+        same(3,array_sum(array_column($stats['activity'],'latest_contact')));same(3,array_sum(array_column($stats['activity'],'enrolled')));same(3,$stats['activity'][5]['latest_contact']);same(0,$stats['activity'][6]['latest_contact']);
+        problem(404,fn()=> $app->management->overview($alpha,['tenant_id'=>$tenant['id']]));
+        $app->db->query("UPDATE devices SET last_seen_at=UTC_TIMESTAMP() WHERE id=?",[$ids['active']]);$updated=$app->management->overview($owner,['tenant_id'=>$tenant['id']]);same(2,$updated['activity'][5]['latest_contact']);same(1,$updated['activity'][6]['latest_contact']);same(3,array_sum(array_column($updated['activity'],'latest_contact')));
+    };
     $tests['HTTP workspace context is authenticated role scoped and versioned HTML never pins stale asset URLs']=function()use($app,$config,$owner,$space,$http,$password):void {
         same(401,$http->request('GET','/api/workspace-context',null,[],'anonymous-workspace')['status']);$session=$app->auth->login(['email'=>$owner['email'],'password'=>$password],'127.0.0.240');$headers=['Cookie'=>'control_session='.$session['token']];
         $reply=$http->request('GET','/api/workspace-context',null,$headers,'workspace-owner');same(200,$reply['status']);same($space['id'],$reply['body']['workspace']['id']);same('owner',$reply['body']['workspace']['kind']);same(200,$http->request('GET','/api/device-defaults',null,$headers,'workspace-owner')['status']);same(200,$http->request('GET','/api/trial-contacts',null,$headers,'workspace-owner')['status']);same(200,$http->request('GET','/api/trial-offer-publication',null,$headers,'workspace-owner')['status']);
