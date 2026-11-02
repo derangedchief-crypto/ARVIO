@@ -1,5 +1,22 @@
 # Control Center validation
 
+## 0.39.0 reseller workspace redesign
+
+346 isolated service contracts and 68 broad browser workflow checks pass with zero failures, covering tenant isolation,
+device recovery, explicit approval, signed operations and payment idempotency.
+The responsive redesign suite checks both owner and reseller routes at 320, 390
+and 1440 pixels, customer records/notes, all retained-device selection, complete
+mobile navigation, drawer inertness and saved theme choice. Fixtures are local
+and synthetic. Recovery holds pass CSRF/ownership, no-match/ambiguous/unique-match
+selection and explicit allow/reject checks. The 18 renewal browser scenarios
+pass, including country routing, write-only gateway credentials, conversion
+pricing and refusal of a second checkout for paid pending renewals.
+
+The 0.39.0 installer tests verify frontend-only writes, backup pointers, immutable
+reruns, rejection of edited assets and symlink/other-site isolation. Deterministic
+package and manifest checks pass. Validation does not perform live installation
+or publish any APK.
+
 ## 0.37.0 recovery hardening
 
 Android validation passes 1,042 unit tests (zero failures/errors, one skipped),

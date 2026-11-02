@@ -13,9 +13,10 @@ window.Renewals={async render(epoch,section){
     const needsAttention=o=>(o.payment_state==='paid'&&o.fulfilment_state!=='fulfilled')||['review','verification_pending','link_uncertain'].includes(o.payment_state);
     const attention=orders?.items.filter(needsAttention)||[];
     const summary=el('div',null,'section-summary');summary.append(el('span',data.policy.enabled?(data.policy.testing_only?'Payments on · testing apps only':'Payments on · testing and production apps'):'New payments paused'),el('span',connections.filter(c=>c.checkout_enabled!==false).length+' enabled gateway(s)'));main.append(summary);
+    const metrics=el('div',null,'stats payment-metrics');for(const[label,value,note]of [['Recent orders',orders?orders.items.length:'—','Up to 50 latest orders'],['Needs attention',orders?attention.length:'—','Verification or renewal review'],['Renewals fulfilled',orders?orders.items.filter(o=>o.fulfilment_state==='fulfilled').length:'—','Within recent orders'],['Enabled gateways',connections.filter(c=>c.checkout_enabled!==false).length,'Configured availability']]){const card=el('div',null,'stat');card.append(el('div',label,'stat-label'),el('strong',String(value)),el('span',note));metrics.append(card);}
     const attentionBox=el('div');main.append(attentionBox);
     const tabs=sectionTabs(main,'Renewals:'+tenant,[['payments','Payments'],['plans','Plans & pricing'],['gateways','Gateways'],['settings','Settings']],section,id=>history.replaceState(null,'','#renewals/'+id));
-    const payments=tabs.panes.get('payments'),plans=tabs.panes.get('plans'),gateways=tabs.panes.get('gateways'),settings=tabs.panes.get('settings');
+    const payments=tabs.panes.get('payments'),plans=tabs.panes.get('plans'),gateways=tabs.panes.get('gateways'),settings=tabs.panes.get('settings');payments.append(metrics);
     if(data.catalogue_only)attentionBox.append(el('p','Catalogue-only connection: payments and renewal writes remain OFF. Package prices can still be prepared.','notice warning'));
     if(!data.prices.some(p=>p.enabled))attentionBox.append(el('p','No active customer prices are configured. Set plan pricing before accepting payments.','notice warning'));
     const unverified=connections.filter(c=>c.checkout_enabled!==false&&!c.webhook_verified_at);

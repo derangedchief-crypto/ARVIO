@@ -1,0 +1,38 @@
+Extreme Control Center 0.39.0 — reseller workspace redesign
+
+Frontend-only delivery for control.fecxbrfzku.net, starting on 0.38.0 or 0.38.1.
+Use install-control-0390.sh with the checksum-verified 0.39.0 Update ZIP.
+Do not extract this ZIP over unrelated sites or run its worker installers.
+
+New workspace
+- Near-black/purple visual system, compact surfaces, dark default and saved theme choice.
+- Responsive navigation: Overview, Customers, Requests and the complete tool directory.
+- Reseller dashboard reads actual recovery and recent payment review counts, with
+  unavailable data clearly distinguished from an empty queue. Contact counts are
+  not promises of connectivity, and pending commands are not completed actions.
+- Customer workspace combines account reference, private notes and all retained
+  devices. Device support links back to the customer; old customer-device links work.
+- Recovery queue uses compact account/device rows and expandable installation
+  details. Allow still requires an explicit existing-device confirmation and the
+  original revision; only a unique unrestricted verified match is preselected.
+- Payments summarise recent orders and separate payment from renewal fulfillment.
+- App identity/artwork controls, shared section tabs, tables, forms, owner tools,
+  sign-in and generic public Payment Gateway checkout follow the same system.
+
+Scope and rollback
+The installer validates every ZIP manifest entry before writing. It installs 12
+versioned frontend assets into public/assets/portal-0.39.0 and updates only
+public/index.html, public/renew.html and VERSION. Original unversioned assets,
+config.php, storage/application.key and all PHP are hash-checked/preserved.
+No database migration, app publication, signing changes or worker restart.
+
+Each run reports /root/control-0390-backup-*/website-before.zip containing the
+previous three pointer files. To roll back, restore only those three files from
+that exact backup into /www/wwwroot/control.fecxbrfzku.net. Retain the old asset
+directories; the previous index points back to its own release. Do not restore a
+database or remove credentials for a frontend rollback.
+
+After installation reload the browser, check /api/status reports 0.39.0 and
+verify the index points to portal-0.39.0. Check the real reseller dashboard,
+Customers, Recovery holds, renewals and a narrow-screen navigation session.
+Live installation/verification requires the site's aaPanel terminal operator.
