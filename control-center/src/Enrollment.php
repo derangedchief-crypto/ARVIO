@@ -140,8 +140,15 @@ final class Enrollment
             }
             $this->db->query('UPDATE enrollment_requests SET label=?,model=?,os_version=?,app_version=?,last_request_at=UTC_TIMESTAMP() WHERE id=?',[$label,$model,$os,$version,$row['id']]);
             if($linked)$this->db->query('UPDATE enrollment_requests SET panel_reseller_id=?,panel_customer_id=? WHERE id=?',[$claim['panel']['reseller_id'],$claim['panel']['customer_id'],$row['id']]);
+            $wasIdentityHold=($row['recovery_state']??null)==='unidentified'&&$row['status']==='pending';
             if($recovery->available()){
                 $this->db->query('UPDATE enrollment_requests SET recovery_hint_hash=? WHERE id=?',[$hintHash,$row['id']]);
+                // Reevaluate pre-upgrade holds only with a fresh signed proof.
+                // Keep the response policy until automatic admission succeeds.
+                if($match===null&&$hintHash!==null&&$row['status']==='pending'&&$row['device_id']===null&&($row['recovery_state']??null)==='unidentified'){
+                    $this->db->query('UPDATE enrollment_requests SET recovery_state=NULL WHERE id=?',[$row['id']]);
+                    $row['recovery_state']=null;
+                }
                 if($match!==null&&$row['status']==='pending'){
                     if($match['state']==='recover'){
                         $recovery->reconnect($row,$match['device']);
@@ -172,6 +179,11 @@ final class Enrollment
                 }
             }
             if($enabled&&isset($claim['panel'])&&$row['status']==='pending'&&$row['device_id']===null&&$match===null&&empty($row['recovery_state'])) $this->autoApprove($row,$claim['panel']);
+            if($wasIdentityHold&&$match===null){
+                // Existing clients retain a synthetic suspension until they see
+                // an authenticated active check-in. Keep failed admission retryable.
+                $this->db->query("UPDATE enrollment_requests SET recovery_state=IF(status='approved',NULL,'unidentified') WHERE id=?",[$row['id']]);
+            }
             $this->db->query('UPDATE enrollment_challenges SET used_at=UTC_TIMESTAMP(),request_id=? WHERE nonce_hash=?',[$row['id'],$nonceHash]);
             if($row['id']===$candidate) $this->auth->audit(null,'enrollment.requested',$row['id'],null,[
                 'app_package'=>$claim['package'],

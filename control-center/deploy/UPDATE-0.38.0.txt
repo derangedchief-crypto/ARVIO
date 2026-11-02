@@ -1,0 +1,38 @@
+Extreme Control Center 0.38.0 — automatic additional devices and Recovery holds
+
+Install with install-control-038.sh on the WEBSITE host only. Supported previous
+version: 0.37.0. No database migration, private configuration edit, worker restart,
+APK publication or reseller fanout is performed. Existing assets and APKs stay.
+
+Eligible additional devices with a signed account proof and recovery hint no longer
+get stuck merely because another active legacy TV has no recovery hint. Existing
+account/workspace ownership and device allocations still apply. An unidentified
+legacy restricted device remains held rather than allowing a new identity to
+escape its restriction. New-device admission creates a distinct device; it never
+pretends an unknown legacy TV is the same physical device. Recognized recovery
+continues to preserve the existing device and restrictions. Old unidentified holds
+reevaluate after fresh signed registration. Successful approvals retire older
+unassigned pending requests for the same hint, retaining historical records.
+
+Recovery holds is available to resellers and owners. Resellers see only holds
+bound to customers in their own workspace. Allow requires an explicit existing
+device choice, a current revision, consistent ownership and an inactive active-policy
+device; it adds an association and waits for a fresh signed retry. It creates no
+new device record. Reject leaves existing devices and credentials untouched.
+Blocked/suspended/removed devices are also shown. Resellers can reactivate their
+suspended devices; owner blocks/removals keep the existing owner-only rules.
+
+The database already stores identity history; no raw Android identifiers are added.
+No claim of physical-device continuity is made from username/model/IP alone.
+Standalone and admitted branded packages use this shared flow, with package fencing.
+Existing 2.0.131 clients use these server changes; no new APK is required for this fix.
+
+An optional private-config automatic_additional_devices=false retains conservative
+legacy review for installations that explicitly require it. The installer does not
+edit that setting or turn on a disabled enrollment/recovery service.
+
+After installation, open Recovery holds as a reseller and verify expected scope.
+Keep affected apps open and select Retry connection. Verify fresh active check-ins;
+an allowed association or approved request alone does not prove reconnection.
+Keep the installer backup path. On failure it restores only its changed PHP/HTML/
+VERSION files; the new RecoveryHolds.php is removed only if it did not exist before.

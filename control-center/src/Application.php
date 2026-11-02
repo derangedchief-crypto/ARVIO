@@ -200,6 +200,12 @@ final class Application
         if($method==='POST'&&$path==='/api/enrollments/settings') Http::json($this->enrollment->setEnabled($actor,Http::body()));
         if($method==='POST'&&$path==='/api/enrollments/bridge-configuration') { Input::keys(Http::body(),[]); Http::json($this->enrollment->bridgeConfiguration($actor)); }
         if($method==='GET'&&$path==='/api/enrollments') Http::json($this->enrollment->listing($actor,$_GET));
+        if($method==='GET'&&$path==='/api/recovery-holds') Http::json((new RecoveryHolds($this->db,$this->config,$this->auth,$this->management))->listing($actor,$_GET));
+        if(preg_match('~^/api/recovery-holds/([a-f0-9]{32})$~D',$path,$match)) {
+            $holds=new RecoveryHolds($this->db,$this->config,$this->auth,$this->management);
+            if($method==='GET')Http::json($holds->preview($actor,$match[1]));
+            if($method==='POST')Http::json($holds->decide($actor,$match[1],Http::body()));
+        }
         if(preg_match('~^/api/enrollments/([a-f0-9]{32})/recovery$~D',$path,$match)) {
             $recovery=new DeviceRecovery($this->db,$this->config,new Secrets($this->config),$this->auth);
             if($method==='GET')Http::json($recovery->previewLegacy($actor,$match[1]));

@@ -146,7 +146,7 @@ async function enter() {
   workspaceTitle();
   const nav = $('navigation'); nav.replaceChildren();
   const groups = [
-    ['Daily work', [['overview','Dashboard','overview'],['customers','Customers','customers'],['devices','Devices','devices'],['trials','Trials & contacts','profiles'],['renewals','Customer renewals','key']]],
+    ['Daily work', [['overview','Dashboard','overview'],['customers','Customers','customers'],['devices','Devices','devices'],['recovery-holds','Recovery holds','enrollments'],['trials','Trials & contacts','profiles'],['renewals','Customer renewals','key']]],
     ['App setup', [['branding','My app','profiles'],['library','Saved setups','layouts'],['addons','Add-ons','key']]],
     ...(state.user.role==='owner'?[['Administration',[['resellers','Resellers','resellers'],['enrollments','Website settings','enrollments']]]]:[]),
     ['Account', [['audit','Activity','audit'],['more','Tools','more']]]
@@ -818,6 +818,48 @@ async function reviewLegacyRecovery(request,refresh){
     el('p','Last previous check-in: '+date(preview.previous_last_seen_at)),
     el('p','An account match is not proof of the same physical TV. Authorize only a recovery you approve. This preserves the existing device record and requires a fresh signed app retry. It does not unblock a restricted device.','notice'));
 }
+async function recoveryHolds(epoch) {
+  const main=$('main');main.replaceChildren(heading('Recovery holds','Review blocked connections without creating duplicate device records.'));
+  const results=panel('Pending recovery');main.append(results);
+  async function review(request,action){
+    const p=await api('/api/recovery-holds/'+request.id);if(epoch!==state.epoch)return;
+    if(action==='reject'){
+      if(!confirm('Reject this installation request? Existing devices and their saved data remain unchanged.'))return;
+      await api('/api/recovery-holds/'+request.id,{action,expected_revision:p.expected_revision,confirm:true});await load();return;
+    }
+    const choices=p.devices.filter(d=>d.policy==='active');
+    if(!choices.length){toast('No active existing device is available. Review the device policy below before allowing recovery.');return;}
+    modal('Allow reconnection to an existing device',[
+      {key:'device_id',label:'Existing device to reconnect — no new record will be created',options:[['','Select the actual device…'],...choices.map(d=>[d.id,`${d.label} · ${d.model} · ${d.id.slice(-8)}${d.hint_matches?' · matching hint':''}`])]},
+      {key:'confirmation',label:'Confirm this is the same physical device',options:[['','Choose…'],['yes','Reconnect the selected existing device']]}
+    ],async values=>{
+      if(!values.device_id||values.confirmation!=='yes')throw new Error('Select and confirm the existing device.');
+      await api('/api/recovery-holds/'+request.id,{action:'allow',device_id:values.device_id,expected_revision:p.expected_revision,confirm:true});
+      toast('Allowed. Keep the app open and retry connection. Completion requires a fresh signed check-in.');await load();
+    },'Allow reconnection');
+  }
+  async function load(page=1,restrictedPage=1){
+    const data=await api('/api/recovery-holds?page='+page+'&restricted_page='+restrictedPage);if(epoch!==state.epoch)return;
+    const rows=data.items.map(r=>{const actions=el('div',null,'actions');actions.append(button('Allow',()=>review(r,'allow').catch(e=>toast(e.message))),button('Reject',()=>review(r,'reject').catch(e=>toast(e.message)),'danger'));return [cellName(r.line_username||'Verified account',r.installation_id),cellName(r.label,r.model),cellName(r.app_version,r.app_package),r.recovery_state,date(r.last_request_at),actions];});
+    results.replaceChildren(el('h2',`Pending recovery (${data.total})`),el('p','Allow reconnects an existing record. A genuinely additional device enrolls separately when account ownership and allocation permit. Never select another working TV.','notice'));
+    if(rows.length)results.append(table(['Account / installation','Device','App','Reason','Last request','Actions'],rows));else results.append(el('p','No pending recovery holds.','subtle'));
+    results.append(pagination(data,load));
+    const blocked=panel('Blocked or suspended devices',el('p','Policy restrictions remain attached to the existing device. Open its controls to reactivate where your role permits; owner blocks require the owner.','subtle'));
+    for(const d of data.restricted_devices){
+      const row=el('div',null,'actions');const a=el('a',`${d.label} · ${d.model||''} · ${d.policy}`,'workspace-tool-link');a.href='#device/'+d.id;row.append(a);
+      if(d.policy==='suspended'||(d.policy==='blocked'&&state.user.role==='owner'))row.append(button('Reactivate existing device',async()=>{
+        if(!confirm('Reactivate '+d.label+'? This keeps the existing device record.'))return;
+        try{await api('/api/devices/'+d.id,{policy:'active'});await load(page);toast('Policy updated. The app must check in to reconnect.');}catch(e){toast(e.message);}
+      }));
+      blocked.append(row);
+    }
+    if(!data.restricted_devices.length)blocked.append(el('p','No restricted devices.','subtle'));
+    if(data.restricted_pagination)blocked.append(pagination(data.restricted_pagination,p=>load(page,p)));
+    results.append(blocked);
+  }
+  $('section-name').textContent='Recovery holds';document.title='Recovery holds · Extreme Control';
+  await load();
+}
 async function enrollments(epoch) {
   const main = $('main'); main.replaceChildren(heading('Website settings', ''));
   const system = await api('/api/system/status'); if (epoch !== state.epoch) return;
@@ -901,6 +943,7 @@ async function route() {
     else if(/^renewals(?:\/(?:payments|plans|gateways|settings))?$/.test(hash)){document.title='Customer renewals · Extreme Control';await Renewals.render(epoch,hash.split('/')[1]);}
     else if(/^trials(?:\/[a-f0-9]{32})?(?:\/(?:contacts|approvals))?$/.test(hash)){document.title='Trials & contacts · Extreme Control';const part=hash.split('/')[1];await TrialWorkspace.render(epoch,/^[a-f0-9]{32}$/.test(part||'')?part:undefined);}
     else if(/^devices\/customer\/[a-f0-9]{32}$/.test(hash))await records('devices',epoch,hash.split('/')[2]);
+    else if (hash === 'recovery-holds') await recoveryHolds(epoch);
     else if (hash === 'enrollments' && state.user.role === 'owner') await enrollments(epoch);
     else if (/^device\/[a-f0-9]{32}$/.test(hash)) await devicePage(hash.split('/')[1], epoch);
     else location.hash = 'overview';

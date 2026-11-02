@@ -68,6 +68,13 @@ final class DeviceRecovery {
         // Legacy rows with no hint cannot be identified from name/model/IP or
         // account alone. Hold outside the device list instead of guessing.
         $legacy=$this->db->one("SELECT d.id FROM devices d JOIN enrollment_requests r ON r.device_id=d.id LEFT JOIN device_recovery_hints h ON h.device_id=d.id WHERE r.account_ref=? AND r.app_package=? AND r.status='approved' AND h.device_id IS NULL LIMIT 1",[$claim['sub'],$claim['package']]);
+        if($legacy&&$hintHash!==null&&$this->config->get('automatic_additional_devices',true)===true){
+            // A missing hint on an unrelated legacy TV is not evidence that this
+            // installation replaces it. Admit a separate, proved device through
+            // the ordinary ownership/allocation checks; never rewrite the old TV.
+            $restricted=$this->db->one("SELECT d.id FROM devices d JOIN enrollment_requests r ON r.device_id=d.id JOIN tenants t ON t.id=d.tenant_id WHERE r.account_ref=? AND r.app_package=? AND r.status='approved' AND (d.policy!='active' OR t.status!='active') LIMIT 1",[$claim['sub'],$claim['package']]);
+            if(!$restricted)return null;
+        }
         if($legacy||$hintHash===null){
             $known=$legacy??$this->db->one("SELECT d.id FROM devices d JOIN enrollment_requests r ON r.device_id=d.id WHERE r.account_ref=? AND r.app_package=? AND r.status='approved' LIMIT 1",[$claim['sub'],$claim['package']]);
             if($known)return ['state'=>'unidentified'];
@@ -87,6 +94,10 @@ final class DeviceRecovery {
     public function storeForRequest(array $request):void {
         if(!$this->available()||empty($request['recovery_hint_hash'])||empty($request['device_id'])||empty($request['panel_reseller_id'])||$request['status']!=='approved')return;
         $this->db->query('INSERT INTO device_recovery_hints (device_id,account_ref,app_package,panel_reseller_id,hint_hash) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE hint_hash=VALUES(hint_hash),updated_at=UTC_TIMESTAMP()',[$request['device_id'],$request['account_ref'],$request['app_package'],$request['panel_reseller_id'],$request['recovery_hint_hash']]);
+        // Once one installation is actually approved, retire older unassigned
+        // requests for this same hint. Keep their history; never touch another TV.
+        $changed=$this->db->query("UPDATE enrollment_requests SET status='rejected',recovery_state='superseded' WHERE account_ref=? AND app_package=? AND panel_reseller_id=? AND recovery_hint_hash=? AND id<>? AND status='pending' AND device_id IS NULL AND created_at<=?",[$request['account_ref'],$request['app_package'],$request['panel_reseller_id'],$request['recovery_hint_hash'],$request['id'],$request['created_at']])->rowCount();
+        if($changed)$this->auth->audit(null,'enrollment.duplicates_superseded',$request['id'],null,['count'=>$changed,'device_id'=>$request['device_id']]);
     }
     /** Explicit owner association for legacy records; fresh signed enrollment
      * still performs reconnection and credential rotation. No policy is lifted. */
