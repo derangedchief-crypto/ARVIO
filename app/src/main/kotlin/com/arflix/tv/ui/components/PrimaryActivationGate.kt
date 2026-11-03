@@ -24,6 +24,7 @@ import com.arflix.tv.management.RenewalCheckoutState
 import com.arflix.tv.management.RenewalCheckoutRepository
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 
 val LocalPrimaryAccess=staticCompositionLocalOf<PrimaryAccessRepository?> { null }
@@ -33,7 +34,7 @@ val LocalPrimaryState=staticCompositionLocalOf { PrimaryAccessState() }
  * automatic verification; do not invite customers to re-enter a code or trial. */
 @Composable
 fun PrimaryActivationGate(controller:PrimaryAccessRepository,content: @Composable () -> Unit){
-    val state by controller.state.collectAsState()
+    val state by controller.state.collectAsStateWithLifecycle()
     CompositionLocalProvider(LocalPrimaryAccess provides controller,LocalPrimaryState provides state){
         when(state.gatePage()){
             PrimaryGatePage.CHECKING -> Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
@@ -61,7 +62,7 @@ private fun BrandedExpiredAccount(controller:PrimaryAccessRepository){
 
 @Composable
 internal fun RenewalCheckoutScreen(repository:RenewalCheckoutRepository,onRenewed:(()->Unit)?=null,onCancel:(()->Unit)?=null){
-    val checkout by repository.state.collectAsState()
+    val checkout by repository.state.collectAsStateWithLifecycle()
     var showQr by remember { mutableStateOf(false) }
     val lifecycle=LocalLifecycleOwner.current.lifecycle
     val scope=rememberCoroutineScope()

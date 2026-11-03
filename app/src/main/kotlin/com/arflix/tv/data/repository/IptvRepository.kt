@@ -4504,8 +4504,11 @@ class IptvRepository @Inject constructor(
         )
     }
 
-    suspend fun importCloudConfigForProfile(profileId: String, state: IptvCloudProfileState) {
+    suspend fun importCloudConfigForProfile(profileId: String, cloudState: IptvCloudProfileState) {
         val safeProfileId = profileId.trim().ifBlank { "default" }
+        context.settingsDataStore.edit { prefs ->
+        val primary = managedConfig(safeProfileId, prefs).playlists.firstOrNull { primaryAccess.isPrimary(it.m3uUrl) }
+        val state = preserveCloudPrimary(cloudState, primary, primaryAccess::isPrimary)
         val normalizedM3u = normalizeStoredIptvUrl(state.m3uUrl)
         val normalizedEpgUrls = normalizeStoredEpgInputs(state.epgUrl)
         val normalizedEpg = normalizedEpgUrls.firstOrNull().orEmpty()
@@ -4568,7 +4571,6 @@ class IptvRepository @Inject constructor(
                 .distinct()
                 .takeLast(40),
         )
-        context.settingsDataStore.edit { prefs ->
             authorizeSourceChange(safeProfileId, prefs, IptvConfig(m3uUrl=effectivePlaylists.firstOrNull()?.m3uUrl.orEmpty(),epgUrl=effectivePlaylists.firstOrNull()?.epgUrl.orEmpty(),playlists=effectivePlaylists,stalkerPortals=normalizedStalkerPortals),requireSelected=false)
             prefs[m3uUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedM3u)
             prefs[epgUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedEpg)

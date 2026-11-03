@@ -8,6 +8,7 @@ import com.arflix.tv.util.AppLogger
 import kotlinx.serialization.Serializable
 import retrofit2.HttpException
 import java.time.Instant
+import java.time.OffsetDateTime
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Provider
@@ -546,10 +547,12 @@ class WatchHistoryRepository @Inject constructor(
         return refreshed?.let { "Bearer $it" }
     }
 
-    private fun parseEpoch(value: String?): Long {
+    internal fun parseEpoch(value: String?): Long {
         if (value.isNullOrBlank()) return 0L
         return try {
-            Instant.parse(value).toEpochMilli()
+            // Android 8/9's Instant parser rejects +00:00 (including Supabase's
+            // microsecond timestamps). ISO_OFFSET_DATE_TIME supports Z and offsets.
+            OffsetDateTime.parse(value.trim()).toInstant().toEpochMilli()
         } catch (e: Exception) {
             AppLogger.e("WatchHistoryRepository", "Error parsing date, fallback 0L", e)
             0L

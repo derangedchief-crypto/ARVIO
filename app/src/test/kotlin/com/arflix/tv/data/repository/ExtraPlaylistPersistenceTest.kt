@@ -25,8 +25,20 @@ class ExtraPlaylistPersistenceTest {
         every{profile.profileStringKey(any())}answers{androidx.datastore.preferences.core.stringPreferencesKey("profile_addon-test_${firstArg<String>()}")}
         every{profile.profileStringKeyFor(any(),any())}answers{androidx.datastore.preferences.core.stringPreferencesKey("profile_${firstArg<String>()}_${secondArg<String>()}")}
         val licence=mockk<ExtraPlaylistLicence>();coEvery{licence.authorize(any())}throws ExtraPlaylistLicenceException("Locked")
-        val repo=IptvRepository(ApplicationProvider.getApplicationContext(),OkHttpClient(),profile,mockk(relaxed=true),IptvEpgPlaybackGate(),licence,primaryAccessFixture())
+        val access=primaryAccessFixture()
+        every{access.isPrimary(any())}answers{firstArg<String>()=="https://a.test/list.m3u"}
+        val repo=IptvRepository(ApplicationProvider.getApplicationContext(),OkHttpClient(),profile,mockk(relaxed=true),IptvEpgPlaybackGate(),licence,access)
         repo.clearConfig();repo.saveConfig("https://a.test/list.m3u","");val before=repo.observeConfig().first();coVerify(exactly=0){licence.authorize(any())}
+        every{access.protectPrimary(any(),any())}answers{
+            val target=secondArg<IptvConfig>()
+            check(target.playlists.any{it.id==before.playlists.first().id&&it.enabled&&it.m3uUrl==before.m3uUrl})
+        }
+        repo.importCloudConfigForProfile("addon-test",IptvCloudProfileState(
+            playlists=listOf(before.playlists.first().copy(id="remote",enabled=false)),
+            favoriteChannels=listOf("remote:xtream:42")))
+        assertEquals(before,repo.observeConfig().first())
+        assertEquals(listOf("${before.playlists.first().id}:xtream:42"),repo.exportCloudConfigForProfile("addon-test").favoriteChannels)
+        coVerify(exactly=0){licence.authorize(any())}
         val extra=IptvPlaylistEntry("list_2","Extra","https://b.test/list.m3u");val target=before.copy(playlists=before.playlists+extra)
         suspend fun denied(block:suspend()->Unit){try{block();fail("Expected licence denial")}catch(_:ExtraPlaylistLicenceException){};assertEquals(before,repo.observeConfig().first())}
         denied{repo.savePlaylists(target.playlists)}
