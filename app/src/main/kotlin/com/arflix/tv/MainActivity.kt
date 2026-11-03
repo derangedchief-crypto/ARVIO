@@ -503,8 +503,9 @@ class MainActivity : ComponentActivity() {
         primaryAccess.foreground(true)
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             // Returning to a retained activity is also an app launch to the user.
-            // Debounce quick returns/rotations without waiting for process death.
-            iptvRepository.get().requestLaunchContentRefresh(recheckOnLaunch = true)
+            val repo = iptvRepository.get()
+            repo.startPeriodicPlaylistRefresh()
+            repo.requestLaunchContentRefresh(recheckOnLaunch = true)
         }
     }
     override fun onStop() {

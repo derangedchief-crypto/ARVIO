@@ -330,6 +330,7 @@ class IptvRepository @Inject constructor(
     private val guideRetryAt = ConcurrentHashMap<String, Long>()
     private val guideRefreshCoordinator = GuideRefreshCoordinator()
     private val launchContentCoordinator = GuideRefreshCoordinator()
+    private val playlistRefreshScheduler = PlaylistRefreshScheduler()
     private val movieVodLookupMutex = Mutex()
     private val verifiedMovieMisses = ConcurrentHashMap<String, Long>()
     private val verifiedEpisodeInfo = ConcurrentHashMap<String, Pair<Long, List<XtreamSeriesEpisode>>>()
@@ -3960,7 +3961,11 @@ class IptvRepository @Inject constructor(
         requestLaunchContentRefresh().join()
     }
 
-    /** Non-blocking launch check; ordinary tab requests do not re-download catalogues. */
+    fun startPeriodicPlaylistRefresh() {
+        playlistRefreshScheduler.start { requestLaunchContentRefresh(recheckOnLaunch = true) }
+    }
+
+    /** Every foreground open checks again; ordinary tab requests reuse the checked catalogue. */
     fun requestLaunchContentRefresh(recheckOnLaunch: Boolean = false): kotlinx.coroutines.Job = launchContentCoordinator.request {
         try {
             warmupFromCacheOnly()
@@ -3971,7 +3976,7 @@ class IptvRepository @Inject constructor(
             val checkKey = "$profile|$signature"
             val now = System.currentTimeMillis()
             val checkedAt = launchContentCheckedAt[checkKey]
-            if (checkedAt != null && (!recheckOnLaunch || now - checkedAt < 15 * 60_000L)) return@request
+            if (checkedAt != null && !recheckOnLaunch) return@request
             launchContentCheckedAt[checkKey] = now
             val guideKey = currentEpgIndexKey(config)
             val completed = context.getSharedPreferences("arvio_guide_refresh", Context.MODE_PRIVATE)
@@ -4062,6 +4067,7 @@ class IptvRepository @Inject constructor(
                 cachedVodIndex = null
             }
             clearIptvMovieSourceCache()
+            verifiedMovieMisses.clear()
             if (vod.none { it.streamId == null || it.name.isNullOrBlank() }) {
                 verifiedVodCatalogs.mark(verifiedCatalogKey(verificationScope, creds, "vod"), now)
             }

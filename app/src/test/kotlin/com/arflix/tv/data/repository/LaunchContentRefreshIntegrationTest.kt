@@ -35,7 +35,8 @@ class LaunchContentRefreshIntegrationTest {
     @Test fun validEmptyVodListsRemoveAllPreviousItems() = fixture(emptyVod = true)
     @Test fun malformedVodListsCannotErasePreviousItems() = fixture(malformedVod = true)
     @Test fun profileSwitchDiscardsTheInFlightResponse() = fixture(switchProfile = true)
-    @Test fun reopeningAfterDebounceRechecksButQuickReturnsDoNot() = fixture(recheck = true)
+    @Test fun immediateReopenRechecksAllThreeCatalogues() = fixture(recheck = true)
+    @Test fun failedReopenKeepsPreviousVodCatalogues() = fixture(failVod = true, recheck = true)
 
     private fun fixture(failVod: Boolean = false, emptyVod: Boolean = false,
         malformedVod: Boolean = false, switchProfile: Boolean = false, recheck: Boolean = false,
@@ -53,6 +54,7 @@ class LaunchContentRefreshIntegrationTest {
         vodFile.writeText(oldVod)
         seriesFile.writeText(oldSeries)
         var profileId = "fixture"
+        var reopened = false
         val actions = java.util.Collections.synchronizedList(mutableListOf<String>())
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             val action = chain.request().url.queryParameter("action").orEmpty()
@@ -60,9 +62,9 @@ class LaunchContentRefreshIntegrationTest {
             if (switchProfile && action == "get_live_streams") profileId = "other"
             val body = when (action) {
                 "get_live_categories" -> "[{\"category_id\":\"1\",\"category_name\":\"News\"}]"
-                "get_live_streams" -> "[{\"stream_id\":11,\"name\":\"Kept channel\",\"category_id\":\"1\"},{\"stream_id\":13,\"name\":\"New channel\",\"category_id\":\"1\"}]"
-                "get_vod_streams" -> if (emptyVod) "[]" else if (malformedVod) "[{\"error\":\"Unavailable\"}]" else "[{\"stream_id\":23,\"name\":\"New movie\"}]"
-                "get_series" -> if (emptyVod) "[]" else if (malformedVod) "{\"error\":\"Unavailable\"}" else "[{\"series_id\":33,\"name\":\"New series\"}]"
+                "get_live_streams" -> "[{\"stream_id\":11,\"name\":\"Kept channel\",\"category_id\":\"1\"},{\"stream_id\":${if (reopened) 14 else 13},\"name\":\"New channel\",\"category_id\":\"1\"}]"
+                "get_vod_streams" -> if (emptyVod) "[]" else if (malformedVod) "[{\"error\":\"Unavailable\"}]" else "[{\"stream_id\":${if (reopened) 24 else 23},\"name\":\"New movie\"}]"
+                "get_series" -> if (emptyVod) "[]" else if (malformedVod) "{\"error\":\"Unavailable\"}" else "[{\"series_id\":${if (reopened) 34 else 33},\"name\":\"New series\"}]"
                 else -> error("Unexpected launch request: $action")
             }
             Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
@@ -92,10 +94,8 @@ class LaunchContentRefreshIntegrationTest {
             if (!switchProfile) {
                 repository.requestLaunchContentRefresh().join()
                 repository.prefetchFreshStartupData()
-                repository.requestLaunchContentRefresh(recheckOnLaunch = true).join()
                 if (recheck) {
-                    @Suppress("UNCHECKED_CAST") val checked = field("launchContentCheckedAt").get(repository) as MutableMap<String, Long>
-                    checked.keys.toList().forEach { checked[it] = System.currentTimeMillis() - 16 * 60_000L }
+                    reopened = true
                     repository.requestLaunchContentRefresh(recheckOnLaunch = true).join()
                 }
             }
@@ -105,8 +105,8 @@ class LaunchContentRefreshIntegrationTest {
                 assertEquals(oldVod, vodFile.readText())
                 assertEquals(oldSeries, seriesFile.readText())
             } else {
-                assertEquals(setOf("list_1:xtream:11", "list_1:xtream:13", "offline:99"), rows.map { it.id }.toSet())
-                assertEquals(1L, repository.playlistRevision.value)
+                assertEquals(setOf("list_1:xtream:11", if (recheck) "list_1:xtream:14" else "list_1:xtream:13", "offline:99"), rows.map { it.id }.toSet())
+                assertEquals(if (recheck) 2L else 1L, repository.playlistRevision.value)
                 if (failVod || malformedVod) {
                     assertEquals(oldVod, vodFile.readText())
                     assertEquals(oldSeries, seriesFile.readText())
@@ -116,8 +116,8 @@ class LaunchContentRefreshIntegrationTest {
                     assertEquals(if (emptyVod) 0 else 1, vod.size())
                     assertEquals(if (emptyVod) 0 else 1, series.size())
                     if (!emptyVod) {
-                        assertEquals(23, vod[0].asJsonObject["stream_id"].asInt)
-                        assertEquals(33, series[0].asJsonObject["series_id"].asInt)
+                        assertEquals(if (recheck) 24 else 23, vod[0].asJsonObject["stream_id"].asInt)
+                        assertEquals(if (recheck) 34 else 33, series[0].asJsonObject["series_id"].asInt)
                     }
                 }
             }
