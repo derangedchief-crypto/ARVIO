@@ -502,7 +502,7 @@ fun LiveTvScreen(
     LaunchedEffect(selectedProviderId, selectedCategoryId) {
         pagedLoadedLimit = GuideMaxWindowRows
     }
-    LaunchedEffect(state.snapshot.channels, selectedCategoryId, favSet, recents.value, hiddenGroupSet, state.snapshot.groupOrder, pagedLoadedLimit) {
+    LaunchedEffect(state.snapshot.channels, state.snapshot.loadedAt, selectedCategoryId, favSet, recents.value, hiddenGroupSet, state.snapshot.groupOrder, pagedLoadedLimit) {
         val snapshot = state.snapshot.channels
         var pagedTotal = withContext(Dispatchers.IO) {
             if (viewModel.iptvRepository.pagedChannelsReady()) {
@@ -544,6 +544,8 @@ fun LiveTvScreen(
         if (hasPagedStoreWindow) {
             val signature = buildString {
                 append("paged:")
+                append(state.snapshot.loadedAt)
+                append(':')
                 append(pagedTotal)
                 append(':')
                 append(selectedCategoryId)
@@ -732,7 +734,7 @@ fun LiveTvScreen(
             return@LaunchedEffect
         }
         // Skip re-enrichment if we already have a cache for the same playlist.
-        val signature = "${snapshot.size}:${snapshot.firstOrNull()?.id}:${snapshot.lastOrNull()?.id}"
+        val signature = "${state.snapshot.loadedAt}:${snapshot.size}:${snapshot.firstOrNull()?.id}:${snapshot.lastOrNull()?.id}"
         if (viewModel.cachedChannelsSignature == signature &&
             viewModel.cachedEnrichedChannels is EnrichedChannels
         ) {

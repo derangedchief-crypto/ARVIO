@@ -611,7 +611,7 @@ class IptvRepository @Inject constructor(
             .build()
     }
     private val launchCatalogHttpClient: OkHttpClient by lazy {
-        okHttpClient.newBuilder().connectTimeout(8, TimeUnit.SECONDS)
+        okHttpClient.newBuilder().cache(null).connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS).callTimeout(45, TimeUnit.SECONDS).build()
     }
     private val xtreamGuideHttpClient: OkHttpClient by lazy {
@@ -637,6 +637,7 @@ class IptvRepository @Inject constructor(
         // Live catalog payloads can be very large (50k+ streams), so keep them
         // below XMLTV timeouts but long enough to finish on TV WiFi.
         okHttpClient.newBuilder()
+            .cache(null)
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
             .writeTimeout(12, TimeUnit.SECONDS)
@@ -3654,7 +3655,7 @@ class IptvRepository @Inject constructor(
         return Pair(emptyMap(), false)
     }
 
-    private fun persistCurrentCacheSnapshot(config: IptvConfig, loadedAtMs: Long = System.currentTimeMillis()) {
+    private fun persistCurrentCacheSnapshot(config: IptvConfig, loadedAtMs: Long = System.currentTimeMillis(), completeChannels: Boolean = false) {
         val channels = cachedChannels
         if (channels.isEmpty()) return
         val nowNext = cachedNowNext
@@ -3663,7 +3664,8 @@ class IptvRepository @Inject constructor(
             channels = channels,
             nowNext = nowNext,
             loadedAtMs = loadedAtMs.coerceAtLeast(cachedPlaylistAt.coerceAtLeast(loadedAtMs)),
-            epgLoadedAtMs = cachedEpgAt
+            epgLoadedAtMs = cachedEpgAt,
+            completeChannels = completeChannels
         )
     }
 
@@ -3949,7 +3951,9 @@ class IptvRepository @Inject constructor(
             if (cachedNowNext.isNotEmpty()) {
                 cachedNowNext.keys.retainAll(validIds)
             }
-            persistCurrentCacheSnapshot(config, cachedPlaylistAt)
+            // Only the guarded refresh has merged every source with its previous
+            // complete store. A smaller result here can be a legitimate removal.
+            persistCurrentCacheSnapshot(config, cachedPlaylistAt, completeChannels = expectedSignature != null)
             true
         }
     }
@@ -9856,7 +9860,8 @@ class IptvRepository @Inject constructor(
         channels: List<IptvChannel>,
         nowNext: Map<String, IptvNowNext>,
         loadedAtMs: Long,
-        epgLoadedAtMs: Long = cachedEpgAt
+        epgLoadedAtMs: Long = cachedEpgAt,
+        completeChannels: Boolean = false
     ) {
         runCatching {
             // Channels are persisted to the SQLite channel store (streamed, bounded
@@ -9866,7 +9871,7 @@ class IptvRepository @Inject constructor(
             runCatching {
                 val key = currentEpgIndexKey(config)
                 val existingCount = channelStore.count(key)
-                if (existingCount > LargeIptvListChannelCount && channels.size < existingCount) {
+                if (!completeChannels && existingCount > LargeIptvListChannelCount && channels.size < existingCount) {
                     System.err.println("[IPTV-Paged] Keeping full channel store ($existingCount); skip partial write ${channels.size}")
                 } else {
                     channelStore.replaceAll(key, channels, loadedAtMs)

@@ -37,10 +37,12 @@ class LaunchContentRefreshIntegrationTest {
     @Test fun profileSwitchDiscardsTheInFlightResponse() = fixture(switchProfile = true)
     @Test fun immediateReopenRechecksAllThreeCatalogues() = fixture(recheck = true)
     @Test fun failedReopenKeepsPreviousVodCatalogues() = fixture(failVod = true, recheck = true)
+    @Test fun newCategoryWithExistingChannelsUpdatesMemoryAndPagedStore() = fixture(recheck = true, categoryOnly = true)
+    @Test fun completeRefreshCanShrinkLargePagedStoreAndReplaceItsCategories() = fixture(largeStore = true)
 
     private fun fixture(failVod: Boolean = false, emptyVod: Boolean = false,
         malformedVod: Boolean = false, switchProfile: Boolean = false, recheck: Boolean = false,
-        checkSourceReuse: Boolean = false) = runBlocking {
+        checkSourceReuse: Boolean = false, categoryOnly: Boolean = false, largeStore: Boolean = false) = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         context.deleteDatabase("arvio_iptv_channel_store.db")
         val host = "https://provider.example.test"
@@ -61,8 +63,10 @@ class LaunchContentRefreshIntegrationTest {
             actions.add(action)
             if (switchProfile && action == "get_live_streams") profileId = "other"
             val body = when (action) {
-                "get_live_categories" -> "[{\"category_id\":\"1\",\"category_name\":\"News\"}]"
-                "get_live_streams" -> "[{\"stream_id\":11,\"name\":\"Kept channel\",\"category_id\":\"1\"},{\"stream_id\":${if (reopened) 14 else 13},\"name\":\"New channel\",\"category_id\":\"1\"}]"
+                "get_live_categories" -> if (reopened && categoryOnly)
+                    "[{\"category_id\":\"1\",\"category_name\":\"News\"},{\"category_id\":\"2\",\"category_name\":\"Added category\"}]"
+                    else "[{\"category_id\":\"1\",\"category_name\":\"News\"}]"
+                "get_live_streams" -> "[{\"stream_id\":11,\"name\":\"Kept channel\",\"category_id\":\"1\"},{\"stream_id\":${if (reopened && !categoryOnly) 14 else 13},\"name\":\"New channel\",\"category_id\":\"${if (reopened && categoryOnly) 2 else 1}\"}]"
                 "get_vod_streams" -> if (emptyVod) "[]" else if (malformedVod) "[{\"error\":\"Unavailable\"}]" else "[{\"stream_id\":${if (reopened) 24 else 23},\"name\":\"New movie\"}]"
                 "get_series" -> if (emptyVod) "[]" else if (malformedVod) "{\"error\":\"Unavailable\"}" else "[{\"series_id\":${if (reopened) 34 else 33},\"name\":\"New series\"}]"
                 else -> error("Unexpected launch request: $action")
@@ -85,8 +89,15 @@ class LaunchContentRefreshIntegrationTest {
             IptvChannel("list_1:xtream:12", "Removed channel", "$host/live/12", "News"),
             IptvChannel("offline:99", "Other provider", "$host/live/99", "Other"))
         field("cachedChannels").set(repository, previous)
+        @Suppress("UNCHECKED_CAST") val storeDelegate = field("channelStore\$delegate").get(repository) as Lazy<IptvChannelStore>
+        if (largeStore) {
+            storeDelegate.value.replaceAll("fixture|source", previous + (100..10100).map {
+                IptvChannel("list_1:xtream:$it", "Old $it", "$host/live/$it", "Obsolete category")
+            }, 1L)
+        }
         try {
             repository.requestLaunchContentRefresh().join()
+            val firstLoadedAt = repository.getMemoryCachedSnapshot()?.loadedAt
             if (checkSourceReuse) {
                 assertTrue(repository.findMovieVodSources("Not In This Catalogue", 2026,
                     verifyBeforeFallback = true).isEmpty())
@@ -105,8 +116,14 @@ class LaunchContentRefreshIntegrationTest {
                 assertEquals(oldVod, vodFile.readText())
                 assertEquals(oldSeries, seriesFile.readText())
             } else {
-                assertEquals(setOf("list_1:xtream:11", if (recheck) "list_1:xtream:14" else "list_1:xtream:13", "offline:99"), rows.map { it.id }.toSet())
+                assertEquals(setOf("list_1:xtream:11", if (recheck && !categoryOnly) "list_1:xtream:14" else "list_1:xtream:13", "offline:99"), rows.map { it.id }.toSet())
                 assertEquals(if (recheck) 2L else 1L, repository.playlistRevision.value)
+                if (categoryOnly) {
+                    assertEquals(setOf("News", "Added category"), rows.filter { it.id.startsWith("list_1:") }.map { it.group }.toSet())
+                    assertNotEquals(firstLoadedAt, repository.getMemoryCachedSnapshot()?.loadedAt)
+                }
+                val persisted = storeDelegate.value.window("fixture|source", 0, 20000)
+                assertEquals(rows, persisted)
                 if (failVod || malformedVod) {
                     assertEquals(oldVod, vodFile.readText())
                     assertEquals(oldSeries, seriesFile.readText())
