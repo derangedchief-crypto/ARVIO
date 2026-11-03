@@ -52,6 +52,25 @@ function deviceRecoveryCases(array &$tests,ControlCenter\Application $app,Contro
             same($policy,$app->commands->checkIn($new['credential'],[],'127.0.0.91')['policy']);
         }
     };
+    $tests['in-place version update retains online device identity without recovery hold even before hint backfill']=function()use($app,$owner,$identity,$body,$poll,$count):void{
+        foreach([null,hash('sha256','upgrade-with-hint')] as $hint){
+            $identityBefore=$identity();
+            $request=$body($identityBefore,$hint);$request['app_version']='2.0.124';
+            $registered=$app->enrollment->register($request,'127.0.0.91');$old=$poll($registered);$id=$old['device_id'];
+            $app->management->updateDevice($owner,$id,['label'=>'Retained upgrade TV','notes'=>'Retained customer notes']);
+            $before=$app->db->one('SELECT * FROM devices WHERE id=?',[$id]);$total=$count();
+            $heartbeat=$app->commands->checkIn($old['credential'],['app_version'=>'2.0.132','capabilities'=>[]],'127.0.0.91');
+            same($id,$heartbeat['device_id']);same('active',$heartbeat['policy']);
+            // Also exercise credential re-registration while the same device is online.
+            $request=$body($identityBefore,$hint);$request['app_version']='2.0.132';
+            $again=$app->enrollment->register($request,'127.0.0.91');
+            same('approved',$again['status']);same($registered['request_id'],$again['request_id']);check(empty($again['recovery_state']));
+            same($id,$poll($again)['device_id']);same($total,$count());
+            $after=$app->db->one('SELECT * FROM devices WHERE id=?',[$id]);
+            foreach(['installation_id','key_fingerprint','app_package','customer_id','tenant_id','label','notes','policy','enrolled_at'] as $key)same($before[$key],$after[$key]);
+            same(0,(int)$app->db->query("SELECT COUNT(*) FROM enrollment_requests WHERE account_ref=? AND status='pending' AND recovery_state IS NOT NULL",[$identityBefore['account']])->fetchColumn());
+        }
+    };
     $tests['online old installation is not silently displaced by a copied hint']=function()use($app,$identity,$register,$poll,$count):void{
         $a=$identity();$hint=hash('sha256',$a['install']);$old=$poll($register($a,$hint));$total=$count();
         $new=$register($identity($a['account']),$hint);same('pending',$new['status']);same('busy',$new['recovery_state']);same('suspended',$new['recovery_policy']);same(true,$new['recovery_retry']);same($total,$count());
