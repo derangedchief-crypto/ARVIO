@@ -430,7 +430,7 @@ fun playlistGroupCategoryId(playlistId: String, group: String): String {
 /**
  * Build the category tree from a list of enriched channels. Counts are
  * computed up front so the sidebar can render without filtering again.
- * Never advertise synthetic g-4k/adult shortcuts: provider groups remain in
+ * Never synthesize country, genre or quality categories: provider groups remain in
  * PLAYLIST in their configured order, and hidden groups stay under HIDDEN.
  */
 fun buildCategoryTree(
@@ -440,27 +440,7 @@ fun buildCategoryTree(
     hiddenGroups: Set<String> = emptySet(),
     groupOrder: List<String> = emptyList(),
 ): LiveCategoryTree {
-    data class CountryAccumulator(
-        var total: Int = 0,
-        var general: Int = 0,
-        var k4: Int = 0,
-        var fhd: Int = 0,
-        var sports: Int = 0,
-        var movies: Int = 0,
-        var news: Int = 0,
-        var kids: Int = 0,
-        var series: Int = 0,
-        var docs: Int = 0,
-    )
-
     var allCount = 0
-    var sportsCount = 0
-    var moviesCount = 0
-    var newsCount = 0
-    var kidsCount = 0
-    var docsCount = 0
-    var musicCount = 0
-    val countryAccumulators = LinkedHashMap<String, CountryAccumulator>()
     val playlistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroups = hiddenGroups.toHashSet()
@@ -483,82 +463,7 @@ fun buildCategoryTree(
         }
 
         allCount += 1
-        when (channel.genre) {
-            Genre.Sports -> sportsCount += 1
-            Genre.Movies -> moviesCount += 1
-            Genre.News -> newsCount += 1
-            Genre.Kids -> kidsCount += 1
-            Genre.Docs -> docsCount += 1
-            Genre.Music -> musicCount += 1
-            else -> Unit
-        }
-
-        val countryCode = channel.country
-        if (!countryCode.isNullOrBlank()) {
-            val country = countryAccumulators.getOrPut(countryCode) { CountryAccumulator() }
-            country.total += 1
-            when (channel.genre) {
-                Genre.General -> country.general += 1
-                Genre.Sports -> country.sports += 1
-                Genre.Movies -> country.movies += 1
-                Genre.News -> country.news += 1
-                Genre.Kids -> country.kids += 1
-                Genre.Series -> country.series += 1
-                Genre.Docs -> country.docs += 1
-                else -> Unit
-            }
-            when (channel.quality) {
-                Quality.K4 -> country.k4 += 1
-                Quality.FHD -> country.fhd += 1
-                else -> Unit
-            }
-        }
     }
-
-    val autoGlobal = listOf(
-        LiveCategory("g-sports", "Sports · Global",    sportsCount, CategoryIcon.Sport),
-        LiveCategory("g-movies", "Movies · Global",    moviesCount, CategoryIcon.Movie),
-        LiveCategory("g-news",   "News · Global",      newsCount,   CategoryIcon.News),
-        LiveCategory("g-kids",   "Kids · Global",      kidsCount,   CategoryIcon.Kids),
-        LiveCategory("g-docs",   "Documentary",        docsCount,   CategoryIcon.Docs),
-        LiveCategory("g-music",  "Music",              musicCount,  CategoryIcon.Music),
-    ).filter { it.count > 0 }
-
-    val countryCategories = countryAccumulators
-        .entries
-        .sortedByDescending { it.value.total }
-        .map { (code, counts) ->
-            val subs = buildList {
-                fun addChild(tag: String, count: Int) {
-                    if (count <= 0) return
-                    add(
-                        LiveCategory(
-                            id = "$code-$tag",
-                            label = "$code | ${tag.replaceFirstChar(Char::uppercase)}",
-                            count = count,
-                            iconToken = CategoryIcon.SubEntry,
-                        )
-                    )
-                }
-                addChild("general", counts.general)
-                addChild("4k", counts.k4)
-                addChild("fhd", counts.fhd)
-                addChild("sports", counts.sports)
-                addChild("movies", counts.movies)
-                addChild("news", counts.news)
-                addChild("kids", counts.kids)
-                addChild("entertainment", counts.series)
-                addChild("documentary", counts.docs)
-            }
-            LiveCategory(
-                id = code,
-                label = countryName(code),
-                count = counts.total,
-                iconToken = CategoryIcon.Country,
-                flagEmoji = countryFlag(code),
-                children = subs,
-            )
-        }
 
     val top = listOf(
         LiveCategory("fav", "Favorites", favoritesCount, CategoryIcon.Favorite),
@@ -568,7 +473,6 @@ fun buildCategoryTree(
             label = "All Channels",
             count = allCount,
             iconToken = CategoryIcon.All,
-            children = autoGlobal + countryCategories,
         ),
     )
     val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
@@ -606,27 +510,7 @@ fun buildCategoryTree(
     hiddenGroups: Set<String> = emptySet(),
     groupOrder: List<String> = emptyList(),
 ): LiveCategoryTree {
-    data class RawCountryAccumulator(
-        var total: Int = 0,
-        var general: Int = 0,
-        var k4: Int = 0,
-        var fhd: Int = 0,
-        var sports: Int = 0,
-        var movies: Int = 0,
-        var news: Int = 0,
-        var kids: Int = 0,
-        var series: Int = 0,
-        var docs: Int = 0,
-    )
-
     var allCount = 0
-    var sportsCount = 0
-    var moviesCount = 0
-    var newsCount = 0
-    var kidsCount = 0
-    var docsCount = 0
-    var musicCount = 0
-    val countryAccumulators = LinkedHashMap<String, RawCountryAccumulator>()
     val playlistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroups = hiddenGroups.toHashSet()
@@ -650,82 +534,7 @@ fun buildCategoryTree(
         }
 
         allCount += 1
-        when (traits.genre) {
-            Genre.Sports -> sportsCount += 1
-            Genre.Movies -> moviesCount += 1
-            Genre.News -> newsCount += 1
-            Genre.Kids -> kidsCount += 1
-            Genre.Docs -> docsCount += 1
-            Genre.Music -> musicCount += 1
-            else -> Unit
-        }
-
-        val countryCode = traits.country
-        if (!countryCode.isNullOrBlank()) {
-            val country = countryAccumulators.getOrPut(countryCode) { RawCountryAccumulator() }
-            country.total += 1
-            when (traits.genre) {
-                Genre.General -> country.general += 1
-                Genre.Sports -> country.sports += 1
-                Genre.Movies -> country.movies += 1
-                Genre.News -> country.news += 1
-                Genre.Kids -> country.kids += 1
-                Genre.Series -> country.series += 1
-                Genre.Docs -> country.docs += 1
-                else -> Unit
-            }
-            when (traits.quality) {
-                Quality.K4 -> country.k4 += 1
-                Quality.FHD -> country.fhd += 1
-                else -> Unit
-            }
-        }
     }
-
-    val autoGlobal = listOf(
-        LiveCategory("g-sports", "Sports · Global", sportsCount, CategoryIcon.Sport),
-        LiveCategory("g-movies", "Movies · Global", moviesCount, CategoryIcon.Movie),
-        LiveCategory("g-news", "News · Global", newsCount, CategoryIcon.News),
-        LiveCategory("g-kids", "Kids · Global", kidsCount, CategoryIcon.Kids),
-        LiveCategory("g-docs", "Documentary", docsCount, CategoryIcon.Docs),
-        LiveCategory("g-music", "Music", musicCount, CategoryIcon.Music),
-    ).filter { it.count > 0 }
-
-    val countryCategories = countryAccumulators
-        .entries
-        .sortedByDescending { it.value.total }
-        .map { (code, counts) ->
-            val subs = buildList {
-                fun addChild(tag: String, count: Int) {
-                    if (count <= 0) return
-                    add(
-                        LiveCategory(
-                            id = "$code-$tag",
-                            label = "$code | ${tag.replaceFirstChar(Char::uppercase)}",
-                            count = count,
-                            iconToken = CategoryIcon.SubEntry,
-                        )
-                    )
-                }
-                addChild("general", counts.general)
-                addChild("4k", counts.k4)
-                addChild("fhd", counts.fhd)
-                addChild("sports", counts.sports)
-                addChild("movies", counts.movies)
-                addChild("news", counts.news)
-                addChild("kids", counts.kids)
-                addChild("entertainment", counts.series)
-                addChild("documentary", counts.docs)
-            }
-            LiveCategory(
-                id = code,
-                label = countryName(code),
-                count = counts.total,
-                iconToken = CategoryIcon.Country,
-                flagEmoji = countryFlag(code),
-                children = subs,
-            )
-        }
 
     val channelIds = channels.asSequence()
         .filterNot { channel -> isAdultGroup(channel.group, channel.name) || isHiddenPlaylistGroup(channel, hiddenGroups) }
@@ -739,7 +548,6 @@ fun buildCategoryTree(
             label = "All Channels",
             count = allCount,
             iconToken = CategoryIcon.All,
-            children = autoGlobal + countryCategories,
         ),
     )
     val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
@@ -814,41 +622,8 @@ private fun rawCategoryMatcher(
     if (categoryId == "recent") return { ch -> ch.id in recents && !ch.traits().isAdult }
     if (categoryId == "adult") return { ch -> ch.traits().isAdult }
     if (categoryId.startsWith("grp:")) return { ch -> playlistGroupCategoryId(channelPlaylistId(ch.id), ch.group) == categoryId }
-    if (categoryId == "g-4k") return { ch -> ch.traits().let { !it.isAdult && it.quality == Quality.K4 } }
-    if (categoryId == "g-sports") return { ch -> ch.traits().let { !it.isAdult && it.genre == Genre.Sports } }
-    if (categoryId == "g-movies") return { ch -> ch.traits().let { !it.isAdult && it.genre == Genre.Movies } }
-    if (categoryId == "g-news") return { ch -> ch.traits().let { !it.isAdult && it.genre == Genre.News } }
-    if (categoryId == "g-kids") return { ch -> ch.traits().let { !it.isAdult && it.genre == Genre.Kids } }
-    if (categoryId == "g-docs") return { ch -> ch.traits().let { !it.isAdult && it.genre == Genre.Docs } }
-    if (categoryId == "g-music") return { ch -> ch.traits().let { !it.isAdult && it.genre == Genre.Music } }
-    if (categoryId.length == 2 && categoryId.all { it.isUpperCase() }) {
-        return { ch -> ch.traits().let { !it.isAdult && it.country == categoryId } }
-    }
-    if ("-" in categoryId) {
-        val parts = categoryId.split("-", limit = 2)
-        val cc = parts.getOrNull(0).orEmpty()
-        val tag = parts.getOrNull(1).orEmpty()
-        return { ch: IptvChannel ->
-            val traits = ch.traits()
-            if (traits.country != cc || traits.isAdult) {
-                false
-            } else {
-                when (tag) {
-                    "general" -> traits.genre == Genre.General
-                    "4k" -> traits.quality == Quality.K4
-                    "fhd" -> traits.quality == Quality.FHD
-                    "sports" -> traits.genre == Genre.Sports
-                    "movies" -> traits.genre == Genre.Movies
-                    "news" -> traits.genre == Genre.News
-                    "kids" -> traits.genre == Genre.Kids
-                    "entertainment" -> traits.genre == Genre.Series
-                    "documentary" -> traits.genre == Genre.Docs
-                    else -> false
-                }
-            }
-        }
-    }
-    return { ch -> !ch.traits().isAdult }
+    // Old saved synthetic selections must not reconstruct inferred categories.
+    return { false }
 }
 
 fun buildFastStartupChannelState(
@@ -908,12 +683,6 @@ fun buildFastStartupChannelState(
         add("all", channel)
         if (channel.id in favoritesSet) favoriteCount += 1
         if (channel.id in recentsSet) recentCount += 1
-        if (channel.quality == Quality.K4) {
-            add("g-4k", channel)
-        }
-        channel.country?.takeIf { it.isNotBlank() }?.let { country ->
-            add(country, channel)
-        }
     }
 
     val top = listOf(
@@ -999,8 +768,6 @@ fun buildPagedStartupChannelState(
             add("adult", channel)
         } else {
             add("all", channel)
-            if (channel.quality == Quality.K4) add("g-4k", channel)
-            channel.country?.takeIf { it.isNotBlank() }?.let { add(it, channel) }
         }
     }
 
@@ -1148,36 +915,6 @@ fun buildCategoryIndex(
 
         add("all", channel)
 
-        if (channel.quality == Quality.K4) add("g-4k", channel)
-        when (channel.genre) {
-            Genre.Sports -> add("g-sports", channel)
-            Genre.Movies -> add("g-movies", channel)
-            Genre.News -> add("g-news", channel)
-            Genre.Kids -> add("g-kids", channel)
-            Genre.Docs -> add("g-docs", channel)
-            Genre.Music -> add("g-music", channel)
-            else -> Unit
-        }
-
-        val country = channel.country
-        if (!country.isNullOrBlank()) {
-            add(country, channel)
-            when (channel.genre) {
-                Genre.General -> add("$country-general", channel)
-                Genre.Sports -> add("$country-sports", channel)
-                Genre.Movies -> add("$country-movies", channel)
-                Genre.News -> add("$country-news", channel)
-                Genre.Kids -> add("$country-kids", channel)
-                Genre.Series -> add("$country-entertainment", channel)
-                Genre.Docs -> add("$country-documentary", channel)
-                else -> Unit
-            }
-            when (channel.quality) {
-                Quality.K4 -> add("$country-4k", channel)
-                Quality.FHD -> add("$country-fhd", channel)
-                else -> Unit
-            }
-        }
     }
 
     return LiveCategoryIndex(
@@ -1193,23 +930,7 @@ fun bestCategoryIdForChannel(
 ): String {
     val playlistGroupId = playlistGroupCategoryId(channelPlaylistId(channel.source.id), channel.source.group)
     if (tree.byId(playlistGroupId) != null) return playlistGroupId
-    if (channel.isAdult) return "adult"
-
-    val countryId = channel.country
-    if (!countryId.isNullOrBlank()) {
-        val countryCategory = tree.countries.categories.firstOrNull { it.id == countryId }
-        val childId = countryCategory
-            ?.children
-            ?.firstOrNull { child -> matchesCategoryId(channel, child.id) }
-            ?.id
-        if (childId != null) return childId
-        return countryId
-    }
-
-    val globalId = tree.global.categories
-        .firstOrNull { global -> matchesCategoryId(channel, global.id) }
-        ?.id
-    return globalId ?: "all"
+    return "all"
 }
 
 /** Returns a predicate matching channels for [categoryId]. Implements spec §5. */
@@ -1224,64 +945,6 @@ fun categoryMatcher(
         categoryId == "recent" -> { ch -> ch.id in recents && !ch.isAdult }
         categoryId == "adult"  -> { ch -> ch.isAdult }
         categoryId.startsWith("grp:") -> { ch -> playlistGroupCategoryId(channelPlaylistId(ch.source.id), ch.source.group) == categoryId }
-        categoryId == "g-4k"      -> { ch -> ch.quality == Quality.K4 && !ch.isAdult }
-        categoryId == "g-sports"  -> { ch -> ch.genre == Genre.Sports && !ch.isAdult }
-        categoryId == "g-movies"  -> { ch -> ch.genre == Genre.Movies && !ch.isAdult }
-        categoryId == "g-news"    -> { ch -> ch.genre == Genre.News && !ch.isAdult }
-        categoryId == "g-kids"    -> { ch -> ch.genre == Genre.Kids && !ch.isAdult }
-        categoryId == "g-docs"    -> { ch -> ch.genre == Genre.Docs && !ch.isAdult }
-        categoryId == "g-music"   -> { ch -> ch.genre == Genre.Music && !ch.isAdult }
-        categoryId.length == 2 && categoryId.all { it.isUpperCase() } ->
-            { ch -> ch.country == categoryId && !ch.isAdult }
-        "-" in categoryId -> {
-            val (cc, tag) = categoryId.split("-", limit = 2)
-            val (genre, quality) = when (tag) {
-                "4k"  -> null to Quality.K4
-                "fhd" -> null to Quality.FHD
-                "sports" -> Genre.Sports to null
-                "movies" -> Genre.Movies to null
-                "news"   -> Genre.News to null
-                "kids"   -> Genre.Kids to null
-                "entertainment" -> Genre.Series to null
-                "documentary"   -> Genre.Docs to null
-                "general" -> Genre.General to null
-                else -> null to null
-            }
-            { ch -> ch.country == cc && !ch.isAdult &&
-                (genre == null || ch.genre == genre) &&
-                (quality == null || ch.quality == quality) }
-        }
         else -> { _ -> false }
     }
 }
-
-private fun matchesCategoryId(channel: EnrichedChannel, categoryId: String): Boolean =
-    when (categoryId) {
-        "adult" -> channel.isAdult
-        "g-4k" -> !channel.isAdult && channel.quality == Quality.K4
-        "g-sports" -> !channel.isAdult && channel.genre == Genre.Sports
-        "g-movies" -> !channel.isAdult && channel.genre == Genre.Movies
-        "g-news" -> !channel.isAdult && channel.genre == Genre.News
-        "g-kids" -> !channel.isAdult && channel.genre == Genre.Kids
-        "g-docs" -> !channel.isAdult && channel.genre == Genre.Docs
-        "g-music" -> !channel.isAdult && channel.genre == Genre.Music
-        else -> {
-            val parts = categoryId.split("-", limit = 2)
-            if (parts.size != 2 || parts[0] != channel.country || channel.isAdult) {
-                false
-            } else {
-                when (parts[1]) {
-                    "4k" -> channel.quality == Quality.K4
-                    "fhd" -> channel.quality == Quality.FHD
-                    "sports" -> channel.genre == Genre.Sports
-                    "movies" -> channel.genre == Genre.Movies
-                    "news" -> channel.genre == Genre.News
-                    "kids" -> channel.genre == Genre.Kids
-                    "entertainment" -> channel.genre == Genre.Series
-                    "documentary" -> channel.genre == Genre.Docs
-                    "general" -> channel.genre == Genre.General
-                    else -> false
-                }
-            }
-        }
-    }

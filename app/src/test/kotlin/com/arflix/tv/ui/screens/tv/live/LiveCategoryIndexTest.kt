@@ -11,7 +11,7 @@ import org.junit.Test
 class LiveCategoryIndexTest {
 
     @Test
-    fun channelsForKeepsFavoriteOrderAndUsesStaticBuckets() {
+    fun channelsForKeepsFavoriteOrderAndOnlyIndexesProviderGroups() {
         val channels = listOf(
             channel("1", "NL News HD", "NL | News"),
             channel("2", "US Sports 4K", "US | Sports"),
@@ -24,9 +24,11 @@ class LiveCategoryIndexTest {
             .containsExactly("2", "1")
             .inOrder()
         assertThat(index.channelsFor("g-sports", favorites = emptyList(), recents = emptyList()).map { it.id })
-            .containsExactly("2")
+            .isEmpty()
         assertThat(index.channelsFor("NL-news", favorites = emptyList(), recents = emptyList()).map { it.id })
-            .containsExactly("1")
+            .isEmpty()
+        assertThat(index.channelsFor(playlistGroupCategoryId(channelPlaylistId("2"), "US | Sports"), emptyList(), emptyList()).map { it.id })
+            .containsExactly("2")
     }
 
     @Test
