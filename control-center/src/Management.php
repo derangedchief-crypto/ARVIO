@@ -252,7 +252,7 @@ final class Management
             } else $scope .= " AND r.policy != 'removed'";
             $joins = 'devices r JOIN customers c ON c.id = r.customer_id JOIN tenants t ON t.id = r.tenant_id';
             $line=$this->deviceUsernameSql('r');
-            $fields = "r.*, c.notes AS customer_notes, TIMESTAMPDIFF(SECOND, r.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, COALESCE($line,c.name) AS customer_name, $line AS line_username, t.name AS tenant_name";
+            $fields = "r.*, TIMESTAMPDIFF(SECOND, r.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, COALESCE($line,c.name) AS customer_name, $line AS line_username, t.name AS tenant_name";
             if ($search !== '') {
                 $scope .= " AND (LOCATE(?, r.label) > 0 OR LOCATE(?, c.name) > 0 OR LOCATE(?, CONVERT(r.id USING utf8mb4)) > 0 OR LOCATE(?, COALESCE(r.model,'')) > 0 OR LOCATE(?,COALESCE($line,''))>0)";
                 array_push($args, $search, $search, $search, $search, $search);
@@ -266,8 +266,40 @@ final class Management
         $total = (int) $this->db->query("SELECT COUNT(*) FROM $joins WHERE $scope", $args)->fetchColumn();
         $rows = $this->db->all("SELECT $fields FROM $joins WHERE $scope ORDER BY r.created_at DESC, r.id LIMIT 25 OFFSET $offset", $args);
         if ($resource === 'devices') $rows = array_map($this->publicDevice(...), $rows);
+        $rows = $this->withPanelNotes($rows, $resource);
         return ['items' => $rows, 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total]
             +($resource==='devices'?['list_window'=>(new DeviceListWindow($this->db,$this->auth))->state()]:[]);
+    }
+    private function withPanelNotes(array $rows,string $resource):array
+    {
+        if(!$rows)return $rows;
+        $ids=array_values(array_unique(array_map(static fn($r)=>$resource==='devices'?$r['customer_id']:$r['id'],$rows)));
+        $marks=implode(',',array_fill(0,count($ids),'?'));
+        $bindings=$this->db->all("SELECT p.* FROM panel_customers p JOIN panel_resellers r ON r.panel_id=p.reseller_id AND r.tenant_id=p.tenant_id WHERE p.customer_id IN ($marks)",$ids);
+        $byCustomer=[];$requests=[];
+        foreach($bindings as $binding){
+            foreach($rows as $row){
+                $customer=$resource==='devices'?$row['customer_id']:$row['id'];
+                if($customer===$binding['customer_id']&&$row['tenant_id']===$binding['tenant_id']){
+                    $byCustomer[$customer]=$binding;
+                    $requests[$binding['panel_id']]=['id'=>$binding['panel_id'],'account_ref'=>$binding['account_ref'],'reseller_id'=>$binding['reseller_id']];
+                }
+            }
+        }
+        $notes=[];
+        if($requests&&($this->panelBridge!==null||!$this->config->local())){
+            try {
+                $bridge=$this->panelBridge??new PanelBridge(new EnrollmentProof($this->config,new Secrets($this->config)));
+                $notes=$bridge->lineNotes(array_values($requests));
+            }catch(\Throwable){/* Keep the scoped list available; never substitute Hub notes. */}
+        }
+        foreach($rows as &$row){
+            $customer=$resource==='devices'?$row['customer_id']:$row['id'];$binding=$byCustomer[$customer]??null;
+            $result=$binding?($notes[$binding['panel_id']]??['state'=>'unavailable','notes'=>null]):['state'=>'not_linked','notes'=>null];
+            $row['panel_notes']=$result['notes'];$row['panel_notes_state']=$result['state'];
+        }
+        unset($row);
+        return $rows;
     }
     private function deviceUsernameSql(string $alias):string
     {

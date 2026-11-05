@@ -33,6 +33,45 @@ final class PanelBridge
         if(!is_array($reseller)||!is_string($reseller['id']??null)||!preg_match('/^[1-9][0-9]{0,19}$/D',$reseller['id'])||($reseller['username']??null)!==$username)throw new Problem(503,'Panel reseller identity did not match.');
         return $reseller;
     }
+    /** Reseller notes only, using server-owned line/account/reseller bindings. */
+    public function lineNotes(array $lines):array {
+        if(!array_is_list($lines)||!$lines||count($lines)>25)throw new Problem(422,'Invalid line notes batch.');
+        $expected=[];
+        foreach($lines as $line){
+            if(!is_array($line)||array_diff(array_keys($line),['id','account_ref','reseller_id']))throw new Problem(422,'Invalid line notes identity.');
+            foreach(['id','reseller_id'] as $key)if(!is_string($line[$key]??null)||!preg_match('/^[1-9][0-9]{0,19}$/D',$line[$key]))throw new Problem(422,'Invalid line notes identity.');
+            EnrollmentProof::hex($line['account_ref']??null,64);
+            if(isset($expected[$line['id']]))throw new Problem(422,'Duplicate line notes identity.');
+            $expected[$line['id']]=$line;
+        }
+        $body=json_encode(['lines'=>$lines],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
+        $timestamp=(string)time();$nonce=bin2hex(random_bytes(16));$secret=$this->proofs->bridgeSecret();
+        $headers=['Content-Type: application/json','Accept: application/json','X-Management-Timestamp: '.$timestamp,'X-Management-Nonce: '.$nonce,'X-Management-Signature: '.self::signature($secret,'line-notes-request-v1',$timestamp,$nonce,$body)];
+        if($this->transport)$raw=($this->transport)($body,$headers);
+        else {
+            if(!function_exists('curl_init'))throw new Problem(503,'Panel notes connection unavailable.');
+            $raw='';$curl=curl_init('https://activationworker.extremeiptv.net/management/line-notes');
+            curl_setopt_array($curl,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>$body,CURLOPT_HTTPHEADER=>$headers,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT=>3,CURLOPT_TIMEOUT=>8,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_WRITEFUNCTION=>static function($c,$chunk)use(&$raw){if(strlen($raw)+strlen($chunk)>12582912)return 0;$raw.=$chunk;return strlen($chunk);}]);
+            $ok=curl_exec($curl);$status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);curl_close($curl);
+            if($ok===false||$status!==200)throw new Problem(503,'Panel line notes unavailable.');
+        }
+        try {
+            $envelope=json_decode($raw,true,16,JSON_THROW_ON_ERROR);
+            if(!is_string($envelope['payload']??null)||!is_string($envelope['signature']??null)||!hash_equals(self::signature($secret,'line-notes-result-v1',$timestamp,$nonce,$envelope['payload']),$envelope['signature']))throw new \RuntimeException();
+            $response=json_decode($envelope['payload'],true,16,JSON_THROW_ON_ERROR);
+            $rows=$response['lines']??null;
+            if(!is_array($rows)||!array_is_list($rows)||count($rows)!==count($lines))throw new \RuntimeException();
+            $out=[];
+            foreach($rows as $row){
+                if(!is_array($row)||array_diff(array_keys($row),['id','account_ref','reseller_id','state','notes']))throw new \RuntimeException();
+                $id=$row['id']??'';$want=$expected[$id]??null;
+                if(!$want||isset($out[$id])||($row['account_ref']??null)!==$want['account_ref']||($row['reseller_id']??null)!==$want['reseller_id']||!in_array($row['state']??null,['current','unavailable'],true))throw new \RuntimeException();
+                if($row['state']==='current'?(!is_string($row['notes']??null)||strlen($row['notes'])>65535):($row['notes']??null)!==null)throw new \RuntimeException();
+                $out[$id]=['state'=>$row['state'],'notes'=>$row['notes']??null];
+            }
+            return $out;
+        }catch(\Throwable){throw new Problem(503,'Invalid signed panel notes response.');}
+    }
     /** Signed read-only check for a panel line ALREADY bound by enrollment. */
     public function primaryLine(string $customerId,string $accountRef):array {
         if(!preg_match('/^[1-9][0-9]{0,19}$/D',$customerId)||!preg_match('/^[a-f0-9]{64}$/D',$accountRef))throw new Problem(503,'Missing trusted primary identity.');

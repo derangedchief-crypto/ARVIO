@@ -291,3 +291,6 @@ async def activate(
 # Read-only primary status; existing activation/enrollment routes are unchanged.
 from primary_line_status import install_primary_status_routes
 install_primary_status_routes(app, settings, panel_cursor)
+
+from panel_line_notes import install_line_notes_routes
+install_line_notes_routes(app, settings, panel_cursor)
