@@ -81,3 +81,17 @@ the installer matches the existing application.key ownership.
 8. Compare identity/record with step 1 and verify existing recovery restrictions.
 
 Source/unit verification does not substitute for these installed-device checks.
+
+## My Hub deployment baseline
+
+Sites updated with the November 5 My Hub workspace-access/showcase packages have
+different `Auth.php` and `Application.php` hashes while still reporting 0.40.0.
+Use `Extreme-Control-Live-Connection-0.41.0-MyHub.zip` for that exact baseline.
+Generate it with `package-update.py OUTPUT.zip My-Hub-reseller-showcase.zip`;
+the generator verifies the released showcase archive hash and performs a
+three-way merge against the pre-live baseline, failing on merge conflicts.
+The resulting package adds only the live audit hook and live-ticket route to
+those two My Hub files, preserving the My Hub authentication and routes.
+Its baseline checks remain mandatory. The ordinary package's mismatch refusal
+happens before backups, service creation, or website writes, so that failure
+can be followed directly by the matching My Hub package installation.

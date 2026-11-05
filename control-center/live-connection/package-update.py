@@ -3,6 +3,7 @@
 import hashlib
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 
@@ -19,6 +20,18 @@ old = {name: subprocess.check_output(['git', 'show', f'{baseline}:control-center
        for name in replaced}
 assert old['VERSION'].strip() == b'0.40.0'
 assert contents['VERSION'].strip() == b'0.41.0'
+# Optional exact released My Hub baseline: preserve its routes and auth changes.
+if len(sys.argv) > 2:
+    hub_archive = Path(sys.argv[2]).read_bytes()
+    assert hashlib.sha256(hub_archive).hexdigest() == 'e3fce802e365a9e9caec727e1b25848ae1ca020e4bc0c15061cf9fb8845644f4', 'Unexpected My Hub archive'
+    with ZipFile(sys.argv[2]) as hub, tempfile.TemporaryDirectory(dir='/tmp/opencode') as tmp:
+        for name in ('src/Auth.php', 'src/Application.php'):
+            deployed = hub.read('my-hub-backend/payload/hub/' + name)
+            paths = [Path(tmp) / part for part in ('live', 'base', 'hub')]
+            for path, data in zip(paths, (contents[name], old[name], deployed)):
+                path.write_bytes(data)
+            contents[name] = subprocess.check_output(['git', 'merge-file', '-p', *map(str, paths)])
+            old[name] = deployed
 def manifest(items):
     return ''.join(f'{hashlib.sha256(data).hexdigest()}  {name}\n' for name, data in sorted(items.items())).encode()
 contents['BASELINE.sha256'] = manifest(old)
