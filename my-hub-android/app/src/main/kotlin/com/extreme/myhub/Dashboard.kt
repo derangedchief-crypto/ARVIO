@@ -2,6 +2,7 @@ package com.extreme.myhub
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -16,24 +17,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
 
-@Composable internal fun Dashboard(data: JSONObject, name: String, busy: Boolean, open: (String)->Unit) {
+@Composable internal fun Dashboard(data: JSONObject, name: String, busy: Boolean, onlineDevices: ()->Unit, open: (String)->Unit) {
     Column(verticalArrangement=Arrangement.spacedBy(5.dp)) {
         Text("WORKSPACE OVERVIEW",style=MaterialTheme.typography.labelSmall,color=HubColors.muted)
         Text("Everything, connected.",style=MaterialTheme.typography.headlineMedium)
         Text("Welcome back, $name.",style=MaterialTheme.typography.bodyMedium,color=HubColors.muted)
     }
     val connected=data.optInt("connected");val total=data.optInt("total")
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(Color(0xFF183831),Color(0xFF142633),HubColors.surface)))) {
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(Color(0xFF183831),Color(0xFF142633),HubColors.surface))).clickable(enabled=!busy,role=Role.Button,onClickLabel="View online devices",onClick=onlineDevices)) {
         Row(Modifier.fillMaxWidth().padding(22.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(7.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {HubIcon("activity",Modifier.size(17.dp),HubColors.mint);Text("Connected devices",style=MaterialTheme.typography.labelLarge,color=HubColors.mint)}
                 Row(verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(7.dp)) {Text(connected.toString(),fontSize=42.sp,fontWeight=FontWeight.Bold,letterSpacing=(-1).sp);Text("/ $total",style=MaterialTheme.typography.titleMedium,color=HubColors.muted,modifier=Modifier.padding(bottom=7.dp))}
                 Text("Your fleet at a glance",style=MaterialTheme.typography.bodySmall,color=HubColors.muted)
-                TextButton(onClick={open("devices")},enabled=!busy,contentPadding=PaddingValues(0.dp)) {Text("View devices");Spacer(Modifier.width(6.dp));HubIcon("chevron",Modifier.size(14.dp))}
+                Row(Modifier.heightIn(min=48.dp),verticalAlignment=Alignment.CenterVertically) {Text("View online devices",color=HubColors.mint);Spacer(Modifier.width(6.dp));HubIcon("chevron",Modifier.size(14.dp),HubColors.mint)}
             }
             Box(Modifier.size(94.dp),contentAlignment=Alignment.Center) {
                 Canvas(Modifier.fillMaxSize()) {

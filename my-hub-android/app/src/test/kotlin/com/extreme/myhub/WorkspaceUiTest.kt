@@ -29,12 +29,18 @@ class WorkspaceUiTest {
         compose.setContent {
             HubTheme {
                 WorkspaceFrame(HubState(busy = false, data = data), { destination = it }, {}, {}) {
-                    Dashboard(data, "Preview", false) { destination = it }
+                    Dashboard(data, "Preview", false, onlineDevices = { destination = "online-only" }) { destination = it }
                 }
             }
         }
         compose.onNodeWithText("Everything, connected.").assertIsDisplayed()
-        compose.onNodeWithText("View devices").performClick()
+        compose.onNodeWithText("Connected devices").assertHasClickAction().performTouchInput {
+            click(androidx.compose.ui.geometry.Offset(width - 10f, height / 2f))
+        }
+        org.junit.Assert.assertEquals("online-only", destination)
+        compose.onNodeWithText("View online devices").performClick()
+        org.junit.Assert.assertEquals("online-only", destination)
+        compose.onNodeWithText("Total devices").performClick()
         org.junit.Assert.assertEquals("devices", destination)
         compose.onNodeWithText("More").performClick()
         org.junit.Assert.assertEquals("more", destination)
@@ -60,7 +66,7 @@ class WorkspaceUiTest {
         compose.setContent {
             HubTheme {
                 WorkspaceFrame(HubState(busy = false), { destination = it }, {}, {}) {
-                    Dashboard(JSONObject().put("total", 0), "Preview", false) { destination = it }
+                    Dashboard(JSONObject().put("total", 0), "Preview", false, onlineDevices = { destination = "online-only" }) { destination = it }
                 }
             }
         }

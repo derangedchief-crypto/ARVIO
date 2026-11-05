@@ -97,7 +97,7 @@ private fun HubScreen(model: HubModel = viewModel()) {
                         if (state.busy) EmptyState("Loading your workspace", "Fetching the latest information…", "activity")
                         else Action("Try again", false) { model.open(state.route, state.page, state.search, state.filters) }
                     } else when {
-                        state.route == "overview" -> Dashboard(data, state.session!!.name, state.busy) { model.open(it) }
+                        state.route == "overview" -> Dashboard(data, state.session!!.name, state.busy, onlineDevices = { model.open("devices", filters = mapOf("presence" to "online")) }) { model.open(it) }
                         state.route == "more" -> WorkspaceMenu(state, model)
                         state.route in listOf("customers", "devices", "audit") -> Records(state, model)
                         state.route == "trial-setup" -> TrialSettings(data, state.busy, model)
@@ -158,9 +158,16 @@ internal fun Records(state: HubState, model: HubModel) {
     var create by remember(state.route) { mutableStateOf(false) }
     var policy by remember(state.route, state.filters) { mutableStateOf(state.filters["policy"] ?: "") }
     var visibility by remember(state.route, state.filters) { mutableStateOf(state.filters["visibility"] ?: "current") }
+    var presence by remember(state.route, state.filters) { mutableStateOf(state.filters["presence"] ?: "") }
     var showFilters by rememberSaveable(state.route) { mutableStateOf(false) }
     Text(if (state.route == "devices") "YOUR FLEET" else "YOUR BUSINESS", style = MaterialTheme.typography.labelSmall, color = HubColors.muted)
     Text(label(state.route), style = MaterialTheme.typography.headlineMedium)
+    if (state.route == "devices" && state.filters["presence"] == "online") {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Online devices only", color = HubColors.mint)
+            TextButton(onClick = { model.open("devices", search = state.search, filters = state.filters - "presence") }, enabled = !state.busy) { Text("Show all") }
+        }
+    }
     if (state.route != "audit") {
         OutlinedTextField(search, { search = it.take(120) }, label = { Text("Search ${state.route}") }, leadingIcon = { HubIcon("search") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (state.route == "devices") {
@@ -168,10 +175,11 @@ internal fun Records(state: HubState, model: HubModel) {
             if (showFilters) {
                 Choice("Access", policy, listOf("" to "All current policies") + pairs("active", "suspended", "blocked", "removed")) { policy = it }
                 Choice("Device history", visibility, pairs("current", "all")) { visibility = it }
+                Choice("Connection", presence, listOf("" to "All connections", "online" to "Online only")) { presence = it }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { model.open(state.route, search = search, filters = if (state.route == "devices") state.filters + mapOf("policy" to policy, "visibility" to visibility) else state.filters) }, enabled = !state.busy) { Text("Search") }
+            Button(onClick = { model.open(state.route, search = search, filters = if (state.route == "devices") state.filters + mapOf("policy" to policy, "visibility" to visibility, "presence" to presence) else state.filters) }, enabled = !state.busy) { Text("Search") }
             if (state.route == "customers") OutlinedButton(onClick = { create = true }, enabled = !state.busy) { Text("Add customer") }
         }
     }
