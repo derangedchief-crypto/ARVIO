@@ -77,6 +77,21 @@ function httpCases(HttpFixture $http, array &$tests, string $password, ControlCe
     $tests['HTTP pagination rejects array/injection values and prevents foreign tenant filtering'] = function () use ($http,$tenantB): void { same(422,$http->request('GET','/api/devices?page%5B%5D=1',null,[],'alpha')['status']); same(422,$http->request('GET','/api/devices?page=1%20OR%201=1',null,[],'alpha')['status']); same(404,$http->request('GET','/api/devices?tenant_id='.$tenantB['id'],null,[],'alpha')['status']); };
     $tests['HTTP oversize writes are rejected before storing customer data'] = function () use ($http,&$sessions): void { same(413,$http->request('POST','/api/customers',['name'=>'Too big','notes'=>str_repeat('x',40000)],['X-CSRF-Token'=>$sessions['alpha']['csrf']],'alpha')['status']); };
     $tests['HTTP device credentials are not interchangeable with browser sessions'] = function () use ($http): void { same(401,$http->request('POST','/api/device/check-in',[],[],'owner')['status']); };
+    $tests['HTTP live tickets require exact device credential and ignore no caller-selected scope'] = function()use($http,$app,$owner,$alpha,$tenantA,$makeDevice):void {
+        $file=$app->config->root.'/storage/live-connection.key';file_put_contents($file,bin2hex(random_bytes(32)));chmod($file,0600);
+        try {
+            same(401,$http->request('POST','/api/device/live-ticket',null,[],'owner')['status']);
+            same(401,$http->request('POST','/api/device/live-ticket',null,['Authorization'=>'Bearer '.str_repeat('f',64)])['status']);
+            $d=$makeDevice($alpha,$tenantA['id']);$token=$app->commands->issueTestCredential($owner,$d['id']);$headers=['Authorization'=>'Bearer '.$token];
+            same(422,$http->request('POST','/api/device/live-ticket',['device_id'=>str_repeat('e',32)],$headers)['status']);
+            $result=$http->request('POST','/api/device/live-ticket',null,$headers);same(200,$result['status']);same($d['id'],$result['body']['device_id']);
+            check(!str_contains($result['raw'],$token));
+            $app->management->updateDevice($owner,$d['id'],['policy'=>'blocked']);
+            same(200,$http->request('POST','/api/device/live-ticket',null,$headers)['status']);
+            $app->management->updateDevice($owner,$d['id'],['policy'=>'removed']);
+            same(401,$http->request('POST','/api/device/live-ticket',null,$headers)['status']);
+        } finally {unlink($file);}
+    };
     $tests['HTTP production enrollment and test-token issuance endpoints do not exist yet'] = function () use ($http,&$sessions): void { same(404,$http->request('POST','/api/device/test-enroll',[],['X-CSRF-Token'=>$sessions['owner']['csrf']],'owner')['status']); same(404,$http->request('POST','/api/device/enroll',[],['X-CSRF-Token'=>$sessions['owner']['csrf']],'owner')['status']); };
     $tests['HTTP command endpoint applies ownership and idempotency requirements'] = function () use ($http,&$sessions,$app,$owner,$alpha,$tenantA,$makeDevice): void {
         $d=$makeDevice($alpha,$tenantA['id']); $token=$app->commands->issueTestCredential($owner,$d['id']);

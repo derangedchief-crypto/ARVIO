@@ -8,6 +8,7 @@ final class Database
 {
     public readonly PDO $pdo;
     private int $savepoint = 0;
+    private array $committedCallbacks = [];
 
     public function __construct(Config $config)
     {
@@ -97,13 +98,27 @@ final class Database
     public function transaction(callable $work): mixed
     {
         if($this->pdo->inTransaction()) {
+            $callbacks = $this->committedCallbacks;
             $name='cc_nested_'.(++$this->savepoint);$this->pdo->exec("SAVEPOINT $name");
             try {$result=$work();$this->pdo->exec("RELEASE SAVEPOINT $name");return $result;}
-            catch(\Throwable $error){$this->pdo->exec("ROLLBACK TO SAVEPOINT $name");$this->pdo->exec("RELEASE SAVEPOINT $name");throw $error;}
+            catch(\Throwable $error){$this->committedCallbacks=$callbacks;$this->pdo->exec("ROLLBACK TO SAVEPOINT $name");$this->pdo->exec("RELEASE SAVEPOINT $name");throw $error;}
         }
         $this->pdo->beginTransaction();
-        try { $result = $work(); $this->pdo->commit(); return $result; }
-        catch (\Throwable $error) { if ($this->pdo->inTransaction()) $this->pdo->rollBack(); throw $error; }
+        try { $result = $work(); $this->pdo->commit(); }
+        catch (\Throwable $error) { $this->committedCallbacks=[];if ($this->pdo->inTransaction()) $this->pdo->rollBack(); throw $error; }
+        $callbacks=$this->committedCallbacks;$this->committedCallbacks=[];
+        foreach($callbacks as $callback)self::notify($callback);
+        return $result;
+    }
+    /** Best-effort hints only. Never publish uncommitted state or fail a committed write. */
+    public function afterCommit(string $key, callable $callback): void
+    {
+        if($this->pdo->inTransaction())$this->committedCallbacks[$key]=$callback;
+        else self::notify($callback);
+    }
+    private static function notify(callable $callback): void
+    {
+        try {$callback();}catch(\Throwable $error){error_log('Post-commit notification unavailable');}
     }
     public static function id(): string { return bin2hex(random_bytes(16)); }
 }

@@ -100,6 +100,8 @@ $tests['private key permissions are owner-only'] = function () use ($config): vo
 $tests['production HTTPS policy does not trust spoofed forwarded headers'] = function () use ($fixture,$settings): void { $saved=$_SERVER; try { $_SERVER=['HTTP_HOST'=>'control.fecxbrfzku.net','DOCUMENT_ROOT'=>$fixture.'/public','SERVER_PORT'=>80,'HTTP_X_FORWARDED_PROTO'=>'https']; $c=new Config($fixture,array_replace($settings,['environment'=>'production','origin'=>'https://control.fecxbrfzku.net'])); problem(503,fn()=> Http::guard($c)); $_SERVER['HTTPS']='on'; $_SERVER['SERVER_PORT']=443; Http::guard($c); $_SERVER['DOCUMENT_ROOT']=$fixture; problem(503,fn()=> Http::guard($c)); } finally { $_SERVER=$saved; } };
 
 require __DIR__ . '/http.php';
+require __DIR__ . '/live-connection.php';
+liveConnectionCases($tests,$app,$config);
 $http = new HttpFixture($fixture, $settings);
 httpCases($http, $tests, $password, $app, $owner, $alpha, $beta, $tenantA, $tenantB, $makeDevice);
 require __DIR__ . '/operations.php';

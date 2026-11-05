@@ -134,6 +134,12 @@ final class Application
         if($method==='POST'&&$path==='/api/device/enrollment/register') { $result=$this->enrollment->register(Http::body(),$_SERVER['REMOTE_ADDR']??'');Http::json($result,$result['status']==='not_managed'?200:201); }
         if($method==='POST'&&$path==='/api/device/enrollment/poll') Http::json($this->enrollment->poll(Http::body(),$_SERVER['REMOTE_ADDR']??''));
         if($method==='POST'&&$path==='/api/device/enrollment/confirm') Http::json($this->enrollment->poll(Http::body(),$_SERVER['REMOTE_ADDR']??'',true));
+        if($method==='POST'&&$path==='/api/device/live-ticket') {
+            Input::keys(Http::body(1024),[]);
+            $device=$this->commands->deviceIdentity(Http::bearer());
+            $this->auth->limit('device-live-ticket',$device['id'],12,60);
+            Http::json((new LiveConnection($this->config))->ticket($device));
+        }
         if ($method === 'POST' && $path === '/api/device/check-in') {
             $credential=Http::bearer();
             try { $result=$this->commands->checkIn($credential, Http::body(), $_SERVER['REMOTE_ADDR'] ?? '');$this->deviceProfiles->tickDevice($result['device_id']);if($this->deviceProfiles->pending($result['device_id']))$result['heartbeat_seconds']=min($result['heartbeat_seconds'],15);Http::json($result); }

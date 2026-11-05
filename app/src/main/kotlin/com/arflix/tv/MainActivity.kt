@@ -542,11 +542,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onUserInteraction() {
-        super.onUserInteraction()
-        if (::deviceManagementAgent.isInitialized) deviceManagementAgent.onInteraction()
-    }
-
     override fun onDestroy() {
         jankStats?.isTrackingEnabled = false
         jankStats = null

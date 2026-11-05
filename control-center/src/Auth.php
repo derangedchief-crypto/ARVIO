@@ -17,6 +17,7 @@ final class Auth
     {
         $this->db->query('INSERT INTO audit_events (tenant_id, actor_id, action, resource_id, metadata) VALUES (?, ?, ?, ?, ?)',
             [$tenant, $actor['id'] ?? null, $action, $resource, json_encode($metadata, JSON_THROW_ON_ERROR)]);
+        (new LiveConnection($this->config))->audited($this->db,$action,$resource,$tenant,$metadata);
     }
 
     public function bootstrap(string $setupKey, array $input): array

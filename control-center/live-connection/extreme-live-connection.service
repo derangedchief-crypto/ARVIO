@@ -1,0 +1,25 @@
+[Unit]
+Description=Extreme Control live device wake relay
+After=network.target
+
+[Service]
+Type=simple
+User=extremelive
+Group=extremelive
+WorkingDirectory=/opt/extreme-live-connection
+EnvironmentFile=/etc/extreme-live-connection.env
+ExecStart=/opt/extreme-live-connection/venv/bin/python /opt/extreme-live-connection/service.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=16384
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

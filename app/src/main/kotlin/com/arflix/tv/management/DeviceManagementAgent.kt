@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,18 +60,18 @@ class DeviceManagementAgent @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(DeviceManagementState())
     val state = _state.asStateFlow()
-    @Volatile private var lastInteraction = SystemClock.elapsedRealtime()
     private class Active(val account: ManagementAccount, @Volatile var session: ManagementSession, val publicKey: ByteArray) {
+        val liveIdentity = MutableStateFlow(managementLiveIdentity(session))
         var status = "Connecting to control center"
         var heartbeat = 60
         var nextRenew = 0L
+        var nextBackup = 0L
         var recoveryHintsSupported = false
         var favouritesStatus = "Waiting for managed check-in"
     }
     @Volatile private var active: Active? = null
     private val recoveryHint by lazy { DeviceRecoveryHint.read(context) }
 
-    fun onInteraction() { lastInteraction = SystemClock.elapsedRealtime() }
     fun checkInNow() {
         val current=active ?: run { wake.trySend(Unit); return }
         scope.launch {
@@ -105,6 +106,7 @@ class DeviceManagementAgent @Inject constructor(
             throw error
         }
         current.session = next
+        current.liveIdentity.value = managementLiveIdentity(next)
         publish(current)
     }
     private fun publish(current: Active) {
@@ -156,12 +158,22 @@ class DeviceManagementAgent @Inject constructor(
                     vault.save(saved)
                     val current = Active(account, saved, key)
                     mutation.withLock { active = current; publish(current) }
+                    coroutineScope {
+                    val live = ManagementLiveConnection(api)
+                    val liveJob = launch { live.run(current.liveIdentity) { wake.trySend(Unit) } }
+                    val stopNetwork = managementNetworkWake(context) { wake.trySend(Unit); live.reconnect() }
                     var failures = 0
+                    var lastStart = SystemClock.elapsedRealtime() - MANAGEMENT_MIN_CHECK_IN_MS
+                    try {
                     while (currentCoroutineContext().isActive) {
+                        // Bound bursts across manual retries, network changes and live hints.
+                        delay(managementCheckInRemaining(SystemClock.elapsedRealtime(), lastStart))
+                        while (wake.tryReceive().isSuccess) { /* coalesce already pending hints */ }
+                        lastStart = SystemClock.elapsedRealtime()
                         try {
                             cycle(current)
                             failures = 0
-                            waitForNextCheckIn((current.heartbeat.coerceIn(15, 300) * 1000L) + Random.nextLong(0, 5000))
+                            waitForNextCheckIn(managementCheckInDelay(current.heartbeat, live.connected))
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (error: Exception) {
                             failures = (failures + 1).coerceAtMost(5)
@@ -170,8 +182,10 @@ class DeviceManagementAgent @Inject constructor(
                             }
                             current.status = if (current.session.policy in setOf("suspended", "blocked", "removed")) "Waiting for provider policy check" else "Control center unavailable — app activation is unchanged"
                             publish(current)
-                            waitForNextCheckIn((10_000L shl (failures - 1)).coerceAtMost(300_000) + Random.nextLong(0, 3000))
+                            waitForNextCheckIn((5_000L shl (failures - 1)).coerceAtMost(30_000) + Random.nextLong(0, 1000))
                         }
+                    }
+                    } finally { stopNetwork(); liveJob.cancel() }
                     }
                 }
             }
@@ -273,7 +287,7 @@ class DeviceManagementAgent @Inject constructor(
         val report = JSONObject().put("schema_version", 1).put("model", "${Build.MANUFACTURER} ${Build.MODEL}".take(120))
             .put("account_username",current.account.username)
             .put("os_version", "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})").put("app_version", BuildConfig.VERSION_NAME)
-            .put("activity_state", if (SystemClock.elapsedRealtime() - lastInteraction >= 300_000) "idle" else "active")
+            .put("activity_state", MANAGEMENT_VISIBLE_ACTIVITY)
             .put("capabilities", JSONArray(MANAGEMENT_CAPABILITIES)).put("storage_total", storage.totalBytes).put("storage_free", storage.availableBytes)
             .apply { val hint=recoveryHint;val id=current.session.deviceId
                 if(current.recoveryHintsSupported&&hint!=null&&id!=null){
@@ -297,10 +311,14 @@ class DeviceManagementAgent @Inject constructor(
         }
         if (policy != "active") { ManagementEvents.unbind();return }
         ManagementEvents.bind(context,current.account.scope)
-        try { captureFavourites(current,"automatic",false) } catch(cancelled: CancellationException){throw cancelled} catch(_: Exception){current.favouritesStatus="Backup unavailable; existing server backups retained";publish(current)}
         val commands = response.getJSONArray("commands")
         require(commands.length() <= 5)
         for (i in 0 until commands.length()) handle(current, commands.getJSONObject(i))
+        // Deliver interactive work first; faster presence checks must not multiply scans.
+        if (SystemClock.elapsedRealtime() >= current.nextBackup) {
+            current.nextBackup = SystemClock.elapsedRealtime() + 60_000
+            try { captureFavourites(current,"automatic",false) } catch(cancelled: CancellationException){throw cancelled} catch(_: Exception){current.favouritesStatus="Backup unavailable; existing server backups retained";publish(current)}
+        }
     }
     private suspend fun handle(current: Active, command: JSONObject) {
         val id = command.getString("id").also { require(it.matches(Regex("[a-f0-9]{32}"))) }
