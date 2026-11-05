@@ -252,7 +252,7 @@ final class Management
             } else $scope .= " AND r.policy != 'removed'";
             $joins = 'devices r JOIN customers c ON c.id = r.customer_id JOIN tenants t ON t.id = r.tenant_id';
             $line=$this->deviceUsernameSql('r');
-            $fields = "r.*, TIMESTAMPDIFF(SECOND, r.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, COALESCE($line,c.name) AS customer_name, $line AS line_username, t.name AS tenant_name";
+            $fields = "r.*, c.notes AS customer_notes, TIMESTAMPDIFF(SECOND, r.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, COALESCE($line,c.name) AS customer_name, $line AS line_username, t.name AS tenant_name";
             if ($search !== '') {
                 $scope .= " AND (LOCATE(?, r.label) > 0 OR LOCATE(?, c.name) > 0 OR LOCATE(?, CONVERT(r.id USING utf8mb4)) > 0 OR LOCATE(?, COALESCE(r.model,'')) > 0 OR LOCATE(?,COALESCE($line,''))>0)";
                 array_push($args, $search, $search, $search, $search, $search);
