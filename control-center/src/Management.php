@@ -229,6 +229,7 @@ final class Management
         $page = Input::page($input['page'] ?? 1);
         $offset = ($page - 1) * 25;
         $args = [];
+        $panelSearch=[];
         $scope = $this->scope($actor, 'r.tenant_id', $args);
         if (isset($input['tenant_id']) && $input['tenant_id'] !== '') {
             $tenant = $this->tenant($actor, Input::id($input['tenant_id']));
@@ -243,7 +244,7 @@ final class Management
             if(!in_array($presence,['','online'],true))throw new Problem(422,'Invalid connection filter.');
             if($presence==='online'){
                 $threshold=$this->config->number('offline_after_seconds',180,60,1800);
-                $scope.=" AND r.enrolled_at IS NOT NULL AND TIMESTAMPDIFF(SECOND,r.last_seen_at,UTC_TIMESTAMP()) <= $threshold AND r.activity_state != 'idle'";
+                $scope.=" AND r.enrolled_at IS NOT NULL AND TIMESTAMPDIFF(SECOND,r.last_seen_at,UTC_TIMESTAMP()) <= $threshold";
             }
             if(isset($input['customer_id'])){$customer=$this->customer($actor,Input::id($input['customer_id']));$scope.=' AND r.customer_id=?';$args[]=$customer['id'];}
             if (isset($input['policy']) && $input['policy'] !== '') {
@@ -254,23 +255,49 @@ final class Management
             $line=$this->deviceUsernameSql('r');
             $fields = "r.*, TIMESTAMPDIFF(SECOND, r.last_seen_at, UTC_TIMESTAMP()) AS last_seen_age, COALESCE($line,c.name) AS customer_name, $line AS line_username, t.name AS tenant_name";
             if ($search !== '') {
-                $scope .= " AND (LOCATE(?, r.label) > 0 OR LOCATE(?, c.name) > 0 OR LOCATE(?, CONVERT(r.id USING utf8mb4)) > 0 OR LOCATE(?, COALESCE(r.model,'')) > 0 OR LOCATE(?,COALESCE($line,''))>0)";
+                $noteMatch=$this->panelNoteSearch($joins,$scope,$args,'r.customer_id',$search,$panelSearch);
+                $scope .= " AND (LOCATE(?, r.label) > 0 OR LOCATE(?, c.name) > 0 OR LOCATE(?, CONVERT(r.id USING utf8mb4)) > 0 OR LOCATE(?, COALESCE(r.model,'')) > 0 OR LOCATE(?,COALESCE($line,''))>0 OR $noteMatch)";
                 array_push($args, $search, $search, $search, $search, $search);
             }
         } elseif ($resource === 'customers') {
             $joins = 'customers r JOIN tenants t ON t.id = r.tenant_id';
             $line=$this->hasVerifiedUsernames()?'(SELECT n.username FROM managed_accounts a JOIN verified_line_usernames n ON n.account_ref=a.account_ref WHERE a.customer_id=r.id ORDER BY n.verified_at DESC LIMIT 1)':'NULL';
             $fields = "r.*, t.name AS tenant_name, $line AS line_username";
-            if ($search !== '') { $scope .= " AND (LOCATE(?, r.name)>0 OR LOCATE(?,COALESCE(r.external_reference,''))>0 OR LOCATE(?,COALESCE($line,''))>0)"; array_push($args, $search, $search, $search); }
+            if ($search !== '') {
+                $noteMatch=$this->panelNoteSearch($joins,$scope,$args,'r.id',$search,$panelSearch);
+                $scope .= " AND (LOCATE(?, r.name)>0 OR LOCATE(?,COALESCE(r.external_reference,''))>0 OR LOCATE(?,COALESCE($line,''))>0 OR $noteMatch)"; array_push($args, $search, $search, $search);
+            }
         } else throw new Problem(404, 'Record not found.');
         $total = (int) $this->db->query("SELECT COUNT(*) FROM $joins WHERE $scope", $args)->fetchColumn();
         $rows = $this->db->all("SELECT $fields FROM $joins WHERE $scope ORDER BY r.created_at DESC, r.id LIMIT 25 OFFSET $offset", $args);
         if ($resource === 'devices') $rows = array_map($this->publicDevice(...), $rows);
-        $rows = $this->withPanelNotes($rows, $resource);
+        $rows = $this->withPanelNotes($rows, $resource, $panelSearch);
         return ['items' => $rows, 'page' => $page, 'pages' => max(1, (int) ceil($total / 25)), 'total' => $total]
             +($resource==='devices'?['list_window'=>(new DeviceListWindow($this->db,$this->auth))->state()]:[]);
     }
-    private function withPanelNotes(array $rows,string $resource):array
+    /** Search authoritative notes before COUNT/LIMIT, across all scoped candidates. */
+    private function panelNoteSearch(string $joins,string $scope,array $args,string $customerColumn,string $search,array &$results):string
+    {
+        if($this->panelBridge===null&&$this->config->local())return '0=1';
+        $bindings=$this->db->all("SELECT DISTINCT p.panel_id,p.account_ref,p.reseller_id,p.customer_id FROM $joins JOIN panel_customers p ON p.customer_id=$customerColumn AND p.tenant_id=r.tenant_id JOIN panel_resellers pr ON pr.panel_id=p.reseller_id AND pr.tenant_id=p.tenant_id WHERE $scope",$args);
+        if(!$bindings)return '0=1';
+        $bridge=$this->panelBridge??new PanelBridge(new EnrollmentProof($this->config,new Secrets($this->config)));
+        $matches=[];
+        foreach(array_chunk($bindings,25) as $batch){
+            try{$notes=$bridge->lineNotes(array_map(static fn($b)=>['id'=>$b['panel_id'],'account_ref'=>$b['account_ref'],'reseller_id'=>$b['reseller_id']],$batch));}
+            catch(\Throwable){throw new Problem(503,'Panel notes search is temporarily unavailable. Please retry.');}
+            $results+=$notes;
+            foreach($batch as $binding){
+                $note=$notes[$binding['panel_id']];
+                if($note['state']==='current'&&mb_stripos($note['notes'],$search,0,'UTF-8')!==false){
+                    // Only validated internal IDs enter this SQL expression.
+                    $matches[]=Input::id($binding['customer_id']);
+                }
+            }
+        }
+        return $matches?$customerColumn." IN ('".implode("','",array_unique($matches))."')":'0=1';
+    }
+    private function withPanelNotes(array $rows,string $resource,array $notes=[]):array
     {
         if(!$rows)return $rows;
         $ids=array_values(array_unique(array_map(static fn($r)=>$resource==='devices'?$r['customer_id']:$r['id'],$rows)));
@@ -286,11 +313,11 @@ final class Management
                 }
             }
         }
-        $notes=[];
+        $requests=array_diff_key($requests,$notes);
         if($requests&&($this->panelBridge!==null||!$this->config->local())){
             try {
                 $bridge=$this->panelBridge??new PanelBridge(new EnrollmentProof($this->config,new Secrets($this->config)));
-                $notes=$bridge->lineNotes(array_values($requests));
+                $notes+=$bridge->lineNotes(array_values($requests));
             }catch(\Throwable){/* Keep the scoped list available; never substitute Hub notes. */}
         }
         foreach($rows as &$row){
@@ -315,7 +342,7 @@ final class Management
         if(!empty($input['tenant_id'])){$tenant=$this->workspace($actor,$input['tenant_id']);$scope.=' AND tenant_id=?';$args[]=$tenant['id'];}
         $threshold = $this->config->number('offline_after_seconds', 180, 60, 1800);
         $visible=DeviceListWindow::condition($this->db,'devices');
-        $stats = $this->db->one("SELECT COUNT(*) AS total, COALESCE(SUM(enrolled_at IS NULL),0) AS not_enrolled, COALESCE(SUM(enrolled_at IS NOT NULL AND TIMESTAMPDIFF(SECOND,last_seen_at,UTC_TIMESTAMP()) <= $threshold AND activity_state != 'idle'),0) AS connected, COALESCE(SUM(policy != 'active'),0) AS restricted FROM devices WHERE $scope AND policy != 'removed' AND $visible", $args);
+        $stats = $this->db->one("SELECT COUNT(*) AS total, COALESCE(SUM(enrolled_at IS NULL),0) AS not_enrolled, COALESCE(SUM(enrolled_at IS NOT NULL AND TIMESTAMPDIFF(SECOND,last_seen_at,UTC_TIMESTAMP()) <= $threshold),0) AS connected, COALESCE(SUM(policy != 'active'),0) AS restricted FROM devices WHERE $scope AND policy != 'removed' AND $visible", $args);
         $stats['customers'] = (int) $this->db->query("SELECT COUNT(*) FROM customers WHERE $scope", $args)->fetchColumn();
         $stats['pending_commands'] = (int) $this->db->query("SELECT COUNT(*) FROM commands WHERE $scope AND status IN ('pending','delivered','running') AND expires_at > UTC_TIMESTAMP()", $args)->fetchColumn();
         $accountScope = str_replace('tenant_id', 'a.tenant_id', $scope);
