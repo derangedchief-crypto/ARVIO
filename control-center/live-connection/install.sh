@@ -39,10 +39,14 @@ python3 -m venv /opt/extreme-live-connection/venv
 /opt/extreme-live-connection/venv/bin/pip install --disable-pip-version-check -r "$bundle/live-connection/requirements.txt"
 id extremelive >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin extremelive
 install -m 0644 "$bundle/live-connection/service.py" /opt/extreme-live-connection/service.py
+# The root-only install umask must not prevent the service user reading its venv.
+# This directory contains code/dependencies only; the secret stays in /etc.
+chmod -R a+rX /opt/extreme-live-connection
 changed=0
 rollback() {
     code=$?
     if (( code != 0 && changed == 1 )); then
+        set +e
         systemctl disable --now extreme-live-connection.service || true
         tar -C "$site" -xzf "$backup/backend.tgz"
         cp -p "$backup/nginx.conf" "$conf"
