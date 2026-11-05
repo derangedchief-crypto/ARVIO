@@ -35,7 +35,9 @@ def install(site, archive, backup, php):
     writes={}
     for name,target in targets.items():
         if name.startswith('src/'):
-            candidate=backup/(Path(name).name+'.new.php'); candidate.write_bytes(data[name]); subprocess.run([*php,'-l',str(candidate)],check=True)
+            # Syntax checking needs no php.ini or extensions. Some aaPanel CLI
+            # extension/JIT combinations crash before linting can complete.
+            candidate=backup/(Path(name).name+'.new.php'); candidate.write_bytes(data[name]); subprocess.run([*php,'-n','-l',str(candidate)],check=True)
             writes[site/target]=data[name]
         else:
             stem,ext=name.rsplit('.',1); dest=site/('public/assets/portal-0.42.0/'+stem+'-panel-notes.'+ext)
