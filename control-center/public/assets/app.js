@@ -206,7 +206,7 @@ async function records(resource, epoch,customerId=null) {
   async function load(page = 1) {
     try {
       const data = await api(`/api/${resource}?page=${page}&search=${encodeURIComponent(search.value)}${scopeQuery()}${customerId?'&customer_id='+encodeURIComponent(customerId):''}`); if (epoch !== state.epoch) return;
-       const content = resource === 'devices' ? devicesTable(data.items) : table(['Line username / customer', 'Workspace', 'Reference', 'Actions'], data.items.map(c => { const actions = el('div', null, 'actions'); actions.append(button('Open customer',()=>{location.hash='customer/'+c.id;}),button('Edit notes', () => customerForm(c))); const name = c.line_username || (/^Panel line [0-9]+$/.test(c.name) ? 'Username awaiting app check-in' : c.name); return [cellName(name, c.notes), c.tenant_name, c.external_reference || '—', actions]; }));
+       const content = resource === 'devices' ? devicesTable(data.items) : table(['Line username / customer', 'Workspace', 'Notes', 'Actions'], data.items.map(c => { const actions = el('div', null, 'actions'); actions.append(button('Open customer',()=>{location.hash='customer/'+c.id;}),button('Edit notes', () => customerForm(c))); const name = c.line_username || (/^Panel line [0-9]+$/.test(c.name) ? 'Username awaiting app check-in' : c.name); return [cellName(name), c.tenant_name, el('span',c.notes || '—','notes'), actions]; }));
       resultBox.replaceChildren(content, pagination(data, load));
     } catch (e) { toast(e.message); }
   }
