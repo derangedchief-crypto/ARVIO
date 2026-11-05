@@ -212,7 +212,7 @@ async function records(resource, epoch,customerId=null) {
   }
   await load();
 }
-async function fleetPage(epoch,customerId=null){
+async function fleetPage(epoch,customerId=null,presence=''){
   let customer=null;
   if(customerId){customer=await api('/api/customers/'+customerId);if(epoch!==state.epoch)return;if(state.user.role==='owner'){await chooseWorkspace(customer.tenant_id);if(epoch!==state.epoch)return;state.workspaceScope=customer.tenant_id;}}
   const main=$('main');const count=el('p','Loading devices…','fleet-count');const actions=[button('Refresh',()=>load())];
@@ -221,7 +221,7 @@ async function fleetPage(epoch,customerId=null){
     actions.push(button('Start fresh check-in list',async()=>{if(!confirm('Start a fresh visible device list for YOUR WORKSPACE AND ALL RESELLERS? Nothing is deleted or logged out. Devices reappear after their next check-in. Notes, history, restrictions and device allocation remain unchanged.'))return;await api('/api/device-list-window',{scope:'all_workspaces',confirm:true});visibility.value='current';await load(1);toast('Fresh list started for all workspaces. Refresh to see devices check back in.');}));
     actions.push(button('Automatic reconnection',()=>modal('Automatic device reconnection',[{key:'enabled',label:'Recovery',value:recoveryEnabled?'yes':'no',options:[['yes','Enabled'],['no','Disabled']]}],async values=>{await api('/api/device-recovery/settings',{enabled:values.enabled==='yes'});await load(1);toast('Recovery policy saved. Matching hints are not hardware authentication.');})));
   }
-  const head=heading('Devices','',[actions[0],...(actions.length>1?[actionMenu('Device tools',actions.slice(1))]:[])]);head.querySelector('p').replaceWith(count);main.replaceChildren(head);main.classList.add('fleet-page');
+  const head=heading(presence==='online'?'Online devices':'Devices','',[actions[0],...(actions.length>1?[actionMenu('Device tools',actions.slice(1))]:[])]);head.querySelector('p').replaceWith(count);main.replaceChildren(head);main.classList.add('fleet-page');
   if(customer){
     head.querySelector('h1').textContent=customer.line_username||customer.name;
     const back=el('a','← Customers','back-link');back.href='#customers';main.prepend(back);
@@ -232,7 +232,7 @@ async function fleetPage(epoch,customerId=null){
   const visibility=el('select');visibility.setAttribute('aria-label','Device list view');for(const[value,text]of [['current','Fresh check-ins'],['all','All retained records']]){const o=el('option',text);o.value=value;visibility.append(o);}if(customer)visibility.value='all';
   const note=el('p','', 'context-note');
   const submit=el('button','Search');submit.type='submit';form.append(search,policy,visibility,submit);const results=el('div',null,'fleet-results'),help=el('details',null,'context-note');help.append(el('summary','About device lists & reconnection'),note);main.append(form,help,results);let page=1,serial=0;
-  async function load(next=page){const turn=++serial;page=next;results.setAttribute('aria-busy','true');try{const data=await api(`/api/devices?page=${page}&search=${encodeURIComponent(search.value)}&policy=${policy.value}&visibility=${visibility.value}${scopeQuery()}${customerId?'&customer_id='+encodeURIComponent(customerId):''}`);if(epoch!==state.epoch||turn!==serial)return;recoveryEnabled=!!data.list_window?.recovery_enabled;note.textContent=data.list_window?.reset_at?`Fresh list started ${date(data.list_window.reset_at)}. Devices appear after checking in; hidden records and restrictions are retained. Allocation is unchanged.`:'Updates retain the same device record. Automatic reset/reinstall recovery needs a prior hint from a compatible app; ambiguous matches are not merged.';count.textContent=`${data.total} ${search.value||policy.value?'matching ':''}${data.total===1?'device':'devices'}${customerId?' for this customer':''}`;results.replaceChildren(devicesTable(data.items),pagination(data,load));}catch(e){if(epoch===state.epoch&&turn===serial)results.replaceChildren(panel('Could not load devices',el('p',e.message,'error'),button('Try again',()=>load())));}finally{if(turn===serial)results.removeAttribute('aria-busy');}}
+  async function load(next=page){const turn=++serial;page=next;results.setAttribute('aria-busy','true');try{const data=await api(`/api/devices?page=${page}&search=${encodeURIComponent(search.value)}&policy=${policy.value}&visibility=${visibility.value}&presence=${presence}${scopeQuery()}${customerId?'&customer_id='+encodeURIComponent(customerId):''}`);if(epoch!==state.epoch||turn!==serial)return;recoveryEnabled=!!data.list_window?.recovery_enabled;note.textContent=data.list_window?.reset_at?`Fresh list started ${date(data.list_window.reset_at)}. Devices appear after checking in; hidden records and restrictions are retained. Allocation is unchanged.`:'Updates retain the same device record. Automatic reset/reinstall recovery needs a prior hint from a compatible app; ambiguous matches are not merged.';count.textContent=`${data.total} ${search.value||policy.value?'matching ':''}${data.total===1?'device':'devices'}${customerId?' for this customer':''}`;results.replaceChildren(devicesTable(data.items),pagination(data,load));}catch(e){if(epoch===state.epoch&&turn===serial)results.replaceChildren(panel('Could not load devices',el('p',e.message,'error'),button('Try again',()=>load())));}finally{if(turn===serial)results.removeAttribute('aria-busy');}}
   form.onsubmit=e=>{e.preventDefault();load(1);};policy.onchange=()=>load(1);visibility.onchange=()=>load(1);await load(1);
 }
 async function resellers(epoch) {
@@ -937,6 +937,7 @@ async function route() {
     $('main').setAttribute('aria-busy','true');
     if (hash === 'overview') await overview(epoch);
     else if(hash==='addons')await addonsPage(epoch);
+    else if (hash === 'devices/online') await fleetPage(epoch,null,'online');
     else if (hash === 'devices' || hash === 'customers') await records(hash, epoch);
     else if (hash === 'resellers' && state.user.role === 'owner') await resellers(epoch);
     else if (hash === 'audit') await audit(epoch);

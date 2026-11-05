@@ -225,7 +225,7 @@ final class Management
 
     public function listing(array $actor, string $resource, array $input): array
     {
-        Input::keys($input, array_merge(['page','search','tenant_id','policy'],$resource==='devices'?['customer_id','visibility']:[]));
+        Input::keys($input, array_merge(['page','search','tenant_id','policy'],$resource==='devices'?['customer_id','visibility','presence']:[]));
         $page = Input::page($input['page'] ?? 1);
         $offset = ($page - 1) * 25;
         $args = [];
@@ -239,6 +239,12 @@ final class Management
             $visibility=$input['visibility']??'current';
             if(!in_array($visibility,['current','all'],true))throw new Problem(422,'Invalid device visibility.');
             if($visibility==='current')$scope.=' AND '.DeviceListWindow::condition($this->db,'r');
+            $presence=$input['presence']??'';
+            if(!in_array($presence,['','online'],true))throw new Problem(422,'Invalid connection filter.');
+            if($presence==='online'){
+                $threshold=$this->config->number('offline_after_seconds',180,60,1800);
+                $scope.=" AND r.enrolled_at IS NOT NULL AND TIMESTAMPDIFF(SECOND,r.last_seen_at,UTC_TIMESTAMP()) <= $threshold AND r.activity_state != 'idle'";
+            }
             if(isset($input['customer_id'])){$customer=$this->customer($actor,Input::id($input['customer_id']));$scope.=' AND r.customer_id=?';$args[]=$customer['id'];}
             if (isset($input['policy']) && $input['policy'] !== '') {
                 if (!in_array($input['policy'], ['active','suspended','blocked','removed'], true)) throw new Problem(422, 'Invalid policy filter.');
@@ -277,7 +283,7 @@ final class Management
         if(!empty($input['tenant_id'])){$tenant=$this->workspace($actor,$input['tenant_id']);$scope.=' AND tenant_id=?';$args[]=$tenant['id'];}
         $threshold = $this->config->number('offline_after_seconds', 180, 60, 1800);
         $visible=DeviceListWindow::condition($this->db,'devices');
-        $stats = $this->db->one("SELECT COUNT(*) AS total, COALESCE(SUM(enrolled_at IS NULL),0) AS not_enrolled, COALESCE(SUM(last_seen_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL $threshold SECOND)),0) AS connected, COALESCE(SUM(policy != 'active'),0) AS restricted FROM devices WHERE $scope AND policy != 'removed' AND $visible", $args);
+        $stats = $this->db->one("SELECT COUNT(*) AS total, COALESCE(SUM(enrolled_at IS NULL),0) AS not_enrolled, COALESCE(SUM(enrolled_at IS NOT NULL AND TIMESTAMPDIFF(SECOND,last_seen_at,UTC_TIMESTAMP()) <= $threshold AND activity_state != 'idle'),0) AS connected, COALESCE(SUM(policy != 'active'),0) AS restricted FROM devices WHERE $scope AND policy != 'removed' AND $visible", $args);
         $stats['customers'] = (int) $this->db->query("SELECT COUNT(*) FROM customers WHERE $scope", $args)->fetchColumn();
         $stats['pending_commands'] = (int) $this->db->query("SELECT COUNT(*) FROM commands WHERE $scope AND status IN ('pending','delivered','running') AND expires_at > UTC_TIMESTAMP()", $args)->fetchColumn();
         $accountScope = str_replace('tenant_id', 'a.tenant_id', $scope);

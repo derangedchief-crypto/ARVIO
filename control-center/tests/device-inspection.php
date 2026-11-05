@@ -3,6 +3,21 @@ declare(strict_types=1);
 
 function deviceInspectionCases(array &$tests,ControlCenter\Application $app,array $owner,array $alpha,array $beta,array $tenantA,callable $enrolled):void {
     $inspect=new ControlCenter\DeviceInspection($app->db,$app->management,$app->commands);
+    $tests['online device filtering excludes idle offline and unenrolled records before pagination']=function()use($app,$alpha,$beta,$tenantA,$enrolled):void {
+        $ids=[];
+        foreach(['active','idle','offline','unenrolled'] as $kind){
+            [$d]=$enrolled($alpha,$tenantA['id']);$ids[$kind]=$d['id'];
+            $app->db->query("UPDATE devices SET label=?,activity_state=?,last_seen_at=UTC_TIMESTAMP() WHERE id=?",['ONLINE-FILTER-FIXTURE-'.$kind,$kind==='idle'?'idle':'active',$d['id']]);
+        }
+        $app->db->query('UPDATE devices SET last_seen_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 HOUR) WHERE id=?',[$ids['offline']]);
+        $app->db->query('UPDATE devices SET enrolled_at=NULL WHERE id=?',[$ids['unenrolled']]);
+        $filter=['search'=>'ONLINE-FILTER-FIXTURE-','presence'=>'online','visibility'=>'all'];
+        $result=$app->management->listing($alpha,'devices',$filter);
+        same(1,$result['total']);same(1,$result['pages']);same($ids['active'],$result['items'][0]['id']);same('online',$result['items'][0]['presence']);
+        same([],$app->management->listing($alpha,'devices',$filter+['page'=>2])['items']);
+        same(0,$app->management->listing($beta,'devices',$filter)['total']);
+        problem(422,fn()=>$app->management->listing($alpha,'devices',['presence'=>'invalid']));
+    };
     $tests['automatic inspection deduplicates viewers and bounds queued reads']=function()use($app,$inspect,$owner,$alpha,$tenantA,$enrolled):void {
         [$d]=$enrolled($alpha,$tenantA['id']);$id=$d['id'];
         $app->db->query("UPDATE devices SET last_seen_at=UTC_TIMESTAMP(),activity_state='active',capabilities=? WHERE id=?",[json_encode(ControlCenter\DeviceInspection::READS),$id]);

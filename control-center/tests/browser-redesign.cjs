@@ -33,7 +33,13 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
       await page.getByText('What this chart measures',{exact:true}).click();
       await page.screenshot({path:output+'/'+role+'-dashboard.png',fullPage:true,animations:'disabled'});
       await page.setViewportSize({width:390,height:950});await page.screenshot({path:output+'/'+role+'-dashboard-mobile.png',fullPage:true,animations:'disabled'});await page.setViewportSize({width:1440,height:1000});
-      const routes=['customers','devices','recovery-holds','renewals/payments','renewals/plans','renewals/gateways','renewals/settings','trials/contacts','trials','branding','library','addons','audit','more',...(role==='owner'?['resellers','enrollments']:[])];
+       const onlineResponse=page.waitForResponse(r=>r.url().includes('/api/devices?')&&r.url().includes('presence=online'));
+       await page.locator('.metric-card').filter({hasText:'Online devices'}).click();
+       const online=await(await onlineResponse).json();
+       await page.getByRole('heading',{name:'Online devices',exact:true}).waitFor();
+       assert.ok(online.items.every(device=>device.presence==='online'));
+       assert.equal(new URL(page.url()).hash,'#devices/online');
+       const routes=['customers','devices','recovery-holds','renewals/payments','renewals/plans','renewals/gateways','renewals/settings','trials/contacts','trials','branding','library','addons','audit','more',...(role==='owner'?['resellers','enrollments']:[])];
       for(const route of routes){
         const epoch=await page.evaluate(hash=>{const previous=state.epoch;location.hash=hash;return previous;},route);await page.waitForFunction(previous=>state.epoch>previous&&document.querySelector('#main')?.getAttribute('aria-busy')!=='true',epoch);await ready();
         for(const width of [1440,390,320]){
