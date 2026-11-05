@@ -16,7 +16,7 @@ iconPaths.profiles='M5 4h14v16H5z M9 8h6 M9 12h6 M9 16h3';
 iconPaths.defaults='M12 3v4 M12 17v4 M3 12h4 M17 12h4 M8 12l3 3 5-6';
 iconPaths.editor='M14 4h6v6 M20 4l-9 9 M10 5H4v15h15v-6';
 iconPaths.refresh='M20 7v5h-5 M4 17v-5h5 M6 7a7 7 0 0 1 12-1l2 6 M4 12l2 6a7 7 0 0 0 12-1';
-const drawerMedia=window.matchMedia('(min-width:0px)');let navOpen=false;
+const drawerMedia=window.matchMedia('(max-width:1000px)');let navOpen=false;
 function setNavOpen(open,restoreFocus=true){navOpen=!!open&&drawerMedia.matches&&!$('shell').hidden;document.body.classList.toggle('nav-open',navOpen);$('nav-toggle').setAttribute('aria-expanded',String(navOpen));$('nav-toggle').setAttribute('aria-label',navOpen?'Close navigation':'Open navigation');$('nav-scrim').hidden=!navOpen;$('workspace').inert=navOpen;$('sidebar').inert=drawerMedia.matches&&!navOpen;if(drawerMedia.matches){$('sidebar').setAttribute('aria-hidden',String(!navOpen));if(navOpen){$('sidebar').setAttribute('role','dialog');$('sidebar').setAttribute('aria-modal','true');$('nav-close').focus();}else{$('sidebar').removeAttribute('role');$('sidebar').removeAttribute('aria-modal');if(restoreFocus&&!$('shell').hidden)$('nav-toggle').focus();}}else{$('sidebar').removeAttribute('aria-hidden');$('sidebar').removeAttribute('role');$('sidebar').removeAttribute('aria-modal');}}
 function applyTheme(theme){document.documentElement.dataset.theme=theme;const next=theme==='dark'?'light':'dark';$('theme-toggle').replaceChildren(icon(next==='light'?'sun':'moon'),el('span',next==='light'?'Light':'Dark','theme-text'));$('theme-toggle').setAttribute('aria-label','Switch to '+next+' theme');document.querySelector('meta[name="theme-color"]').setAttribute('content',theme==='light'?'#f5f3f8':'#100e15');}
 let savedTheme='dark';try{const stored=localStorage.getItem('extreme-control-theme');if(['light','dark'].includes(stored))savedTheme=stored;}catch{}applyTheme(savedTheme);
@@ -305,7 +305,7 @@ async function preferenceProfilesPanel(main,epoch,tenantId=null) {
 async function preferencesPanel(d,parent,isCurrent,reload) {
   const box=panel('Playback preferences',workflowSteps('Load preferences','Review changes','Apply to device'));parent.append(box);
   box.append(helpDetails('Setting priority and scope','A device override takes priority over saved settings. Changes apply to the selected app profile, not other devices. These audio/subtitle preferences are separate from Live TV’s own audio controls.'));
-  const read=button('Load playback preferences',()=>queue(d,'get_preferences').catch(e=>toast(e.message)));read.disabled=d.policy!=='active';box.append(read,button('Refresh preferences',reload));
+  box.append(el('p','Preferences update automatically. Review your changes before applying.','hint'));
   let data,profiles;try{[data,profiles]=await Promise.all([api(`/api/devices/${d.id}/preferences`),api('/api/preference-profiles?tenant_id='+encodeURIComponent(d.tenant_id))]);}catch(e){box.append(el('p',e.message+' Apply database upgrade011 first.','error'));return;}if(!isCurrent())return;
   if(!data.snapshot){box.append(el('p','No expanded snapshot yet. Request one from the open app.','hint'));return;}
   const doc=data.snapshot.document;
@@ -324,8 +324,8 @@ async function preferencesPanel(d,parent,isCurrent,reload) {
 async function supportPanel(d,parent,isCurrent,reload) {
   const box=panel('Support reports');parent.append(box);
   box.append(el('p','Sharing a support image requires the customer’s permission. It cannot capture their screen or video.','notice'));
-  for(const[kind,label]of [['get_support_bundle','Collect support report'],['capture_app_screen','Ask customer for support image']]){const b=button(label,()=>{if(kind==='capture_app_screen'&&!confirm('Ask the customer to share one safe app support panel? They may decline; there is no hidden/full-device/video capture.'))return;queue(d,kind).catch(e=>toast(e.message));});b.disabled=d.policy!=='active'||!d.capabilities.includes(kind);box.append(b);}
-  box.append(button('Refresh support reports',reload));
+  for(const[kind,label]of [['capture_app_screen','Ask customer for support image']]){const b=button(label,()=>{if(!confirm('Ask the customer to share one safe app support panel? They may decline.'))return;queue(d,kind).catch(e=>toast(e.message));});b.disabled=d.policy!=='active'||!d.capabilities.includes(kind);box.append(b);}
+  box.append(el('p','Diagnostics and support reports sync automatically.','hint'));
   try{const data=await api(`/api/devices/${d.id}/support`);if(!isCurrent())return;box.append(table(['Received','Artifact','Bytes','Expires','Private download'],(data.current_items||[]).map(r=>{const link=el('a',r.kind==='panel'?'Download consented panel PNG':'Download redacted JSON bundle');link.href=`/api/devices/${d.id}/support/${r.id}/download`;link.setAttribute('download','');return[date(r.created_at),r.kind,r.bytes,date(r.expires_at),link];})),helpDetails('Report privacy and retention',data.retention));}catch(e){if(isCurrent())box.append(el('p',e.message,'error'));}
 }
 async function layoutTemplatesPanel(main, epoch) {
@@ -417,7 +417,7 @@ async function layoutDraftPanel(d, body, isCurrent, goCommands) {
     if (busy || !isCurrent()) return; busy = true;
     try {
       const watch = op.readId || op.push?.id;
-      const query = new URLSearchParams({ metadata: '1', ...(watch ? { watch_id: watch } : {}), ...(op.readId ? { command_id: op.readId } : {}) });
+      const query = new URLSearchParams({ metadata: '1', ...(window.DeviceWorkspace?.scope(d.id)||{}), ...(watch ? { watch_id: watch } : {}), ...(op.readId ? { command_id: op.readId } : {}) });
       const data = await api(`/api/devices/${d.id}/category-layout?${query}`); if (!isCurrent()) return;
       op.commands = data.commands;
       if (op.readId) {
@@ -450,10 +450,10 @@ async function layoutDraftPanel(d, body, isCurrent, goCommands) {
   function draw() {
     if (!isCurrent()) return; panelNode.replaceChildren(el('h2', 'Organize entire playlist/category layout'));
     panelNode.append(el('p', 'All moves, drag/drop, positions and visibility changes below are LOCAL browser edits. Arrange everything first, then Push the entire layout once. Save a template before leaving/reloading this page to retain your work.', 'subtle'));
-    const controls = el('div', null, 'actions'); const read = button('Read whole current profile layout', () => refreshRead()); read.disabled = d.policy !== 'active' || pending() || editingLocked(); controls.append(read, button('View layout commands', goCommands)); panelNode.append(controls);
+    const controls = el('div', null, 'actions'); controls.append(el('span','Channel groups sync automatically for the selected source.','hint'),button('View activity', goCommands)); panelNode.append(controls);
     if (op.message) panelNode.append(el('p', op.message, 'notice'));
     const draft = op.draft;
-    if (!draft) { panelNode.append(el('p', 'Request one complete cached source layout from the app first. There is no per-page native command wait after it arrives.', 'hint')); localUi = null; return; }
+    if (!draft) { panelNode.append(el('p', 'Loading channel groups automatically. Keep the customer app open.', 'hint')); localUi = null; return; }
     if (op.available) {
       const fresh = op.available; const box = el('div', null, 'notice'); box.append(el('p', 'A newer snapshot is available. Your unsaved draft has NOT been overwritten.'));
       const rebase = button('Rebase draft onto fresh snapshot', () => { try { const diff = LayoutDraft.rebasePreview(draft, fresh.catalog); if (!confirm(`Rebase: ${diff.added.length} new and ${diff.removed.length} removed categories. Your edited order/visibility wins where changed; untouched visibility uses the fresh app state. Continue?`)) return; LayoutDraft.rebase(draft, fresh.catalog, fresh.snapshot.command_id); op.available = null; op.push = null; draw(); } catch (e) { toast(e.message); } }); rebase.disabled = editingLocked();
@@ -461,9 +461,8 @@ async function layoutDraftPanel(d, body, isCurrent, goCommands) {
     }
     const source = el('select'); source.setAttribute('aria-label', 'Layout source'); source.disabled = pending() || editingLocked();
     for (const s of draft.base.sources) { const option = el('option', `${s.label} · ${s.total} categories`); option.value = s.ref; option.selected = s.ref === draft.base.source_ref; source.append(option); }
-    source.addEventListener('change', () => refreshRead({ profile_ref: draft.base.profile_ref, source_ref: source.value }));
-    const refresh = button('Refresh source / get rebase snapshot', () => refreshRead({ profile_ref: draft.base.profile_ref, source_ref: draft.base.source_ref })); refresh.disabled = pending() || editingLocked() || d.policy !== 'active';
-    const context = el('div', null, 'actions'); context.append(source, refresh); panelNode.append(context);
+    source.addEventListener('change', () => {if(draft.dirty&&!confirm('Discard unsaved channel edits and switch source?')){source.value=draft.base.source_ref;return;}op.draft=null;op.readId=null;op.available=null;op.message='Loading the selected source automatically…';const scope={ profile_ref: draft.base.profile_ref, source_ref: source.value };window.DeviceWorkspace?.setScope(scope);draw();});
+    const context = el('div', null, 'actions'); context.append(source); panelNode.append(context);
     const status = el('p', '', 'notice'); panelNode.append(status);
     const toolbar = el('div', null, 'actions'); const pushButton = button('Push entire layout once', push, 'primary');
     const apply = button('Preview / apply saved layout template', () => applyLayoutTemplate(d, draft).catch(e => toast(e.message))); apply.disabled = editingLocked();
@@ -496,7 +495,7 @@ async function layoutDraftPanel(d, body, isCurrent, goCommands) {
     search.addEventListener('input', () => { draft.filter = search.value; draft.page = 1; drawTable(); });
     localUi = { status, push: pushButton, table: drawTable }; changed();
   }
-  try { const data = await api(`/api/devices/${d.id}/category-layout`); if (!isCurrent()) return; ingest(data); draw(); schedule(); } catch (e) { if (isCurrent()) panelNode.append(el('p', e.message + ' Apply the database upgrade under Enrollments first.', 'error')); }
+  try { const data = await api(`/api/devices/${d.id}/category-layout?${new URLSearchParams(window.DeviceWorkspace?.scope(d.id)||{})}`); if (!isCurrent()) return; ingest(data); draw(); schedule(); } catch (e) { if (isCurrent()) panelNode.append(el('p', e.message + ' Apply the database upgrade under Enrollments first.', 'error')); }
 }
 async function queue(device, kind, payload = {}) {
   if (kind === 'clear_cache' && !confirm('Clear only disposable image and ordinary HTTP response caches? Login, profiles, favourites, saved guides, enrollment, update files and active playback buffers are preserved. Caches may refill immediately.')) return;
@@ -511,8 +510,7 @@ async function sourcesPanel(d, body, isCurrent, reload,goRequests=null) {
   box.append(el('p','Playlist changes can interrupt viewing. Review the changes before applying them.','notice'));
   box.append(helpDetails('Passwords and protected playlists','Existing passwords and URLs are never displayed. Blank replacement fields keep the saved values. The activation playlist stays first and its credentials are protected. At least one supported playlist must remain enabled.'));
   const actions = el('div', null, 'actions');
-  const read=button('Load playlist settings', () => queue(d, 'get_sources').catch(e => toast(e.message)), 'primary');read.disabled=d.policy!=='active';
-  actions.append(read, button('Refresh status', reload,'quiet'), button('Refresh playlist',()=>queue(d,'refresh_playlist').catch(e=>toast(e.message))),button('Reload EPG',()=>queue(d,'reload_epg').catch(e=>toast(e.message)))); box.append(actions);
+  actions.append(el('span','Playlist settings sync automatically.','hint'), button('Reload channels on device',()=>queue(d,'refresh_playlist').catch(e=>toast(e.message))),button('Reload TV guide on device',()=>queue(d,'reload_epg').catch(e=>toast(e.message)))); box.append(actions);
   let history; try { history = await api(`/api/devices/${d.id}/sources`); } catch(e) { box.append(el('p', e.message + ' Apply database upgrade010 first.', 'error')); return; } if (!isCurrent()) return;
   box.append(helpDetails('Playlist backup and privacy',history.notice));
   box.append(currentRequestBox(history,{get_sources:'Load playlist settings',apply_sources:'Apply playlist changes'},goRequests));
@@ -572,7 +570,7 @@ async function sourcesPanel(d, body, isCurrent, reload,goRequests=null) {
 async function favouritesPanel(d, body, isCurrent, reload) {
   const box = panel('Favourites backups'); body.append(box);
   box.append(helpDetails('How backup protection works','Nonempty favourites are backed up automatically while the app is open. An empty list does not replace a good backup. To undo a mistake, choose a backup made before it happened.'));
-  const actions = el('div', null, 'actions'); const capture = button('Back up current favourites now', () => queue(d, 'backup_favourites').catch(e => toast(e.message)), 'primary'); capture.disabled = d.policy !== 'active' || !d.capabilities.includes('backup_favourites'); actions.append(capture, button('Refresh backups / results', reload)); box.append(actions);
+  const actions = el('div', null, 'actions'); const capture = button('Create favourites backup', () => queue(d, 'backup_favourites').catch(e => toast(e.message)), 'primary'); capture.disabled = d.policy !== 'active' || !d.capabilities.includes('backup_favourites'); actions.append(capture,el('span','Backup history updates automatically.','hint')); box.append(actions);
   if (!d.capabilities.includes('backup_favourites')) box.append(el('p', 'Update the testing app to 111 and let it check in to enable automatic backups and recovery. Existing saved server versions stay available.', 'notice'));
   let data; try { data = await api(`/api/devices/${d.id}/favourites`); } catch (e) { box.append(el('p', e.message + ' Apply the database upgrade under Enrollments first.', 'error')); return; } if (!isCurrent()) return;
   if (data.live.length) box.append(panel('Last app-reported favourites state', table(['Saved app context', 'Channels', 'Groups', 'Reported'], data.live.map((r,index) => ['Reported context '+(index+1), r.channel_count, r.group_count, date(r.updated_at)]))));
@@ -632,19 +630,18 @@ async function categoryPanel(d, body, isCurrent, goCommands) {
   const pending = commands.some(c => ['get_categories', 'set_categories'].includes(c.kind) && ['pending', 'delivered', 'running'].includes(c.status));
   const canRead = d.policy === 'active' && !pending;
   const actions = el('div', null, 'actions');
-  const read = button('Read current profile categories', () => queue(d, 'get_categories').catch(e => toast(e.message)), 'primary'); read.disabled = !canRead; actions.append(read, button('View category commands', goCommands)); p.append(actions);
-  if (pending) p.append(el('p', 'A category request/change is queued or running. Leave the app open, then Refresh this view. Queued requests can be cancelled under Commands.', 'notice'));
+  actions.append(button('View category commands', goCommands)); p.append(actions);
+  if (pending) p.append(el('p', 'Categories are syncing automatically. Queued requests can be cancelled under Commands.', 'notice'));
   const result = commands.filter(c => c.kind === 'get_categories' && c.status === 'succeeded' && c.result?.catalog).sort((a, b) => Number(b.result.received_at_us || 0) - Number(a.result.received_at_us || 0) || String(b.finished_at).localeCompare(String(a.finished_at)))[0];
-  if (!result) { p.append(el('p', 'No category snapshot in the latest command-history page. Request one from the app first. Nothing is guessed from other devices or sources.', 'hint')); return; }
+  if (!result) { p.append(el('p', 'Waiting for the app to send its categories. This section updates automatically.', 'hint')); return; }
   const catalog = result.result.catalog;
   if (commands.some(c => ['get_categories', 'set_categories'].includes(c.kind) && c.status === 'failed' && c.created_at >= result.created_at)) p.append(el('p', 'A category request/change failed since this snapshot. The previous snapshot is retained below—not treated as a successful fresh read. View Commands for the result or read again.', 'notice warning'));
   p.append(el('p', `Snapshot received: ${date(result.finished_at)} · Profile ${catalog.profile_ref.slice(0, 12)} · ${catalog.total} categories in this source`, 'hint'));
   const selector = el('select'); selector.setAttribute('aria-label', 'Category source'); selector.disabled = !canRead;
   for (const source of catalog.sources) { const o = el('option', `${source.label} · ${source.total} categories`); o.value = source.ref; o.selected = source.ref === catalog.source_ref; selector.append(o); }
   const sourcePayload = (page = 1, source = catalog.source_ref) => ({ profile_ref: catalog.profile_ref, source_ref: source, page });
-  selector.addEventListener('change', () => queue(d, 'get_categories', sourcePayload(1, selector.value)).catch(e => toast(e.message)));
-  const refresh = button('Refresh this source', () => queue(d, 'get_categories', sourcePayload(catalog.page)).catch(e => toast(e.message))); refresh.disabled = !canRead;
-  const sourceActions = el('div', null, 'actions'); sourceActions.append(selector, refresh); p.append(sourceActions);
+  selector.addEventListener('change', () => {window.DeviceWorkspace?.setScope({profile_ref:catalog.profile_ref,source_ref:selector.value});queue(d, 'get_categories', sourcePayload(1, selector.value)).catch(e => toast(e.message));});
+  const sourceActions = el('div', null, 'actions'); sourceActions.append(selector); p.append(sourceActions);
   const canWrite = canRead && d.capabilities.includes('set_categories');
   const change = (operation, ref) => queue(d, 'set_categories', { profile_ref: catalog.profile_ref, source_ref: catalog.source_ref, expected_revision: catalog.revision, operation, ...(ref ? { category_ref: ref } : {}) });
   const reset = button('Reset this source’s category order', async () => {

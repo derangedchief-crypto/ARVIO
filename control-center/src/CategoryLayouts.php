@@ -7,9 +7,13 @@ final class CategoryLayouts
     public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly Config $config) {}
     public function device(array $actor,string $id,array $input): array
     {
-        Input::keys($input,['metadata','command_id','watch_id']);$this->management->device($actor,$id);
+        Input::keys($input,['metadata','command_id','watch_id','profile_ref','source_ref']);$this->management->device($actor,$id);
         if(isset($input['metadata'])&&!in_array($input['metadata'],['0','1'],true))throw new Problem(422,'Invalid layout metadata option.');$metadata=($input['metadata']??'0')==='1';
         $args=[$id];$where='device_id=?';if(isset($input['command_id'])){$where.=' AND command_id=?';$args[]=Input::id($input['command_id']);}
+        if(isset($input['profile_ref'])||isset($input['source_ref'])){
+            EnrollmentProof::hex($input['profile_ref']??null,64);EnrollmentProof::hex($input['source_ref']??null,64);
+            $where.=' AND profile_ref=? AND source_ref=?';$args[]=$input['profile_ref'];$args[]=$input['source_ref'];
+        }
         $row=$this->db->one('SELECT command_id,profile_ref,source_ref,revision,total,received_at_us'.($metadata?'':',catalog')." FROM category_layout_snapshots WHERE $where ORDER BY received_at_us DESC LIMIT 1",$args);
         $catalog=$row&&!$metadata?json_decode($row['catalog'],true,16,JSON_THROW_ON_ERROR):null;if($row)unset($row['catalog']);
         $this->db->query("UPDATE commands SET status='expired',finished_at=UTC_TIMESTAMP() WHERE device_id=? AND status IN ('pending','delivered','running') AND expires_at<=UTC_TIMESTAMP()",[$id]);

@@ -21,7 +21,7 @@ final class RenewalSettings {
         $this->ready();$t=$this->management->workspace($actor,$id);
         // Owner logins deliberately have tenant_id=NULL; Management resolves the
         // existing owner workspace and enforces role/tenant access separately.
-        $ownerWorkspace=$t['kind']==='owner'&&$actor['role']==='owner';
+        $ownerWorkspace=Auth::ownsWorkspace($actor,$t);
         if(($t['kind']!=='reseller'&&!$ownerWorkspace)||$t['status']!=='active'||!$this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$t['id']]))throw new Problem(409,'Renewals require an active workspace with a verified panel reseller link.');return $t;
     }
     public function connection(string $tenant,string $gateway='rampex'):?array {return $this->db->one('SELECT * FROM renewal_connections WHERE tenant_id=? AND gateway=? AND enabled=1 ORDER BY created_at DESC,id DESC LIMIT 1',[$tenant,$gateway]);}

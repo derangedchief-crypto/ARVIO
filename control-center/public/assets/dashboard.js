@@ -1,9 +1,9 @@
 (function(root){
   'use strict';
-  const colors=['#ed00ed','#b67af0','#407eeb','#2bb68e'];
+  const colors=['#72e6bf','#88bcff','#b7a5f9','#f0c47b'];
   function svg(tag,attributes={},text){const node=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const[k,v]of Object.entries(attributes))node.setAttribute(k,String(v));if(text!==undefined)node.textContent=text;return node;}
   function legend(entries){const row=el('div',null,'chart-legend');for(const[label,color]of entries){const item=el('span'),dot=el('i');dot.style.background=color;item.append(dot,document.createTextNode(label));row.append(item);}return row;}
-  function card(label,value,note,glyph,tone,tag,hash){const box=el('a',null,'metric-card '+tone);box.href='#'+hash;const top=el('div',null,'metric-top'),symbol=el('span',null,'metric-symbol');symbol.append(icon(glyph));top.append(symbol,el('span',tag,'metric-tag'));box.append(top,el('span',label,'metric-label'),el('strong',String(value)),el('small',note));return box;}
+  function card(label,value,note,glyph,tone,tag,hash){const box=el('a',null,'metric-card '+tone);box.href='#'+hash;const top=el('div',null,'metric-top'),symbol=el('span',null,'metric-symbol');symbol.append(icon(glyph));top.append(el('span',label,'metric-label'),symbol);box.append(top,el('strong',String(value)),el('small',note));return box;}
   function activityChart(days){
     const box=panel('Device Activity');box.classList.add('chart-panel','activity-chart');box.append(el('span','7 days · UTC','chart-period'));
     const chart=svg('svg',{viewBox:'0 0 620 250',role:'img','aria-label':'Latest device contact and enrollments by UTC day. Exact values are in the table below.'});
@@ -25,19 +25,23 @@
     box.append(chart,legend(items.map(([label,value],i)=>[label+' · '+value,colors[i]])));return box;
   }
   async function render(epoch){
-    const main=$('main');main.classList.add('dashboard-page');const head=el('div',null,'page-heading dashboard-toolbar');head.append(el('h1','Dashboard'),button('Refresh',route,'quiet'));main.replaceChildren(head);scopePicker(main);
+    const main=$('main');main.classList.add('dashboard-page');const head=el('div',null,'page-heading dashboard-toolbar'),intro=el('div');intro.append(el('span','WORKSPACE OVERVIEW','welcome-label'),el('h1','Everything, connected.'),el('p','Your customers, devices and requests in one workspace.'));head.append(intro,button('Find a customer',()=>{location.hash='customers';},'primary'));main.replaceChildren(head);scopePicker(main);
     const loading=el('p','Loading workspace activity…','hint');main.append(loading);
     const stats=await api('/api/overview?'+scopeQuery().slice(1));if(epoch!==state.epoch)return;loading.remove();
-    const cards=el('div',null,'dashboard-metrics');cards.append(card('Total Devices',stats.total,'Visible customer devices','devices','mint','Workspace','devices'),card('Recovery Requests',stats.recovery_holds,'Waiting for your decision','refresh','rose','Needs review','recovery-holds'),card('Apps Seen Recently',stats.connected,'Based on latest check-in','overview','violet','Recent contact','devices'),card('Total Customers',stats.customers,'In this workspace scope','customers','cyan','Your accounts','customers'));main.append(cards);
+    const cards=el('div',null,'dashboard-metrics');cards.append(card('Online devices',stats.connected,'Of '+stats.total+' devices · Latest check-ins','devices','mint','Online','devices'),card('Customers',stats.customers,'Accounts in this workspace','customers','cyan','Customers','customers'),card('Needs attention',stats.recovery_holds+stats.payment_review,'Recovery requests and payment reviews','refresh','rose','Review','recovery-holds'),card('Total devices',stats.total,'Visible customer devices','devices','violet','Fleet','devices'));main.append(cards);
     const strip=el('div',null,'metric-strip');for(const[label,value,hash]of [['Pending app actions',stats.pending_commands,'devices'],['Awaiting enrollment',stats.not_enrolled,'devices'],['Restricted devices',stats.restricted,'devices'],['Payments to review',stats.payment_review,'renewals/payments']]){const link=el('a');link.href='#'+hash;link.append(el('strong',String(value)),el('span',label));strip.append(link);}main.append(strip);
-    const charts=el('div',null,'analytics-grid');charts.append(activityChart(stats.activity),accessChart(stats.access));main.append(charts);
+    const charts=el('div',null,'analytics-grid');charts.append(activityChart(stats.activity));main.append(charts);
     const queue=panel('Needs Your Attention');queue.classList.add('dashboard-queue');
     function row(title,note,label,hash){const item=el('div',null,'summary-row'),text=el('div');text.append(el('h3',title),el('p',note));item.append(text,button(label,()=>{location.hash=hash;},'review-button'));queue.append(item);}
     for(const request of stats.recovery_requests)row(request.label||'Device reconnection',[request.model,'Recovery requested'].filter(Boolean).join(' · '),'Review','recovery-holds');
     if(stats.recovery_holds>stats.recovery_requests.length)row('More recovery requests',stats.recovery_holds+' pending across this scope','View all','recovery-holds');
     if(stats.payment_review)row('Payment & renewal review',stats.payment_review+' order(s) require review. Open the appropriate payment workspace.','Open payments','renewals/payments');
     if(!stats.recovery_holds&&!stats.payment_review)row('No recovery or payment reviews pending','Find a customer to manage devices and support.','Find customer','customers');
-    main.append(queue,el('p','Current visible device records · Recent contact is not a guarantee of connectivity · App actions require a confirmed response','dashboard-footnote'));
+    charts.append(queue);
+    const lower=el('div',null,'analytics-grid');const tools=panel('Workspace tools');
+    for(const [title,note,hash] of [['App branding','Your identity, artwork and app releases','branding'],['Setup library','Saved layouts and device preferences','library'],['Customers','Find a customer and manage their devices','customers']]){const link=el('a',null,'dashboard-tool');link.href='#'+hash;link.append(el('strong',title),el('span',note));tools.append(link);}
+    const fleet=panel('Your devices');fleet.append(el('p','Open a device to manage it.','hint'));lower.append(fleet,tools);main.append(lower,el('p','Online reflects latest authenticated app contact. App actions require a confirmed response.','dashboard-footnote'));
+    try {const data=await api('/api/devices?page=1'+scopeQuery());if(epoch!==state.epoch)return;fleet.append(table(['Device / customer','Status',''],data.items.slice(0,4).map(d=>{const name=el('div');name.append(el('strong',d.label||d.model||'Device'),el('div',d.customer_name||d.line_username||'','cell-sub'));return [name,badge(d.presence),button('Manage →',()=>{location.hash='device/'+d.id;},'quiet')];})));}catch(e){if(epoch===state.epoch)fleet.append(el('p',e.message,'error'));}
   }
   root.ControlDashboard={render};
 })(window);

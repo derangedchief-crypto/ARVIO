@@ -102,6 +102,8 @@ $tests['production HTTPS policy does not trust spoofed forwarded headers'] = fun
 require __DIR__ . '/http.php';
 require __DIR__ . '/live-connection.php';
 liveConnectionCases($tests,$app,$config);
+require __DIR__.'/device-inspection.php';
+deviceInspectionCases($tests,$app,$owner,$alpha,$beta,$tenantA,$enrolled);
 $http = new HttpFixture($fixture, $settings);
 httpCases($http, $tests, $password, $app, $owner, $alpha, $beta, $tenantA, $tenantB, $makeDevice);
 require __DIR__ . '/operations.php';
@@ -159,6 +161,8 @@ globalTrialCases($tests,$app,$config,$owner,$http,$password);
 require __DIR__.'/current-activity.php';
 currentActivityCases($tests,$app,$owner,$alpha,$beta,$tenantA,$enrolled);
 require __DIR__.'/module-licences.php';
+require __DIR__.'/my-hub.php';
+myHubCases($tests,$app,$owner,$password,$http,$config);
 moduleLicenceCases($tests,$app,$owner,$alpha,$beta,$tenantA,$http,$password,$fixture);
 require __DIR__.'/primary-access.php';
 primaryAccessCases($tests,$app,$config,$owner);

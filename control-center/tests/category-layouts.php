@@ -21,6 +21,9 @@ function layoutCases(array &$tests,ControlCenter\Application $app,array $owner,a
     $tests['complete layout snapshots are separate bounded private caches, not huge command-history responses'] = function()use($app,$owner,$alpha,$beta,$fixture,$catalog,$read):void {
         [$d,$token]=$fixture();$r=$read($d,$token,$catalog());check(!isset($r['result']['catalog']));same(60,$r['result']['layout_summary']['total']);
         $state=$app->layouts->device($alpha,$d['id'],[]);same(60,count($state['catalog']['items']));
+        same(60,$app->layouts->device($alpha,$d['id'],['profile_ref'=>str_repeat('a',64),'source_ref'=>str_repeat('b',64)])['catalog']['total']);
+        same(null,$app->layouts->device($alpha,$d['id'],['profile_ref'=>str_repeat('a',64),'source_ref'=>str_repeat('d',64)])['snapshot']);
+        problem(422,fn()=> $app->layouts->device($alpha,$d['id'],['source_ref'=>str_repeat('b',64)]));
         $meta=$app->layouts->device($alpha,$d['id'],['metadata'=>'1']);same(null,$meta['catalog']);check(strlen(json_encode($meta))<10000);
         problem(404,fn()=> $app->layouts->device($beta,$d['id'],[]));
         for($i=0;$i<3;$i++)$read($d,$token,$catalog());

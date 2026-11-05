@@ -7,8 +7,8 @@ final class AppBrands
 {
     private const ASSETS=['loading_asset','logo_asset','icon_asset'];
     // Platform release identity; never selected by reseller inputs.
-    private const APP_VERSION='2.0.131';
-    private const APP_VERSION_CODE=447;
+    private const APP_VERSION='2.0.130';
+    private const APP_VERSION_CODE=446;
     public function __construct(private readonly Database $db,private readonly Management $management,private readonly Auth $auth,private readonly ?BrandArtifacts $artifacts=null,private readonly ?Config $config=null) {}
     private function channel():string {
         $channel=$this->config?->get('brand_release',[])['default_channel']??'testing';if(!in_array($channel,['testing','production'],true))throw new Problem(503,'Invalid owner release channel.');
@@ -27,7 +27,7 @@ final class AppBrands
         // Historical testing snapshots stay buildable on their explicitly pinned
         // old source during cutover. This never chooses production or a new key.
         $pins=$this->config?->get('brand_builder',[])['sources']??[];
-        foreach([self::APP_VERSION=>self::APP_VERSION_CODE,'2.0.130'=>446,'2.0.129'=>445,'2.0.126'=>442,'2.0.125'=>441,'2.0.124'=>440,'2.0.115'=>431] as $version=>$code){
+        foreach([self::APP_VERSION=>self::APP_VERSION_CODE,'2.0.129'=>445,'2.0.126'=>442,'2.0.125'=>441,'2.0.124'=>440,'2.0.115'=>431] as $version=>$code){
             if(isset($pins[$version])&&is_string($pins[$version])&&preg_match('/^[a-f0-9]{40}$/D',$pins[$version]))return ['version'=>$version,'code'=>$code,'sha'=>null];
         }
         // Isolated fixtures deliberately exercise the installed historical APK
@@ -43,7 +43,7 @@ final class AppBrands
         // The administrator may prepare ONE separate owner-branded app without
         // creating/relinking a reseller account. This grants no trial/panel rights
         // and never changes the existing generic app or its update channel.
-        if($t['kind']==='owner'){Auth::owner($actor);return $t;}
+        if($t['kind']==='owner'){Auth::ownerWorkspace($actor,$t);return $t;}
         if($t['kind']!=='reseller')throw new Problem(409,'Choose an owner or verified reseller workspace.');
         if(!$this->db->one('SELECT panel_id FROM panel_resellers WHERE tenant_id=?',[$t['id']]))throw new Problem(409,'A verified linked reseller is required for branded apps.');return $t;
     }

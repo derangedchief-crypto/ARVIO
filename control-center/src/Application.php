@@ -162,15 +162,36 @@ final class Application
         if($method==='POST'&&$path==='/api/device/preferences/capture')Http::json($this->preferences->capture(Http::bearer(),Http::body(65536)));
         if($method==='POST'&&$path==='/api/device/preferences/context')Http::json($this->preferences->context(Http::bearer(),Http::body()));
         if($method==='POST'&&$path==='/api/device/support/upload')Http::json($this->support->upload(Http::bearer(),Http::body(262144)));
-        $token = $_COOKIE[Http::COOKIE] ?? '';
+        $native=str_starts_with($path,'/api/my-hub/');
+        $myHub=new MyHub($this->db,$this->config);
+        if ($native) {
+            $myHub->ready();
+            if ($method!=='GET') Http::sameOrigin($this->config);
+            if ($method==='POST' && $path==='/api/my-hub/login') Http::json($this->auth->loginPanel(Http::body(),$_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+        }
+        $token = $native?Http::bearer():($_COOKIE[Http::COOKIE] ?? '');
         if($method==='POST'&&$path==='/api/device/addons/policy'){Input::keys(Http::body(),[]);Http::json($this->moduleLicences->policy());}
         if($method==='POST'&&$path==='/api/device/addons/authorize'){Input::keys(Http::body(),[]);$d=$this->commands->deviceIdentity(Http::bearer());$this->auth->limit('module-device-check',$d['id'],30,60);Http::json($this->moduleLicences->decision($d));}
         if (!is_string($token)) throw new Problem(401, 'Please sign in.');
-        $actor = $this->auth->user($token);
+        $actor = $this->auth->user($token,$native);
         $this->auth->limit('web-session', $actor['id'], 300, 60);
         if ($method !== 'GET') {
             Http::sameOrigin($this->config);
             $this->auth->verifyCsrf($token, $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+        }
+        if ($native) {
+            MyHub::reseller($actor);
+            if ($method==='GET' && $path==='/api/my-hub/license') { Input::keys($_GET,[]); Http::json($myHub->status($actor)); }
+            if ($method==='POST' && $path==='/api/my-hub/activate') {
+                $input=Http::body();Input::keys($input,['key']);
+                $this->auth->limit('my-hub-activation',$actor['id'],10,900);
+                Http::json($myHub->status($actor,Input::text($input['key'] ?? null,'license key',80)));
+            }
+            if ($method==='POST' && $path==='/api/my-hub/logout') { Input::keys(Http::body(),[]);$this->auth->logout($token);Http::json(['ok'=>true]); }
+            if (!str_starts_with($path,'/api/my-hub/manage/')) throw new Problem(404,'My Hub route not found.');
+            $myHub->requireActive($actor);
+            $path='/api/'.substr($path,strlen('/api/my-hub/manage/'));
+            if ($path==='/api/password') throw new Problem(403,'Manage your reseller-panel password through the reseller website.');
         }
         if ($method === 'GET' && $path === '/api/me') Http::json(['user' => $actor, 'csrf' => $this->auth->csrf($token)]);
         if($method==='GET'&&$path==='/api/renewals/settings')Http::json($this->renewalSettings->status($actor,$_GET));
@@ -228,6 +249,9 @@ final class Application
             Http::cookie($this->config, ''); Http::json(['ok' => true]);
         }
         if ($method === 'GET' && $path === '/api/overview') Http::json($this->management->overview($actor,$_GET));
+        if($method==='POST'&&preg_match('~^/api/devices/([a-f0-9]{32})/inspection$~D',$path,$m)) {
+            Http::json((new DeviceInspection($this->db,$this->management,$this->commands))->observe($actor,$m[1],Http::body(2048)));
+        }
         if($method==='GET'&&$path==='/api/device-list-window'){Input::keys($_GET,[]);Http::json((new DeviceListWindow($this->db,$this->auth))->state());}
         if($method==='POST'&&$path==='/api/device-list-window')Http::json((new DeviceListWindow($this->db,$this->auth))->reset($actor,Http::body()));
         if($method==='POST'&&$path==='/api/device-recovery/settings')Http::json((new DeviceListWindow($this->db,$this->auth))->setRecovery($actor,Http::body()));

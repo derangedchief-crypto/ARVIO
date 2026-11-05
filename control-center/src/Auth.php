@@ -54,8 +54,9 @@ final class Auth
         }
     }
 
-    public function login(array $input, string $ip): array
+    public function login(array $input, string $ip, bool $native=false): array
     {
+        if ($native) (new MyHub($this->db,$this->config))->ready();
         Input::keys($input, ['email', 'password']);
         $email = Input::email($input['email'] ?? null);
         $password = $input['password'] ?? '';
@@ -73,21 +74,71 @@ final class Auth
             $this->audit(null, 'auth.login_failed', null, null);
             throw new Problem(401, 'Email or password is incorrect.');
         }
+        if ($native) MyHub::reseller($user);
+        return $this->issueSession($user,$native);
+    }
+
+    public function loginPanel(array $input,string $ip,?MyHub $bridge=null): array
+    {
+        $bridge??=new MyHub($this->db,$this->config);$bridge->ready();
+        Input::keys($input,['username','password']);
+        $username=Input::text($input['username']??null,'reseller username',150);
+        $password=$input['password']??null;
+        if (!is_string($password) || $password==='' || strlen($password)>256) throw new Problem(401,'Username or password is incorrect.');
+        $this->limit('my-hub-login-ip',$ip,60,900);
+        $this->limit('my-hub-login-account',mb_strtolower($username),20,900);
+        $panelId=$bridge->authenticate($username,$password);
+        return $this->db->transaction(function()use($panelId):array {
+            $link=$this->db->one('SELECT p.tenant_id,t.kind,t.status FROM panel_resellers p JOIN tenants t ON t.id=p.tenant_id WHERE p.panel_id=? FOR UPDATE',[$panelId]);
+            if (!$link) throw new Problem(403,'Ask the administrator to link your reseller-panel account to a Hub reseller workspace.');
+            if ($link['status']!=='active') throw new Problem(403,'Your Hub workspace is unavailable.');
+            if ($link['kind']==='owner') {
+                if (!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['035_my_hub_owner_workspaces.sql'])) throw new Problem(503,'Install the My Hub owner-workspace update first.');
+                $user=$this->db->one("SELECT u.* FROM installation i JOIN users u ON u.id=i.owner_id WHERE i.id=1 AND u.role='owner' AND u.active=1 FOR UPDATE");
+                if (!$user) throw new Problem(403,'The Hub owner account is unavailable.');
+                return $this->issueSession($user,true,['workspace_id'=>$link['tenant_id'],'panel_id'=>$panelId]);
+            }
+            $users=$this->db->all("SELECT u.*,t.status AS tenant_status FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE u.tenant_id=? AND u.role='reseller' ORDER BY u.id LIMIT 2 FOR UPDATE",[$link['tenant_id']]);
+            if (count($users)!==1) throw new Problem(403,'Ask the administrator to configure one Hub reseller login for this workspace.');
+            $user=$users[0];
+            if (!$user['active'] || $user['tenant_status']!=='active') throw new Problem(403,'Your Hub reseller workspace is unavailable.');
+            return $this->issueSession($user,true);
+        });
+    }
+
+    private function issueSession(array $user,bool $native,?array $ownerScope=null): array
+    {
         $token = bin2hex(random_bytes(32));
         $hours = $this->config->number('session_hours', 12, 1, 24);
         $this->db->query('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? HOUR))',
             [hash('sha256', $token), $user['id'], $hours]);
+        if ($native) {
+            try {
+                $this->db->query('INSERT INTO my_hub_sessions (token_hash) VALUES (?)',[hash('sha256',$token)]);
+                if ($ownerScope) $this->db->query('INSERT INTO my_hub_owner_workspaces (token_hash,workspace_id,panel_id) VALUES (?,?,?)',[hash('sha256',$token),$ownerScope['workspace_id'],$ownerScope['panel_id']]);
+            }
+            catch (\Throwable $e) { $this->logout($token); throw $e; }
+        }
         $this->audit($user, 'auth.login', $user['id'], $user['tenant_id']);
-        return ['token' => $token, 'user' => self::publicUser($user), 'csrf' => $this->csrf($token)];
+        return ['token' => $token, 'user' => $native&&$ownerScope?$this->nativeOwner($user,$token):self::publicUser($user), 'csrf' => $this->csrf($token)];
     }
 
-    public function user(string $token): array
+    public function user(string $token, bool $native=false): array
     {
         if (!preg_match('/^[a-f0-9]{64}$/D', $token)) throw new Problem(401, 'Please sign in.');
+        if ((new MyHub($this->db,$this->config))->isNative($token)!==$native) throw new Problem(401,'Please sign in again.');
         $user = $this->db->one('SELECT u.*, t.status AS tenant_status FROM sessions s JOIN users u ON u.id = s.user_id '
             . 'LEFT JOIN tenants t ON t.id = u.tenant_id WHERE s.token_hash = ? AND s.expires_at > UTC_TIMESTAMP() AND u.active = 1', [hash('sha256', $token)]);
         if (!$user || ($user['tenant_id'] !== null && $user['tenant_status'] !== 'active')) throw new Problem(401, 'Please sign in.');
-        return self::publicUser($user);
+        return $native&&$user['role']==='owner'?$this->nativeOwner($user,$token):self::publicUser($user);
+    }
+
+    /** A panel-authenticated owner session is a workspace operator, never a global owner. */
+    private function nativeOwner(array $user,string $token): array
+    {
+        $scope=$this->db->one("SELECT t.id FROM my_hub_owner_workspaces s JOIN tenants t ON t.id=s.workspace_id JOIN panel_resellers p ON p.tenant_id=t.id AND p.panel_id=s.panel_id JOIN installation i ON i.id=1 WHERE s.token_hash=? AND t.kind='owner' AND t.status='active' AND i.owner_id=?",[hash('sha256',$token),$user['id']]);
+        if (!$scope) throw new Problem(401,'Owner workspace access changed. Please sign in again.');
+        return self::publicUser(array_replace($user,['role'=>'reseller','tenant_id'=>$scope['id']]))+['_native_owner_workspace'=>$scope['id']];
     }
 
     public static function publicUser(array $user): array
@@ -116,6 +167,15 @@ final class Auth
         });
     }
     public static function owner(array $actor): void { if ($actor['role'] !== 'owner') throw new Problem(403, 'Owner access is required.'); }
+    /** Only nativeOwner creates this verified, request-local capability. It grants
+     * owner-workspace features, never installation-wide owner administration. */
+    public static function ownsWorkspace(array $actor,array $workspace): bool {
+        return $workspace['kind']==='owner' && ($actor['role']==='owner' ||
+            ($actor['role']==='reseller' && ($actor['_native_owner_workspace']??null)===$workspace['id'] && ($actor['tenant_id']??null)===$workspace['id']));
+    }
+    public static function ownerWorkspace(array $actor,array $workspace): void {
+        if (!self::ownsWorkspace($actor,$workspace)) throw new Problem(403,'Owner workspace access is required.');
+    }
     /** Filesystem-authorized CLI recovery only; no HTTP route exposes this. */
     public function recoverOwner(string $newPassword): void
     {

@@ -18,16 +18,16 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/tmp/opencode/control-c
       await page.getByLabel('Password',{exact:true}).fill(role==='owner'?credentials.password:credentials.brand_password);
       await page.getByRole('button',{name:'Sign in',exact:true}).click();
       async function ready(){await page.waitForFunction(()=>document.querySelector('#main')?.getAttribute('aria-busy')!== 'true'&&document.querySelector('#main .page-heading'));assert.equal(await page.getByRole('heading',{name:'Unable to load this view',exact:true}).count(),0);}
-      await page.getByRole('heading',{name:'Dashboard',exact:true}).waitFor().catch(async error=>{await page.screenshot({path:output+'/failure.png',fullPage:true});console.error(await page.locator('body').innerText(),errors);throw error;});await ready();
+       await page.getByRole('heading',{name:'Everything, connected.',exact:true}).waitFor().catch(async error=>{await page.screenshot({path:output+'/failure.png',fullPage:true});console.error(await page.locator('body').innerText(),errors);throw error;});await ready();
       if(role==='reseller'){
-        await page.evaluate(async()=>{const customer=await api('/api/customers',{name:'TEST · Morgan household',external_reference:'DEMO-001',notes:'Illustrative customer. Prefers evening support.'});await api('/api/devices',{customer_id:customer.id,label:'TEST · Living room TV',notes:'Local UI fixture; not enrolled.'});await route();});await ready();
+         await page.evaluate(async()=>{const suffix=Date.now();const customer=await api('/api/customers',{name:'TEST · Morgan household '+suffix,external_reference:'DEMO-'+suffix,notes:'Illustrative customer. Prefers evening support.'});await api('/api/devices',{customer_id:customer.id,label:'TEST · Living room TV',notes:'Local UI fixture; not enrolled.'});await route();});await ready();
       }
       assert.equal(await page.locator('#navigation a[href="#resellers"]').count(),role==='owner'?1:0);
-      assert.equal(await page.locator('.sidebar').isVisible(),false);
-      assert.equal(await page.locator('#top-nav').isVisible(),true);
+       assert.equal(await page.locator('.sidebar').isVisible(),true);
+       assert.equal(await page.locator('#top-nav').isVisible(),false);
       assert.equal(await page.locator('.metric-card').count(),4);
       assert.equal(await page.locator('.metric-strip a').count(),4);
-      assert.equal(await page.locator('.analytics-grid svg').count(),2);
+       assert.equal(await page.locator('.analytics-grid svg').count(),1);
       await page.getByText('What this chart measures',{exact:true}).click();
       assert.equal(await page.locator('.chart-explanation tbody tr').count(),7);
       await page.getByText('What this chart measures',{exact:true}).click();
