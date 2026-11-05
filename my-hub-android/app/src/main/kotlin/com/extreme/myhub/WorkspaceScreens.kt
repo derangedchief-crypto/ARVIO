@@ -81,8 +81,9 @@ internal fun BrandSettings(data: JSONObject, busy: Boolean, model: HubModel) {
         Button(onClick = { model.submit("app-brand/builds", JSONObject().put("expected_version", version), "app-brand") }, enabled = !busy && !dirty && brand.optBoolean("enabled")) { Text("Build app") }
     }
     val builds = data.optJSONArray("builds") ?: JSONArray()
-    for (index in 0 until builds.length()) {
-        val build = builds.getJSONObject(index)
+    // The API orders builds newest first; mobile shows only the current build.
+    builds.optJSONObject(0)?.let { build ->
+        Text("Current build", style = MaterialTheme.typography.titleMedium)
         Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
             Text("${build.optString("app_version")} · ${build.optString("state").replace('_', ' ')}")
             build.optJSONObject("progress")?.let { Text(it.optString("label")) }
