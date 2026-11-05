@@ -184,8 +184,9 @@ internal fun Records(state: HubState, model: HubModel) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     IconTile(if (state.route == "devices") "device" else "person", if (state.route == "devices") HubColors.mint else HubColors.blue)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(row.text(if (state.route == "devices") "label" else "name"), style = MaterialTheme.typography.titleSmall)
-                        Text(row.text(if (state.route == "devices") "customer_name" else "external_reference", "Customer"), style = MaterialTheme.typography.bodySmall, color = HubColors.muted)
+                        val customer = CustomerIdentity.from(row)
+                        Text(if (state.route == "devices") row.text("label") else customer.name, style = MaterialTheme.typography.titleSmall)
+                        Text(if (state.route == "devices") row.text("customer_name", "Customer") else customer.subtitle, style = MaterialTheme.typography.bodySmall, color = HubColors.muted)
                     }
                     HubIcon("chevron", Modifier.size(16.dp), HubColors.muted)
                 }
@@ -207,7 +208,9 @@ internal fun Records(state: HubState, model: HubModel) {
 private fun Customer(data: JSONObject, busy: Boolean, model: HubModel) {
     var edit by remember(data) { mutableStateOf(false) }
     var addDevice by remember(data) { mutableStateOf(false) }
-    Text(data.getString("name"), style = MaterialTheme.typography.headlineSmall)
+    val identity = CustomerIdentity.from(data)
+    Text(identity.name, style = MaterialTheme.typography.headlineSmall)
+    if (identity.subtitle != "Customer") Text(identity.subtitle, style = MaterialTheme.typography.bodySmall, color = HubColors.muted)
     Facts(data, listOf("notes", "external_reference", "created_at"))
     Action("Customer devices", busy) { model.open("devices", filters = mapOf("customer_id" to data.getString("id"))) }
     Button(onClick = { edit = true }, enabled = !busy) { Text("Edit customer") }

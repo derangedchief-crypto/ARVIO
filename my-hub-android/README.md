@@ -3,7 +3,8 @@
 This is a separate Kotlin / Jetpack Compose Android project. It contains no
 WebView. It uses the licensed `/api/my-hub/` API on Hub Control Center.
 
-Testing version 0.1.3-dev adds lifecycle-scoped automatic device inspection to the navy/mint native redesign: persistent
+Testing version 0.1.4-dev displays verified customer usernames instead of panel
+placeholders and retains real customer names. It includes lifecycle-scoped automatic device inspection and the navy/mint native redesign: persistent
 phone navigation, tablet rail, visual dashboard, polished sign-in, customer/device
 cards, renewal tabs and consistent workflow controls. It signs in with the existing reseller-panel username and
 password. Deploy the matching username-login backend update first. The verified

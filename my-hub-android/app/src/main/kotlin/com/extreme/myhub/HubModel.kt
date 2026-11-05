@@ -139,6 +139,13 @@ internal class HubModel(application: Application) : AndroidViewModel(application
     fun navigate(route: String) = operation { history.clear(); load(route) }
     private suspend fun load(route: String, page: Int = 1, search: String = "", filters: Map<String, String> = emptyMap(), quiet: Boolean = false) {
         val epoch=operationEpoch;val session=mutable.value.session
+        // Older detail endpoints omit the verified username already returned by
+        // the authenticated customer list. Keep that identity when opening a row.
+        val customerId = Regex("^customers/([a-f0-9]{32})$").find(route)?.groupValues?.get(1)
+        val previousData = mutable.value.data
+        val selectedCustomer = if (customerId == null) null else
+            previousData?.takeIf { it.optString("id") == customerId }
+                ?: previousData?.rows()?.find { it.optString("id") == customerId }
         if (!quiet) {
             if (mutable.value.route.split('/').take(2) != route.split('/').take(2)) inspectionScope=null
             mutable.value = mutable.value.copy(route = route, data = if (mutable.value.route == route) mutable.value.data else null, page = page, search = search, filters = filters, canBack = history.isNotEmpty(),inspection=if(mutable.value.route==route)mutable.value.inspection else null,syncError=null)
@@ -158,6 +165,8 @@ internal class HubModel(application: Application) : AndroidViewModel(application
             route.endsWith("/setup") && route.startsWith("devices/") -> client.request("manage/${route.substringBeforeLast('/')}", mutable.value.session).put("_profiles", allItems("device-profiles"))
             else -> client.request("manage/$route", mutable.value.session, query = query)
         }
+        if (customerId != null && data.isNull("line_username") && selectedCustomer?.isNull("line_username") == false)
+            data.put("line_username", selectedCustomer.getString("line_username"))
         if (route == "renewals/settings") {
             for ((key, path) in listOf("_catalog" to "renewals/catalog", "_orders" to "renewals/orders")) {
                 try { data.put(key, client.request("manage/$path", mutable.value.session)) }

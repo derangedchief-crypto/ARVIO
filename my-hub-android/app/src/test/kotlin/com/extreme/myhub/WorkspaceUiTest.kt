@@ -83,6 +83,18 @@ class WorkspaceUiTest {
         capture("devices-phone")
     }
 
+    @Test fun customerCardsShowVerifiedNamesInsteadOfPanelReferences() {
+        val model = HubModel(compose.activity.application)
+        val row = JSONObject().put("id", "a".repeat(32)).put("name", "Panel line 946")
+            .put("external_reference", "panel:946").put("line_username", "sam.taylor")
+        val state = HubState(busy = false, route = "customers", data = JSONObject().put("items", org.json.JSONArray().put(row)))
+        compose.setContent { HubTheme { WorkspaceFrame(state, {}, {}, {}) { Records(state, model) } } }
+        compose.onNodeWithText("sam.taylor").assertIsDisplayed()
+        compose.onNodeWithText("Panel line 946").assertDoesNotExist()
+        compose.onNodeWithText("panel:946").assertDoesNotExist()
+        capture("customers-verified-name-phone")
+    }
+
     @Test fun renewalsSwitchSectionsWithoutLosingNavigation() {
         val model = HubModel(compose.activity.application)
         val state = HubState(busy = false, route = "renewals/settings", data = JSONObject())
