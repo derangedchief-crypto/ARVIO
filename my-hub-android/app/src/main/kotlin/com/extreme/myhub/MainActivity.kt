@@ -190,6 +190,15 @@ internal fun Records(state: HubState, model: HubModel) {
                     }
                     HubIcon("chevron", Modifier.size(16.dp), HubColors.muted)
                 }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Notes", style = MaterialTheme.typography.labelSmall, color = HubColors.muted)
+                    val panelNotes = when (row.optString("panel_notes_state")) {
+                        "current" -> if (row.isNull("panel_notes")) "Panel notes unavailable" else row.optString("panel_notes").ifEmpty { "—" }
+                        "not_linked" -> "—"
+                        else -> "Panel notes unavailable"
+                    }
+                    Text(panelNotes, style = MaterialTheme.typography.bodySmall)
+                }
                 if (state.route == "devices") Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatusPill(presenceLabel(row.text("presence")), if (row.text("presence") in listOf("online", "idle")) HubColors.mint else HubColors.muted)
                     StatusPill(title(row.text("policy", "Unknown")), if (row.text("policy") == "active") HubColors.blue else HubColors.amber)

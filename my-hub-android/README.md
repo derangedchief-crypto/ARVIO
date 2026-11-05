@@ -3,7 +3,10 @@
 This is a separate Kotlin / Jetpack Compose Android project. It contains no
 WebView. It uses the licensed `/api/my-hub/` API on Hub Control Center.
 
-Testing version 0.1.5-dev shows only the current build in App branding and
+Testing version 0.1.6-dev displays actual IPTV panel line notes on both customer
+and device cards. Install the IPTV Panel Notes worker and control 0.42.0 updates
+first; missing or unavailable panel notes never fall back to Hub-local notes.
+It shows only the current build in App branding and
 displays verified customer usernames instead of panel
 placeholders and retains real customer names. It includes lifecycle-scoped automatic device inspection and the navy/mint native redesign: persistent
 phone navigation, tablet rail, visual dashboard, polished sign-in, customer/device
