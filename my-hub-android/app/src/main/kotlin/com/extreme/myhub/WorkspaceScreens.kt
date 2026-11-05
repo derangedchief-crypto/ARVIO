@@ -59,6 +59,8 @@ internal fun TrialSettings(data: JSONObject, busy: Boolean, model: HubModel) {
 @Composable
 internal fun BrandSettings(data: JSONObject, busy: Boolean, model: HubModel) {
     val brand = data.optJSONObject("brand")
+    // PDO may encode TINYINT flags as 1 or "1", not JSON booleans.
+    val brandEnabled = brand == null || brand.opt("enabled").toString().lowercase() in listOf("1", "true")
     val version = brand?.optInt("version", 0) ?: 0
     var name by rememberSaveable(version) { mutableStateOf(brand?.optString("name") ?: "") }
     var loading by rememberSaveable(version) { mutableStateOf(brand?.optString("loading_asset") ?: "") }
@@ -75,10 +77,12 @@ internal fun BrandSettings(data: JSONObject, busy: Boolean, model: HubModel) {
         OutlinedButton(onClick = { target = key; picker.launch(arrayOf("image/png", "image/jpeg", "image/webp")) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("$title${if (asset.isNotBlank()) " · selected" else " · choose image"}") }
     }
     val dirty = name != brand?.optString("name") || loading != brand?.optString("loading_asset") || logo != brand?.optString("logo_asset") || icon != brand?.optString("icon_asset")
-    Button(onClick = { model.submit("app-brand", JSONObject().put("name", name).put("expected_version", version).put("loading_asset", loading).put("logo_asset", logo).put("icon_asset", icon), "app-brand") }, enabled = !busy && dirty && name.isNotBlank() && listOf(loading, logo, icon).all(String::isNotBlank) && (brand?.optBoolean("enabled") != false)) { Text("Save name & artwork") }
+    Button(onClick = { model.submit("app-brand", JSONObject().put("name", name).put("expected_version", version).put("loading_asset", loading).put("logo_asset", logo).put("icon_asset", icon), "app-brand") }, enabled = !busy && dirty && name.isNotBlank() && listOf(loading, logo, icon).all(String::isNotBlank) && brandEnabled) { Text("Save name & artwork") }
     if (brand != null) {
         Text("Package: ${brand.getString("package_name")}")
-        Button(onClick = { model.submit("app-brand/builds", JSONObject().put("expected_version", version), "app-brand") }, enabled = !busy && !dirty && brand.optBoolean("enabled")) { Text("Build app") }
+        Button(onClick = { model.submit("app-brand/builds", JSONObject().put("expected_version", version), "app-brand") }, enabled = !busy && !dirty && brandEnabled) { Text("Build app") }
+        if (!brandEnabled) Text("App branding is disabled or unavailable for this workspace. Contact the owner.", color = HubColors.muted)
+        else if (dirty) Text("Save your name and artwork changes before building.", color = HubColors.muted)
     }
     val builds = data.optJSONArray("builds") ?: JSONArray()
     // The API orders builds newest first; mobile shows only the current build.

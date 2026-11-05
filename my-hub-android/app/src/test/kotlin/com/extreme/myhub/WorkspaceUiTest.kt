@@ -112,6 +112,32 @@ class WorkspaceUiTest {
         compose.onNodeWithText("Home").assertIsDisplayed()
     }
 
+    @Test fun brandingAcceptsDatabaseFlagsAndKeepsSaveBeforeBuildGuard() {
+        val model = HubModel(compose.activity.application)
+        val enabled = androidx.compose.runtime.mutableStateOf<Any>(1)
+        compose.setContent {
+            val brand = JSONObject().put("version", 1).put("name", "Preview Brand")
+                .put("package_name", "com.extreme.brand.fixture").put("enabled", enabled.value)
+                .put("loading_asset", "a".repeat(32)).put("logo_asset", "b".repeat(32)).put("icon_asset", "c".repeat(32))
+            HubTheme { Surface { Column { BrandSettings(JSONObject().put("brand", brand), false, model) } } }
+        }
+        for (flag in listOf(1, "1", true, "true")) {
+            compose.runOnIdle { enabled.value = flag }
+            compose.onNodeWithText("Build app").assertIsEnabled()
+            compose.onNodeWithText("Save name & artwork").assertIsNotEnabled()
+        }
+        compose.onNodeWithText("App name").performTextReplacement("Edited Brand")
+        compose.onNodeWithText("Save name & artwork").assertIsEnabled()
+        compose.onNodeWithText("Build app").assertIsNotEnabled()
+        compose.onNodeWithText("Save your name and artwork changes before building.").assertExists()
+        for (flag in listOf(0, "0", false, "false", JSONObject.NULL)) {
+            compose.runOnIdle { enabled.value = flag }
+            compose.onNodeWithText("Save name & artwork").assertIsNotEnabled()
+            compose.onNodeWithText("Build app").assertIsNotEnabled()
+            compose.onNodeWithText("App branding is disabled or unavailable for this workspace. Contact the owner.").assertExists()
+        }
+    }
+
     private fun capture(name: String) {
         val directory = File("build/ui-preview").apply { mkdirs() }
         compose.runOnIdle {

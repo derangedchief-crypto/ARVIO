@@ -11,8 +11,8 @@ android {
         applicationId = "com.extreme.myhub.dev"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.1.7-dev"
+        versionCode = 9
+        versionName = "0.1.8-dev"
     }
     buildFeatures { compose = true; buildConfig = true }
     testOptions { unitTests.isIncludeAndroidResources = true }

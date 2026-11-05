@@ -3,7 +3,10 @@
 This is a separate Kotlin / Jetpack Compose Android project. It contains no
 WebView. It uses the licensed `/api/my-hub/` API on Hub Control Center.
 
-Testing version 0.1.7-dev makes the whole Connected devices card tappable and
+Testing version 0.1.8-dev correctly reads numeric and boolean branding-enabled
+flags so enabled resellers can save artwork and request builds. Disabled brands
+remain blocked with an explanation; edits must be saved before building.
+It makes the whole Connected devices card tappable and
 opens the server-filtered online-only device list. Search and pagination retain
 the connection filter, with a Show all action to clear it.
 It displays actual IPTV panel line notes on both customer
