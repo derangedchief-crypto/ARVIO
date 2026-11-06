@@ -12,13 +12,19 @@ const credentials=JSON.parse(fs.readFileSync(process.argv[2]));
  const row=name=>page.locator('tr').filter({has:page.getByLabel('Position of '+name,{exact:true})});
  await page.getByLabel('Show Kids',{exact:true}).uncheck();
  await page.getByLabel('Select News',{exact:true}).check();await page.getByLabel('Select Kids',{exact:true}).check();
- const rect=await row('Music').boundingBox();await page.getByRole('button',{name:'Drag News',exact:true}).dragTo(row('Music'),{targetPosition:{x:rect.width/2,y:rect.height-3}});
+ async function drag(name,target,fraction=0.5){await row(target).evaluate(el=>el.scrollIntoView({block:'center'}));const a=await page.getByRole('button',{name:'Drag '+name,exact:true}).boundingBox(),b=await row(target).boundingBox();await page.mouse.move(a.x+a.width/2,a.y+a.height/2);await page.mouse.down();await page.mouse.move(b.x+b.width/2,b.y+b.height*fraction,{steps:12});await page.mouse.up();}
+ await drag('News','Music');
  const order=()=>page.locator('.layout-position').evaluateAll(inputs=>inputs.map(x=>x.getAttribute('aria-label').replace('Position of ','')));
  assert.deepEqual((await order()).slice(0,5),['Sports','Movies','Music','News','Kids']);assert.equal(await page.getByLabel('Show Kids',{exact:true}).isChecked(),false);
  assert.equal(await page.locator('.layout-selection-count').innerText(),'2 selected');
  await page.getByRole('button',{name:'Clear selection',exact:true}).click();
- await page.getByRole('button',{name:'Drag Music',exact:true}).dragTo(row('Sports'),{targetPosition:{x:140,y:2}});
+ await drag('Music','Sports');
  assert.deepEqual((await order()).slice(0,5),['Music','Sports','Movies','News','Kids']);
+ // Centre-of-row drops must reorder even an adjacent row, in both directions.
+ await drag('Music','Sports');assert.deepEqual((await order()).slice(0,3),['Sports','Music','Movies']);
+ await drag('Music','Sports');assert.deepEqual((await order()).slice(0,3),['Music','Sports','Movies']);
+ // Releasing over a child control still drops; releasing outside cancels.
+ const grip=await page.getByRole('button',{name:'Drag Music',exact:true}).boundingBox();await page.mouse.move(grip.x+10,grip.y+10);await page.mouse.down();await page.mouse.move(5,5,{steps:8});await page.mouse.up();assert.deepEqual((await order()).slice(0,3),['Music','Sports','Movies']);
  await page.getByRole('button',{name:'Clear selection',exact:true}).click();await page.getByLabel('Select Sports',{exact:true}).check();
  await page.getByRole('button',{name:'Next →',exact:true}).click();await page.getByLabel('Select Group 50',{exact:true}).check();
  await page.getByRole('button',{name:'Move to top',exact:true}).click();
