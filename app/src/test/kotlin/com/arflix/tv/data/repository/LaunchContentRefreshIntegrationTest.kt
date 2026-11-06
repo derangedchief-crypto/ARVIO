@@ -17,6 +17,8 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Rule
+import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -29,6 +31,7 @@ import java.security.MessageDigest
 @ConscryptMode(ConscryptMode.Mode.OFF)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class LaunchContentRefreshIntegrationTest {
+    @get:Rule val timeout: Timeout = Timeout.seconds(90)
     @Test fun launchRefreshUpdatesAllThreeCataloguesOnlyOnce() = fixture()
     @Test fun sourcesReuseCatalogueVerifiedByHomeRefresh() = fixture(checkSourceReuse = true)
     @Test fun failedVodResponsesKeepPreviousCatalogues() = fixture(failVod = true)
@@ -77,6 +80,12 @@ class LaunchContentRefreshIntegrationTest {
         }.build()
         val profile = mockk<ProfileManager>(relaxed = true)
         every { profile.getProfileIdSync() } answers { profileId }
+        // Snapshot reads combine this stream with preferences. A relaxed mock
+        // Flow never emits, so first() would wait indefinitely after refresh.
+        every { profile.activeProfileId } answers { flowOf(profileId) }
+        every { profile.profileStringKey(any()) } answers {
+            androidx.datastore.preferences.core.stringPreferencesKey("profile_${profileId}_${firstArg<String>()}")
+        }
         val repository = spyk(IptvRepository(context, client, profile, mockk(relaxed = true), IptvEpgPlaybackGate(),primaryAccess=primaryAccessFixture()))
         coEvery { repository.warmupFromCacheOnly() } returns Unit
         every { repository.observeConfig() } returns flowOf(IptvConfig(m3uUrl = "$host/get.php?username=fixture-user&password=fixture-pass&type=m3u_plus"))

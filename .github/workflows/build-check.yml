@@ -55,6 +55,7 @@ jobs:
           --no-daemon
 
       - name: Five-minute playlist refresh checks
+        timeout-minutes: 8
         run: >-
           ./gradlew :app:testSideloadDebugUnitTest
           --tests '*PlaylistRefreshSchedulerTest'
