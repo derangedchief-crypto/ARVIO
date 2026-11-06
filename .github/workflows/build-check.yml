@@ -54,6 +54,13 @@ jobs:
           --tests '*CategoryMenuInteractionTest'
           --no-daemon
 
+      - name: Five-minute playlist refresh checks
+        run: >-
+          ./gradlew :app:testSideloadDebugUnitTest
+          --tests '*PlaylistRefreshSchedulerTest'
+          --tests '*LaunchContentRefreshIntegrationTest'
+          --no-daemon
+
       - name: Live management regression checks
         run: >-
           ./gradlew :app:testSideloadDebugUnitTest
