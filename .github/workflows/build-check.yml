@@ -40,6 +40,9 @@ jobs:
           --tests '*WatchHistoryTimestampTest'
           --tests '*CloudPrimaryPlaylistMergeTest'
           --tests '*ExtraPlaylistPersistenceTest'
+          --tests '*ApkInstallerThreadingTest'
+          --tests '*EpisodeVodVerificationTest'
+          --tests '*ManagementHashCompatibilityTest'
           --no-daemon
 
       - name: Provider-only Live TV category checks
@@ -48,6 +51,7 @@ jobs:
           --tests '*ProviderOnlyCategoriesTest'
           --tests '*LiveCategoryIndexTest'
           --tests '*PlaylistCategorySectionsTest'
+          --tests '*CategoryMenuInteractionTest'
           --no-daemon
 
       - name: Live management regression checks

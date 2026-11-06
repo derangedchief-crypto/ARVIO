@@ -378,7 +378,8 @@ fun OwnTvCategoryPanel(
     val selectedRequest = focusRequester ?: remember { FocusRequester() }
     val searchRequest = remember { FocusRequester() }
     var menu by remember { mutableStateOf<TvStageFolder?>(null) }
-    LaunchedEffect(guideInteractive) { if (!guideInteractive) menu = null }
+    var manageHidden by remember { mutableStateOf(false) }
+    LaunchedEffect(guideInteractive) { if (!guideInteractive) { menu = null; manageHidden = false } }
     val currentFocusEnter by rememberUpdatedState(onFocusEnter)
     LaunchedEffect(focusSearchSignal) {
         if (focusSearchSignal > 0) runCatching { searchRequest.requestFocus() }
@@ -426,7 +427,9 @@ fun OwnTvCategoryPanel(
                     .background(if (active || focused) TvStageStyle.Accent.copy(alpha = if (focused) 0.28f else 0.14f) else Color.Transparent)
                     .focusProperties { canFocus = guideInteractive }
                     .combinedClickable(enabled = guideInteractive, onClick = { if (folder.hidden) menu = folder else onSelect(category.id) },
-                        onLongClick = { if (category.playlistGroupName != null) menu = folder })
+                        onLongClick = {
+                            if (category.playlistGroupName != null || tree.hidden.categories.isNotEmpty()) menu = folder
+                        })
                     .padding(horizontal = 10.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Text(liveCategoryLabel(category.label), color = if (active) TvStageStyle.Accent else Color.White,
@@ -437,9 +440,11 @@ fun OwnTvCategoryPanel(
         }
     }
     menu?.let { folder ->
+        val confirmGuard = remember(folder) { MenuConfirmKeyGuard() }
         val category = folder.category
         val group = category.playlistGroupName
         AlertDialog(onDismissRequest = { menu = null }, containerColor = TvStageStyle.Surface,
+            modifier = Modifier.onPreviewKeyEvent { confirmGuard.consume(it.nativeKeyEvent) },
             title = { Text(category.label, color = Color.White) },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (group != null) {
@@ -452,7 +457,30 @@ fun OwnTvCategoryPanel(
                         TvStageAction(stringResource(R.string.tv_stage_move_down)) { onMoveCategoryDown(category.playlistId, group); menu = null }
                     }
                 }
+                if (!folder.hidden && tree.hidden.categories.isNotEmpty()) {
+                    TvStageAction(stringResource(R.string.tv_stage_unhide)) {
+                        menu = null
+                        manageHidden = true
+                    }
+                }
             } }, confirmButton = { TextButton(onClick = { menu = null }) { Text(stringResource(android.R.string.cancel)) } })
+    }
+    if (manageHidden) {
+        val confirmGuard = remember { MenuConfirmKeyGuard() }
+        AlertDialog(onDismissRequest = { manageHidden = false }, containerColor = TvStageStyle.Surface,
+            modifier = Modifier.onPreviewKeyEvent { confirmGuard.consume(it.nativeKeyEvent) },
+            title = { Text(stringResource(R.string.tv_stage_unhide), color = Color.White) },
+            text = {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(tree.hidden.categories, key = { _, category -> category.id }) { _, category ->
+                        TvStageAction(category.label, modifier = Modifier.fillMaxWidth()) {
+                            category.playlistGroupName?.let { onUnhideCategory(category.playlistId, it) }
+                            manageHidden = false
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { manageHidden = false }) { Text(stringResource(android.R.string.cancel)) } })
     }
 }
 

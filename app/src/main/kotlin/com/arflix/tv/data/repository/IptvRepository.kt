@@ -5830,7 +5830,9 @@ class IptvRepository @Inject constructor(
         if (providers.isEmpty()) return@withLock emptyList()
         val profile = profileManager.getProfileIdSync()
         val signature = buildConfigSignature(config)
-        val missKey = "episode|$profile|$signature|$imdbId|$tmdbId|${normalizeLookupText(title)}|$season|$episode"
+        val query = normalizeLookupText(title)
+        val compactCanonical = toCanonicalTitleKeyFromTokens(extractTitleTokensFromNormalized(query)).replace(" ", "")
+        val missKey = "episode|$profile|$signature|$imdbId|$tmdbId|$query|$season|$episode"
         val verificationScope = vodLookupScopeKey()
         val normalizedImdb = normalizeImdbId(imdbId)
         val normalizedTmdb = normalizeTmdbId(tmdbId)
@@ -5841,15 +5843,19 @@ class IptvRepository @Inject constructor(
             val ids = rows.filter { (!normalizedTmdb.isNullOrBlank() && normalizeTmdbId(it.tmdb) == normalizedTmdb) ||
                 (!normalizedImdb.isNullOrBlank() && normalizeImdbId(it.imdb) == normalizedImdb) }
             if (ids.isNotEmpty()) return ids
-            val query = normalizeLookupText(title)
-            val canonical = toCanonicalTitleKey(title)
             return rows.filter { item ->
                 val providerTmdb = normalizeTmdbId(item.tmdb)?.takeUnless { it == "0" }
                 val providerImdb = normalizeImdbId(item.imdb)
                 if (!normalizedTmdb.isNullOrBlank() && providerTmdb != null && providerTmdb != normalizedTmdb) false
                 else if (!normalizedImdb.isNullOrBlank() && providerImdb != null && providerImdb != normalizedImdb) false
-                else normalizeLookupText(item.name.orEmpty()) == query ||
-                    (canonical.isNotBlank() && toCanonicalTitleKey(item.name.orEmpty()).replace(" ", "") == canonical.replace(" ", ""))
+                else {
+                    // Large catalogues used to run the entire regex normalization
+                    // pipeline twice per non-exact title, creating GC pressure.
+                    val normalizedName = normalizeLookupText(item.name.orEmpty())
+                    normalizedName == query || (compactCanonical.isNotBlank() &&
+                        toCanonicalTitleKeyFromTokens(extractTitleTokensFromNormalized(normalizedName))
+                            .replace(" ", "") == compactCanonical)
+                }
             }
         }
         fun sources(creds: XtreamCredentials, rows: List<XtreamSeriesEpisode>): List<StreamSource> = rows
