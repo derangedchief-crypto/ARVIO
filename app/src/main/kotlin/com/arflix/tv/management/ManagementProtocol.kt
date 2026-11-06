@@ -7,8 +7,19 @@ import java.security.MessageDigest
 import java.util.Locale
 
 internal fun managementHash(value: String): String = managementHash(value.toByteArray(Charsets.UTF_8))
-internal fun managementHash(value: ByteArray): String = MessageDigest.getInstance("SHA-256")
-    .digest(value).joinToString("") { "%02x".format(it) }
+internal fun managementHash(value: ByteArray): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(value)
+    val hex = "0123456789abcdef"
+    // Preserve the exact account/device hash while avoiding a Formatter and
+    // format-string parser allocation for each of the 32 digest bytes.
+    return buildString(digest.size * 2) {
+        digest.forEach { byte ->
+            val unsigned = byte.toInt() and 0xff
+            append(hex[unsigned ushr 4])
+            append(hex[unsigned and 0x0f])
+        }
+    }
+}
 
 internal data class ManagementAccount(val username: String, val password: String) {
     val scope: String get() = managementHash("extreme-management-account-v1\n" + username.trim().lowercase(Locale.ROOT))

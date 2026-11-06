@@ -40,6 +40,9 @@ jobs:
           --tests '*WatchHistoryTimestampTest'
           --tests '*CloudPrimaryPlaylistMergeTest'
           --tests '*ExtraPlaylistPersistenceTest'
+          --tests '*ApkInstallerThreadingTest'
+          --tests '*EpisodeVodVerificationTest'
+          --tests '*ManagementHashCompatibilityTest'
           --no-daemon
 
       - name: Provider-only Live TV category checks

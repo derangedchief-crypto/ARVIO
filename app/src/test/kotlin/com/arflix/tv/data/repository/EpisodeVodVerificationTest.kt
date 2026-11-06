@@ -49,6 +49,13 @@ class EpisodeVodVerificationTest {
     @Test fun partialSeriesCatalogueStillCannotProveAbsenceOrPermitFallback() = fixture(
         series = listOf("""[{"name":"Broken row"}]"""), unavailable = true)
 
+    @Test fun normalizedTitleWithoutProviderIdsStillFindsExactEpisode() = fixture(
+        series = listOf("""[{"series_id":41,"name":"Hárbour Watch [HD]"}]"""))
+    @Test fun reorderedCanonicalTitleStillFindsExactEpisode() = fixture(
+        series = listOf("""[{"series_id":41,"name":"The Watch Harbour [HD]"}]"""))
+    @Test fun matchingTitleWithContradictoryProviderIdRemainsExcluded() = fixture(
+        series = listOf("""[{"series_id":41,"name":"Harbour Watch","tmdb":"99999"}]"""), missing = true)
+
     private fun fixture(series: List<String> = listOf(show), info: String = episode,
         files: String = "[]", season: Int = 1, missing: Boolean = false, unavailable: Boolean = false,
         host: String = "p0.example.test", fileEpisode: Boolean = false, alternateVariant: Boolean = false,
