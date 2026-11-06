@@ -402,11 +402,6 @@ fun OwnTvCategoryPanel(
             .focusRequester(searchRequest).onPreviewKeyEvent {
                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionUp) { onMoveUpFromSearch(); true } else false
             }, onClick = onOpenSearch)
-        if (tree.hidden.categories.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            TvStageAction(stringResource(R.string.tv_stage_manage_hidden_categories),
-                modifier = Modifier.fillMaxWidth(), onClick = { manageHidden = true })
-        }
         Spacer(Modifier.height(16.dp))
         LazyColumn(state = listState, modifier = Modifier.focusProperties { canFocus = guideInteractive },
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -432,7 +427,9 @@ fun OwnTvCategoryPanel(
                     .background(if (active || focused) TvStageStyle.Accent.copy(alpha = if (focused) 0.28f else 0.14f) else Color.Transparent)
                     .focusProperties { canFocus = guideInteractive }
                     .combinedClickable(enabled = guideInteractive, onClick = { if (folder.hidden) menu = folder else onSelect(category.id) },
-                        onLongClick = { if (category.playlistGroupName != null) menu = folder })
+                        onLongClick = {
+                            if (category.playlistGroupName != null || tree.hidden.categories.isNotEmpty()) menu = folder
+                        })
                     .padding(horizontal = 10.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Text(liveCategoryLabel(category.label), color = if (active) TvStageStyle.Accent else Color.White,
@@ -460,13 +457,19 @@ fun OwnTvCategoryPanel(
                         TvStageAction(stringResource(R.string.tv_stage_move_down)) { onMoveCategoryDown(category.playlistId, group); menu = null }
                     }
                 }
+                if (!folder.hidden && tree.hidden.categories.isNotEmpty()) {
+                    TvStageAction(stringResource(R.string.tv_stage_unhide)) {
+                        menu = null
+                        manageHidden = true
+                    }
+                }
             } }, confirmButton = { TextButton(onClick = { menu = null }) { Text(stringResource(android.R.string.cancel)) } })
     }
     if (manageHidden) {
         val confirmGuard = remember { MenuConfirmKeyGuard() }
         AlertDialog(onDismissRequest = { manageHidden = false }, containerColor = TvStageStyle.Surface,
             modifier = Modifier.onPreviewKeyEvent { confirmGuard.consume(it.nativeKeyEvent) },
-            title = { Text(stringResource(R.string.tv_stage_manage_hidden_categories), color = Color.White) },
+            title = { Text(stringResource(R.string.tv_stage_unhide), color = Color.White) },
             text = {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     itemsIndexed(tree.hidden.categories, key = { _, category -> category.id }) { _, category ->

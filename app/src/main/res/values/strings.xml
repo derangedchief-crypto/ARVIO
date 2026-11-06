@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="tv_stage_manage_hidden_categories">Unhide categories</string>
     <string name="app_name">Extreme Hub</string>
     <string name="now_playing">NOW PLAYING</string>
 

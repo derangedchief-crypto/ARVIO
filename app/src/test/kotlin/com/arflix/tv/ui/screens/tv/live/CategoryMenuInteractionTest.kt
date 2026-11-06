@@ -91,14 +91,18 @@ class CategoryMenuInteractionTest {
         compose.runOnIdle { assertEquals(listOf("up", "top", "down"), actions) }
     }
 
-    @Test fun lastVisibleCategoryCanBeHiddenAndRestoredFromTv() {
+    @Test fun lastVisibleCategoryCanBeRestoredThroughTheExistingMenu() {
         content(); open()
         compose.onNodeWithText(label(R.string.tv_stage_hide)).performClick()
         compose.onNodeWithText("Provider News").assertDoesNotExist()
-        compose.onNodeWithText(label(R.string.tv_stage_manage_hidden_categories)).performClick()
+        // Unhide belongs inside the long-press menu, not in the sidebar.
+        compose.onNodeWithText(label(R.string.tv_stage_unhide)).assertDoesNotExist()
+        compose.onNodeWithText(label(R.string.live_label_all_channels))
+            .performSemanticsAction(SemanticsActions.OnLongClick) { it() }
+        compose.onNodeWithText(label(R.string.tv_stage_unhide)).performClick()
         compose.onNodeWithText("Provider News").performClick()
         compose.onNodeWithText("Provider News").assertExists()
-        compose.onNodeWithText(label(R.string.tv_stage_manage_hidden_categories)).assertDoesNotExist()
+        compose.onNodeWithText(label(R.string.tv_stage_unhide)).assertDoesNotExist()
         compose.runOnIdle { assertEquals(listOf("hide", "unhide"), actions) }
     }
 

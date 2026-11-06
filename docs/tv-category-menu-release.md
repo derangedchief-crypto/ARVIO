@@ -13,9 +13,11 @@ ignores repeated confirms while its menu is open.
 
 Hidden categories intentionally remain absent from playable TV navigation. That
 made the active folder menu's hidden-row Unhide branch unreachable. A separate
-Unhide categories control now appears below Search whenever hidden provider
-groups exist, including when the last visible provider group has been hidden.
-Selecting a group restores it through the existing source-scoped callback.
+Unhide action is available inside the existing long-press category menu whenever
+hidden provider groups exist. Long-pressing All Channels also opens that menu,
+so the last hidden provider group remains recoverable. Selecting Unhide then a
+group restores it through the existing source-scoped callback. There is no new
+sidebar control; the initially added shortcut was removed at the user's request.
 
 Regression checks dispatch held repeats and an orphan release into the actual
 dialog, then a fresh confirmation, verify all three move callbacks and Cancel,
