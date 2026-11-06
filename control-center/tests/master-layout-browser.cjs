@@ -1,0 +1,28 @@
+const {chromium}=require('/tmp/opencode/control-center-browser-tools/node_modules/playwright');
+const fs=require('fs'),assert=require('assert/strict');
+const credentials=JSON.parse(fs.readFileSync(process.argv[2]));
+(async()=>{const browser=await chromium.launch();try{
+ const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ await page.goto(process.env.CONTROL_PREVIEW_URL);
+ await page.getByRole('button',{name:'Owner / existing Hub login',exact:true}).click();
+ await page.getByLabel('Email address').fill(credentials.email);await page.getByLabel('Password',{exact:true}).fill(credentials.password);
+ await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.dashboard-metrics').waitFor();
+ let reads=0;const commands=[];
+ page.on('request',r=>{if(r.method()==='POST'&&r.url().includes('/commands'))commands.push(r.url());});
+ await page.route('**/api/layout-catalogue',r=>{reads++;return r.fulfill({json:{version:1,entries:['Sports','News','Movies'].map(name=>({name,hidden:false})),updated_at:'2026-11-06T00:00:00Z'}});});
+ await page.evaluate(()=>location.hash='library/layouts');
+ await page.getByRole('button',{name:'Master catalogue · owner only',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Create channel layout',exact:true}).click();
+ await page.getByLabel('Position of Sports',{exact:true}).waitFor();assert.equal(reads,1);
+ await page.getByLabel('Layout name',{exact:true}).fill('MASTER BROWSER FIXTURE');
+ await page.getByLabel('Position of News',{exact:true}).fill('1');await page.getByLabel('Position of News',{exact:true}).press('Tab');
+ await page.getByLabel('Show Sports',{exact:true}).uncheck();
+ await page.getByRole('button',{name:'Add new master categories',exact:true}).click();
+ await page.getByText('0 categories added; your existing order and visibility were kept.',{exact:true}).waitFor();
+ assert.equal(await page.getByLabel('Position of News',{exact:true}).inputValue(),'1');assert.equal(await page.getByLabel('Show Sports',{exact:true}).isChecked(),false);
+ await page.getByRole('button',{name:'Save channel layout',exact:true}).click();await page.getByText('Channel layout saved.',{exact:true}).waitFor();
+ assert.equal(commands.length,0);assert.ok(reads>=2);
+ await page.setViewportSize({width:390,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ await page.screenshot({path:'/tmp/opencode/master-layout-mobile.png',fullPage:true});
+ console.log('PASS master catalogue loads without device commands; ordering, visibility and save work; refresh preserves draft; mobile fits');
+}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1)});

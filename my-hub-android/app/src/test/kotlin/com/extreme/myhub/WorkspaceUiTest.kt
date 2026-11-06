@@ -138,6 +138,22 @@ class WorkspaceUiTest {
         }
     }
 
+    @Test fun masterCatalogueCategoriesCanBeArrangedWithoutADevice() {
+        val entries = listOf("Sports", "News", "Premium").map { JSONObject().put("name", it).put("hidden", false) }
+        var saved = emptyList<String>()
+        val open = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent { HubTheme { Surface(Modifier.fillMaxSize()) { Column {
+            androidx.compose.material3.Button(onClick = { open.value = true }) { androidx.compose.material3.Text("Create master layout") }
+            if (open.value) LayoutEditor(entries, true, "Master layout", { open.value = false }) { _, rows -> saved = rows.map { it.getString("name") }; open.value = false }
+        } } } }
+        compose.onNodeWithText("Create master layout").performClick()
+        compose.onNodeWithText("Sports").assertIsDisplayed()
+        compose.onNodeWithText("Premium").assertIsDisplayed()
+        compose.onAllNodesWithText("Top")[2].performClick()
+        compose.onNodeWithText("Save layout").performClick()
+        org.junit.Assert.assertEquals(listOf("Premium", "Sports", "News"), saved)
+    }
+
     private fun capture(name: String) {
         val directory = File("build/ui-preview").apply { mkdirs() }
         compose.runOnIdle {

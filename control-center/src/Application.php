@@ -308,6 +308,13 @@ final class Application
         if($method==='POST'&&$path==='/api/settings-presets')Http::json($this->presets->create($actor,Http::body()),201);
         if($method==='POST'&&preg_match('~^/api/settings-presets/([a-f0-9]{32})$~D',$path,$match))Http::json($this->presets->change($actor,$match[1],Http::body()));
         if($method==='POST'&&preg_match('~^/api/settings-presets/([a-f0-9]{32})/archive$~D',$path,$match))Http::json($this->presets->change($actor,$match[1],Http::body(),true));
+        if($method==='GET'&&$path==='/api/layout-catalogue'){Input::keys($_GET,[]);Http::json((new MasterLayoutCatalogue($this->config))->catalogue($actor));}
+        if($method==='GET'&&$path==='/api/layout-catalogue/master'){Input::keys($_GET,[]);Http::json((new MasterLayoutCatalogue($this->config))->master($actor));}
+        if($method==='POST'&&$path==='/api/layout-catalogue/master'){
+            Auth::owner($actor);$this->auth->limit('master-layout-refresh',$actor['id'],10,3600);
+            $result=(new MasterLayoutCatalogue($this->config))->save($actor,Http::body(8192));
+            $this->auth->audit($actor,'layout.master_updated',null,null,['version'=>$result['version'],'categories'=>$result['category_count']]);Http::json($result);
+        }
         if($method==='GET'&&$path==='/api/category-layout-templates')Http::json($this->layouts->listing($actor,$_GET));
         if($method==='POST'&&$path==='/api/category-layout-templates')Http::json($this->layouts->create($actor,Http::body(2097152)),201);
         if($method==='GET'&&preg_match('~^/api/category-layout-templates/([a-f0-9]{32})$~D',$path,$match))Http::json($this->layouts->get($actor,$match[1]));

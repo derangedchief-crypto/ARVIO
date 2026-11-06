@@ -3,7 +3,11 @@
 This is a separate Kotlin / Jetpack Compose Android project. It contains no
 WebView. It uses the licensed `/api/my-hub/` API on Hub Control Center.
 
-Testing version 0.1.8-dev correctly reads numeric and boolean branding-enabled
+Testing version 0.1.9-dev creates category layouts from the shared master
+catalogue without requiring a customer device. The website owner configures
+the private master playlist in Saved setups → Category layouts.
+The layout editor uses a full-screen category list for arranging larger catalogues.
+It correctly reads numeric and boolean branding-enabled
 flags so enabled resellers can save artwork and request builds. Disabled brands
 remain blocked with an explanation; edits must be saved before building.
 It makes the whole Connected devices card tappable and

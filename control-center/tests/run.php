@@ -168,6 +168,8 @@ require __DIR__.'/primary-access.php';
 primaryAccessCases($tests,$app,$config,$owner);
 require __DIR__.'/panel-notes.php';
 panelNotesCases($tests,$app,$config,$owner);
+require __DIR__.'/master-layout.php';
+masterLayoutCases($tests,$config,$owner,$alpha);
 require __DIR__.'/device-recovery.php';
 deviceRecoveryCases($tests,$app,$config,$owner,$beta,$fixture);
 require __DIR__.'/rampex-contract.php';
