@@ -17,6 +17,7 @@ function myHubCases(array &$tests,ControlCenter\Application $app,array $owner,st
             });
             $input=['username'=>'OwnerPanel','password'=>'verified-panel-password'];
             $count=(int)$app->db->query('SELECT COUNT(*) FROM users')->fetchColumn();
+            problem(403,fn()=>$app->auth->loginPanel($input,'127.0.0.217',$bridge,false));
             $session=$app->auth->loginPanel($input,'127.0.0.217',$bridge);$actor=$app->auth->user($session['token'],true);
             same($owner['id'],$actor['id']);same('reseller',$actor['role']);same($space['id'],$actor['tenant_id']);same($actor,$session['user']);
             same($count,(int)$app->db->query('SELECT COUNT(*) FROM users')->fetchColumn());
@@ -66,11 +67,18 @@ function myHubCases(array &$tests,ControlCenter\Application $app,array $owner,st
         $native=$app->auth->loginPanel($input,'127.0.0.216',$bridge);
         same($tenant['id'],$native['user']['tenant_id']);same('reseller',$native['user']['role']);
         same($native['user'],$app->auth->user($native['token'],true));problem(401,fn()=>$app->auth->user($native['token']));
+        $web=$app->auth->loginPanel($input,'127.0.0.216',$bridge,false);
+        same($tenant['id'],$web['user']['tenant_id']);same('reseller',$web['user']['role']);
+        same($web['user'],$app->auth->user($web['token']));problem(401,fn()=>$app->auth->user($web['token'],true));
+        $app->auth->verifyCsrf($web['token'],$web['csrf']);problem(403,fn()=>$app->auth->verifyCsrf($web['token'],'invalid'));
+        $app->auth->logout($web['token']);problem(401,fn()=>$app->auth->user($web['token']));
         $authenticated=false;problem(401,fn()=>$app->auth->loginPanel($input,'127.0.0.216',$bridge));
+        problem(401,fn()=>$app->auth->loginPanel($input,'127.0.0.216',$bridge,false));
         $authenticated=true;$panelId='999999';problem(403,fn()=>$app->auth->loginPanel($input,'127.0.0.216',$bridge));
         $panelId='991235';$tamper=true;problem(503,fn()=>$app->auth->loginPanel($input,'127.0.0.216',$bridge));$tamper=false;
         $app->db->query("UPDATE tenants SET status='suspended' WHERE id=?",[$tenant['id']]);
         problem(403,fn()=>$app->auth->loginPanel($input,'127.0.0.216',$bridge));
+        problem(403,fn()=>$app->auth->loginPanel($input,'127.0.0.216',$bridge,false));
         $app->db->query("UPDATE tenants SET status='active' WHERE id=?",[$tenant['id']]);
         $app->db->query('UPDATE users SET active=0 WHERE id=?',[$native['user']['id']]);
         problem(403,fn()=>$app->auth->loginPanel($input,'127.0.0.216',$bridge));

@@ -125,7 +125,10 @@ final class Application
         }
         if ($method === 'POST' && $path === '/api/login') {
             Http::sameOrigin($this->config);
-            $result = $this->auth->login(Http::body(), $_SERVER['REMOTE_ADDR'] ?? 'unknown');
+            $input=Http::body();$ip=$_SERVER['REMOTE_ADDR'] ?? 'unknown';
+            $result = array_key_exists('username',$input)
+                ? $this->auth->loginPanel($input,$ip,null,false)
+                : $this->auth->login($input,$ip);
             Http::cookie($this->config, $result['token']);
             unset($result['token']);
             Http::json($result);

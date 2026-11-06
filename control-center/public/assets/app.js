@@ -124,13 +124,15 @@ function modal(title, schema, save, label = 'Save') {
 $('modal').addEventListener('close',()=>{$('modal-form').querySelectorAll('input[type="password"], textarea[name="guides"]').forEach(input=>{input.value='';});});
 function signedOut() { window.TrialWorkspace?.clear();window.AppBranding?.clear();window.DeviceWorkspace?.clear();window.WorkspaceLibrary?.clear();state.user = null; state.csrf = ''; state.tenants = []; state.workspaceSelf=null;state.workspaceScope='';state.toolWorkspace=null;state.deviceTab = null; state.layoutEditors.clear(); state.favouritesSelection.clear(); state.sourceEditors.clear(); state.preferenceEditors.clear(); state.epoch++; requestKeys.clear(); if ($('modal').open) $('modal').close(); $('modal-form').replaceChildren(); $('main').replaceChildren(); $('navigation').replaceChildren(); $('account-name').textContent = ''; $('workspace-name').textContent = ''; $('shell').hidden = true; $('entry').hidden = false; loginForm(); }
 function entryCard(title, description) { const card = el('div', null, 'entry-card'); card.append(el('div','EXTREME / CONTROL','entry-wordmark'), el('h1', title), el('p', description, 'subtle')); const intro=el('aside',null,'entry-intro');intro.append(el('span','RESELLER WORKSPACE','eyebrow'),el('h2','Everything behind your service.'),el('p','Customers. Devices. Your app.'),el('div','One workspace for everyday operations.','entry-caption'));$('entry').replaceChildren(intro,card); return card; }
-function loginForm() {
+function loginForm(ownerLogin=false) {
   viewTabs.clear();disclosureViews.clear();
   setNavOpen(false,false);
-  const card = entryCard('Welcome back', 'Sign in to your owner or reseller workspace.'); const form = el('form');
-  const schema = [{ key: 'email', label: 'Email address', type: 'email', max: 254 }, { key: 'password', label: 'Password', type: 'password' }]; fields(form, schema); form.elements.password.autocomplete = 'current-password'; form.elements.password.removeAttribute('minlength');
+  const card = entryCard('Welcome back', ownerLogin?'Sign in with your existing Hub account.':'Sign in with your normal IPTV reseller username and password.'); const form = el('form');
+  const identity=ownerLogin?{ key: 'email', label: 'Email address', type: 'email', max: 254 }:{ key: 'username', label: 'IPTV reseller username', type: 'text', max: 150 };
+  const schema = [identity, { key: 'password', label: 'Password', type: 'password' }]; fields(form, schema); form.elements[identity.key].autocomplete='username';form.elements.password.autocomplete = 'current-password'; form.elements.password.removeAttribute('minlength');
   const error = el('p', '', 'error'); const submit = el('button', 'Sign in', 'primary'); submit.type = 'submit'; form.append(error, submit); card.append(form);
   form.onsubmit = async e => { e.preventDefault(); submit.disabled = true; try { const session = await api('/api/login', formValues(form, schema)); state.user = session.user; state.csrf = session.csrf; form.reset(); await enter(); } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; } };
+  card.append(button(ownerLogin?'Reseller IPTV login':'Owner / existing Hub login',()=>{form.reset();loginForm(!ownerLogin);},'quiet'));
 }
 function setupForm() {
   const card = entryCard('Create your owner account', 'First installation only. There are no default passwords.');
