@@ -66,7 +66,7 @@ final class MasterLayoutCatalogue
             if($this->transport){$status=($this->transport)($url,$consume);$ok=true;}
             else{
                 if(!function_exists('curl_init'))throw new \RuntimeException();$curl=curl_init($url);
-                curl_setopt_array($curl,[CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT=>5,CURLOPT_TIMEOUT=>90,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_WRITEFUNCTION=>static fn($c,$chunk)=>$consume($chunk)]);
+                curl_setopt_array($curl,[CURLOPT_USERAGENT=>'MyHub-Catalogue/1.0',CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT=>5,CURLOPT_TIMEOUT=>90,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_WRITEFUNCTION=>static fn($c,$chunk)=>$consume($chunk)]);
                 $ok=curl_exec($curl);$status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);curl_close($curl);
             }
             if($buffer!=='')$line($buffer);
