@@ -7,6 +7,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -76,7 +78,7 @@ internal val bufferChoices = listOf("0" to "Off", "2" to "2 seconds", "5" to "5 
             OutlinedTextField(search, { search = it.take(80) }, label = { Text("Search saved items") }, modifier = Modifier.fillMaxWidth())
             Action("Search", state.busy) { model.open(route, search = search) }
             Action("Create ${when(route) { "device-profiles" -> "saved setup"; "category-layout-templates" -> "layout"; else -> "preset" }}", state.busy) {
-                when (route) { "device-profiles" -> saveProfile(null); "settings-presets" -> preset(null); "preference-profiles" -> preference(null); else -> { layout = JSONObject().put("entries", JSONArray()); layoutNew = true } }
+                when (route) { "device-profiles" -> saveProfile(null); "settings-presets" -> preset(null); "preference-profiles" -> preference(null); else -> model.read("layout-catalogue") { catalogue -> layout = JSONObject().put("entries", catalogue.getJSONArray("entries")); layoutNew = true } }
             }
         }
         data.rows().forEach { row -> DetailCard(row.text("name", row.text("profile_name", "Setup"))) {
@@ -107,11 +109,13 @@ internal val bufferChoices = listOf("0" to "Off", "2" to "2 seconds", "5" to "5 
 @Composable internal fun LayoutEditor(initial: List<JSONObject>, portable: Boolean, initialName: String, close: () -> Unit, save: (String, List<JSONObject>) -> Unit) {
     val rows = remember { mutableStateListOf<JSONObject>().apply { addAll(initial.map { JSONObject(it.toString()) }) } }
     var name by remember { mutableStateOf(initialName) }; var newName by remember { mutableStateOf("") }; var search by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = close, title = { Text(if (portable) "Category layout template" else "Review category order & visibility") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+      Surface(Modifier.fillMaxSize(), color = HubColors.background) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(if (portable) "Category layout template" else "Review category order & visibility", style = MaterialTheme.typography.titleLarge)
             if (portable) OutlinedTextField(name, { name = it.take(80) }, label = { Text("Template name") })
             OutlinedTextField(search, { search = it }, label = { Text("Find category") })
-            LazyColumn(Modifier.heightIn(max = 280.dp)) {
+            LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
                 itemsIndexed(rows) { index, row ->
                     val caption = row.text(if (portable) "name" else "label")
                     if (caption.contains(search, true)) Column {
@@ -126,6 +130,11 @@ internal val bufferChoices = listOf("0" to "Off", "2" to "2 seconds", "5" to "5 
                 }
             }
             if (portable) { OutlinedTextField(newName, { newName = it.take(80) }, label = { Text("Add category name") }); TextButton(onClick = { rows.add(JSONObject().put("name", newName.trim()).put("hidden", false)); newName = "" }, enabled = newName.isNotBlank() && rows.none { it.text("name") == newName.trim() } && rows.size < 2000) { Text("Add category") } }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = close) { Text("Cancel") }
+                Button(onClick = { save(name, rows.toList()) }, enabled = (!portable || name.isNotBlank()) && rows.isNotEmpty() && rows.any { !it.optBoolean("hidden") }) { Text(if (portable) "Save layout" else "Apply reviewed layout") }
+            }
         }
-    }, confirmButton = { TextButton(onClick = { save(name, rows.toList()) }, enabled = (!portable || name.isNotBlank()) && rows.isNotEmpty() && rows.any { !it.optBoolean("hidden") }) { Text(if (portable) "Save layout" else "Apply reviewed layout") } }, dismissButton = { TextButton(onClick = close) { Text("Cancel") } })
+      }
+    }
 }

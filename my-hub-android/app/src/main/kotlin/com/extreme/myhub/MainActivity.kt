@@ -38,9 +38,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun HubScreen(model: HubModel = viewModel()) {
+private fun HubScreen(model: HubModel = viewModel(), updates: HubUpdates = viewModel()) {
     val state by model.state.collectAsStateWithLifecycle()
+    val updateState by updates.state.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(updates, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { updates.check(); kotlinx.coroutines.awaitCancellation() }
+    }
     LaunchedEffect(model, lifecycle, state.route, state.session, state.license?.optBoolean("allowed")) {
         if (state.session != null && state.license?.optBoolean("allowed") == true)
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { model.observeVisible() }
@@ -51,11 +55,12 @@ private fun HubScreen(model: HubModel = viewModel()) {
         Row(Modifier.fillMaxWidth().padding(vertical = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             IconTile("grid"); Text("My Hub", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.weight(1f))
-            if (state.session != null) TextButton(onClick = model::logout, enabled = !state.busy) { Text("Sign out") }
+         if (state.session != null) TextButton(onClick = model::logout, enabled = !state.busy) { Text("Sign out") }
         }
         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         state.error?.let { MessageBanner(it, true) }
-        state.notice?.let { MessageBanner(it) }
+         state.notice?.let { MessageBanner(it) }
+         TextButton(onClick = { updates.check(true) }, enabled = !updateState.busy) { Text("Check for My Hub updates") }
         when {
             state.session == null -> Login(state.busy, model::login)
             else -> License(state, model::activate, model::refreshLicense)
@@ -98,7 +103,11 @@ private fun HubScreen(model: HubModel = viewModel()) {
                         else Action("Try again", false) { model.open(state.route, state.page, state.search, state.filters) }
                     } else when {
                         state.route == "overview" -> Dashboard(data, state.session!!.name, state.busy, onlineDevices = { model.open("devices", filters = mapOf("presence" to "online")) }) { model.open(it) }
-                        state.route == "more" -> WorkspaceMenu(state, model)
+                        state.route == "more" -> {
+                            WorkspaceMenu(state, model)
+                            Action("Check for My Hub updates", updateState.busy) { updates.check(true) }
+                            Text("My Hub ${BuildConfig.VERSION_NAME.removeSuffix("-dev")}", color = HubColors.muted)
+                        }
                         state.route in listOf("customers", "devices", "audit") -> Records(state, model)
                         state.route == "trial-setup" -> TrialSettings(data, state.busy, model)
                         state.route == "app-brand" -> {
@@ -119,6 +128,7 @@ private fun HubScreen(model: HubModel = viewModel()) {
                     Spacer(Modifier.height(16.dp))
                 }
     }
+    HubUpdatePrompt(updateState, updates)
 }
 
 @Composable

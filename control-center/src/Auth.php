@@ -78,7 +78,7 @@ final class Auth
         return $this->issueSession($user,$native);
     }
 
-    public function loginPanel(array $input,string $ip,?MyHub $bridge=null): array
+    public function loginPanel(array $input,string $ip,?MyHub $bridge=null,bool $native=true): array
     {
         $bridge??=new MyHub($this->db,$this->config);$bridge->ready();
         Input::keys($input,['username','password']);
@@ -88,11 +88,12 @@ final class Auth
         $this->limit('my-hub-login-ip',$ip,60,900);
         $this->limit('my-hub-login-account',mb_strtolower($username),20,900);
         $panelId=$bridge->authenticate($username,$password);
-        return $this->db->transaction(function()use($panelId):array {
+        return $this->db->transaction(function()use($panelId,$native):array {
             $link=$this->db->one('SELECT p.tenant_id,t.kind,t.status FROM panel_resellers p JOIN tenants t ON t.id=p.tenant_id WHERE p.panel_id=? FOR UPDATE',[$panelId]);
             if (!$link) throw new Problem(403,'Ask the administrator to link your reseller-panel account to a Hub reseller workspace.');
             if ($link['status']!=='active') throw new Problem(403,'Your Hub workspace is unavailable.');
             if ($link['kind']==='owner') {
+                if(!$native)throw new Problem(403,'Use Owner / existing Hub login for the website owner account.');
                 if (!$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['035_my_hub_owner_workspaces.sql'])) throw new Problem(503,'Install the My Hub owner-workspace update first.');
                 $user=$this->db->one("SELECT u.* FROM installation i JOIN users u ON u.id=i.owner_id WHERE i.id=1 AND u.role='owner' AND u.active=1 FOR UPDATE");
                 if (!$user) throw new Problem(403,'The Hub owner account is unavailable.');
@@ -102,7 +103,7 @@ final class Auth
             if (count($users)!==1) throw new Problem(403,'Ask the administrator to configure one Hub reseller login for this workspace.');
             $user=$users[0];
             if (!$user['active'] || $user['tenant_status']!=='active') throw new Problem(403,'Your Hub reseller workspace is unavailable.');
-            return $this->issueSession($user,true);
+            return $this->issueSession($user,$native);
         });
     }
 

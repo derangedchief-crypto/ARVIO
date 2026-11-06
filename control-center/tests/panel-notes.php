@@ -15,7 +15,7 @@ function panelNotesCases(array &$tests,ControlCenter\Application $app,ControlCen
         $app->db->query('UPDATE customers SET notes=? WHERE id=?',['Different Hub note',$customer['id']]);
         try {
             $actor=['role'=>'reseller','tenant_id'=>$binding['tenant_id']];
-            $find=function()use($management,$actor,$customer):array {foreach($management->listing($actor,'customers',[])['items'] as $row)if($row['id']===$customer['id'])return $row;throw new RuntimeException('Fixture not listed');};
+            $find=function()use($management,$actor,$customer):array {$page=1;do{$result=$management->listing($actor,'customers',['page'=>$page]);foreach($result['items'] as $row)if($row['id']===$customer['id'])return $row;$page++;}while($page<=$result['pages']);throw new RuntimeException('Fixture not listed');};
             same($note,$find()['panel_notes']);$note='';same('',$find()['panel_notes']);
             foreach(['tampered','binding'] as $mode){$row=$find();same(null,$row['panel_notes']);same('unavailable',$row['panel_notes_state']);}
             $mode='ok';$note='Device panel note';$device=$management->createDevice($owner,['customer_id'=>$customer['id'],'label'=>'TEST panel notes']);

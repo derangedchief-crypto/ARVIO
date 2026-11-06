@@ -3,7 +3,20 @@
 This is a separate Kotlin / Jetpack Compose Android project. It contains no
 WebView. It uses the licensed `/api/my-hub/` API on Hub Control Center.
 
-Testing version 0.1.8-dev correctly reads numeric and boolean branding-enabled
+Testing version 0.1.10-dev checks for My Hub updates on launch and when returning
+to the foreground (at most once per hour per running process). More and the
+sign-in screen offer a manual check. Updates come from the existing published
+staging-testing release; upload `My-Hub-X.Y.Z-testing.apk` with increasing Android
+versionCode and the same package/signer. APK size, GitHub SHA-256, package,
+version and installed signing certificate are verified before Android installation.
+Users approve the unknown-app permission and Android installer; there is no
+silent install. Install 0.1.10 manually once to enable checks for future versions.
+This is the existing sideload/testing channel, not a Play Store updater.
+It creates category layouts from the shared master
+catalogue without requiring a customer device. The website owner configures
+the private master playlist in Saved setups → Category layouts.
+The layout editor uses a full-screen category list for arranging larger catalogues.
+It correctly reads numeric and boolean branding-enabled
 flags so enabled resellers can save artwork and request builds. Disabled brands
 remain blocked with an explanation; edits must be saved before building.
 It makes the whole Connected devices card tappable and

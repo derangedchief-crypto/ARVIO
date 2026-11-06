@@ -26,4 +26,11 @@
 @media(max-width:600px){.device-records.mobile-records tbody tr{grid-template-areas:'device actions' 'customer customer' 'notes notes' 'access contact'}.device-records.mobile-records td:nth-child(3){grid-area:notes}.device-records.mobile-records td:nth-child(4){grid-area:access}.device-records.mobile-records td:nth-child(5){grid-area:contact}.device-records.mobile-records td:last-child{grid-area:actions}}
 .dashboard-page .activity-chart>svg{display:block;width:100%;height:auto;max-height:none;aspect-ratio:620/250}
 @media(max-width:600px){.dashboard-page .activity-chart>svg text{font-size:24px}}
+/* layout-template-controls:start */
+.layout-template-editor input[type=checkbox]{appearance:auto;width:18px!important;height:18px!important;min-width:18px!important;min-height:18px!important;padding:0!important;margin:0!important;flex:0 0 18px;accent-color:var(--accent)}
+.layout-template-editor .layout-check-hit{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;margin:0;padding:0;cursor:pointer}
+.layout-template-editor .layout-row-controls{display:flex;align-items:center;gap:4px}.layout-template-editor .layout-drag-handle{min-width:36px;min-height:36px;padding:4px 8px;font-size:1.35rem;line-height:1;cursor:grab;touch-action:none;user-select:none}.layout-template-editor .layout-drag-handle:active{cursor:grabbing}
+.layout-template-editor .layout-position{width:72px;min-width:64px;min-height:36px;padding:6px 9px}.layout-template-editor .layout-move-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.layout-template-editor .layout-move-tools input{width:82px;min-width:64px;flex:none}.layout-template-editor .layout-selection-count{color:var(--accent);font-weight:600;margin-right:8px}
+.layout-template-editor tr.layout-selected>td{background:var(--accent-soft)}.layout-template-editor tr.layout-drop-before>td{box-shadow:inset 0 3px var(--accent)}.layout-template-editor tr.layout-drop-after>td{box-shadow:inset 0 -3px var(--accent)}.layout-template-editor .table-scroll td{padding-top:8px;padding-bottom:8px}.layout-template-editor td:nth-child(3){white-space:normal;min-width:180px;overflow-wrap:anywhere}
+/* layout-template-controls:end */
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
