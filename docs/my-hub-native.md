@@ -10,7 +10,10 @@ The user confirmed My Hub's reseller-panel page should match the My TV showcase.
 screenshots. It uses the My TV hero/license-card, paired-phone preview, benefits
 and feature-grid layout with My Hub mint accents. Existing authentication,
 active-account verification, CSRF and license redemption remain in the controller.
-Active licenses show the 0.1.2 testing APK link; other states show license status
+The original page hardcoded the 0.1.2 testing APK. The latest-download update in
+`control-center/deploy/panel-download/` replaces it with an entitlement-checked
+redirect to the newest versioned My Hub APK in the staging-testing release,
+refreshing release metadata within five minutes. Other states show license status
 and the existing redemption flow. Login copy now says reseller-panel username
 and password. Preview data is labelled and testing-build status is explicit.
 
