@@ -51,6 +51,7 @@ jobs:
           --tests '*ProviderOnlyCategoriesTest'
           --tests '*LiveCategoryIndexTest'
           --tests '*PlaylistCategorySectionsTest'
+          --tests '*CategoryMenuInteractionTest'
           --no-daemon
 
       - name: Live management regression checks

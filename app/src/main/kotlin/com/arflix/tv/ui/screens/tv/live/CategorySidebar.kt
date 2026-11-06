@@ -295,7 +295,8 @@ fun CategorySidebar(
                             true
                         }
                         Key.DirectionCenter, Key.Enter, Key.Menu -> {
-                            runActiveMenuAction(menu.focusedIndex)
+                            // Repeats belong to the hold that opened the menu.
+                            if (ev.nativeKeyEvent.repeatCount == 0) runActiveMenuAction(menu.focusedIndex)
                             true
                         }
                         Key.DirectionLeft, Key.Back, Key.Escape -> {
