@@ -4063,6 +4063,8 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    private var progressStorageWarningShown = false
+
     fun saveProgress(
         position: Long,
         duration: Long,
@@ -4082,6 +4084,17 @@ class PlayerViewModel @Inject constructor(
         }
 
         val job = viewModelScope.launch(Dispatchers.IO) {
+            persistPlaybackProgress(onStorageFailure = {
+                android.util.Log.w("PlayerProgress", "Progress could not be saved; retaining previous saved state")
+                if (!progressStorageWarningShown) {
+                    progressStorageWarningShown = true
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context,
+                            "Unable to save viewing progress. Check your device's free storage.",
+                            android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            }) {
             val currentTime = System.currentTimeMillis()
             val progressFraction = (progressPercent / 100f).coerceIn(0f, 1f)
             val selectedStream = _uiState.value.selectedStream
@@ -4329,6 +4342,7 @@ class PlayerViewModel @Inject constructor(
             }
 
             lastIsPlaying = isPlaying
+            }
         }
 
         progressSaveJob = job

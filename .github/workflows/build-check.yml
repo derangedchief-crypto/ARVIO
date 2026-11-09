@@ -35,6 +35,7 @@ jobs:
         run: ./gradlew assembleSideloadDebug --no-daemon
 
       - name: Sentry regression checks
+        timeout-minutes: 10
         run: >-
           ./gradlew :app:testSideloadDebugUnitTest
           --tests '*WatchHistoryTimestampTest'
@@ -43,6 +44,8 @@ jobs:
           --tests '*ApkInstallerThreadingTest'
           --tests '*EpisodeVodVerificationTest'
           --tests '*ManagementHashCompatibilityTest'
+          --tests '*LenientJsonGzipTest'
+          --tests '*PlaybackProgressPersistenceTest'
           --no-daemon
 
       - name: Provider-only Live TV category checks
