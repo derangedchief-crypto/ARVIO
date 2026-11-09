@@ -37,5 +37,5 @@ internal fun decodeLenientJsonGzip(response: Response): Response {
 }
 
 private fun BufferedSource.hasGzipMagic(): Boolean =
-    request(2) && buffer.getByte(0).toInt() and 0xff == 0x1f &&
-        buffer.getByte(1).toInt() and 0xff == 0x8b
+    request(2) && buffer[0].toInt() and 0xff == 0x1f &&
+        buffer[1].toInt() and 0xff == 0x8b
