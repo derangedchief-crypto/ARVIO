@@ -57,6 +57,19 @@ jobs:
           --tests '*CategoryMenuInteractionTest'
           --no-daemon
 
+      - name: Downloaded data retention checks
+        timeout-minutes: 8
+        run: >-
+          ./gradlew :app:testSideloadDebugUnitTest
+          --tests '*ServerGuideSnapshotCacheTest'
+          --tests '*ServerCachedGuideIntegrationTest'
+          --tests '*GuideOwnershipRetentionTest'
+          --tests '*AtomicDownloadedFileTest'
+          --tests '*DownloadedUpdateRetentionTest'
+          --tests '*ApkDownloaderTest'
+          --tests '*CatalogueDiskFileTest'
+          --no-daemon
+
       - name: Five-minute playlist refresh checks
         timeout-minutes: 8
         run: >-

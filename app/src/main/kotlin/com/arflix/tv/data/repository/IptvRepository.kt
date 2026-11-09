@@ -3719,7 +3719,7 @@ class IptvRepository @Inject constructor(
         val marker = "server_import_$sourceKey|${buildEpgSourceSignature(config)}|$mappingHash"
         val prefs = context.getSharedPreferences("arvio_guide_refresh", Context.MODE_PRIVATE)
         try {
-            serverGuideCache.withSnapshot(onProgress) { snapshot ->
+            serverGuideCache.withSnapshot(onProgress, accepted = { it.channelIds.isNotEmpty() && it.fresh }) { snapshot ->
             if (!snapshot.fresh && epgIndex.hasCurrentPrograms(sourceKey)) {
                 // An older fallback artifact must never downgrade a usable local
                 // guide, including provider corrections made after that file.
@@ -9930,7 +9930,7 @@ class IptvRepository @Inject constructor(
             )
             val compressed = gzipBytes(gson.toJson(payload))
             if (compressed.size <= MAX_IPTV_CACHE_BYTES) {
-                cacheFile().writeBytes(compressed)
+                com.arflix.tv.util.replaceDownloadedFile(cacheFile()) { it.write(compressed) }
             } else {
                 val reducedPayload = payload.copy(
                     nowNext = compactNowNext.mapValues { (channelId, value) ->
@@ -9948,10 +9948,11 @@ class IptvRepository @Inject constructor(
                 )
                 val reduced = gzipBytes(gson.toJson(reducedPayload))
                 if (reduced.size <= MAX_IPTV_CACHE_BYTES) {
-                    cacheFile().writeBytes(reduced)
+                    com.arflix.tv.util.replaceDownloadedFile(cacheFile()) { it.write(reduced) }
                 } else {
                     // Final fallback: keep a fast warm-start playlist even if the guide slice is too large.
-                    cacheFile().writeBytes(gzipBytes(gson.toJson(payload.copy(nowNext = emptyMap()))))
+                    val minimal = gzipBytes(gson.toJson(payload.copy(nowNext = emptyMap())))
+                    com.arflix.tv.util.replaceDownloadedFile(cacheFile()) { it.write(minimal) }
                 }
             }
         }
@@ -10078,7 +10079,8 @@ class IptvRepository @Inject constructor(
             ).takeIf { isValidCacheSignature(config, it.configSignature, it.sourceSignature) && it.channels.isNotEmpty() }
                 ?.also {
                     rememberDiscoveredEpgUrls(it.discoveredEpgUrls)
-                    channelCacheFile().writeBytes(gzipBytes(gson.toJson(it)))
+                    val encoded = gzipBytes(gson.toJson(it))
+                    com.arflix.tv.util.replaceDownloadedFile(channelCacheFile()) { output -> output.write(encoded) }
                 }
         }.getOrNull()
     }

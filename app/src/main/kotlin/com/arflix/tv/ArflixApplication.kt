@@ -114,6 +114,11 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         )
         scheduleIptvEpgRefresh()
 
+        appScope.launch(Dispatchers.IO) {
+            delay(5_000L)
+            runCatching { com.arflix.tv.updater.removeInstalledUpdateDownloads(this@ArflixApplication) }
+        }
+
         // Initialize global DNS provider and user agent from DataStore before network calls.
         appScope.launch(Dispatchers.IO) {
             val prefs = settingsDataStore.data.first()

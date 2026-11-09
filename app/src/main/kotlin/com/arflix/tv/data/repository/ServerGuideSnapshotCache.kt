@@ -28,7 +28,8 @@ internal class ServerGuideSnapshotCache(context: Context, client: OkHttpClient, 
     private val hashPattern = Regex("[a-fA-F0-9]{64}")
     private var cleanedPendingFiles = false
 
-    suspend fun <T> withSnapshot(progress: (IptvLoadProgress) -> Unit, use: suspend (ServerGuideSnapshot) -> T): T? =
+    suspend fun <T> withSnapshot(progress: (IptvLoadProgress) -> Unit,
+        accepted: (T) -> Boolean = { true }, use: suspend (ServerGuideSnapshot) -> T): T? =
         withContext(Dispatchers.IO) { mutex.withLock {
             directory.mkdirs()
             if (!cleanedPendingFiles) {
@@ -60,11 +61,11 @@ internal class ServerGuideSnapshotCache(context: Context, client: OkHttpClient, 
             catch (_: Exception) { null }
             if (saved != null && manifest?.first == saved.hash) {
                 progress(IptvLoadProgress("Server guide unchanged — using saved cache", 55))
-                return@withLock use(saved.copy(fresh = true))
+                return@withLock useAndRetire(saved.copy(fresh = true), accepted, use)
             }
             if (saved != null && manifest == null) {
                 progress(IptvLoadProgress("Server unavailable — keeping saved guide", 55))
-                return@withLock use(saved)
+                return@withLock useAndRetire(saved, accepted, use)
             }
             val compressed = File.createTempFile("pending-guide-", ".gz", directory)
             val staged = File.createTempFile("pending-guide-", ".sqlite", directory)
@@ -112,7 +113,6 @@ internal class ServerGuideSnapshotCache(context: Context, client: OkHttpClient, 
                 check(validDatabase(staged, integrity = true)) { "Invalid server guide database" }
                 val target = File(directory, "server-$hash.sqlite")
                 check(staged.renameTo(target)) { "Could not retain downloaded guide" }
-                prefs.edit().putString("hash", hash).apply()
                 snapshot = ServerGuideSnapshot(target, hash, true)
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (_: Exception) {
@@ -123,15 +123,23 @@ internal class ServerGuideSnapshotCache(context: Context, client: OkHttpClient, 
                 SQLiteDatabase.deleteDatabase(staged)
             }
             val selected = snapshot ?: return@withLock null
-            try { use(selected) } finally {
-                // Keep the latest and one previous verified artifact. The mutex
-                // also covers imports, so no caller's source file is removed.
-                val files = directory.listFiles().orEmpty().filter { it.name.startsWith("server-") && it.extension == "sqlite" }
-                val keep = (listOf(selected.file.name) + files.filter { it != selected.file }
-                    .sortedByDescending { it.lastModified() }.take(1).map { it.name }).toSet()
-                files.filterNot { it.name in keep }.forEach { SQLiteDatabase.deleteDatabase(it) }
-            }
+            useAndRetire(selected, accepted, use)
         } }
+
+    private suspend fun <T> useAndRetire(snapshot: ServerGuideSnapshot, accepted: (T) -> Boolean,
+        use: suspend (ServerGuideSnapshot) -> T): T {
+        val result = use(snapshot)
+        // Only retire old files AFTER the caller successfully installs a usable
+        // replacement. Exceptions, cancellation and empty imports keep fallback.
+        if (accepted(result)) {
+            if (prefs.edit().putString("hash", snapshot.hash).commit()) {
+                directory.listFiles().orEmpty().filter {
+                    it != snapshot.file && it.name.matches(Regex("server-[a-fA-F0-9]{64}\\.sqlite"))
+                }.forEach { SQLiteDatabase.deleteDatabase(it) }
+            }
+        }
+        return result
+    }
 
     private fun validDatabase(file: File, integrity: Boolean = false): Boolean = try {
         if (!file.isFile || file.length() == 0L) false else SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
