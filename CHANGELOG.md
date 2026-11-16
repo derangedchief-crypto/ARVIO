@@ -7,6 +7,11 @@ All notable changes to this project are documented in this file.
 ### Added
 - (Nothing yet)
 
+## [2.0.136] - 2026-11-16
+
+- Corrected the Cloud Stream scraper's 20 GB size filter, restoring results suppressed by the previous configuration.
+- Includes the startup, storage-retention and playback-stability improvements from 2.0.135.
+
 ## [2.0.135] - 2026-11-16
 
 - Reduced memory usage when downloading compressed provider responses.
