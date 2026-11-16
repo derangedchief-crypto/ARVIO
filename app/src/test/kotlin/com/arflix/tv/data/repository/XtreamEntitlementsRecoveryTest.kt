@@ -41,7 +41,7 @@ class XtreamEntitlementsRecoveryTest {
             Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("Fixture")
                 .body("""[{"category_id":"1","category_name":"Cloud Stream Enabled"}]""".toResponseBody()).build()
         }.build()
-        return XtreamEntitlementsGuard(context,client,iptv,entitlements,Lazy{streams})
+        return XtreamEntitlementsGuard(context,Lazy{client},Lazy{iptv},Lazy{entitlements},Lazy{streams})
     }
     @Before fun setup(){
         prefs.edit().clear().putString("granted_addon_id:cloud_stream",addon.id)
@@ -53,6 +53,16 @@ class XtreamEntitlementsRecoveryTest {
         coEvery{streams.ensureCustomAddons(listOf(url))}returns listOf(Result.success(addon))
     }
     @After fun cleanup(){unmockkAll()}
+    @Test fun lifecycleRegistrationDoesNotConstructNetworkOrRepositoryGraph() {
+        val guard = XtreamEntitlementsGuard(
+            context,
+            Lazy { error("Network client constructed during application startup") },
+            Lazy { error("IPTV repository constructed during application startup") },
+            Lazy { error("Entitlements repository constructed during application startup") },
+            Lazy { error("Stream repository constructed during application startup") },
+        )
+        guard.attach(context)
+    }
     @Test fun normalRefreshPreservesExistingAddonWithoutRemovalOrReinstallation()=runBlocking {
         assertTrue(guard().applyResolved(resolved))
         assertEquals(addon.id,prefs.getString("granted_addon_id:cloud_stream",null))

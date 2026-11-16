@@ -69,21 +69,26 @@ private const val MAX_RESPONSE_CHARS = 2_000_000
 @Singleton
 class XtreamEntitlementsGuard @Inject constructor(
     @ApplicationContext private val context: Context,
-    okHttpClient: OkHttpClient,
-    private val iptvRepository: IptvRepository,
-    private val entitlementsRepository: XtreamEntitlementsRepository,
+    private val okHttpClient: Lazy<OkHttpClient>,
+    private val iptvRepositoryProvider: Lazy<IptvRepository>,
+    private val entitlementsRepositoryProvider: Lazy<XtreamEntitlementsRepository>,
     // Lazy: StreamRepository is a heavy singleton and most app opens resolve to
     // "nothing changed", so it should not be built on the cold-start path.
     private val streamRepository: Lazy<StreamRepository>
 ) {
 
     /** Short timeouts: this is a background check, never worth holding resources for. */
-    private val client: OkHttpClient = okHttpClient.newBuilder()
+    private val iptvRepository get() = iptvRepositoryProvider.get()
+    private val entitlementsRepository get() = entitlementsRepositoryProvider.get()
+
+    // Lifecycle registration is cheap; materialize network/repository dependencies
+    // only inside the delayed IO check, not Application.onCreate's Hilt injection.
+    private val client: OkHttpClient by lazy { okHttpClient.get().newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
         .callTimeout(25, TimeUnit.SECONDS)
-        .build()
+        .build() }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()

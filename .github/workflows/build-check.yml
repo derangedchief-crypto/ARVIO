@@ -46,6 +46,8 @@ jobs:
           --tests '*ManagementHashCompatibilityTest'
           --tests '*LenientJsonGzipTest'
           --tests '*PlaybackProgressPersistenceTest'
+          --tests '*ActualApplicationStartupTest'
+          --tests '*XtreamEntitlementsRecoveryTest'
           --no-daemon
 
       - name: Provider-only Live TV category checks
