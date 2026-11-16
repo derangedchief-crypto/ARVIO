@@ -98,7 +98,7 @@ class XtreamEntitlementsRecoveryTest {
         assertNull(prefs.getString("granted_addon_id:cloud_stream",null))
         coVerify(exactly=1){streams.removeAddon(addon.id)}
         coVerify(exactly=0){streams.ensureManagedCloudAddon(any(),any())}
-        coVerify(exactly=1){streams.revokeManagedCloudAddon(url,any())}
+        coVerify(exactly=1){streams.revokeManagedCloudAddon(url,addon.id)}
     }
     @Test fun failedRetirementIsRetriedWithoutLosingTheReplacement()=runBlocking {
         val replacement=addon.copy(id="new-cloud")

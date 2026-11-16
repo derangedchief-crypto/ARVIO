@@ -226,6 +226,7 @@ class XtreamEntitlementsGuard @Inject constructor(
 
         val repository = streamRepository.get()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val previousCloudAddonId = prefs.getString(ADDON_ID_KEY_PREFIX + "cloud_stream", null)
 
         // Tracked by the entitlement definition's stable id ("cloud_stream"),
         // never by the manifest URL — a URL can change shape entirely (a new
@@ -270,7 +271,7 @@ class XtreamEntitlementsGuard @Inject constructor(
             // resurrect the retired managed configuration.
             for (url in resolved.revoked) {
                 val revoked = withTimeoutOrNull(REMOVE_TIMEOUT_MS) {
-                    repository.revokeManagedCloudAddon(url, prefs.getString(ADDON_ID_KEY_PREFIX + "cloud_stream", null))
+                    repository.revokeManagedCloudAddon(url, previousCloudAddonId)
                     true
                 }
                 if (revoked != true) complete = false
