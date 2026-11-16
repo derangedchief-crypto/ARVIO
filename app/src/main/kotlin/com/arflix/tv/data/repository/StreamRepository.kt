@@ -907,6 +907,73 @@ class StreamRepository @Inject constructor(
         return newAddon
     }
 
+    private val managedCloudMutex = Mutex()
+    private val managedCloudKey = stringPreferencesKey("managed_cloud_addon_v1")
+
+    private fun managedCloud(prefs: Preferences): ManagedCloudAddon? =
+        prefs[managedCloudKey]?.let { gson.fromJson(it, ManagedCloudAddon::class.java) }
+
+    private fun protectManagedCloud(prefs: Preferences, incoming: List<Addon>): List<Addon> =
+        managedCloud(prefs)?.protectCloud(incoming, readSharedOrLegacyAddons(prefs).orEmpty()) ?: incoming
+
+    /** Fetch first, then atomically promote the new configuration and retire only owned sources. */
+    internal suspend fun ensureManagedCloudAddon(url: String, trackedId: String?): Result<Addon> = withContext(Dispatchers.IO) {
+        try {
+            managedCloudMutex.withLock {
+                val normalized = resolveAddonInstallUrl(url)
+                val existing = installedAddons.first().firstOrNull {
+                    it.url?.let(::normalizeAddonInputUrl) == normalized && it.isInstalled && it.manifest != null
+                }
+                val replacement = existing ?: hydrateCustomAddon(normalized, null)
+                check(replacement.manifest?.resources?.any { it.name == "stream" } == true) {
+                    "Cloud manifest has no stream resource"
+                }
+                var installed = replacement
+                context.streamDataStore.edit { prefs ->
+                    val (addons, receipt) = replaceManagedCloudAddon(
+                        readSharedOrLegacyAddons(prefs) ?: getDefaultAddonList(), managedCloud(prefs),
+                        replacement, normalized, trackedId,
+                    )
+                    installed = requireNotNull(receipt.active)
+                    val json = gson.toJson(addons)
+                    prefs[sharedAddonsKey] = json
+                    prefs[addonsKey()] = json
+                    prefs.remove(sharedPendingAddonsKey)
+                    prefs.remove(pendingAddonsKey())
+                    prefs[managedCloudKey] = gson.toJson(receipt)
+                    prefs[addonsUpdatedAtKey] = System.currentTimeMillis()
+                }
+                synchronized(streamResultCache) { streamResultCache.clear() }
+                invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "replace managed cloud source")
+                Result.success(installed)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
+    internal suspend fun revokeManagedCloudAddon(url: String, trackedId: String?) = withContext(Dispatchers.IO) {
+        managedCloudMutex.withLock {
+            context.streamDataStore.edit { prefs ->
+                val (addons, receipt) = replaceManagedCloudAddon(
+                    readSharedOrLegacyAddons(prefs) ?: getDefaultAddonList(), managedCloud(prefs),
+                    null, normalizeAddonInputUrl(url), trackedId,
+                )
+                val json = gson.toJson(addons)
+                prefs[sharedAddonsKey] = json
+                prefs[addonsKey()] = json
+                prefs.remove(sharedPendingAddonsKey)
+                prefs.remove(pendingAddonsKey())
+                prefs[managedCloudKey] = gson.toJson(receipt)
+                prefs[addonsUpdatedAtKey] = System.currentTimeMillis()
+            }
+            synchronized(streamResultCache) { streamResultCache.clear() }
+            invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "revoke managed cloud source")
+        }
+    }
+
     suspend fun ensureCustomAddons(urls: List<String>): List<Result<Addon>> = withContext(Dispatchers.IO) {
         val requested = urls
             .map { resolveAddonInstallUrl(it) }
@@ -1050,13 +1117,25 @@ class StreamRepository @Inject constructor(
 
     suspend fun removeAddon(addonId: String) {
         if (addonId == "opensubtitles") return
-        val current = installedAddons.first()
-        val addons = current.filter { it.id != addonId }
-        saveAddons(addons)
+        context.streamDataStore.edit { prefs ->
+            val current = readSharedOrLegacyAddons(prefs) ?: getDefaultAddonList()
+            val receipt = managedCloud(prefs)
+            if (receipt?.active?.id == addonId) {
+                prefs[managedCloudKey] = gson.toJson(receipt.copy(active = null))
+            }
+            val json = gson.toJson(current.filterNot { it.id == addonId })
+            prefs[sharedAddonsKey] = json
+            prefs[addonsKey()] = json
+            prefs.remove(sharedPendingAddonsKey)
+            prefs.remove(pendingAddonsKey())
+            prefs[addonsUpdatedAtKey] = System.currentTimeMillis()
+        }
+        synchronized(streamResultCache) { streamResultCache.clear() }
+        invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "remove addon")
     }
 
     suspend fun replaceAddonsFromCloud(addons: List<Addon>) {
-        saveAddons(enforceOpenSubtitles(addons).filterNot(::isIncompleteExternalAddon), stampChange = false)
+        replaceSharedAddonsFromCloud(addons)
     }
 
     suspend fun getAddonsForProfile(profileId: String): List<Addon> {
@@ -1069,9 +1148,10 @@ class StreamRepository @Inject constructor(
     suspend fun replaceAddonsForProfile(profileId: String, addons: List<Addon>) {
         val resolved = enforceOpenSubtitles(addons).filterNot(::isIncompleteExternalAddon)
         context.streamDataStore.edit { prefs ->
-            prefs[sharedAddonsKey] = gson.toJson(resolved)
+            val protected = protectManagedCloud(prefs, resolved)
+            prefs[sharedAddonsKey] = gson.toJson(protected)
             prefs.remove(sharedPendingAddonsKey)
-            prefs[addonsKeyFor(profileId)] = gson.toJson(resolved)
+            prefs[addonsKeyFor(profileId)] = gson.toJson(protected)
             prefs.remove(pendingAddonsKeyFor(profileId))
         }
         synchronized(streamResultCache) { streamResultCache.clear() }
@@ -1081,7 +1161,7 @@ class StreamRepository @Inject constructor(
     suspend fun replaceSharedAddonsFromCloud(addons: List<Addon>) {
         val resolved = enforceOpenSubtitles(addons).filterNot(::isIncompleteExternalAddon)
         context.streamDataStore.edit { prefs ->
-            prefs[sharedAddonsKey] = gson.toJson(resolved)
+            prefs[sharedAddonsKey] = gson.toJson(protectManagedCloud(prefs, resolved))
             prefs.remove(sharedPendingAddonsKey)
         }
         synchronized(streamResultCache) { streamResultCache.clear() }
@@ -1101,11 +1181,19 @@ class StreamRepository @Inject constructor(
     }
 
     private suspend fun saveAddons(addons: List<Addon>, stampChange: Boolean = true) {
-        val json = gson.toJson(addons.map { sanitizeAddonDisplayName(it) })
-
         // Save locally to the shared account-level addon list. Mirror to the
         // active profile key so older builds/cloud payloads can still recover it.
         context.streamDataStore.edit { prefs ->
+            val receipt = managedCloud(prefs)
+            // Also fence stale read/modify/write snapshots from ordinary addon
+            // operations racing a managed rotation. Preserve explicit toggles.
+            val current = readSharedOrLegacyAddons(prefs).orEmpty()
+            val active = receipt?.active?.let { saved ->
+                addons.firstOrNull { it.id == saved.id } ?: current.firstOrNull { it.id == saved.id } ?: saved
+            }
+            val protected = if (receipt == null) addons else
+                addons.filterNot(receipt::owns) + listOfNotNull(active)
+            val json = gson.toJson(protected.map { sanitizeAddonDisplayName(it) })
             prefs[sharedAddonsKey] = json
             prefs.remove(sharedPendingAddonsKey)
             prefs[addonsKey()] = json

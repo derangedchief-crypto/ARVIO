@@ -92,6 +92,7 @@ class XtreamEntitlementsGuard @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
+    private val applyMutex = Mutex()
     private var checkJob: Job? = null
 
     /** Main-thread only (ActivityLifecycleCallbacks are always dispatched there). */
@@ -220,8 +221,8 @@ class XtreamEntitlementsGuard @Inject constructor(
         complete
     }
 
-    internal suspend fun applyResolved(resolved: XtreamEntitlementsResult.Resolved): Boolean {
-        if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return true
+    internal suspend fun applyResolved(resolved: XtreamEntitlementsResult.Resolved): Boolean = applyMutex.withLock {
+        if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return@withLock true
 
         val repository = streamRepository.get()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -241,7 +242,7 @@ class XtreamEntitlementsGuard @Inject constructor(
             val addonIdKey = ADDON_ID_KEY_PREFIX + entitlement.id
             val previousAddonId = prefs.getString(addonIdKey,null)
             val result = try {
-                withTimeoutOrNull(INSTALL_TIMEOUT_MS) { repository.ensureCustomAddons(listOf(entitlement.manifestUrl)).singleOrNull() }
+                withTimeoutOrNull(INSTALL_TIMEOUT_MS) { repository.ensureManagedCloudAddon(entitlement.manifestUrl, previousAddonId) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { null }
             (result?.exceptionOrNull() as? CancellationException)?.let { throw it }
@@ -265,6 +266,15 @@ class XtreamEntitlementsGuard @Inject constructor(
         }
 
         if (resolved.revoked.isNotEmpty()) {
+            // Record revocation locally as well, so a later cloud pull cannot
+            // resurrect the retired managed configuration.
+            for (url in resolved.revoked) {
+                val revoked = withTimeoutOrNull(REMOVE_TIMEOUT_MS) {
+                    repository.revokeManagedCloudAddon(url, prefs.getString(ADDON_ID_KEY_PREFIX + "cloud_stream", null))
+                    true
+                }
+                if (revoked != true) complete = false
+            }
             val removed = withTimeoutOrNull(REMOVE_TIMEOUT_MS) {
                 repository.removeCustomAddonsByUrl(resolved.revoked)
             }
@@ -284,7 +294,7 @@ class XtreamEntitlementsGuard @Inject constructor(
         }
         prefs.edit().putStringSet(KEY_RETIRED_ADDON_IDS,retiredIds.toSet())
             .putStringSet(KEY_TRACKED_DEFINITION_IDS, trackedDefinitionIds + grantedDefinitionIds).apply()
-        return complete
+        complete
     }
 
     /**

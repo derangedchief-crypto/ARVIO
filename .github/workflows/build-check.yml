@@ -48,6 +48,10 @@ jobs:
           --tests '*PlaybackProgressPersistenceTest'
           --tests '*ActualApplicationStartupTest'
           --tests '*XtreamEntitlementsRecoveryTest'
+          --tests '*ManagedCloudAddonTest'
+          --tests '*ManagedCloudAddonPersistenceTest'
+          --tests '*XtreamGateSubmitTest'
+          --tests '*CloudSyncRepositoryAddonMergeTest'
           --no-daemon
 
       - name: Provider-only Live TV category checks

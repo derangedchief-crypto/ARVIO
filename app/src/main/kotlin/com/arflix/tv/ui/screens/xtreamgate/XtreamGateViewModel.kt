@@ -8,7 +8,7 @@ import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.IptvActivationRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileRepository
-import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.XtreamEntitlementsGuard
 import com.arflix.tv.data.repository.XtreamEntitlementsRepository
 import com.arflix.tv.data.repository.XtreamEntitlementsResult
 import dagger.Lazy
@@ -28,8 +28,7 @@ import javax.inject.Inject
 private const val XTREAM_GATE_HOST_URL = "https://tv.extremeiptv.net"
 
 /** Hard ceilings so a dead manifest host can never stall sign-in. */
-private const val ENTITLEMENT_INSTALL_TIMEOUT_MS = 15_000L
-private const val ENTITLEMENT_REMOVE_TIMEOUT_MS = 5_000L
+private const val ENTITLEMENT_INSTALL_TIMEOUT_MS = 25_000L
 
 data class XtreamGateUiState(
     val activationCode: String = "",
@@ -46,10 +45,9 @@ class XtreamGateViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val profileManager: ProfileManager,
     private val entitlementsRepository: XtreamEntitlementsRepository,
-    // Lazy on purpose: StreamRepository is a heavy singleton (addon health load,
-    // quality-filter warmup, Telegram resolver) and this gate is on the cold-start
-    // path. Only construct it if the package actually grants or revokes an addon.
-    private val streamRepository: Lazy<StreamRepository>,
+    // Resolve the shared installer only once provider data establishes an
+    // entitlement. Its heavy StreamRepository dependency remains lazy too.
+    private val entitlementsGuard: Lazy<XtreamEntitlementsGuard>,
     primaryAccess: com.arflix.tv.access.PrimaryAccessRepository,
 ) : ViewModel() {
 
@@ -202,9 +200,8 @@ class XtreamGateViewModel @Inject constructor(
      * server-side filtered by the line's bouquets, so a marker category present
      * only in the paid packages is a signal the client cannot fake.
      *
-     * Uses ensureCustomAddons() rather than addCustomAddon() so a re-login does not
-     * reinstate an addon the user deliberately disabled: ensureCustomAddons only
-     * fetches the manifest when nothing with that URL is installed yet.
+     * Uses the same tracked replacement transaction as the background guard.
+     * Ownership and disabled-state preservation must not depend on install path.
      *
      * Addons are account-level (shared_installed_addons_v1), not profile-scoped, so
      * unlike the IPTV playlist above this does not depend on the active profile.
@@ -239,36 +236,16 @@ class XtreamGateViewModel @Inject constructor(
         )
         if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return
 
-        val repository = streamRepository.get()
-
         if (resolved.granted.isNotEmpty()) {
             val names = resolved.granted.joinToString(", ") { it.displayName }
             _uiState.value = _uiState.value.copy(progressText = "Unlocking $names…")
-            val results = withTimeoutOrNull(ENTITLEMENT_INSTALL_TIMEOUT_MS) {
-                repository.ensureCustomAddons(resolved.granted.map { it.manifestUrl })
-            }
-            if (results == null) {
-                System.err.println("[XtreamGate] entitlement install timed out for: $names")
-            } else {
-                // Not indexed against `granted`: ensureCustomAddons() normalizes and
-                // de-duplicates the URLs it was given, so its result list is not
-                // guaranteed to be positionally aligned with the input.
-                results.forEach { result ->
-                    result.onSuccess { addon ->
-                        System.err.println("[XtreamGate] entitlement addon ready: ${addon.name} (${addon.id})")
-                    }.onFailure { error ->
-                        System.err.println("[XtreamGate] entitlement addon failed: ${error.message}")
-                    }
-                }
-            }
         }
-
-        if (resolved.revoked.isNotEmpty()) {
-            // Package no longer carries the marker — drop the addon so a downgrade
-            // actually takes effect instead of leaving a paid addon installed forever.
-            withTimeoutOrNull(ENTITLEMENT_REMOVE_TIMEOUT_MS) {
-                repository.removeCustomAddonsByUrl(resolved.revoked)
-            }
+        val guard = entitlementsGuard.get()
+        val complete = withTimeoutOrNull(ENTITLEMENT_INSTALL_TIMEOUT_MS) {
+            guard.applyResolved(resolved)
+        }
+        if (complete != true) {
+            guard.scheduleCheck("sign_in_retry", initialDelayMs = 1_000L, minIntervalMs = 0L)
         }
     }
 
