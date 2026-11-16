@@ -7,6 +7,14 @@ All notable changes to this project are documented in this file.
 ### Added
 - (Nothing yet)
 
+## [2.0.135] - 2026-11-16
+
+- Reduced memory usage when downloading compressed provider responses.
+- Improved startup responsiveness by deferring background-service initialization.
+- Retire old guide snapshots after a usable replacement is imported; failed refreshes keep the working guide.
+- Save downloaded channel caches and update files atomically and clean up obsolete installed-update APKs.
+- Handle playback-progress storage failures without crashing the player.
+
 ## [1.9.995] - 2026-08-20
 
 - Added 16 KB memory-page support to the Play release native libraries.

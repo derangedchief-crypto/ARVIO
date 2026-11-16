@@ -35,7 +35,9 @@ the public HTTPS OAuth callback; issue evidence was read live on November 16.
 - ANDROID-1M: latest November 15 event still runs 2.0.134/450 and the exact eager
   decodeGzipLayers/readBytes allocation removed by 3f554c6 + 0a49441. Streaming
   regression passed GitHub Build Check 42635304768 and 42638912545. Fix exists in
-  staging/main but is not yet shipped. Resolve in next release, not as deployed.
+  staging/main. Marked resolved with an explicit delivery-pending comment. The
+  integration's next-release action incorrectly selected an existing reseller
+  release; that association was reverted before resolving the code defect.
 - ANDROID-1D: ISO offset watch-history timestamp handling and regression already
   shipped with 2.0.134. Latest event remains 2.0.131/447 on November 2.
 - ANDROID-1F: protected-primary cloud merge and persistence regression already
@@ -54,3 +56,7 @@ GitHub Build Check includes actual Hilt application startup and entitlement reco
 tests, including lifecycle registration with dependency factories that fail if
 evaluated during startup. Existing timestamp/cloud merge, gzip/storage, retention,
 playlist/category and management regressions remain in the same workflow.
+
+Build Check 43897693638 passed exact source f067dfc887d12e4d5928b05e70caa78976ad1af7.
+The user subsequently authorized customer publication as 2.0.135/code 451. Release
+preparation is not proof of publication; verify the release workflow and artifact.
