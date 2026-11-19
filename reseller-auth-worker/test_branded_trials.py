@@ -205,18 +205,38 @@ class PlanValidationTest(unittest.TestCase):
 
     def test_invalid_package_does_not_block_valid_catalogue_or_change_fingerprints(self):
         adapter,cur,conn,credit=self.adapter();cur.fetchone.side_effect=None;cur.fetchone.return_value={'id':101,'username':'TEST','status':1}
-        cur.fetchall.return_value=[dict(PLAN,id=92,duration=0,duration_value=24),dict(PLAN),dict(PLAN,id=93,bouquets='[]')]
+        cur.fetchall.return_value=[dict(PLAN,id=92,duration=0,duration_value=0),dict(PLAN),dict(PLAN,id=93,bouquets='[]')]
         with self.assertLogs(module.__name__,level='WARNING') as logs:data=adapter.catalog('101')
         self.assertEqual([module.plan_document(PLAN)],data['plans']);self.assertEqual(2,len(logs.output))
         conn.rollback.assert_called_once();conn.commit.assert_not_called();credit.assert_not_called()
         self.assertFalse(any(call.args[0].startswith(('INSERT','UPDATE','DELETE')) for call in cur.execute.call_args_list))
 
     def test_all_invalid_catalogue_is_empty_but_invalid_plan_still_cannot_be_created(self):
-        adapter,cur,conn,credit=self.adapter();owner={'id':101,'username':'TEST','status':1,'credits':'5'};bad=dict(PLAN,duration=0,duration_value=24)
+        adapter,cur,conn,credit=self.adapter();owner={'id':101,'username':'TEST','status':1,'credits':'5'};bad=dict(PLAN,duration=0,duration_value=0)
         cur.fetchone.side_effect=None;cur.fetchone.return_value=owner;cur.fetchall.return_value=[bad]
         with self.assertLogs(module.__name__,level='WARNING'):self.assertEqual([],adapter.catalog('101')['plans'])
         cur.fetchone.side_effect=[owner,bad]
         with self.assertRaises(module.TrialRejected):adapter.owner_plan(cur,request())
+
+    def test_duration_value_package_catalogue_creation_and_result_agree_on_24_hours(self):
+        plan=dict(PLAN,duration=0,duration_value=24);doc=module.plan_document(plan);self.assertEqual(24,doc['duration'])
+        spec=dict(request(),plan_fingerprint=doc['fingerprint']);adapter,cur,conn,credit=self.adapter();owner={'id':101,'username':'TEST','status':1,'credits':'5'}
+        cur.fetchone.side_effect=None;cur.fetchone.return_value=owner;cur.fetchall.return_value=[plan]
+        self.assertEqual([doc],adapter.catalog('101')['plans'])
+        cur.fetchone.side_effect=[owner,plan,None];cur.fetchall.return_value=[]
+        now=datetime.datetime.now(datetime.timezone.utc);adapter.worker['_utcnow']=lambda:now
+        self.assertEqual('999',adapter.create(spec))
+        values=next(c.args[1] for c in cur.execute.call_args_list if c.args[0].startswith('INSERT INTO customers'))
+        self.assertEqual(int((now+datetime.timedelta(hours=24)).timestamp()),values[3]);self.assertEqual((24,'hours',24),values[4:7]);self.assertEqual(0,plan['duration'])
+        row=dict(self.result_row(adapter),duration_value=24);cur.fetchone.side_effect=[row,plan];cur.fetchall.return_value=[{'id':999}]
+        self.assertEqual('123456',adapter.result(spec,'999')['activation_code'])
+        changed=dict(plan,duration_value=48);cur.fetchone.side_effect=[owner,changed]
+        with self.assertRaises(module.TrialRejected):adapter.owner_plan(cur,spec)
+
+    def test_duration_fallback_rejects_invalid_lengths_and_preserves_positive_duration(self):
+        for raw in [-1,'1.5','NaN',1000001]:
+            with self.assertRaises(module.TrialRejected):module.plan_document(dict(PLAN,duration=0,duration_value=raw))
+        self.assertEqual(24,module.plan_document(dict(PLAN,duration=24,duration_value=48))['duration'])
 
 
 if __name__=='__main__':unittest.main()

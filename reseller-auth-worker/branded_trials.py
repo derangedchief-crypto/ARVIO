@@ -85,6 +85,9 @@ def plan_document(plan):
             if not n.is_finite() or n<0 or n>1000000 or n!=n.to_integral_value():raise ValueError()
             return int(n)
         duration=bounded_integer(plan.get('duration'),0);connections=bounded_integer(plan.get('max_connections') or 1,1);legacy_duration=bounded_integer(plan.get('duration_value'),0)
+        # Some panel packages store the displayed length in duration_value.
+        # Preserve established positive-duration packages and their fingerprints.
+        if duration==0:duration=legacy_duration
         groups=group_ids(plan.get('bouquets') or '[]')
         period=str(plan.get('duration_period') or '').lower()
         name=str(plan.get('package_name') or '')
@@ -238,15 +241,16 @@ class ExistingPanelAdapter:
         if not plan or str(plan.get('type')) != '1': raise TrialRejected('Select an enabled trial plan')
         group, overrides = self.worker['_reseller_package_scope'](cur, owner['username'])
         if not self.worker['_package_allowed'](plan, group, overrides): raise TrialRejected('Trial plan is unavailable for this reseller')
-        duration = int(plan.get('duration') or 0)
+        document = plan_document(plan)
+        duration = document['duration']
         period = str(plan.get('duration_period') or '').lower()
         if duration <= 0 or period not in {'hour','hours','day','days','week','weeks','month','months','year','years'}:
             raise TrialRejected('Invalid trial duration')
         try: price = decimal.Decimal(str(plan.get('credits') or '0'))
         except decimal.InvalidOperation: raise TrialRejected('Invalid trial price') from None
         if not price.is_finite() or price < 0: raise TrialRejected('Invalid trial price')
-        if not hmac.compare_digest(plan_document(plan)['fingerprint'],spec['plan_fingerprint']):raise TrialRejected('Trial plan changed; review its current limits and price')
-        return owner, plan, price
+        if not hmac.compare_digest(document['fingerprint'],spec['plan_fingerprint']):raise TrialRejected('Trial plan changed; review its current limits and price')
+        return owner, dict(plan,duration=duration), price
 
     def catalog(self, reseller_id):
         if not isinstance(reseller_id,str) or not re.fullmatch('[1-9][0-9]{0,18}',reseller_id):raise TrialRejected('Invalid reseller identity')
