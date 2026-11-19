@@ -41,7 +41,7 @@ class XtreamEntitlementsRecoveryTest {
             Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("Fixture")
                 .body("""[{"category_id":"1","category_name":"Cloud Stream Enabled"}]""".toResponseBody()).build()
         }.build()
-        return XtreamEntitlementsGuard(context,client,iptv,entitlements,Lazy{streams})
+        return XtreamEntitlementsGuard(context,Lazy{client},Lazy{iptv},Lazy{entitlements},Lazy{streams})
     }
     @Before fun setup(){
         prefs.edit().clear().putString("granted_addon_id:cloud_stream",addon.id)
@@ -50,31 +50,41 @@ class XtreamEntitlementsRecoveryTest {
         coEvery{iptv.verifyXtreamLogin(any(),any(),any())}returns XtreamLoginCheckResult(true)
         every{entitlements.markerCategoryNames(any())}returns emptyList()
         every{entitlements.resolve(any())}returns resolved
-        coEvery{streams.ensureCustomAddons(listOf(url))}returns listOf(Result.success(addon))
+        coEvery{streams.ensureManagedCloudAddon(url,any())}returns Result.success(addon)
     }
     @After fun cleanup(){unmockkAll()}
+    @Test fun lifecycleRegistrationDoesNotConstructNetworkOrRepositoryGraph() {
+        val guard = XtreamEntitlementsGuard(
+            context,
+            Lazy { error("Network client constructed during application startup") },
+            Lazy { error("IPTV repository constructed during application startup") },
+            Lazy { error("Entitlements repository constructed during application startup") },
+            Lazy { error("Stream repository constructed during application startup") },
+        )
+        guard.attach(context)
+    }
     @Test fun normalRefreshPreservesExistingAddonWithoutRemovalOrReinstallation()=runBlocking {
         assertTrue(guard().applyResolved(resolved))
         assertEquals(addon.id,prefs.getString("granted_addon_id:cloud_stream",null))
         coVerify(exactly=0){streams.removeAddon(any())}
-        coVerify(exactly=1){streams.ensureCustomAddons(listOf(url))}
+        coVerify(exactly=1){streams.ensureManagedCloudAddon(url,addon.id)}
     }
     @Test fun failedManifestRefreshKeepsWorkingCloudAndDoesNotThrottleRecovery()=runBlocking {
-        coEvery{streams.ensureCustomAddons(listOf(url))}returns listOf(Result.failure(java.io.IOException("Offline")))
+        coEvery{streams.ensureManagedCloudAddon(url,any())}returns Result.failure(java.io.IOException("Offline"))
         val guard=guard()
         assertFalse(guard.enforce("fixture",0))
         assertEquals(addon.id,prefs.getString("granted_addon_id:cloud_stream",null))
         assertEquals(0L,prefs.getLong("last_check_at",0L))
         coVerify(exactly=0){streams.removeAddon(any())}
-        coEvery{streams.ensureCustomAddons(listOf(url))}returns listOf(Result.success(addon))
+        coEvery{streams.ensureManagedCloudAddon(url,any())}returns Result.success(addon)
         assertTrue(guard.enforce("retry",30*60_000L))
         assertTrue(prefs.getLong("last_check_at",0L)>0L)
     }
     @Test fun replacementIsInstalledAndTrackedBeforeTheOldIdentityIsRemoved()=runBlocking {
         val replacement=addon.copy(id="new-cloud")
-        coEvery{streams.ensureCustomAddons(listOf(url))}coAnswers{
+        coEvery{streams.ensureManagedCloudAddon(url,any())}coAnswers{
             assertEquals(addon.id,prefs.getString("granted_addon_id:cloud_stream",null))
-            listOf(Result.success(replacement))
+            Result.success(replacement)
         }
         coEvery{streams.removeAddon(addon.id)}coAnswers{
             assertEquals(replacement.id,prefs.getString("granted_addon_id:cloud_stream",null))
@@ -87,11 +97,12 @@ class XtreamEntitlementsRecoveryTest {
         assertTrue(guard().applyResolved(XtreamEntitlementsResult.Resolved(emptyList(),listOf(url),null,1)))
         assertNull(prefs.getString("granted_addon_id:cloud_stream",null))
         coVerify(exactly=1){streams.removeAddon(addon.id)}
-        coVerify(exactly=0){streams.ensureCustomAddons(any())}
+        coVerify(exactly=0){streams.ensureManagedCloudAddon(any(),any())}
+        coVerify(exactly=1){streams.revokeManagedCloudAddon(url,addon.id)}
     }
     @Test fun failedRetirementIsRetriedWithoutLosingTheReplacement()=runBlocking {
         val replacement=addon.copy(id="new-cloud")
-        coEvery{streams.ensureCustomAddons(any())}returns listOf(Result.success(replacement))
+        coEvery{streams.ensureManagedCloudAddon(any(),any())}returns Result.success(replacement)
         coEvery{streams.removeAddon(addon.id)}throws java.io.IOException("Temporary storage failure")
         val guard=guard()
         try{guard.applyResolved(resolved);fail("Fixture must exercise cleanup failure")}catch(_:java.io.IOException){}
@@ -103,7 +114,7 @@ class XtreamEntitlementsRecoveryTest {
         assertEquals(replacement.id,prefs.getString("granted_addon_id:cloud_stream",null))
     }
     @Test fun cancelledRefreshPreservesOldIdentityAndPropagatesCancellation()=runBlocking {
-        coEvery{streams.ensureCustomAddons(any())}throws CancellationException("Cancelled")
+        coEvery{streams.ensureManagedCloudAddon(any(),any())}throws CancellationException("Cancelled")
         try{guard().applyResolved(resolved);fail("Cancellation must propagate")}catch(_:CancellationException){}
         assertEquals(addon.id,prefs.getString("granted_addon_id:cloud_stream",null))
         coVerify(exactly=0){streams.removeAddon(any())}

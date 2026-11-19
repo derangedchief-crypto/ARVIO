@@ -14,12 +14,12 @@ data class ExtraPlaylistDecision(val allowed:Boolean,val seconds:Long=0,val prim
 /** No cached unlock or device clock. A fresh server decision is needed only for additions. */
 @Singleton
 class ExtraPlaylistLicence @Inject constructor(@ApplicationContext private val context: Context) {
+    private val api by lazy { ManagementApi() }
     suspend fun authorize(config: IptvConfig) {
         if(!decision(config).allowed)throw ExtraPlaylistLicenceException("Extra Playlists is locked. Your reseller needs an active monthly add-on.")
     }
     suspend fun decision(config:IptvConfig):ExtraPlaylistDecision {
         try {
-            val api = ManagementApi()
             val policy = api.control("/api/device/addons/policy", JSONObject())
             check(policy.getInt("schema_version") == 1)
             if (!policy.getBoolean("enforced")) return ExtraPlaylistDecision(true,900,graceEligible=false)

@@ -42,6 +42,7 @@ import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.worker.TraktSyncWorker
 import com.arflix.tv.worker.IptvEpgRefreshWorker
 import dagger.hilt.android.HiltAndroidApp
+import dagger.Lazy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -68,25 +69,32 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
     lateinit var workerFactory: HiltWorkerFactory
 
     @Inject
-    lateinit var profileManager: ProfileManager
+    lateinit var profileManagerProvider: Lazy<ProfileManager>
+    private val profileManager get() = profileManagerProvider.get()
 
     @Inject
-    lateinit var authRepository: AuthRepository
+    lateinit var authRepositoryProvider: Lazy<AuthRepository>
+    private val authRepository get() = authRepositoryProvider.get()
 
     @Inject
-    lateinit var cloudSyncRepository: CloudSyncRepository
+    lateinit var cloudSyncRepositoryProvider: Lazy<CloudSyncRepository>
+    private val cloudSyncRepository get() = cloudSyncRepositoryProvider.get()
 
     @Inject
-    lateinit var cloudSyncCoordinator: CloudSyncCoordinator
+    lateinit var cloudSyncCoordinatorProvider: Lazy<CloudSyncCoordinator>
+    private val cloudSyncCoordinator get() = cloudSyncCoordinatorProvider.get()
 
     @Inject
-    lateinit var realtimeSyncManager: RealtimeSyncManager
+    lateinit var realtimeSyncManagerProvider: Lazy<RealtimeSyncManager>
+    private val realtimeSyncManager get() = realtimeSyncManagerProvider.get()
 
     @Inject
-    lateinit var watchlistRepository: WatchlistRepository
+    lateinit var watchlistRepositoryProvider: Lazy<WatchlistRepository>
+    private val watchlistRepository get() = watchlistRepositoryProvider.get()
 
     @Inject
-    lateinit var appUsageAnalyticsRepository: AppUsageAnalyticsRepository
+    lateinit var appUsageAnalyticsRepositoryProvider: Lazy<AppUsageAnalyticsRepository>
+    private val appUsageAnalyticsRepository get() = appUsageAnalyticsRepositoryProvider.get()
 
     // ── ADDED (2 of 3): injected guard singleton ──
     @Inject
@@ -113,6 +121,11 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             minIntervalMs = 0L
         )
         scheduleIptvEpgRefresh()
+
+        appScope.launch(Dispatchers.IO) {
+            delay(5_000L)
+            runCatching { com.arflix.tv.updater.removeInstalledUpdateDownloads(this@ArflixApplication) }
+        }
 
         // Initialize global DNS provider and user agent from DataStore before network calls.
         appScope.launch(Dispatchers.IO) {
@@ -153,8 +166,10 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
 
         // Initialize active profile asynchronously to avoid blocking cold start.
         // Wire realtime push notification when realtime is enabled.
-        cloudSyncRepository.onPushCompleted = { realtimeSyncManager.markPush() }
         appScope.launch {
+            // Resolve the repository graph on the worker, not during Hilt's
+            // Application injection (ANDROID-1Q/1R/1S cold-start ANRs).
+            cloudSyncRepository.onPushCompleted = { realtimeSyncManager.markPush() }
             runCatching { profileManager.initialize() }
             // Preload watchlist cache in background for instant display
             runCatching { watchlistRepository.getWatchlistItems() }

@@ -61,6 +61,17 @@ class ServerGuideSnapshotCacheTest {
             assertEquals(1, state.downloads)
         }
     }
+    @Test fun unchangedGuideRetiresLegacyExtraCopiesAfterSuccessfulUse() = runBlocking {
+        fixture { cache, _, state ->
+            val active = cache.withSnapshot({}) { it }!!
+            val legacy = File(active.file.parentFile, "server-${"a".repeat(64)}.sqlite")
+            active.file.copyTo(legacy)
+            cache.withSnapshot({}) { assertTrue(legacy.exists()); read(it) }
+            assertFalse(legacy.exists())
+            assertTrue(active.file.exists())
+            assertEquals(1, state.downloads)
+        }
+    }
     @Test fun corruptNewDownloadCannotReplaceLastGoodSnapshot() = runBlocking {
         fixture { cache, _, state ->
             val original = cache.withSnapshot({}) { it }
@@ -77,24 +88,41 @@ class ServerGuideSnapshotCacheTest {
         fixture { cache, _, state ->
             val original = cache.withSnapshot({}) { it }
             state.payload = payload("New guide")
-            val updated = cache.withSnapshot({}) { it }
+            val updated = cache.withSnapshot({}) {
+                assertTrue("Old guide must survive until import finishes", original!!.file.isFile)
+                it
+            }
             assertEquals("New guide", read(updated!!))
             assertTrue(updated.fresh)
-            assertEquals("Old guide", read(original!!))
+            assertFalse(original!!.file.exists())
             assertNotEquals(original.hash, updated.hash)
         }
     }
-    @Test fun corruptedLatestDiskFileFallsBackToPreviousVerifiedSnapshotOffline() = runBlocking {
+    @Test fun failedImportKeepsPreviousVerifiedSnapshotOffline() = runBlocking {
         fixture { cache, _, state ->
             cache.withSnapshot({}) { assertEquals("Old guide", read(it)) }
             state.payload = payload("New guide")
-            val updated = cache.withSnapshot({}) { it }!!
-            updated.file.writeText("Damaged local cache")
+            try {
+                cache.withSnapshot({}) { error("Import failed") }
+                fail("Import must fail")
+            } catch (_: IllegalStateException) { }
             state.offline = true
             val previous = cache.withSnapshot({}) { it }!!
             assertEquals("Old guide", read(previous))
             assertFalse(previous.fresh)
             assertEquals(2, state.downloads)
+        }
+    }
+    @Test fun rejectedEmptyImportKeepsOldGuideAndAcceptedRetryRemovesIt() = runBlocking {
+        fixture { cache, client, state ->
+            val old = cache.withSnapshot({}) { it }!!
+            state.payload = payload("New guide")
+            cache.withSnapshot({}, accepted = { false }) { read(it) }
+            assertTrue(old.file.exists())
+            val recreated = ServerGuideSnapshotCache(context, client, "https://cache.example.test/epg/full.sqlite.gz")
+            assertEquals("New guide", recreated.withSnapshot({}) { read(it) })
+            assertFalse(old.file.exists())
+            assertEquals(1, old.file.parentFile!!.listFiles()!!.count { it.extension == "sqlite" })
         }
     }
     private class State(var payload: ByteArray) {

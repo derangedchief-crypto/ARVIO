@@ -35,6 +35,7 @@ jobs:
         run: ./gradlew assembleSideloadDebug --no-daemon
 
       - name: Sentry regression checks
+        timeout-minutes: 10
         run: >-
           ./gradlew :app:testSideloadDebugUnitTest
           --tests '*WatchHistoryTimestampTest'
@@ -43,6 +44,14 @@ jobs:
           --tests '*ApkInstallerThreadingTest'
           --tests '*EpisodeVodVerificationTest'
           --tests '*ManagementHashCompatibilityTest'
+          --tests '*LenientJsonGzipTest'
+          --tests '*PlaybackProgressPersistenceTest'
+          --tests '*ActualApplicationStartupTest'
+          --tests '*XtreamEntitlementsRecoveryTest'
+          --tests '*ManagedCloudAddonTest'
+          --tests '*ManagedCloudAddonPersistenceTest'
+          --tests '*XtreamGateSubmitTest'
+          --tests '*CloudSyncRepositoryAddonMergeTest'
           --no-daemon
 
       - name: Provider-only Live TV category checks
@@ -52,6 +61,27 @@ jobs:
           --tests '*LiveCategoryIndexTest'
           --tests '*PlaylistCategorySectionsTest'
           --tests '*CategoryMenuInteractionTest'
+          --no-daemon
+
+      - name: Downloaded data retention checks
+        timeout-minutes: 8
+        run: >-
+          ./gradlew :app:testSideloadDebugUnitTest
+          --tests '*ServerGuideSnapshotCacheTest'
+          --tests '*ServerCachedGuideIntegrationTest'
+          --tests '*GuideOwnershipRetentionTest'
+          --tests '*AtomicDownloadedFileTest'
+          --tests '*DownloadedUpdateRetentionTest'
+          --tests '*ApkDownloaderTest'
+          --tests '*CatalogueDiskFileTest'
+          --no-daemon
+
+      - name: Five-minute playlist refresh checks
+        timeout-minutes: 8
+        run: >-
+          ./gradlew :app:testSideloadDebugUnitTest
+          --tests '*PlaylistRefreshSchedulerTest'
+          --tests '*LaunchContentRefreshIntegrationTest'
           --no-daemon
 
       - name: Live management regression checks

@@ -69,24 +69,30 @@ private const val MAX_RESPONSE_CHARS = 2_000_000
 @Singleton
 class XtreamEntitlementsGuard @Inject constructor(
     @ApplicationContext private val context: Context,
-    okHttpClient: OkHttpClient,
-    private val iptvRepository: IptvRepository,
-    private val entitlementsRepository: XtreamEntitlementsRepository,
+    private val okHttpClient: Lazy<OkHttpClient>,
+    private val iptvRepositoryProvider: Lazy<IptvRepository>,
+    private val entitlementsRepositoryProvider: Lazy<XtreamEntitlementsRepository>,
     // Lazy: StreamRepository is a heavy singleton and most app opens resolve to
     // "nothing changed", so it should not be built on the cold-start path.
     private val streamRepository: Lazy<StreamRepository>
 ) {
 
     /** Short timeouts: this is a background check, never worth holding resources for. */
-    private val client: OkHttpClient = okHttpClient.newBuilder()
+    private val iptvRepository get() = iptvRepositoryProvider.get()
+    private val entitlementsRepository get() = entitlementsRepositoryProvider.get()
+
+    // Lifecycle registration is cheap; materialize network/repository dependencies
+    // only inside the delayed IO check, not Application.onCreate's Hilt injection.
+    private val client: OkHttpClient by lazy { okHttpClient.get().newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
         .callTimeout(25, TimeUnit.SECONDS)
-        .build()
+        .build() }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
+    private val applyMutex = Mutex()
     private var checkJob: Job? = null
 
     /** Main-thread only (ActivityLifecycleCallbacks are always dispatched there). */
@@ -215,11 +221,12 @@ class XtreamEntitlementsGuard @Inject constructor(
         complete
     }
 
-    internal suspend fun applyResolved(resolved: XtreamEntitlementsResult.Resolved): Boolean {
-        if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return true
+    internal suspend fun applyResolved(resolved: XtreamEntitlementsResult.Resolved): Boolean = applyMutex.withLock {
+        if (resolved.granted.isEmpty() && resolved.revoked.isEmpty()) return@withLock true
 
         val repository = streamRepository.get()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val previousCloudAddonId = prefs.getString(ADDON_ID_KEY_PREFIX + "cloud_stream", null)
 
         // Tracked by the entitlement definition's stable id ("cloud_stream"),
         // never by the manifest URL — a URL can change shape entirely (a new
@@ -236,7 +243,7 @@ class XtreamEntitlementsGuard @Inject constructor(
             val addonIdKey = ADDON_ID_KEY_PREFIX + entitlement.id
             val previousAddonId = prefs.getString(addonIdKey,null)
             val result = try {
-                withTimeoutOrNull(INSTALL_TIMEOUT_MS) { repository.ensureCustomAddons(listOf(entitlement.manifestUrl)).singleOrNull() }
+                withTimeoutOrNull(INSTALL_TIMEOUT_MS) { repository.ensureManagedCloudAddon(entitlement.manifestUrl, previousAddonId) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { null }
             (result?.exceptionOrNull() as? CancellationException)?.let { throw it }
@@ -260,6 +267,15 @@ class XtreamEntitlementsGuard @Inject constructor(
         }
 
         if (resolved.revoked.isNotEmpty()) {
+            // Record revocation locally as well, so a later cloud pull cannot
+            // resurrect the retired managed configuration.
+            for (url in resolved.revoked) {
+                val revoked = withTimeoutOrNull(REMOVE_TIMEOUT_MS) {
+                    repository.revokeManagedCloudAddon(url, previousCloudAddonId)
+                    true
+                }
+                if (revoked != true) complete = false
+            }
             val removed = withTimeoutOrNull(REMOVE_TIMEOUT_MS) {
                 repository.removeCustomAddonsByUrl(resolved.revoked)
             }
@@ -279,7 +295,7 @@ class XtreamEntitlementsGuard @Inject constructor(
         }
         prefs.edit().putStringSet(KEY_RETIRED_ADDON_IDS,retiredIds.toSet())
             .putStringSet(KEY_TRACKED_DEFINITION_IDS, trackedDefinitionIds + grantedDefinitionIds).apply()
-        return complete
+        complete
     }
 
     /**

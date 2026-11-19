@@ -7,7 +7,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
-import java.io.FileOutputStream
+import com.arflix.tv.util.replaceDownloadedFile
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -30,7 +30,6 @@ class ApkDownloader @Inject constructor(
             val coroutineContext = currentCoroutineContext()
             coroutineContext.ensureActive()
             destinationFile.parentFile?.mkdirs()
-            if (destinationFile.exists()) destinationFile.delete()
 
             // Use a dedicated client with longer timeouts for large APK downloads
             val downloadClient = okHttpClient.newBuilder()
@@ -52,7 +51,7 @@ class ApkDownloader @Inject constructor(
                 onProgress(0L,total)
                 progress.shouldEmit(android.os.SystemClock.elapsedRealtime())
                 body.byteStream().use { input ->
-                    FileOutputStream(destinationFile).use { output ->
+                    replaceDownloadedFile(destinationFile) { output ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                         var downloaded = 0L
                         while (true) {
