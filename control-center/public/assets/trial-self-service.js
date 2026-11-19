@@ -25,10 +25,10 @@
     if(contactsOnly){let worker=false;try{worker=(await api('/api/trial-policy?tenant_id='+tenant)).worker_configured;}catch{/* Contacts remain readable even if panel-policy setup is unavailable. */}if(valid()){await root.TrialWorkspace.renderContacts(main,tenant,valid,()=>worker);presentTrialSections(main);}return;}
     let setup;try{setup=await api('/api/trial-setup?tenant_id='+tenant);}catch(e){if(valid()){main.append(panel('Trial settings unavailable',el('p',e.message,'error'),button('Reload status',()=>route())));presentTrialSections(main);}return;}if(!valid())return;
     const status=panel(setup.status);status.setAttribute('aria-label','Trial status');if(setup.blockers.length){const ul=el('ul');for(const text of setup.blockers)ul.append(el('li',text));status.append(ul);}status.append(button('Reload status',()=>route(),'quiet'));main.append(status);
-    const readOnly=state.user.role==='owner'&&setup.workspace_kind==='reseller';
+    const ownerAssisting=state.user.role==='owner'&&setup.workspace_kind==='reseller';
     const app=panel(setup.workspace_kind==='owner'?'Owner app trials':'App trial settings');
-    if(readOnly){const p=setup.plans.find(p=>p.id===setup.settings.plan_id);app.append(el('p','Managed by reseller','scope-label'),el('p','You are viewing this reseller’s saved settings as the owner. The reseller chooses their package, daily limit and app switch from their own login.','hint'),detailRows([['Package',p?.name||'Not selected'],['Daily limit',setup.settings.daily_limit],['App switch',setup.settings.enabled?'On':'Off']]));}
-    else {
+    if(ownerAssisting)app.append(el('p','Owner controls · selected reseller workspace','scope-label'),el('p','Set this reseller’s trial package, daily limit and app switch. Changes are saved to the selected workspace.','hint'));
+    {
       let d=drafts.get(tenant);if(!d?.dirty){d={plan:String(setup.settings.plan_id??''),daily:setup.settings.daily_limit??50,enabled:setup.settings.enabled,defaultRevision:setup.settings.default_revision,offerRevision:setup.settings.offer_revision,dirty:false};drafts.set(tenant,d);}
       const choose=el('select');choose.setAttribute('aria-label','Trial package');const blank=el('option','Choose a globally approved package');blank.value='';choose.append(blank);for(const p of setup.plans){const option=el('option',p.name+' · '+terms(p));option.value=p.id;choose.append(option);}choose.value=d.plan;choose.onchange=()=>{d.plan=choose.value;d.dirty=true;};const label=el('label','Trial package');label.append(choose);app.append(label);
       let daily=null;if(setup.owner_unlimited)app.append(el('p','Unlimited eligible trials per day.','notice'));else{daily=el('input');daily.type='number';daily.min='1';daily.max=setup.daily_max;daily.step='1';daily.value=d.daily;daily.setAttribute('aria-label','My daily trial limit');daily.oninput=()=>{d.daily=daily.value;d.dirty=true;};const limit=el('label',`My daily trial limit (1–${setup.daily_max})`);limit.append(daily);app.append(limit);}
@@ -37,7 +37,7 @@
       if(!setup.global_enabled)app.append(el('p','Trials are paused globally. Your chosen settings are retained.','notice'));
       const feedback=el('p',null,'error');feedback.hidden=true;feedback.setAttribute('role','alert');app.append(feedback);
       if(d.dirty&&(d.defaultRevision!==setup.settings.default_revision||d.offerRevision!==setup.settings.offer_revision)){feedback.textContent='App settings changed elsewhere. Discard app edits and review the latest settings.';feedback.hidden=false;}
-      app.append(button('Save my trial settings',async()=>{feedback.hidden=true;const pause=setup.settings.enabled&&!d.enabled;const body={tenant_id:tenant,expected_default_revision:d.defaultRevision,expected_offer_revision:d.offerRevision,enabled:d.enabled,confirmed_public_mode:d.enabled};
+      app.append(button(ownerAssisting?'Save workspace trial settings':'Save my trial settings',async()=>{feedback.hidden=true;const pause=setup.settings.enabled&&!d.enabled;const body={tenant_id:tenant,expected_default_revision:d.defaultRevision,expected_offer_revision:d.offerRevision,enabled:d.enabled,confirmed_public_mode:d.enabled};
         if(!pause&&(d.enabled||String(setup.settings.plan_id??'')!==d.plan||String(setup.settings.daily_limit??50)!==String(d.daily))){const p=setup.plans.find(p=>p.id===Number(d.plan));if(!p){feedback.textContent='Choose a globally approved trial package first.';feedback.hidden=false;return;}body.plan_id=p.id;body.plan_fingerprint=p.fingerprint;if(!setup.owner_unlimited){const n=Number(daily.value);if(!Number.isSafeInteger(n)||n<1||n>setup.daily_max){feedback.textContent=`Choose a whole-number daily limit from 1 to ${setup.daily_max}.`;feedback.hidden=false;return;}body.daily_limit=n;}}
         app.inert=true;try{await api('/api/trial-setup/app',body);if(valid()){drafts.delete(tenant);toast('Your trial settings were saved. No trial account was created.');await route();}}catch(e){if(valid()){feedback.textContent=e.message;feedback.hidden=false;}}finally{app.inert=false;}
       },'primary'),button('Discard app edits',()=>{drafts.delete(tenant);route();},'quiet'));
@@ -47,7 +47,7 @@
       presentTrialSections(main);
       // Both views are already loaded. Switch them immediately rather than
       // waiting for another worker/catalogue request before showing settings.
-      if(readOnly)app.hidden=false;
+      if(ownerAssisting)app.hidden=false;
       for(const link of main.querySelectorAll('.trial-sections a')){
         if(link.hash.endsWith('/contacts'))continue;
         link.onclick=e=>{if(e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;e.preventDefault();history.replaceState(null,'',link.hash);present();};
