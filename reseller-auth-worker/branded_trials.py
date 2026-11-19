@@ -258,7 +258,12 @@ class ExistingPanelAdapter:
                 cur.execute('SELECT id,package_name,credits,duration,duration_value,duration_period,bouquets,max_connections,type,groups FROM users_packages WHERE enabled=1 AND activated=1 AND type=1 ORDER BY id LIMIT 201')
                 rows=cur.fetchall()
                 if len(rows)>200:raise TrialRejected('Too many trial plans; narrow the panel catalog first')
-                plans=[plan_document(p) for p in rows if self.worker['_package_allowed'](p,group,overrides)]
+                plans=[]
+                for p in rows:
+                    if not self.worker['_package_allowed'](p,group,overrides):continue
+                    try:plans.append(plan_document(p))
+                    except TrialRejected:
+                        logging.getLogger(__name__).warning('Omitting invalid trial package id=%s from catalogue',p['id'])
                 return {'reseller_id':reseller_id,'plans':plans}
             finally:conn.rollback()
 
