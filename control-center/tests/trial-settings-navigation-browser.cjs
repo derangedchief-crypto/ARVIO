@@ -1,0 +1,20 @@
+const {chromium}=require('/tmp/opencode/control-center-browser-tools/node_modules/playwright');
+const fs=require('fs'),assert=require('node:assert/strict');
+(async()=>{const credentials=JSON.parse(fs.readFileSync(process.argv[2])),browser=await chromium.launch();try{
+ const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ let checks=0;
+ await page.route('**/api/trial-setup/model',r=>r.fulfill({json:{global:true}}));
+ await page.route('**/api/trial-setup/packages',r=>r.fulfill({json:{revision:1,allowed_plan_ids:[7],packages:[{id:7,name:'24-hour trial',duration:24,period:'hours',max_connections:2,credits:'0',fingerprint:'7'.repeat(64)}],catalog_fresh:true,worker_configured:true}}));
+ await page.route(/\/api\/trial-setup\?tenant_id=/,r=>{checks++;return r.fulfill({json:{tenant_id:new URL(r.request().url()).searchParams.get('tenant_id'),workspace_kind:'reseller',status:'Not ready',blockers:['Choose your trial package and daily limit, then save your app settings.'],plans:[],settings:{plan_id:null,daily_limit:50,enabled:false},global_enabled:true}});});
+ await page.goto(process.env.CONTROL_PREVIEW_URL);await page.getByRole('button',{name:'Owner / existing Hub login',exact:true}).click();await page.getByLabel('Email address').fill(credentials.email);await page.getByLabel('Password',{exact:true}).fill(credentials.password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.dashboard-metrics').waitFor();
+ await page.evaluate(()=>location.hash='trials/approvals');await page.getByText('Managed by reseller',{exact:true}).waitFor();
+ assert.equal(await page.getByText('Not selected',{exact:true}).isVisible(),true);
+ const before=checks;
+ await page.getByRole('link',{name:'Trial settings',exact:true}).click();await page.getByRole('heading',{name:'App trial settings',exact:true}).waitFor();
+ assert.equal(checks,before);assert.equal(await page.getByRole('heading',{name:'Global approved trial packages',exact:true}).isVisible(),false);
+ await page.getByRole('link',{name:'Package approvals',exact:true}).click();assert.equal(await page.getByRole('heading',{name:'Global approved trial packages',exact:true}).isVisible(),true);assert.equal(checks,before);
+ await page.getByRole('button',{name:'Reload status',exact:true}).click();await page.getByText('Managed by reseller',{exact:true}).waitFor();assert.equal(checks,before+1);
+ await page.getByRole('link',{name:'Trial settings',exact:true}).click();assert.equal(await page.getByText('Not selected',{exact:true}).isVisible(),true);
+ assert.equal(await page.getByRole('button',{name:'Save my trial settings',exact:true}).count(),0);assert.deepEqual(errors,[]);
+ console.log('PASS owner/reseller settings visible on approvals, immediate settings tab without refetch, reload and unchanged read-only access');
+}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1)});

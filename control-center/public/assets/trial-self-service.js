@@ -27,7 +27,7 @@
     const status=panel(setup.status);status.setAttribute('aria-label','Trial status');if(setup.blockers.length){const ul=el('ul');for(const text of setup.blockers)ul.append(el('li',text));status.append(ul);}status.append(button('Reload status',()=>route(),'quiet'));main.append(status);
     const readOnly=state.user.role==='owner'&&setup.workspace_kind==='reseller';
     const app=panel(setup.workspace_kind==='owner'?'Owner app trials':'App trial settings');
-    if(readOnly){const p=setup.plans.find(p=>p.id===setup.settings.plan_id);app.append(el('p','Managed by reseller','scope-label'),detailRows([['Package',p?.name||'Not selected'],['Daily limit',setup.settings.daily_limit],['App switch',setup.settings.enabled?'On':'Off']]));}
+    if(readOnly){const p=setup.plans.find(p=>p.id===setup.settings.plan_id);app.append(el('p','Managed by reseller','scope-label'),el('p','You are viewing this reseller’s saved settings as the owner. The reseller chooses their package, daily limit and app switch from their own login.','hint'),detailRows([['Package',p?.name||'Not selected'],['Daily limit',setup.settings.daily_limit],['App switch',setup.settings.enabled?'On':'Off']]));}
     else {
       let d=drafts.get(tenant);if(!d?.dirty){d={plan:String(setup.settings.plan_id??''),daily:setup.settings.daily_limit??50,enabled:setup.settings.enabled,defaultRevision:setup.settings.default_revision,offerRevision:setup.settings.offer_revision,dirty:false};drafts.set(tenant,d);}
       const choose=el('select');choose.setAttribute('aria-label','Trial package');const blank=el('option','Choose a globally approved package');blank.value='';choose.append(blank);for(const p of setup.plans){const option=el('option',p.name+' · '+terms(p));option.value=p.id;choose.append(option);}choose.value=d.plan;choose.onchange=()=>{d.plan=choose.value;d.dirty=true;};const label=el('label','Trial package');label.append(choose);app.append(label);
@@ -43,7 +43,17 @@
       },'primary'),button('Discard app edits',()=>{drafts.delete(tenant);route();},'quiet'));
     }
     main.append(app);
-    presentTrialSections(main);
+    function present(){
+      presentTrialSections(main);
+      // Both views are already loaded. Switch them immediately rather than
+      // waiting for another worker/catalogue request before showing settings.
+      if(readOnly)app.hidden=false;
+      for(const link of main.querySelectorAll('.trial-sections a')){
+        if(link.hash.endsWith('/contacts'))continue;
+        link.onclick=e=>{if(e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;e.preventDefault();history.replaceState(null,'',link.hash);present();};
+      }
+    }
+    present();
   }
   root.TrialSelfService={render,isDirty:()=>!!globalDraft?.dirty||[...drafts.values()].some(d=>d.dirty),clear:()=>{drafts.clear();globalDraft=null;}};
 })(window);
