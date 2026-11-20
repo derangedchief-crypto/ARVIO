@@ -112,6 +112,7 @@ final class Application
         }
         if($method==='GET'&&preg_match('~^/api/app-updates/([a-f0-9]{32})/(testing|production)$~D',$path,$match))Http::json($this->brandDownloads->metadata($match[1],$match[2]));
         if(in_array($method,['GET','HEAD'],true)&&preg_match('~^/downloads/apps/([a-f0-9]{32})/(Brand-[0-9.]+(?:-test)?\.apk)$~D',$path,$match))$this->brandDownloads->serve($match[1],$match[2],$method==='HEAD');
+        if(in_array($method,['GET','HEAD'],true)&&preg_match('~^/downloads/latest/([a-f0-9]{32})/(testing|production)/App\.apk$~D',$path,$match))$this->brandDownloads->serveLatest($match[1],$match[2],$method==='HEAD');
         if(str_starts_with($path,'/api/public-trials/')){
             $supported=(bool)$this->db->one('SELECT name FROM schema_migrations WHERE name=?',['016_public_trial_signup.sql']);
             if(!$supported){if($method==='GET'&&$path==='/api/public-trials/offer')Http::json(['available'=>false]);throw new Problem(404,'Automatic trials unavailable.');}

@@ -247,6 +247,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 branding/prepare_customer_source.py --verify
 
+      - name: Prepare permanent customer download filename
+        run: cp "${{ steps.apk.outputs.path }}" ExtremeTV.apk
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -256,4 +259,6 @@ jobs:
           body: ${{ github.event.inputs.release_notes || format('Automated release build from {0}.', github.ref_name) }}
           draft: false
           prerelease: false
-          files: ${{ steps.apk.outputs.path }}
+          files: |
+            ${{ steps.apk.outputs.path }}
+            ExtremeTV.apk

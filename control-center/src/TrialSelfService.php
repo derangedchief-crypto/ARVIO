@@ -48,7 +48,7 @@ final class TrialSelfService
     }
     public function saveApp(array $actor,array $input):array {
         Input::keys($input,['tenant_id','expected_default_revision','expected_offer_revision','enabled','plan_id','plan_fingerprint','daily_limit','confirmed_public_mode']);if(!is_bool($input['enabled']??null))throw new Problem(422,'Choose whether app trials are on or off.');
-        $t=$this->management->workspace($actor,$input['tenant_id']??null);if($actor['role']==='owner'&&$t['kind']==='reseller')throw new Problem(403,'Resellers manage their own app switch and daily limit.');$pub=$this->db->one('SELECT enabled FROM trial_offer_publications WHERE tenant_id=?',[$t['id']]);$pause=!$input['enabled']&&($pub['enabled']??false);
+        $t=$this->management->workspace($actor,$input['tenant_id']??null);$pub=$this->db->one('SELECT enabled FROM trial_offer_publications WHERE tenant_id=?',[$t['id']]);$pause=!$input['enabled']&&($pub['enabled']??false);
         if(!$pause&&($input['enabled']||isset($input['plan_id'])))$this->refresh($actor,$t['id']);
         return $this->db->transaction(function()use($actor,$input,$t):array {
             $this->management->workspace($actor,$t['id'],true);$pub=$this->db->one('SELECT revision,enabled FROM trial_offer_publications WHERE tenant_id=? FOR UPDATE',[$t['id']]);$expected=$this->number($input['expected_offer_revision']??null,'app trial revision');if($expected!==(int)($pub['revision']??0))throw new Problem(409,'App trial settings changed. Reload before saving.');
@@ -60,7 +60,7 @@ final class TrialSelfService
                 $daily=$unlimited?0:$this->number($input['daily_limit']??null,'daily limit (choose 1–1000)',1,1000);$revision=$this->number($input['expected_default_revision']??null,'package-settings revision');if($revision!==(int)($p['default']['revision']??0))throw new Problem(409,'Your trial package or daily limit changed. Reload before saving.');
                 $same=$p['default']&&$p['default']['enabled']&&(int)$p['default']['plan_id']===$id&&hash_equals($p['default']['plan_fingerprint'],$plan['fingerprint']);
                 if(!$same){$this->policies->setDefault($actor,['tenant_id'=>$t['id'],'expected_revision'=>$revision,'grant_version'=>$p['grant']['version'],'plan_id'=>$id,'enabled'=>true]);$revision++;}
-                if(!$p['default']||!($p['default']['global_opt_in']??false)||(int)($p['default']['daily_limit']??50)!==($unlimited?50:$daily))$this->db->query('UPDATE trial_reseller_defaults SET global_opt_in=1,daily_limit=?,revision=revision+1 WHERE tenant_id=?',[$unlimited?50:$daily,$t['id']]);
+                if(!$p['default']||!($p['default']['global_opt_in']??false)||(int)($p['default']['daily_limit']??50)!==($unlimited?50:$daily))$this->db->query('UPDATE trial_reseller_defaults SET global_opt_in=1,daily_limit=?,revision=revision+1,updated_by=? WHERE tenant_id=?',[$unlimited?50:$daily,$actor['id'],$t['id']]);
             }
             $view=$this->view($actor,$t);if($input['enabled']&&!$this->offers->managerState($actor,['tenant_id'=>$t['id']])['can_publish'])throw new Problem(409,$view['blockers'][0]??'Check the app trial prerequisites.');
             $limit=$unlimited?0:($daily??$view['settings']['daily_limit']);$this->offers->publish($actor,['tenant_id'=>$t['id'],'expected_revision'=>$expected,'enabled'=>$input['enabled'],'daily_limit'=>$limit,'confirmed_public_mode'=>$input['enabled']]);return $this->view($actor,$t);

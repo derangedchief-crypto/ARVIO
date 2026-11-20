@@ -22,6 +22,7 @@ final class BrandDownloads
         return ['channel'=>$artifact['channel'],'version_name'=>$artifact['version_name'],'version_code'=>(int)$artifact['version_code'],
             'package_name'=>$artifact['package_name'],'apk_sha256'=>$artifact['apk_sha256'],
             'artifact_url'=>'/downloads/apps/'.$artifact['id'].'/Brand-'.$artifact['version_name'].'.apk',
+            'permanent_url'=>'/downloads/latest/'.$artifact['brand_id'].'/'.$artifact['channel'].'/App.apk',
             'download_ready'=>$this->available($artifact)];
     }
     /** stream is trusted CLI stdin, bounded by the server's frozen size/digest. */
@@ -79,6 +80,16 @@ final class BrandDownloads
     public function serve(string $id,string $filename,bool $head=false):never {
         $artifact=$this->artifacts->byId($id);
         if(!$artifact||$filename!=='Brand-'.$artifact['version_name'].'.apk'||!$this->available($artifact))throw new Problem(404,'Download not available.');
+        $this->streamArtifact($artifact,$filename,$head);
+    }
+    /** A permanent short-code target; resolve only at the start of each request. */
+    public function serveLatest(string $brand,string $channel,bool $head=false):never {
+        Input::id($brand);if(!in_array($channel,['testing','production'],true))throw new Problem(404,'Download not available.');
+        $artifact=$this->artifacts->approved($brand,$channel);
+        if(!$artifact||!$this->available($artifact))throw new Problem(404,'Download not available.');
+        $this->streamArtifact($artifact,'App.apk',$head);
+    }
+    private function streamArtifact(array $artifact,string $filename,bool $head):never {
         $size=(int)$artifact['apk_size_bytes'];$etag='"'.$artifact['apk_sha256'].'"';
         header('Content-Type: application/vnd.android.package-archive');header('Content-Disposition: attachment; filename="'.$filename.'"');
         header('Accept-Ranges: bytes');header('ETag: '.$etag);header('Cache-Control: private, no-store');

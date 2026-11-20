@@ -25,7 +25,17 @@ function globalTrialCases(array &$tests,ControlCenter\Application $app,ControlCe
         $one=$service->saveApp($a,$input($a,100));same(true,$one['active']);same(100,$one['settings']['daily_limit']);same(100,$offers->admitted($ba['id'])['daily_limit']);same(null,$app->db->one('SELECT * FROM trial_plan_grants WHERE tenant_id=?',[$ta['id']]));
         // Stale old per-reseller denial/cap must not survive the corrected model.
         $app->db->query('INSERT INTO trial_plan_grants (tenant_id,enabled,allowed_plans,updated_by,live_enabled,daily_cap,setup_revision) VALUES (?,0,?, ?,0,1,3)',[$tb['id'],'{}',$owner['id']]);$two=$service->saveApp($b,$input($b,7));same(true,$two['active']);same(7,$offers->admitted($bb['id'])['daily_limit']);same(100,$offers->admitted($ba['id'])['daily_limit']);
-        problem(409,fn()=> $service->saveApp($b,$input($b,7,true,72)));problem(404,fn()=> $service->saveApp($a,array_replace($input($a,100),['tenant_id'=>$tb['id']])));problem(403,fn()=> $service->saveApp($owner,array_replace($input($a,100),['tenant_id'=>$ta['id']])));same($history,$app->db->all('SELECT * FROM trial_signup_operations ORDER BY id'));same(0,$provisions);
+        problem(409,fn()=> $service->saveApp($b,$input($b,7,true,72)));problem(404,fn()=> $service->saveApp($a,array_replace($input($a,100),['tenant_id'=>$tb['id']])));same($history,$app->db->all('SELECT * FROM trial_signup_operations ORDER BY id'));same(0,$provisions);
+    };
+    $tests['owner can configure reseller trials while preserving workspace scope, revisions and quotas']=function()use($app,$owner,$input,&$service,&$offers,&$a,&$b,&$ta,&$tb,&$ba,&$bb,&$provisions):void {
+        $other=$service->status($b,[])['settings'];$history=$app->db->all('SELECT * FROM trial_signup_operations ORDER BY id');
+        $edit=array_replace($input($a,125,true,72),['tenant_id'=>$ta['id']]);$changed=$service->saveApp($owner,$edit);same(72,$changed['settings']['plan_id']);same(125,$changed['settings']['daily_limit']);same(true,$changed['settings']['enabled']);same(false,$changed['owner_unlimited']);same(125,$offers->admitted($ba['id'])['daily_limit']);same($other,$service->status($b,[])['settings']);
+        same($owner['id'],$app->db->one('SELECT updated_by FROM trial_reseller_defaults WHERE tenant_id=?',[$ta['id']])['updated_by']);
+        problem(409,fn()=> $service->saveApp($owner,$edit));
+        problem(409,fn()=> $service->saveApp($owner,array_replace($input($b,20,true,72),['tenant_id'=>$tb['id']])));
+        foreach([0,1001] as $limit)problem(422,fn()=> $service->saveApp($owner,array_replace($input($a,$limit),['tenant_id'=>$ta['id']])));
+        $s=$service->status($a,[]);$off=$service->saveApp($owner,['tenant_id'=>$ta['id'],'expected_offer_revision'=>$s['settings']['offer_revision'],'enabled'=>false]);same(false,$off['settings']['enabled']);same(125,$off['settings']['daily_limit']);
+        $on=$service->saveApp($owner,array_replace($input($a,100),['tenant_id'=>$ta['id']]));same(true,$on['active']);same(100,$on['settings']['daily_limit']);same($other,$service->status($b,[])['settings']);same($history,$app->db->all('SELECT * FROM trial_signup_operations ORDER BY id'));same(0,$provisions);
     };
     $tests['resellers can change daily limits themselves; global pause preserves settings and each opt-out']=function()use($owner,$input,&$service,&$offers,&$a,&$b,&$ba,&$bb):void {
         $revision=$offers->publicInfo($ba['id'])['offer_revision'];$stale=$input($a,100);$changed=$service->saveApp($a,$input($a,250));same(250,$changed['settings']['daily_limit']);same(250,$offers->admitted($ba['id'])['daily_limit']);same($revision,$offers->publicInfo($ba['id'])['offer_revision']);problem(409,fn()=> $service->saveApp($a,$stale));

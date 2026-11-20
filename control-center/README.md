@@ -481,6 +481,19 @@ The normal0.22 ->0.23 update is extract-and-reload, with no terminal command.
 See `deploy/UPDATE-0.23.0.txt` for installation and `test-results/compact-metrics.json`
 for optional local before/after measurements (synthetic fixtures, never production).
 
+## Owner assistance for reseller trial settings
+
+The full owner can edit the selected reseller workspace's trial package, daily
+limit and app switch through the same `/api/trial-setup/app` endpoint as reseller
+self-service. The editor is also visible on the owner's Package approvals tab.
+Resellers retain access only to their own workspace. Package eligibility and
+fingerprints, optimistic revisions, publication prerequisites and finite reseller
+quotas still apply; owner Unlimited is tied to the owner brand, not the editor's
+role. Saves retain the actual owner's audit identity and do not create trials.
+Deploy `Owner-Trial-Controls-0.42.0.zip` with `install-owner-trial-controls.py` on
+the control website host, reload PHP-FPM, then refresh the browser. The installer
+accepts the original or navigation-repaired trial asset and backs up both layers.
+
 ## Previous0.22.0 global approval and reseller self-service
 
 This supersedes0.21's per-reseller admin model, following the user's correction:
