@@ -52,6 +52,7 @@ jobs:
           --tests '*ManagedCloudAddonPersistenceTest'
           --tests '*XtreamGateSubmitTest'
           --tests '*CloudSyncRepositoryAddonMergeTest'
+          --tests '*PhoneLivePictureInPictureTest'
           --no-daemon
 
       - name: Provider-only Live TV category checks

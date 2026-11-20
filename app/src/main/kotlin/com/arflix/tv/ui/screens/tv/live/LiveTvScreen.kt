@@ -1493,6 +1493,7 @@ fun LiveTvScreen(
     // Full-screen playback mode — pressing OK on an EPG row expands the
     // mini-player to cover the whole screen. Back collapses back to the grid.
     var isFullScreen by rememberSaveable { mutableStateOf(initialStreamUrl != null) }
+    var isInPipMode by remember(activity) { mutableStateOf(false) }
     var fullscreenGuideOpen by remember { mutableStateOf(false) }
     var quickZapOpen by remember { mutableStateOf(false) }
     var variantPickerChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
@@ -1523,8 +1524,8 @@ fun LiveTvScreen(
     ) {
         invalidateProgramActionLookup()
     }
-    LaunchedEffect(isFullScreen) {
-        onFullscreenChanged(isFullScreen)
+    LaunchedEffect(isFullScreen, isInPipMode) {
+        onFullscreenChanged(isFullScreen || isInPipMode)
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -2220,6 +2221,15 @@ fun LiveTvScreen(
         val obs = LifecycleEventObserver { _, ev ->
             when (ev) {
                 Lifecycle.Event.ON_PAUSE -> {
+                    // A visible phone PiP window is paused in lifecycle terms.
+                    // Wait for STOP on phones, including the Android 12 Home
+                    // transition where PiP mode may not yet be reported here.
+                    if (!isTouchDevice) {
+                        exoPlayer.pause()
+                        ownTvMpvFallback.pause()
+                    }
+                }
+                Lifecycle.Event.ON_STOP -> {
                     exoPlayer.pause()
                     ownTvMpvFallback.pause()
                 }
@@ -2813,6 +2823,20 @@ fun LiveTvScreen(
         label = "tv-fullscreen-progress",
     )
     var videoPlayerView by remember { mutableStateOf<PlayerView?>(null) }
+    if (isTouchDevice) {
+        PhoneLivePictureInPicture(
+            activity = activity,
+            enabled = phoneLivePipAllowed(
+                touchDevice = isTouchDevice,
+                supported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O,
+                hasPlayback = playingChannelId != null || currentStreamUrl != null,
+                playing = activePlayerIsPlaying,
+                authorized = primaryAccess?.primaryAllowed() == true,
+            ),
+            playerView = videoPlayerView,
+            onModeChanged = { isInPipMode = it },
+        )
+    }
     var attachedPlayerView by remember { mutableStateOf<PlayerView?>(null) }
     val playerSurfaceRevision = rememberPlayerSurfaceRevision(videoPlayerView)
     var liveRootOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
@@ -2948,7 +2972,7 @@ fun LiveTvScreen(
             )
     ) {
         // Guide content uses the whole screen; navigation overlays from the right.
-        RetainedLiveGuideLayer(visible = !isFullScreen) {
+        RetainedLiveGuideLayer(visible = !isFullScreen && !isInPipMode) {
         if (!state.isConfigured && state.snapshot.channels.isEmpty()) {
             EmptyStatePane(
                 message = stringResource(R.string.live_empty_no_playlist),
@@ -3227,8 +3251,8 @@ fun LiveTvScreen(
 
         if (hasPlayback || videoHostStarted) {
             PersistentLiveVideoLayer(
-                bounds = liveVideoPlacement(liveRootSize, liveRootOrigin, previewBoundsInWindow, isFullScreen),
-                visible = hasPlayback, fullscreen = isFullScreen,
+                bounds = liveVideoPlacement(liveRootSize, liveRootOrigin, previewBoundsInWindow, isFullScreen || isInPipMode),
+                visible = hasPlayback, fullscreen = isFullScreen || isInPipMode,
                 resetKey = if (playingChannel?.source?.drmInfo != null) null else ownTvSurfaceResetKey,
                 channel = playingChannel, onOpenFullscreen = openFullScreenPlayer,
                 onCreated = { videoPlayerView = it }, onReleased = ::releasePlayerView)
@@ -3243,7 +3267,7 @@ fun LiveTvScreen(
         // anchored visually to where the user tapped instead of from screen
         // center. fsProgress stays mounted until it reaches 0, so the
         // reverse animation also plays on Back.
-        if ((isFullScreen || fsProgress > 0f) && playingChannel != null) {
+        if (!isInPipMode && (isFullScreen || fsProgress > 0f) && playingChannel != null) {
             val scale = 0.35f + 0.65f * fsProgress
     BackHandler(enabled = isFullScreen) {
         if (fullscreenGuideOpen) {
@@ -3551,7 +3575,7 @@ fun LiveTvScreen(
 
         // Hidden right-side navigation never reserves guide height. Fullscreen
         // playback remains free of this overlay.
-        if (showTvNavigation && !isFullScreen) {
+        if (showTvNavigation && !isFullScreen && !isInPipMode) {
             Box(modifier = Modifier.graphicsLayer { alpha = 1f - fsProgress }) {
                 TvGuideNavigationOverlay(
                     visible = focusZone == LiveTvFocusZone.TOPBAR,
@@ -3579,7 +3603,7 @@ fun LiveTvScreen(
         }
 
         AnimatedVisibility(
-            visible = searchOpen,
+            visible = searchOpen && !isInPipMode,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize(),
@@ -3613,7 +3637,7 @@ fun LiveTvScreen(
             )
         }
 
-        if (!searchOpen) {
+        if (!searchOpen && !isInPipMode) {
             val pickerChannel = variantPickerChannel
             VariantPickerOverlay(
                 channel = pickerChannel,
@@ -3623,6 +3647,7 @@ fun LiveTvScreen(
             )
         }
 
+        if (!isInPipMode) {
         ChannelNumberOverlay(
             buffer = channelNumberBuffer,
             matchCount = channelNumberMatchCount,
@@ -3638,8 +3663,9 @@ fun LiveTvScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = if (isFullScreen) 72.dp else 24.dp),
         )
+        }
 
-        if (programActionLookupInProgress) {
+        if (programActionLookupInProgress && !isInPipMode) {
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -3655,7 +3681,7 @@ fun LiveTvScreen(
         }
 
         val actionData = programActionDialog
-        if (actionData != null) {
+        if (actionData != null && !isInPipMode) {
             val program = actionData.program
             val channel = actionData.channel
             val isNow = program.isLive(guideClockMillis)
