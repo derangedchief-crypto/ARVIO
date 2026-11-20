@@ -40,6 +40,16 @@ function brandDownloadCases(array &$tests,ControlCenter\Application $app,Control
             same(404,$http->request('GET',str_replace('Brand-2.0.115.1-test.apk','Brand-2.0.115.2-test.apk',$url))['status']);
             same(404,$http->request('GET','/api/app-updates/'.str_repeat('0',32).'/testing')['status']);
             same(401,$http->request('POST','/api/brand-builder/mirror',[])['status']);
+            $permanent=$downloads->publicInfo($artifact)['permanent_url'];$latest=$http->request('GET',$permanent);same(200,$latest['status']);same($bytes,$latest['raw']);same(['attachment; filename="App.apk"'],$latest['headers']['content-disposition']);same(['private, no-store'],$latest['headers']['cache-control']);
+            same(200,$http->request('HEAD',$permanent)['status']);same(206,$http->request('GET',$permanent,null,['Range'=>'bytes=10-29'])['status']);same(404,$http->request('GET',str_replace('/testing/','/production/',$permanent))['status']);
+            // A new publication changes the bytes, never the permanent URL; updater URLs stay pinned.
+            $app->appBrands->save($owner,['tenant_id'=>$tenant['id'],'expected_version'=>1,'name'=>'TEST Private Brand','loading_asset'=>$asset['id'],'logo_asset'=>$asset['id'],'icon_asset'=>$asset['id']]);
+            $nextJob=$app->appBrands->requestBuild($owner,['tenant_id'=>$tenant['id'],'expected_version'=>2]);$next=$builder->claim(['build_id'=>$nextJob['id'],'channel'=>'testing','source_sha'=>$sha,'runner_run_id'=>'1235']);$nextLease=['build_id'=>$nextJob['id'],'lease_token'=>$next['lease_token']];
+            same($bytes,$http->request('GET',$permanent)['raw']);
+            $newBytes=str_repeat('NEW APK!',256);$nextReceipt=$next['expected'];unset($nextReceipt['release_tag'],$nextReceipt['asset_name']);$nextReceipt+=['source_sha'=>$sha,'apk_sha256'=>hash('sha256',$newBytes),'apk_size_bytes'=>strlen($newBytes),'provenance_sha256'=>str_repeat('e',64)];
+            $builder->prepared($nextLease+['receipt'=>$nextReceipt]);$builder->authorize($nextLease+['confirmed_publication'=>true]);$input=$stream($newBytes);try{$builder->mirror($nextLease,$input);}finally{fclose($input);}$builder->finish($nextLease+['receipt'=>$nextReceipt]);
+            same($permanent,$downloads->publicInfo($artifacts->approved($brand['id'],'testing'))['permanent_url']);same($newBytes,$http->request('GET',$permanent)['raw']);same($bytes,$http->request('GET',$url)['raw']);
+            $resumed=$http->request('GET',$permanent,null,['Range'=>'bytes=10-29','If-Range'=>'"'.$artifact['apk_sha256'].'"']);same(200,$resumed['status']);same($newBytes,$resumed['raw']);
         } finally {file_put_contents($file,$original);}
     };
 }
