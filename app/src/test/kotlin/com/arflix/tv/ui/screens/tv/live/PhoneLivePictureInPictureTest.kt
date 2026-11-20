@@ -15,8 +15,12 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.ConscryptMode
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
+@ConscryptMode(ConscryptMode.Mode.OFF)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [28], application = android.app.Application::class, manifest = Config.NONE)
 class PhoneLivePictureInPictureTest {
     @get:Rule val compose = createComposeRule()
