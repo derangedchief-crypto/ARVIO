@@ -78,7 +78,8 @@ class PhoneLivePictureInPictureTest {
         controller.pause().stop().destroy()
     }
 
-    @Test fun noPipWithoutPlaybackPermissionOrOnTv() {
+    // Public PiP parameter getters were added in API 33.
+    @Test @Config(sdk = [33]) fun noPipWithoutPlaybackPermissionOrOnTv() {
         assertTrue(phoneLivePipAllowed(true, true, true, true, true))
         assertFalse(phoneLivePipAllowed(false, true, true, true, true))
         assertFalse(phoneLivePipAllowed(true, false, true, true, true))
