@@ -125,6 +125,19 @@ internal object CollectionTemplateManifest {
             )
         ),
         entry(
+            title = "Crave",
+            group = CollectionGroupKind.SERVICE,
+            coverImageUrl = "https://image.tmdb.org/t/p/original/ewOptMVIYcOadMGGJz8DJueH2bH.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
+            hideTitle = true,
+            heroVideoUrl = null,
+            sources = listOf(
+                watchProviderSource(type = "movie", providerId = 230, region = "CA"),
+                watchProviderSource(type = "series", providerId = 230, region = "CA")
+            ),
+            listMetadata = emptyList()
+        ),
+        entry(
             title = "Disney+",
             group = CollectionGroupKind.SERVICE,
             coverImageUrl = "${STREAMING_SERVICE_IMAGE_BASE}disney.jpegli.jpg",
@@ -1078,11 +1091,11 @@ internal object CollectionTemplateManifest {
         sortBy = "popularity.desc"
     )
 
-    private fun watchProviderSource(type: String, providerId: Int) = CollectionSourceConfig(
+    private fun watchProviderSource(type: String, providerId: Int, region: String = "US") = CollectionSourceConfig(
         kind = CollectionSourceKind.TMDB_WATCH_PROVIDER,
         mediaType = type,
         tmdbWatchProviderId = providerId,
-        watchRegion = "US",
+        watchRegion = region,
         sortBy = "popularity.desc"
     )
 
