@@ -10,6 +10,12 @@ import retrofit2.http.Query
  */
 interface TmdbApi {
 
+    @GET("movie/{id}/release_dates")
+    suspend fun kidsMovieRatings(@Path("id") id: Int, @Query("api_key") apiKey: String): com.google.gson.JsonObject
+
+    @GET("tv/{id}/content_ratings")
+    suspend fun kidsTvRatings(@Path("id") id: Int, @Query("api_key") apiKey: String): com.google.gson.JsonObject
+
     @GET("trending/movie/day")
     suspend fun getTrendingMovies(
         @Query("api_key") apiKey: String,

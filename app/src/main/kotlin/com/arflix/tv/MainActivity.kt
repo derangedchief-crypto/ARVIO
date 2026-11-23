@@ -855,7 +855,7 @@ fun ArflixApp(
         // currentRoute is null for the first frame after launch; skipping the bar
         // entirely there (and on the onboarding gates) avoids reserving its height
         // before the route is known, so no empty strip is left behind.
-        if (isMobile && !isPlayerRoute && !isOnboardingGateRoute && currentRoute != null) {
+        if (isMobile && activeProfile?.isKidsProfile != true && !isPlayerRoute && !isOnboardingGateRoute && currentRoute != null) {
             val bottomBarAlpha by androidx.compose.animation.core.animateFloatAsState(
                 targetValue = if (showBottomBar) 1f else 0f,
                 animationSpec = androidx.compose.animation.core.tween(250),
@@ -881,6 +881,7 @@ fun ArflixApp(
     }
 
     LaunchedEffect(activeProfile?.id, pendingLauncherRequest) {
+        if (activeProfile?.isKidsProfile == true) return@LaunchedEffect
         val request = pendingLauncherRequest ?: return@LaunchedEffect
         if (activeProfile == null) return@LaunchedEffect
         val route = Screen.Details.createRoute(
@@ -897,6 +898,7 @@ fun ArflixApp(
     }
 
     LaunchedEffect(activeProfile?.id, pendingInstallPackUrl) {
+        if (activeProfile?.isKidsProfile == true) return@LaunchedEffect
         val packUrl = pendingInstallPackUrl ?: return@LaunchedEffect
         if (activeProfile == null) return@LaunchedEffect
         val encodedUrl = java.net.URLEncoder.encode(packUrl, "UTF-8")

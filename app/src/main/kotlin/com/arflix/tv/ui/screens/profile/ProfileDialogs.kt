@@ -88,6 +88,8 @@ import coil.request.ImageRequest
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun AddProfileDialog(
+    isKidsProfile: Boolean = false,
+    onKidsProfileChange: (Boolean) -> Unit = {},
     name: String,
     onNameChange: (String) -> Unit,
     selectedColorIndex: Int,
@@ -103,6 +105,8 @@ fun AddProfileDialog(
 ) {
     ProfileDialogContent(
         title = stringResource(R.string.add_profile),
+        isKidsProfile = isKidsProfile,
+        onKidsProfileChange = onKidsProfileChange,
         autoFocusNameInput = true,
         name = name,
         onNameChange = onNameChange,
@@ -128,6 +132,8 @@ fun AddProfileDialog(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun EditProfileDialog(
+    isKidsProfile: Boolean = false,
+    onKidsProfileChange: (Boolean) -> Unit = {},
     profile: Profile,
     name: String,
     onNameChange: (String) -> Unit,
@@ -147,6 +153,8 @@ fun EditProfileDialog(
 ) {
     ProfileDialogContent(
         title = stringResource(R.string.profile_edit_title),
+        isKidsProfile = isKidsProfile,
+        onKidsProfileChange = onKidsProfileChange,
         autoFocusNameInput = false,
         name = name,
         onNameChange = onNameChange,
@@ -175,6 +183,8 @@ fun EditProfileDialog(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun ProfileDialogContent(
+    isKidsProfile: Boolean,
+    onKidsProfileChange: (Boolean) -> Unit,
     title: String,
     autoFocusNameInput: Boolean,
     name: String,
@@ -363,6 +373,13 @@ private fun ProfileDialogContent(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
+                    DialogButton(
+                        text = if (isKidsProfile) "Kids profile: On (12 and under)" else "Kids profile: Off",
+                        isPrimary = isKidsProfile,
+                        onClick = { hideKeyboard(); onKidsProfileChange(!isKidsProfile) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
                     if (profile != null && onShowPinSetup != null && onRemovePin != null) {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
@@ -608,6 +625,13 @@ private fun ProfileDialogContent(
                         Spacer(modifier = Modifier.height(20.dp))
 
                         // PIN Controls (edit mode only)
+                        DialogButton(
+                            text = if (isKidsProfile) "Kids profile: On (12 and under)" else "Kids profile: Off",
+                            isPrimary = isKidsProfile,
+                            onClick = { hideKeyboard(); onKidsProfileChange(!isKidsProfile) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
                         if (profile != null && onShowPinSetup != null && onRemovePin != null) {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),

@@ -140,6 +140,24 @@ fun AppNavigation(
     onTvFullscreenChanged: (Boolean) -> Unit = {},
     onExitApp: () -> Unit = {}
 ) {
+    val leavingKids = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(currentProfile?.isKidsProfile) {
+        if (currentProfile?.isKidsProfile != true && leavingKids.value) {
+            navController.navigate(Screen.ProfileSelection.route) {
+                popUpTo(navController.graph.id) { inclusive = true }
+            }
+            leavingKids.value = false
+        }
+    }
+    if (currentProfile?.isKidsProfile == true) {
+        androidx.compose.runtime.key(currentProfile.id) {
+            com.arflix.tv.ui.screens.profile.KidsExperience(currentProfile, onSwitchProfile = {
+                leavingKids.value = true
+                onSwitchProfile()
+            })
+        }
+        return
+    }
     val navigateTopLevel: (String) -> Unit = { route ->
         navController.navigate(route) {
             popUpTo(Screen.Home.route) { saveState = true }

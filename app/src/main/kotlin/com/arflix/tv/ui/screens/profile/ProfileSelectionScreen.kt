@@ -433,6 +433,8 @@ fun ProfileSelectionScreen(
         // Add Profile Dialog
         if (uiState.showAddDialog) {
             AddProfileDialog(
+                isKidsProfile = uiState.isKidsProfile,
+                onKidsProfileChange = viewModel::setKidsProfile,
                 name = uiState.newProfileName,
                 onNameChange = { viewModel.setNewProfileName(it) },
                 selectedColorIndex = uiState.selectedColorIndex,
@@ -451,6 +453,8 @@ fun ProfileSelectionScreen(
         // Edit Profile Dialog
         uiState.editingProfile?.let { profile ->
             EditProfileDialog(
+                isKidsProfile = uiState.isKidsProfile,
+                onKidsProfileChange = viewModel::setKidsProfile,
                 profile = profile,
                 name = uiState.newProfileName,
                 onNameChange = { viewModel.setNewProfileName(it) },
@@ -604,7 +608,7 @@ private fun ProfileAvatar(
         Spacer(modifier = Modifier.height(12.dp))
 
         Text(
-            text = profile.name,
+            text = if (profile.isKidsProfile) "${profile.name} · Kids" else profile.name,
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
             color = if (isFocused > 0) Color.White else Color.White.copy(alpha = 0.7f),

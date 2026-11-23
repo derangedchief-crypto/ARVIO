@@ -286,6 +286,10 @@ class ProfileViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(newProfileName = name)
     }
 
+    fun setKidsProfile(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(isKidsProfile = enabled)
+    }
+
     fun setSelectedColorIndex(index: Int) {
         _uiState.value = _uiState.value.copy(
             selectedColorIndex = index,
@@ -327,7 +331,7 @@ class ProfileViewModel @Inject constructor(
                 name = state.newProfileName.trim(),
                 avatarColor = ProfileColors.getByIndex(state.selectedColorIndex),
                 avatarId = state.selectedAvatarId,
-                isKidsProfile = false
+                isKidsProfile = state.isKidsProfile
             )
             val selectedImage = state.selectedAvatarImageUri
             if (state.useCustomAvatarImage && !selectedImage.isNullOrBlank()) {
@@ -370,7 +374,7 @@ class ProfileViewModel @Inject constructor(
                 selectedAvatarId = profile.avatarId,
                 selectedAvatarImageUri = null,
                 useCustomAvatarImage = profile.avatarImageVersion > 0L,
-                isKidsProfile = false
+                isKidsProfile = profile.isKidsProfile
             )
         }
     }
@@ -389,7 +393,7 @@ class ProfileViewModel @Inject constructor(
                 name = state.newProfileName.trim(),
                 avatarColor = ProfileColors.getByIndex(state.selectedColorIndex),
                 avatarId = state.selectedAvatarId,
-                isKidsProfile = false
+                isKidsProfile = state.isKidsProfile
             )
             val selectedImage = state.selectedAvatarImageUri
             if (state.useCustomAvatarImage && !selectedImage.isNullOrBlank()) {
@@ -509,7 +513,7 @@ class ProfileViewModel @Inject constructor(
                         selectedAvatarId = profile.avatarId,
                         selectedAvatarImageUri = null,
                         useCustomAvatarImage = profile.avatarImageVersion > 0L,
-                        isKidsProfile = false
+                        isKidsProfile = profile.isKidsProfile
                     )
                 }
                 "delete" -> {
