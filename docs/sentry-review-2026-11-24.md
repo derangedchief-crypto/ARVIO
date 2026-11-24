@@ -40,3 +40,11 @@ Scope: Extreme Hub customer Android app, `staging/testing`.
 
 Keep these reports open pending delivery and affected-device verification.
 Saving source to staging does not update existing customer APKs.
+
+## Verification
+
+Debug Kotlin compilation passed. All 12 targeted tests passed: proxy concurrent
+startup/readiness/restart, managed addon persistence, legacy catalogue parsing,
+and native surface handoff. The proxy Robolectric test uses ConscryptMode.OFF,
+matching the existing tests, because the host lacks the Android Conscrypt JNI.
+Signed standard testing APK requested through Publish Testing APK run 45306254700.

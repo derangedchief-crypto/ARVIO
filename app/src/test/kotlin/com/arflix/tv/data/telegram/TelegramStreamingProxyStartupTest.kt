@@ -10,10 +10,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.ConscryptMode
 import java.net.HttpURLConnection
 import java.net.URL
 
 @RunWith(RobolectricTestRunner::class)
+@ConscryptMode(ConscryptMode.Mode.OFF)
 @Config(sdk = [28], application = com.arflix.tv.SentryRegressionTestApplication::class, manifest = Config.NONE)
 class TelegramStreamingProxyStartupTest {
     @Test fun concurrentRequestsShareAReadyLoopbackListenerAndRestartWorks() = runBlocking {
