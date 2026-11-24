@@ -30,7 +30,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.drinkless.tdlib.TdApi
-import java.net.ServerSocket
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -91,14 +90,16 @@ class TelegramStreamingProxy @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var port: Int = 0
     private var server: io.ktor.server.engine.ApplicationEngine? = null
+    private val lifecycleMutex = Mutex()
     @Volatile private var lastStreamedFileId: Int? = null
     private val requestStateMutex = Mutex()
     private val requestStates = mutableMapOf<Int, StreamRequestState>()
 
-    fun start() {
+    private suspend fun start() {
         if (server != null) return
-        port = findFreePort()
-        server = embeddedServer(CIO, port = port) {
+        // Let the listening socket allocate its own port atomically. Reserving
+        // then closing a ServerSocket leaves a race before CIO binds it.
+        server = embeddedServer(CIO, host = "127.0.0.1", port = 0) {
             routing {
                 get("/file/{fileId}") {
                     val fileId = call.parameters["fileId"]?.toIntOrNull()
@@ -157,16 +158,27 @@ class TelegramStreamingProxy @Inject constructor(
                 }
             }
         }
-        server!!.start(wait = false)
+        try {
+            server!!.start(wait = false)
+            port = server!!.resolvedConnectors().single().port
+        } catch (failure: Exception) {
+            runCatching { server?.stop(0, 0) }
+            server = null
+            port = 0
+            throw failure
+        }
         Log.d(TAG, "Streaming proxy started on port $port")
     }
 
-    fun stop() {
-        lastStreamedFileId?.let { scope.launch { deleteFile(it) } }
-        lastStreamedFileId = null
-        server?.stop(0, 0)
-        server = null
-        Log.d(TAG, "Streaming proxy stopped")
+    suspend fun stop() = withContext(Dispatchers.IO) {
+        lifecycleMutex.withLock {
+            lastStreamedFileId?.let { scope.launch { deleteFile(it) } }
+            lastStreamedFileId = null
+            server?.stop(0, 0)
+            server = null
+            port = 0
+            Log.d(TAG, "Streaming proxy stopped")
+        }
     }
 
     private suspend fun deleteFile(fileId: Int) {
@@ -233,10 +245,13 @@ class TelegramStreamingProxy @Inject constructor(
         }
     }
 
-    fun getUrl(fileId: Int): String {
-        val url = "http://localhost:$port/file/$fileId"
-        Log.d(TAG, "Generated stream URL: $url")
-        return url
+    suspend fun getUrl(fileId: Int): String = withContext(Dispatchers.IO) {
+        lifecycleMutex.withLock {
+            start()
+            val url = "http://127.0.0.1:$port/file/$fileId"
+            Log.d(TAG, "Generated stream URL: $url")
+            url
+        }
     }
 
     /**
@@ -310,7 +325,4 @@ class TelegramStreamingProxy @Inject constructor(
         }
     }
 
-    private fun findFreePort(): Int {
-        ServerSocket(0).use { return it.localPort }
-    }
 }

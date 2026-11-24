@@ -1,5 +1,7 @@
 package com.arflix.tv.data.repository
 
+import kotlinx.coroutines.flow.flowOn
+
 import android.content.Context
 import android.util.Log
 import androidx.datastore.core.DataStore
@@ -610,7 +612,7 @@ class StreamRepository @Inject constructor(
         context.streamDataStore.data.map { prefs ->
             val addons = readSharedOrLegacyAddons(prefs) ?: getDefaultAddonList()
             enforceOpenSubtitles(addons).map { sanitizeAddonDisplayName(it) }
-        }
+        }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     private fun readSharedOrLegacyAddons(prefs: Preferences): List<Addon>? {
         parseAddons(prefs[sharedAddonsKey])?.takeIf { it.isNotEmpty() }?.let { return it }

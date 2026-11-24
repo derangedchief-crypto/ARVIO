@@ -68,11 +68,25 @@ internal class OwnTvMpvFallback(context: Context, private val authorized:(String
     private val engine = OwnTvIptvRuntime.player(context)
     private val liveEngine = OwnTvIptvRuntime.livePlayer(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val applicationContext = context.applicationContext
+    private val memoryCallbacks = object : android.content.ComponentCallbacks2 {
+        override fun onConfigurationChanged(configuration: android.content.res.Configuration) = Unit
+        override fun onLowMemory() = engine.onTrimMemory()
+        override fun onTrimMemory(level: Int) {
+            if (level != android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN &&
+                level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE) {
+                engine.onTrimMemory()
+            }
+        }
+    }
     private val surfaceEngine = MutableStateFlow(OwnTvSurfaceEngine.NONE)
     private val tuner = OwnTvLiveTuner(scope, EnginePair(liveEngine, engine), prebufferSeconds = prebufferSeconds, authorized=authorized, onEngineStarted = { fast ->
         selectSurfaceEngine(if (fast) OwnTvSurfaceEngine.FAST_LIVE else OwnTvSurfaceEngine.MPV)
     })
-    init { engine.discardBackgroundRestore();liveEngine.discardBackgroundRestore();tuner.stop() }
+    init {
+        applicationContext.registerComponentCallbacks(memoryCallbacks)
+        engine.discardBackgroundRestore();liveEngine.discardBackgroundRestore();tuner.stop()
+    }
     val playing = combine(surfaceEngine, engine.isPlaying, liveEngine.isPlaying) { owner, mpv, fast ->
         when (owner) { OwnTvSurfaceEngine.FAST_LIVE -> fast; OwnTvSurfaceEngine.MPV -> mpv; else -> false }
     }
@@ -244,6 +258,7 @@ internal class OwnTvMpvFallback(context: Context, private val authorized:(String
     }
 
     fun release() {
+        applicationContext.unregisterComponentCallbacks(memoryCallbacks)
         surfaces.clear()
         observedHolders.forEach { it.removeCallback(surfaceCallback) }
         observedHolders.clear()

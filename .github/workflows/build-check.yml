@@ -54,6 +54,8 @@ jobs:
           --tests '*CloudSyncRepositoryAddonMergeTest'
           --tests '*PhoneLivePictureInPictureTest'
           --tests '*KidsCatalogRepositoryTest'
+          --tests '*TelegramStreamingProxyStartupTest'
+          --tests '*CatalogRepositoryLegacyCompatibilityTest'
           --no-daemon
 
       - name: Provider-only Live TV category checks

@@ -56,7 +56,6 @@ class TelegramRepository @Inject constructor(
     val authState = client.authState
 
     init {
-        proxy.start()
         val hasValidSession = sessionMarker(context).exists()
         if (!hasValidSession) {
             // Wipe any partial database left by a previous crashed session
@@ -246,7 +245,7 @@ class TelegramRepository @Inject constructor(
         return results
     }
 
-    fun getStreamUrl(fileId: Int): String = proxy.getUrl(fileId)
+    suspend fun getStreamUrl(fileId: Int): String = proxy.getUrl(fileId)
 
     fun getExcludedChatIds(): Flow<Set<Long>> =
         context.telegramDataStore.data.map { prefs ->

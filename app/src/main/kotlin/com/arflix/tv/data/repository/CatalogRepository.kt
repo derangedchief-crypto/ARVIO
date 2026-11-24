@@ -1,5 +1,7 @@
 package com.arflix.tv.data.repository
 
+import kotlinx.coroutines.flow.flowOn
+
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -163,6 +165,7 @@ class CatalogRepository @Inject constructor(
                 }
             }
             .distinctUntilChanged()
+            .flowOn(kotlinx.coroutines.Dispatchers.Default)
     }
 
     private suspend fun activeProfileId(): String {

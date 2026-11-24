@@ -859,9 +859,9 @@ class TvViewModel @Inject constructor(
      * playlists a `firstOrNull` over 50k+ channels ran per focus change on the main
      * thread; the SQLite channel store answers the same lookup with an indexed query.
      */
-    private fun lookupChannelById(state: TvUiState, id: String): IptvChannel? {
-        if (id.isBlank()) return null
-        return if (isLargeIptvList(state.snapshot.channels.size) ||
+    private suspend fun lookupChannelById(state: TvUiState, id: String): IptvChannel? = withContext(Dispatchers.IO) {
+        if (id.isBlank()) return@withContext null
+        if (isLargeIptvList(state.snapshot.channels.size) ||
             try { iptvRepository.pagedChannelStoreCount() > 10_000 } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
         ) {
             iptvRepository.pagedChannelsByIds(listOf(id)).firstOrNull()
@@ -1300,23 +1300,23 @@ class TvViewModel @Inject constructor(
     fun refreshCatchupHistoryForChannel(channelId: String?) {
         val id = channelId?.trim().orEmpty()
         if (id.isBlank()) return
-        val now = System.currentTimeMillis()
-        val current = _uiState.value
-        val channel = current.channelLookup[id]
-            ?: lookupChannelById(current, id)
-        if (!supportsCatchup(channel)) return
-        if (hasRecentCatchupHistory(channel, current.snapshot.nowNext[id], now)) return
-        val lastRefreshAt = catchupHistoryRefreshAt[id] ?: 0L
-        if (now - lastRefreshAt < RichCatchupRefreshThrottleMs) return
-
-        catchupHistoryRefreshAt[id] = now
-        while (catchupHistoryRefreshAt.size > 120) {
-            val firstKey = catchupHistoryRefreshAt.keys.firstOrNull() ?: break
-            catchupHistoryRefreshAt.remove(firstKey)
-        }
-
-        markEpgLoading(setOf(id))
         viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val current = _uiState.value
+            val channel = current.channelLookup[id]
+                ?: lookupChannelById(current, id)
+            if (!supportsCatchup(channel)) return@launch
+            if (hasRecentCatchupHistory(channel, current.snapshot.nowNext[id], now)) return@launch
+            val lastRefreshAt = catchupHistoryRefreshAt[id] ?: 0L
+            if (now - lastRefreshAt < RichCatchupRefreshThrottleMs) return@launch
+
+            catchupHistoryRefreshAt[id] = now
+            while (catchupHistoryRefreshAt.size > 120) {
+                val firstKey = catchupHistoryRefreshAt.keys.firstOrNull() ?: break
+                catchupHistoryRefreshAt.remove(firstKey)
+            }
+
+            markEpgLoading(setOf(id))
             System.err.println(
                 "[EPG-Catchup] refreshing history channel=$id " +
                     "recent=${recentCatchupCount(current.snapshot.nowNext[id], now)}"

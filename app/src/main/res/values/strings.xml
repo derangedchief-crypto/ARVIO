@@ -1136,6 +1136,7 @@
 
     <!-- Extracted from code: Profile / TV / device-auth -->
     <string name="profile_avatar_import_failed">Could not import avatar image</string>
+    <string name="profile_avatar_picker_unavailable">No image picker is installed. Please choose a built-in avatar.</string>
     <string name="profile_created_success">Profile created successfully</string>
     <string name="profile_updated">Profile updated</string>
     <string name="profile_deleted">Profile deleted</string>
