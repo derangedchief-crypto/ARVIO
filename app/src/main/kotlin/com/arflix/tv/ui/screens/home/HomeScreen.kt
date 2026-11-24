@@ -604,6 +604,9 @@ fun HomeScreen(
     preloadedHeroLogoUrl: String? = null,
     preloadedLogoCache: Map<String, String> = emptyMap(),
     currentProfile: com.arflix.tv.data.model.Profile? = null,
+    restrictedContent: HomeUiState? = null,
+    onRestrictedLoadMore: (String) -> Unit = {},
+    onRestrictedRetry: () -> Unit = {},
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
     onNavigateToCollection: (String) -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
@@ -630,7 +633,10 @@ fun HomeScreen(
     // Lifecycle-aware: stops collecting when HomeScreen is off-screen so the
     // ViewModel's TMDB/Trakt refresh pushes don't drive recompositions behind
     // an invisible UI.
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val ordinaryUiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // Kids uses the exact home presentation with an independently verified
+    // catalogue. Never fall back to ordinary shelves while it is loading.
+    val uiState = restrictedContent ?: ordinaryUiState
     // Per-card logo reads now come from a stable snapshotStateMap so a single
     // logo arriving no longer recomposes the full home surface.
     val cardLogoUrls = viewModel.cardLogoUrls
@@ -689,13 +695,18 @@ fun HomeScreen(
         preloadedCategories
     }
     val sportsHomeRows by viewModel.sportsHomeRows.collectAsStateWithLifecycle()
-    val rawDisplayCategories = remember(rawDisplayCategoriesBase, sportsHomeRows) {
-        viewModel.withSportsHomeRows(rawDisplayCategoriesBase, sportsHomeRows)
+    val rawDisplayCategories = remember(rawDisplayCategoriesBase, sportsHomeRows, restrictedContent) {
+        if (restrictedContent != null) rawDisplayCategoriesBase
+        else viewModel.withSportsHomeRows(rawDisplayCategoriesBase, sportsHomeRows)
     }
     val displayCategories = remember(rawDisplayCategories) {
         deduplicateHomeCategories(rawDisplayCategories)
     }
-    val displayHeroItem = uiState.heroItem ?: preloadedHeroItem
+    var restrictedFocusedItem by remember(currentProfile?.id) { mutableStateOf<MediaItem?>(null) }
+    val restrictedHero = restrictedFocusedItem?.takeIf { focused ->
+        restrictedContent != null && displayCategories.any { row -> row.items.any { it.id == focused.id && it.mediaType == focused.mediaType } }
+    }
+    val displayHeroItem = restrictedHero ?: uiState.heroItem ?: preloadedHeroItem
         ?: if (uiState.categories.isEmpty()) {
             // Only fall through to first-row hero while the ViewModel is still
             // publishing its initial categories. Once categories are populated,
@@ -875,7 +886,8 @@ fun HomeScreen(
                     return@collectLatest
                 }
                 viewModel.onFocusChanged(focusSnapshot.rowIndex, focusSnapshot.itemIndex, shouldPrefetch = true)
-                viewModel.updateHeroItem(latestFocusedItem)
+                if (restrictedContent != null) restrictedFocusedItem = latestFocusedItem
+                else viewModel.updateHeroItem(latestFocusedItem)
             }
     }
 
@@ -893,7 +905,9 @@ fun HomeScreen(
             .collectLatest { (rowIndex, itemIndex, sidebarFocused) ->
                 if (sidebarFocused) return@collectLatest
                 val category = latestDisplayCategories.getOrNull(rowIndex) ?: return@collectLatest
-                viewModel.maybeLoadNextPageForCategory(category.id, itemIndex)
+                if (restrictedContent != null) {
+                    if (itemIndex >= category.items.size - 4) onRestrictedLoadMore(category.id)
+                } else viewModel.maybeLoadNextPageForCategory(category.id, itemIndex)
             }
     }
 
@@ -1245,11 +1259,14 @@ fun HomeScreen(
             categoryHasMoreMap = uiState.categoryHasMoreMap,
             smoothScrolling = uiState.smoothScrolling,
             isSlowLoading = uiState.isMobileSlowLoading,
-            onRetry = { viewModel.retryMobileHomeLoading() },
-            onLoadMoreCategory = { viewModel.loadNextPageForCategory(it) },
+            onRetry = { if (restrictedContent != null) onRestrictedRetry() else viewModel.retryMobileHomeLoading() },
+            onLoadMoreCategory = { if (restrictedContent != null) onRestrictedLoadMore(it) else viewModel.loadNextPageForCategory(it) },
             onItemFocusedPrefetch = {},
             onMobileCategoryVisiblePosition = { categoryId, lastVisibleItemIndex ->
-                viewModel.onMobileCategoryVisiblePosition(categoryId, lastVisibleItemIndex)
+                if (restrictedContent != null) {
+                    val count = displayCategories.firstOrNull { it.id == categoryId }?.items?.size ?: 0
+                    if (count > 0 && lastVisibleItemIndex >= count - 4) onRestrictedLoadMore(categoryId)
+                } else viewModel.onMobileCategoryVisiblePosition(categoryId, lastVisibleItemIndex)
             },
             onNavigateToDetails = navigateToDetailsWithCache,
             onNavigateToCollection = onNavigateToCollection,
@@ -1316,7 +1333,7 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.height(24.dp))
                     androidx.tv.material3.Button(
-                        onClick = { viewModel.refresh() }
+                        onClick = { if (restrictedContent != null) onRestrictedRetry() else viewModel.refresh() }
                     ) {
                         Text(stringResource(R.string.retry))
                     }

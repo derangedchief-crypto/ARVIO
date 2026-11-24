@@ -131,7 +131,8 @@ val bottomBarItems = listOf(
 fun AppBottomBar(
     currentRoute: String?,
     onNavigate: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    items: List<BottomBarItem> = bottomBarItems
 ) {
     val configuration = LocalConfiguration.current
     val mode = appBottomBarMode(
@@ -162,7 +163,7 @@ fun AppBottomBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            bottomBarItems.forEach { item ->
+            items.forEach { item ->
                 val isSelected = currentRoute?.contains(item.route, ignoreCase = true) == true
                 var isFocused by remember { mutableStateOf(false) }
                 val label = stringResource(item.labelRes)

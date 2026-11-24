@@ -54,6 +54,7 @@ jobs:
           --tests '*CloudSyncRepositoryAddonMergeTest'
           --tests '*PhoneLivePictureInPictureTest'
           --tests '*KidsCatalogRepositoryTest'
+          --tests '*KidsHomeStateTest'
           --tests '*TelegramStreamingProxyStartupTest'
           --tests '*CatalogRepositoryLegacyCompatibilityTest'
           --no-daemon

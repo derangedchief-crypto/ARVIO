@@ -234,7 +234,13 @@ fun DetailsScreen(
     onBack: () -> Unit
 ) {
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val loadedUiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // Related titles and person filmographies are not rating-verified. Kids
+    // retains the ordinary details/episodes/source picker without exposing them.
+    val uiState = if (currentProfile?.isKidsProfile == true) loadedUiState.copy(
+        similar = emptyList(), collectionItems = emptyList(),
+        cast = emptyList(), reviews = emptyList()
+    ) else loadedUiState
     val usePosterCards = rememberCatalogueRowLayoutMode("details:similar") == CardLayoutMode.POSTER
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
