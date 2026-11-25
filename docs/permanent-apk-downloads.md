@@ -2,7 +2,8 @@
 
 Use these as go.aftvnews destinations rather than version-specific assets:
 
-- Main customer app: `https://github.com/derangedchief-crypto/ARVIO/releases/latest/download/ExtremeTV.apk`
+- Main customer app (requires customer mirror deployment): `https://control.fecxbrfzku.net/downloads/customer/ExtremeTV.apk`
+- Upstream alias (not for public short codes): `https://github.com/derangedchief-crypto/ARVIO/releases/latest/download/ExtremeTV.apk`
 - Main testing app: `https://github.com/derangedchief-crypto/ARVIO/releases/download/staging-testing/ExtremeTV-Test-latest.apk`
 - Each owner/reseller brand: `https://control.fecxbrfzku.net/downloads/latest/<brand-id>/<testing-or-production>/App.apk`
 
