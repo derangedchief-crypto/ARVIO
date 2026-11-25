@@ -36,10 +36,14 @@ final class BrandMainUpdates
     }
     public static function publishedCustomerMatches(array $input,array $release,array $commit):bool {
         $assets=array_values(array_filter($release['assets']??[],static fn($asset)=>str_ends_with(strtolower($asset['name']??''),'.apk')));
+        $name='ExtremeTV-'.$input['app_version'].'.apk';$names=array_column($assets,'name');
+        if(!in_array(count($assets),[1,2],true)||!in_array($name,$names,true)||count(array_unique($names))!==count($names)||array_diff($names,[$name,'ExtremeTV.apk']))return false;
+        $apk=$assets[0];
+        foreach($assets as $asset){
+            if(($asset['state']??null)!=='uploaded'||!is_int($asset['size']??null)||$asset['size']<=0||!is_string($asset['digest']??null)||preg_match('/^sha256:[a-f0-9]{64}$/D',$asset['digest'])!==1||$asset['size']!==($apk['size']??null)||$asset['digest']!==($apk['digest']??null))return false;
+        }
         return ($release['tag_name']??null)==='v'.$input['app_version']&&($release['draft']??null)===false&&($release['prerelease']??null)===false
-            &&is_string($release['published_at']??null)&&$release['published_at']!==''&&($commit['sha']??null)===$input['source_sha']
-            &&count($assets)===1&&($assets[0]['name']??null)==='ExtremeTV-'.$input['app_version'].'.apk'&&($assets[0]['state']??null)==='uploaded'
-            &&is_int($assets[0]['size']??null)&&$assets[0]['size']>0&&is_string($assets[0]['digest']??null)&&preg_match('/^sha256:[a-f0-9]{64}$/D',$assets[0]['digest'])===1;
+            &&is_string($release['published_at']??null)&&$release['published_at']!==''&&($commit['sha']??null)===$input['source_sha'];
     }
     public function fanout(array $input):array {
         Input::keys($input,['source_sha','workflow_ref','app_version','version_code','channel']);$channel=$input['channel']??'testing';if(!is_string($channel)||!in_array($channel,['testing','production'],true))throw new Problem(422,'Invalid main rollout channel.');
