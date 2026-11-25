@@ -42,11 +42,17 @@ def published_customer_source(run_id):
     tag='v'+version
     release=gh_json('releases/tags/'+tag)
     assets=[a for a in release.get('assets',[]) if a.get('name','').lower().endswith('.apk')]
+    expected_name='ExtremeTV-'+version+'.apk'
+    names=[a.get('name') for a in assets]
+    if (len(assets) not in (1,2) or expected_name not in names
+            or len(set(names))!=len(names) or set(names)-{expected_name,'ExtremeTV.apk'}):
+        raise ValueError('Unexpected customer APK assets.')
+    apk=next(a for a in assets if a.get('name')==expected_name)
     if (release.get('tag_name')!=tag or release.get('draft') is not False or release.get('prerelease') is not False
-            or not release.get('published_at') or len(assets)!=1
-            or assets[0].get('name')!='ExtremeTV-'+version+'.apk' or assets[0].get('state')!='uploaded'
-            or type(assets[0].get('size')) is not int or assets[0]['size']<=0
-            or not re.fullmatch('sha256:[a-f0-9]{64}',assets[0].get('digest',''))):
+            or not release.get('published_at')
+            or any(a.get('state')!='uploaded' or type(a.get('size')) is not int or a['size']<=0
+                   or not re.fullmatch('sha256:[a-f0-9]{64}',a.get('digest',''))
+                   or a['size']!=apk.get('size') or a['digest']!=apk.get('digest') for a in assets)):
         raise ValueError('A completed customer APK publication is required.')
     if gh_json('commits/'+tag).get('sha')!=source:raise ValueError('Customer release tag/source mismatch.')
     return source,version,code

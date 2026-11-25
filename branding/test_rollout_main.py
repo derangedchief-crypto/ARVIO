@@ -85,6 +85,24 @@ class MainRolloutTests(unittest.TestCase):
                 with patch.object(rollout,'gh_json',side_effect=api):
                     with self.assertRaises(ValueError):rollout.published_customer_source('123')
 
+    def test_permanent_apk_alias_requires_identical_uploaded_bytes(self):
+        original=customer_api('releases/tags/v2.0.116')['assets'][0]
+        alias=dict(original,name='ExtremeTV.apk')
+        cases=[([original,alias],True),([alias,original],True),([original],True),
+               ([alias],False),([original,original],False),
+               ([original,dict(alias,digest='sha256:'+'e'*64)],False),
+               ([original,dict(alias,size=124)],False),
+               ([original,dict(alias,state='new')],False),
+               ([original,dict(alias,name='Other.apk')],False),
+               ([original,alias,dict(alias,name='Other.apk')],False)]
+        for assets,okay in cases:
+            with self.subTest(assets=assets):
+                def api(path):return dict(customer_api(path),assets=assets) if path=='releases/tags/v2.0.116' else customer_api(path)
+                with patch.object(rollout,'gh_json',side_effect=api):
+                    if okay:self.assertEqual((SHA,'2.0.116',432),rollout.published_customer_source('123'))
+                    else:
+                        with self.assertRaises(ValueError):rollout.published_customer_source('123')
+
     def test_tag_must_match_released_sha_not_whichever_commit_is_now_main(self):
         with patch.object(rollout,'gh_json',side_effect=customer_api) as api:
             self.assertEqual((SHA,'2.0.116',432),rollout.published_customer_source('123'))
